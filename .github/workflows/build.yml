@@ -1,4 +1,4 @@
-name: Build ZCode
+name: Build and package ZCode
 
 on:
   push:
@@ -13,10 +13,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Install and build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+  package:
+    name: Package ${{ matrix.os }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: mac
+            arch: arm64
+            runner: macos-14
+          - os: mac
+            arch: x64
+            runner: macos-14
+          - os: win
+            arch: x64
+            runner: windows-latest
 
     steps:
       - name: Checkout
@@ -38,5 +51,50 @@ jobs:
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
 
-      - name: Build
-        run: pnpm build
+      - name: Build installer
+        run: pnpm bundle:desktop -- --os ${{ matrix.os }} --arch ${{ matrix.arch }}
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: zcode-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            packages/desktop/dist/*.dmg
+            packages/desktop/dist/*.zip
+            packages/desktop/dist/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: build-${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "ZCode build $GITHUB_RUN_NUMBER" \
+              --notes "由 GitHub Actions 从提交 $GITHUB_SHA 自动构建。" \
+              --target "$GITHUB_SHA"
+          fi
