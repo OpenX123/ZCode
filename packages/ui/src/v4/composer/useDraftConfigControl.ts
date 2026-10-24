@@ -37,10 +37,17 @@ import {
 } from "@/v4/composer/composerDraftStore.js";
 import { resolveAppFollowupMode } from "@/v4/composer/followupModeSettings.js";
 import { logger } from "@/logger.js";
+import { useDynamicWorkflowAvailabilityStore } from "@/store/dynamicWorkflowAvailabilityStore.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 
 /** 目录水合单飞（per workspaceKey）：draft、已有 session 和严格模式双挂载共享一次 RPC。 */
-const workspaceCatalogHydrationFlights = new Map<string, Promise<void>>();
+const workspaceCatalogHydrationFlights = new Map<
+  string,
+  {
+    workflowEnabled: boolean | undefined;
+    promise: Promise<void>;
+  }
+>();
 
 export function applyDraftModelSelection(
   current: Partial<SessionConfigState>,
@@ -66,13 +73,17 @@ export function shouldHydrateWorkspaceCatalog(params: {
   configOptions: readonly ZCodeConfigOption[];
   sessionId: string | null;
   slashCommands: readonly ZCodeSlashCommand[];
+  workflowEnabled?: boolean;
 }): boolean {
   const hasModePresentation = params.configOptions.some(
     (option) => option.category === "mode" && option.type === "select",
   );
   // slashCommands 属于 workspace identity，不会随已有 session projection 恢复。
   // 因此已有 session 只要目录为空也必须独立水合；mode 目录也不再借模型目录间接提供。
-  return params.slashCommands.length === 0 || !hasModePresentation;
+  const workflowMismatch =
+    params.workflowEnabled !== undefined &&
+    params.slashCommands.some((command) => command.name === "workflow") !== params.workflowEnabled;
+  return params.slashCommands.length === 0 || !hasModePresentation || workflowMismatch;
 }
 
 export interface DraftConfigControl {
@@ -455,86 +466,70 @@ export function useDraftConfigControl(params: {
     [scopeId, isCurrentScope, workspaceIdentity, workspacePath, rootScope],
   );
 
-  // ── workspace 目录水合（见文件头说明）──
-  // 目录已 ready（reload/广播/上次水合写过）则跳过；否则读取最小 workspace presentation。
+  // Host 同步策略后才发布可用性投影，目录仍由 CLI 唯一装配，Renderer 只使旧投影失效。
+  const dynamicWorkflowEnabled = useDynamicWorkflowAvailabilityStore((state) =>
+    state.status === "ready" ? state.enabled : undefined,
+  );
   useEffect(() => {
-    const isDraft = sessionId === null;
     const store = useZCodeSessionStore.getState();
-    const workspaceState = store.getWorkspaceState(workspacePath, workspaceIdentity);
     if (!agentStartupAllowed) {
-      // V4 目录水合曾在无模型时直接进入 RPC，虽然 Host 不会启动 CLI，
-      // renderer 仍会把正常等待态记成 hydration error。readiness 未通过时保持 idle；
-      // registry 就绪后依赖变化会自动重新进入本 effect。
       store.setConfigOptionsStatus(workspacePath, "idle", workspaceIdentity);
       return;
     }
-    const configOptions = workspaceState.configOptions ?? [];
-    const hasModePresentation = configOptions.some(
-      (option) => option.category === "mode" && option.type === "select",
-    );
-    const hasSlashCommandCatalog = workspaceState.slashCommands.length > 0;
-    const shouldHydrateCatalog = shouldHydrateWorkspaceCatalog({
-      configOptions,
-      sessionId,
-      slashCommands: workspaceState.slashCommands,
-    });
-    logger.debug("[v4-workspace-catalog] hydration check", {
-      catalogScope: isDraft ? "draft" : "known-session",
-      hasModePresentation,
-      hasSlashCommandCatalog,
-      flightInProgress: workspaceCatalogHydrationFlights.has(workspaceKey),
-      configOptionsStatus: workspaceState.configOptionsStatus,
-      workspaceKey,
-    });
-    const existingFlight = workspaceCatalogHydrationFlights.get(workspaceKey);
-    if (existingFlight) {
-      return;
-    }
-    if (!shouldHydrateCatalog) {
-      return;
-    }
-
-    store.setConfigOptionsStatus(workspacePath, "loading", workspaceIdentity);
-    const flight = prepareWorkspaceWithZCodeSessionService({
-      workspacePath,
-      workspaceIdentity,
-      provider: displayProvider,
-      zcodeSessionService,
-    })
-      .then((prepareResult) => {
-        const baseOptions = prepareResult.configOptions ?? [];
-        logger.debug("[v4-workspace-catalog] hydration done", {
-          catalogScope: isDraft ? "draft" : "known-session",
-          optionCount: baseOptions.length,
-          slashCommandCount: prepareResult.slashCommands?.length ?? 0,
-          modeCurrentValue: String(
-            baseOptions.find((option) => option.category === "mode" && option.type === "select")
-              ?.currentValue ?? "",
-          ),
-          workspaceKey,
-        });
-        const latest = useZCodeSessionStore.getState();
-        latest.setConfigOptions(workspacePath, baseOptions, workspaceIdentity);
-        latest.setConfigOptionsStatus(workspacePath, "ready", workspaceIdentity);
-        latest.setSlashCommands(
+    const existing = workspaceCatalogHydrationFlights.get(workspaceKey);
+    if (existing && existing.workflowEnabled === dynamicWorkflowEnabled) return;
+    const entry = {
+      workflowEnabled: dynamicWorkflowEnabled,
+      promise: Promise.resolve(),
+    };
+    // 同 workspace 串行；旧模式的在途读先结束，新模式再读，避免覆盖或丢失刷新。
+    entry.promise = (existing?.promise ?? Promise.resolve())
+      .then(async () => {
+        const current = useZCodeSessionStore.getState();
+        const workspace = current.getWorkspaceState(workspacePath, workspaceIdentity);
+        if (
+          !shouldHydrateWorkspaceCatalog({
+            configOptions: workspace.configOptions ?? [],
+            sessionId,
+            slashCommands: workspace.slashCommands,
+            workflowEnabled: dynamicWorkflowEnabled,
+          })
+        )
+          return;
+        current.setConfigOptionsStatus(workspacePath, "loading", workspaceIdentity);
+        const result = await prepareWorkspaceWithZCodeSessionService({
           workspacePath,
-          prepareResult.slashCommands ?? [],
           workspaceIdentity,
-        );
+          provider: displayProvider,
+          zcodeSessionService,
+        });
+        const policy = useDynamicWorkflowAvailabilityStore.getState();
+        const latestEnabled = policy.status === "ready" ? policy.enabled : undefined;
+        // 设置已变更时不发布旧策略的迟到目录，由排队的新策略读完成水合。
+        if (latestEnabled !== dynamicWorkflowEnabled) return;
+        const latest = useZCodeSessionStore.getState();
+        latest.setConfigOptions(workspacePath, result.configOptions ?? [], workspaceIdentity);
+        latest.setConfigOptionsStatus(workspacePath, "ready", workspaceIdentity);
+        latest.setSlashCommands(workspacePath, result.slashCommands ?? [], workspaceIdentity);
       })
       .catch((error) => {
-        useZCodeSessionStore
-          .getState()
-          .setConfigOptionsStatus(workspacePath, "error", workspaceIdentity);
+        if (workspaceCatalogHydrationFlights.get(workspaceKey) === entry) {
+          useZCodeSessionStore
+            .getState()
+            .setConfigOptionsStatus(workspacePath, "error", workspaceIdentity);
+        }
         logger.warn(`[v4-workspace-catalog] workspace 目录水合失败: ${String(error)}`);
       })
       .finally(() => {
-        workspaceCatalogHydrationFlights.delete(workspaceKey);
+        if (workspaceCatalogHydrationFlights.get(workspaceKey) === entry) {
+          workspaceCatalogHydrationFlights.delete(workspaceKey);
+        }
       });
-    workspaceCatalogHydrationFlights.set(workspaceKey, flight);
+    workspaceCatalogHydrationFlights.set(workspaceKey, entry);
   }, [
     agentStartupAllowed,
     displayProvider,
+    dynamicWorkflowEnabled,
     sessionId,
     workspaceIdentity,
     workspaceKey,

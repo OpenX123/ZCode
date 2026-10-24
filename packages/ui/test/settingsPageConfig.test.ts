@@ -71,10 +71,11 @@ describe("settingsPageConfig", () => {
     ]);
   });
 
-  it("Usage 分区文案和头像菜单使用统计入口保持一致", () => {
-    expect(enUS["settings.usageTitle"]).toBe(enUS["sidebar.usage.plan.openStats"]);
-    expect(enUS["settings.usage.sectionTitle"]).toBe(enUS["sidebar.usage.plan.openStats"]);
-    expect(zhCN["settings.usageTitle"]).toBe(zhCN["sidebar.usage.plan.openStats"]);
+  it("Usage 保留本地使用统计分区文案", () => {
+    expect(enUS["settings.usageTitle"]).toBe("Usage stats");
+    expect(enUS["settings.usage.sectionTitle"]).toBe(enUS["settings.usageTitle"]);
+    expect(zhCN["settings.usageTitle"]).toBe("使用统计");
+    expect(zhCN["settings.usage.sectionTitle"]).toBe(zhCN["settings.usageTitle"]);
   });
 
   it.each([

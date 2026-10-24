@@ -1,4 +1,4 @@
-import type { ModelRequestSessionType, ModelRetryBudget } from "@zcode/contracts";
+import type { ModelRequestSessionType } from "@zcode/contracts";
 import {
   CoreErrorType,
   createCoreError,
@@ -14,21 +14,15 @@ import {
   resolveModelRequestSessionTypeFromTaskType,
   resolveModelRetryBudgetFromTaskType,
 } from "./model-request-session-type.js";
-import { getOffPeakModelBinding } from "../off-peak/model-binding.js";
 
 export function createRuntimeModel(
   runtime: AgentRuntimeInternal,
   input: Omit<RuntimeModelFactoryInput, "selection"> & {
     selection: RuntimeModelFactoryInput["selection"] | undefined;
     scope?: "session" | "workspace";
-    /**
-     * 覆盖按 taskType 解析的重试预算，只绑定到本次创建的句柄，不进入 Factory 输入。
-     * 目前只有带 selectionFallback 声明的执行作用域 Selection 使用 single-attempt。
-     */
-    retryBudget?: ModelRetryBudget;
   },
 ): Model {
-  const { retryBudget, scope = "session", ...factoryInput } = input;
+  const { scope = "session", ...factoryInput } = input;
   // 未绑定 Session 可恢复历史；仅在执行入口拒绝缺失选择，Factory 契约仍严格。
   if (!factoryInput.selection) {
     throw createCoreError(CoreErrorType.ConfigurationError, "Select a model before continuing", {
@@ -41,9 +35,8 @@ export function createRuntimeModel(
     scope === "workspace"
       ? "other"
       : resolveModelRequestSessionTypeFromTaskType(runtime.config.taskType),
-    retryBudget,
   );
-  return getOffPeakModelBinding(input.requestDependencies)?.wrap(model) ?? model;
+  return model;
 }
 
 /**
@@ -60,14 +53,12 @@ function withRuntimeInvocationLayer(
   runtime: AgentRuntimeInternal,
   model: Model,
   sessionType: ModelRequestSessionType,
-  retryBudget?: ModelRetryBudget,
 ): Model {
   const layer: ModelInvocationContext = {
     // 原因：标题、Memory、工具调用曾按用途覆写 other，丢失宿主分类。
     // 会话类型统一绑定在句柄上；工作区独立请求即使借用会话 runtime 也保持 other。
     modelRequestSessionType: sessionType,
-    // 带退回声明的执行句柄显式传入 single-attempt，其余沿用 taskType 默认预算。
-    modelRetryBudget: retryBudget ?? resolveModelRetryBudgetFromTaskType(runtime.config.taskType),
+    modelRetryBudget: resolveModelRetryBudgetFromTaskType(runtime.config.taskType),
     ...(runtime.modelRequestAdmission === undefined
       ? {}
       : { modelRequestAdmission: runtime.modelRequestAdmission }),

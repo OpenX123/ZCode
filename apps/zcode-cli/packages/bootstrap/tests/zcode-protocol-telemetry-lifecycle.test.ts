@@ -123,12 +123,6 @@ vi.mock("../src/app/create-app.js", async (importOriginal) => {
   };
 });
 
-vi.mock("@zcode/telemetry", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@zcode/telemetry")>()),
-  prepareModelTelemetryEnv: telemetryMocks.prepareModelTelemetryEnv,
-  shutdownPreparedModelTelemetry: telemetryMocks.shutdownPreparedModelTelemetry,
-}));
-
 import { runZCodeProtocolAgent } from "../src/zcode-protocol-entrypoint.js";
 
 describe("ZCode Protocol telemetry lifecycle", () => {
@@ -138,48 +132,11 @@ describe("ZCode Protocol telemetry lifecycle", () => {
     telemetryMocks.emitToolOnAppCreate = false;
   });
 
-  it.each([
-    ["缺少注入时回退本地 Host", undefined, "desktop_local_host"],
-    ["保留远程 Host 注入", "remote_workspace_host", "remote_workspace_host"],
-  ] as const)("%s", async (_label, injectedSurface, expectedSurface) => {
-    await runProtocolAgent(injectedSurface);
-
-    expect(telemetryMocks.prepareModelTelemetryEnv).toHaveBeenCalledWith(
-      expect.any(Object),
-      expect.objectContaining({
-        runtimeSurface: expectedSurface,
-      }),
-    );
-    expect(telemetryMocks.shutdownPreparedModelTelemetry).toHaveBeenCalledOnce();
+  it("启动和退出不创建原厂遥测 owner", async () => {
+    await runProtocolAgent(undefined);
+    expect(telemetryMocks.prepareModelTelemetryEnv).not.toHaveBeenCalled();
+    expect(telemetryMocks.shutdownPreparedModelTelemetry).not.toHaveBeenCalled();
   });
-
-  it("OTLP Owner 关闭失败保持旁路", async () => {
-    telemetryMocks.shutdownPreparedModelTelemetry.mockRejectedValueOnce(
-      new Error("exporter shutdown failed"),
-    );
-
-    await expect(runProtocolAgent(undefined)).resolves.toBeUndefined();
-  });
-
-  it("MCP 关闭失败仍继续关闭 OTLP Owner", async () => {
-    telemetryMocks.closeMcp.mockRejectedValueOnce(new Error("mcp close failed"));
-
-    await expect(runProtocolAgent(undefined)).resolves.toBeUndefined();
-
-    expect(telemetryMocks.closeMcp).toHaveBeenCalledOnce();
-    expect(telemetryMocks.shutdownPreparedModelTelemetry).toHaveBeenCalledOnce();
-  });
-
-  it("MCP 关闭悬空时有界等待并继续关闭 OTLP Owner", async () => {
-    telemetryMocks.closeMcp.mockImplementationOnce(
-      async () => await new Promise<void>(() => undefined),
-    );
-
-    await expect(runProtocolAgent(undefined)).resolves.toBeUndefined();
-
-    expect(telemetryMocks.closeMcp).toHaveBeenCalledOnce();
-    expect(telemetryMocks.shutdownPreparedModelTelemetry).toHaveBeenCalledOnce();
-  }, 5_000);
 
   it("MCP 资源数组从入口发到新通知，旧 memory 内部事实不再发上协议", async () => {
     telemetryMocks.emitMcpOnStart = true;

@@ -253,10 +253,10 @@ describe("输入框复用市场排序", () => {
     ]);
     expect(result[2]?.disabled).toBe(true);
   });
-  it("无配置和旧 Host 没分类时保留发现顺序", () => {
+  it("无配置时使用本地默认排序，旧 Host 没分类时保留发现顺序", () => {
     expect(
       mapPluginCatalogToMentionItemsForTest(entries, LABELS, "en-US").map((x) => x.value),
-    ).toEqual(entries.filter((x) => x.enabled).map((x) => x.pluginId));
+    ).toEqual([`dev@${official}`, `a@${official}`, `b@${official}`, "personal@personal"]);
     const old = entries.map(({ category: _category, ...item }) => item);
     expect(
       mapPluginCatalogToMentionItemsForTest(old, LABELS, "en-US", {

@@ -4,11 +4,7 @@
 // 因此与 prompt-turn.ts、record-access.ts 并列放在 commands/ 下，
 // 而不是寄居在某一个 handler 文件里。
 import type { SubmissionMode } from "@zcode/shared/zcode-protocol-v4";
-import {
-  isHighspeedProviderId,
-  resolveExecutionState,
-  type ModelSelection,
-} from "@zcode/shared";
+import { resolveExecutionState, type ModelSelection } from "@zcode/shared";
 import type { TurnAttachment } from "@zcode/core";
 import type { SteerTurnOptions } from "../../app/types.js";
 import { parseProviderQualifiedModelSelection } from "../../app/provider-registry-selection.js";
@@ -110,7 +106,6 @@ export async function applyHeldQueueDisposition(
   }
   if (disposition === "clearQueueAndSend") {
     await record.app.clearQueueItems();
-    host.clearQueuedTurnExecutions?.(record.app.sessionId);
   }
 }
 
@@ -160,36 +155,4 @@ export function resolveSubmittedExecutionState(
     mode: state.mode === "auto" ? "build" : state.mode,
     planEnabled: state.planEnabled,
   };
-}
-
-/**
- * Highspeed Selection 只有与同一轮 execution 材料成对出现才有效。retry、edit 重发、卡过期与
- * queue promotion 在没有本轮有效执行材料时，统一经这个 resolver 退回会话常驻 Selection；
- * 禁止只删 modelExecution 却保留 account:*-highspeed-card Selection（spec §3 规则 13）。
- * 只读会话当前值，不改写 session 常驻模型。
- */
-export function resolveSessionFallbackModelSelection(record: V4SessionRecordView): ModelSelection {
-  return resolveSubmittedExecutionState(record, {}).modelSelection;
-}
-
-/**
- * 队列只能持久化普通提交模型。Bug 根因是协议允许任意 fallback target，旧写入点直接信任它，
- * 因此旧版本或异常载荷可把内部 Highspeed Provider 写回 QueueItem。两个队列写入路径统一在此
- * 按 Provider Family 过滤；会话常驻模型也被污染时拒绝入队，禁止继续扩散内部 Selection。
- */
-export function resolveOrdinaryQueueModelSelection(
-  record: V4SessionRecordView,
-  candidate?: ModelSelection,
-): ModelSelection {
-  const selection =
-    candidate && !isHighspeedProviderId(candidate.providerId)
-      ? candidate
-      : resolveSessionFallbackModelSelection(record);
-  if (isHighspeedProviderId(selection.providerId)) {
-    throw new V4InputAdmissionRejectedError(
-      "fault.command.inputRejected",
-      "ordinary queue model selection is unavailable",
-    );
-  }
-  return selection;
 }

@@ -1,4 +1,3 @@
-import { requestVerificationDiagnostics } from "@zcode/shared";
 import { CoreErrorType, ModelErrorCode, createCoreError, isCoreError } from "../deps.js";
 import type { ModelUsage } from "../deps.js";
 import { isPlainRecord, stringProperty } from "./data.js";
@@ -92,7 +91,7 @@ export function createSuspiciousEmptyModelResultError(
       finishReason,
       ...(model ? { modelId: model.modelId, providerId: model.providerId } : {}),
       rawFinishReason,
-      // UI/turn-errors 需识别空 completion，才能展示中文文案与 Coding Plan 恢复动作。
+      // UI/turn-errors 需识别空 completion，才能展示中文文案与恢复动作。
       // 空响应不能只有展示标记，否则监控无法与 provider/SSE 类故障做结构化聚合。
       reason: "empty_model_response",
       source: "provider",
@@ -117,7 +116,6 @@ export function buildSuspiciousEmptyDiagnostics(
     finishReason: input.finishReason ?? null,
     rawFinishReason: input.rawFinishReason ?? null,
     outboundHeaderKeys: input.outboundHeaderKeys ?? [],
-    ...requestVerificationDiagnostics(input),
     providerMetadataKeys: input.providerMetadata
       ? Object.keys(input.providerMetadata).slice(0, 20)
       : [],
@@ -157,7 +155,7 @@ export function tryCreateProviderBusinessModelErrorFromMetadata(
     return undefined;
   }
 
-  // adapter 偶发把 zcode-plan 业务错误落成空 finish + 零 usage，core 会先抛 suspicious empty。
+  // 部分 Provider 将业务错误落成空 finish + 零 usage，core 会先抛 suspicious empty。
   // 在 anomaly guard 前先从 providerMetadata 恢复 providerCode（如 3007），让 UI 能命中业务错误文案。
   return createCoreError(CoreErrorType.ModelError, failure.message, {
     context: {

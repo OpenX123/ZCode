@@ -398,3 +398,45 @@ function failureForTerminalTest() {
     retryable: true,
   };
 }
+
+describe("普通 API 重试预算", () => {
+  it("429 始终受 maxAttempts 约束", async () => {
+    const { TestAiSdkModelAdapter, TestProviderConfigFixture } =
+      await import("./test-provider-config.js");
+    const { executeAdapterGenerateText } = await import("./test-adapter-model.js");
+    let calls = 0;
+    const adapter = new TestAiSdkModelAdapter({
+      registry: new TestProviderConfigFixture({
+        providers: {
+          "plain-provider": {
+            kind: "anthropic",
+            apiKey: "key",
+            baseURL: "http://127.0.0.1:9/plain",
+          },
+        },
+      }),
+      retry: { baseDelayMs: 0, jitter: false, maxAttempts: 2 },
+      runtime: {
+        async generateText() {
+          calls += 1;
+          throw Object.assign(new Error("rate limited"), {
+            isRetryable: true,
+            statusCode: 429,
+            responseHeaders: { "retry-after": "0" },
+          });
+        },
+        streamText() {
+          throw new Error("not used");
+        },
+      },
+    });
+    await expect(
+      executeAdapterGenerateText(adapter, {
+        providerId: "plain-provider" as never,
+        modelId: "some-model" as never,
+        messages: [{ role: "user", content: "ping" }],
+      }),
+    ).rejects.toBeInstanceOf(Error);
+    expect(calls).toBe(2);
+  });
+});

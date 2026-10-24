@@ -2,7 +2,6 @@ import { beginLocalTurnPreparation, type LocalTtftDetail } from "@zcode/contract
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
 import { withConversationQuotes } from "../helpers/conversation-quotes.js";
 import { ensureGroupTaskPermissionScope } from "./input-intent-persistence.js";
-import { prepareOffPeakTurn } from "../off-peak/runtime.js";
 import {
   CoreErrorType,
   HookEventName,
@@ -22,7 +21,6 @@ import type {
   MessageId,
   MessagePart,
   Model,
-  ModelSelection,
   QueryId,
   SessionEvent,
   SessionGoal,
@@ -74,16 +72,10 @@ import { appendBrowserTurnScreenshot } from "./browser-turn-screenshot.js";
 import { clearBrowserTurnState } from "../../repl/browser-turn-state.js";
 import {
   acceptSubmissionModelSelection,
-  captureHighspeedFallbackSelection,
   applySubmissionExecutionState,
   createTurnModel,
-  resolveExecutionModelRetryBudget,
 } from "./turn-model.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
-import {
-  matchExecutionSelectionCreationFallback,
-  resolveExecutionFallbackCandidates,
-} from "./turn-execution-fallback.js";
 
 const TARGET_RUN_HEARTBEAT_MS = 15_000;
 const MODEL_CREATION_FAILED_MESSAGE = "Model creation failed";
@@ -96,12 +88,6 @@ export async function executeTurn(
   attachments?: TurnState["attachments"],
   options?: ExecuteTurnOptions,
 ): Promise<TurnResult> {
-  if (options?.modelExecution) {
-    options = {
-      ...options,
-      modelExecution: captureHighspeedFallbackSelection(this, options.modelExecution),
-    };
-  }
   return await enqueueCancellableRuntimeCommand<TurnResult, PromptRuntimeCommand>(this, {
     abortSignal: options?.abortSignal,
     onCommandAccepted: () => {
@@ -140,21 +126,11 @@ export async function executeTurnCommand(
   // 普通 Turn 过去在异步初始化完成后才读取 Session Selection/输出样式，
   // 初始化期间发生的切模会越过 admission 边界，错误影响已经开始的 Turn。
   // 这里在任何 await 之前冻结本轮事实；后续配置变化只作用于下一轮。
-  const offPeakTurn = prepareOffPeakTurn(this, options);
-  options = offPeakTurn.options;
   const admittedModelSelection =
     options?.intent?.modelSelection ??
     (options && "executionSelection" in options
       ? options.executionSelection
       : this.getSessionModelSelection());
-  // 加速轮期间新输入可以更新 Session 续跑选择；卡过期必须回到本轮启动时的普通模型。
-  const highspeedFallbackSelection = options?.modelExecution?.selectionFallback
-    ? structuredClone(
-        "highspeedFallbackSelection" in options.modelExecution
-          ? options.modelExecution.highspeedFallbackSelection
-          : this.getSessionModelSelection(),
-      )
-    : undefined;
   const admittedOutputStyle = this.config.outputStyle;
   const compactInstructions = parseCompactCommand(input);
   const rewindCommand = parseRewindCommand(input);
@@ -228,138 +204,35 @@ export async function executeTurnCommand(
       status: "completed",
     });
   };
-  const turnTelemetry = this.agentTelemetry.turn({
-    inputSource: options?.inputSource,
-    traceContext: turnTraceContext,
-    turnNumber: this.turnNumber,
-  });
-
   const execute = () =>
     runWithContextAsync(turnTraceContext, async () => {
       const executionStartedAt = performance.timeOrigin + performance.now();
       beginLocalTurnPreparation(turnTraceContext, "execution")();
       throwIfTurnAborted(turnAbortSignal);
       let admittedModel: Model | undefined;
-      let effectiveExecutionSelection = admittedModelSelection;
-      let effectiveRequestDependencies = options?.modelExecution?.requestDependencies;
-      let creationFallback:
-        | {
-            reason: "highspeed_selection_unavailable";
-            fromModelSelection: ModelSelection;
-            toModelSelection: ModelSelection;
-          }
-        | undefined;
       // 普通轮创建模型失败后仍要保留已接纳输入；这里只记下原始错误，由主生命周期落库并收尾。
       let creationFailure: { error: unknown } | undefined;
-      // 创建期退回声明命中但所有候选都无法创建：TurnError 归因要带上该事实，Renderer 才能作废匹配卡。
-      let creationFallbackUnavailable = false;
       try {
         admittedModel =
           rewindCommand === null
             ? createTurnModel(this, {
                 requestDependencies: options?.modelExecution?.requestDependencies,
                 selection: admittedModelSelection,
-                // 带退回声明的执行句柄 0 次重试：失败立刻交给 turn step 退回会话模型。
-                retryBudget: resolveExecutionModelRetryBudget({
-                  selection: admittedModelSelection,
-                  selectionFallback: options?.modelExecution?.selectionFallback,
-                }),
               })
             : undefined;
       } catch (error) {
-        let reportedCreationError = error;
-        const creationFallbackMatch = matchExecutionSelectionCreationFallback({
-          error,
-          selection: admittedModelSelection,
-          selectionFallback: options?.modelExecution?.selectionFallback,
-          selectionScope: options?.modelExecution?.selectionScope,
-        });
-        const selectionFallback = options?.modelExecution?.selectionFallback;
-        if (creationFallbackMatch && admittedModelSelection && selectionFallback) {
-          const skippedCandidates: Array<{
-            source: string;
-            providerId: string;
-            modelId: string;
-            error: string;
-          }> = [];
-          const candidates = resolveExecutionFallbackCandidates({
-            declaredTarget: selectionFallback.target,
-            executionProviderId: admittedModelSelection.providerId,
-            sessionSelection: highspeedFallbackSelection,
-          });
-          for (const candidate of candidates) {
-            try {
-              admittedModel = createTurnModel(this, { selection: candidate.selection });
-              effectiveExecutionSelection = candidate.selection;
-              effectiveRequestDependencies = undefined;
-              creationFallback = {
-                reason: creationFallbackMatch.reason,
-                fromModelSelection: admittedModelSelection,
-                toModelSelection: candidate.selection,
-              };
-              this.logger?.warn(
-                "Execution model selection was unavailable; falling back before the request",
-                {
-                  ...traceContextToLogContext(turnTraceContext),
-                  event: "model.execution_selection.creation_fallback",
-                  module: "core.runtime",
-                  status: "completed",
-                  reason: creationFallbackMatch.reason,
-                  fromProviderId: admittedModelSelection.providerId,
-                  fromModelId: admittedModelSelection.modelId,
-                  toProviderId: candidate.selection.providerId,
-                  toModelId: candidate.selection.modelId,
-                  toSource: candidate.source,
-                  ...(skippedCandidates.length > 0 ? { skippedCandidates } : {}),
-                  errorMessage: error instanceof Error ? error.message : String(error),
-                },
-              );
-              break;
-            } catch (fallbackError) {
-              // Highspeed 已确认不可用后，若普通模型也无法创建，用户应看到可操作的普通模型错误，
-              // 不能继续暴露隐藏执行 Provider 的 Registry 错误。
-              reportedCreationError = fallbackError;
-              skippedCandidates.push({
-                source: candidate.source,
-                providerId: candidate.selection.providerId,
-                modelId: candidate.selection.modelId,
-                error:
-                  fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-              });
-            }
-          }
-          if (!creationFallback) {
-            creationFallbackUnavailable = true;
-            this.logger?.warn(
-              "Execution model selection was unavailable and no fallback model could be created",
-              {
-                ...traceContextToLogContext(turnTraceContext),
-                event: "model.execution_selection.creation_fallback_unavailable",
-                module: "core.runtime",
-                status: "failed",
-                reason: creationFallbackMatch.reason,
-                fromProviderId: admittedModelSelection.providerId,
-                fromModelId: admittedModelSelection.modelId,
-                skippedCandidates,
-                errorMessage: error instanceof Error ? error.message : String(error),
-              },
-            );
-          }
-        }
-        // Bug 根因：Provider/Model 在 Registry 中短暂缺失时，旧逻辑在请求前直接结束 Turn，
-        // 请求期 selectionFallback 永远没有机会运行。成功创建声明目标后继续既有 Turn 主链。
         if (!admittedModel) {
           if (compactInstructions === null) {
             // Bug 根因：edit/retry 的 branch cut 已提交后，Registry 仍可能在 Core 创建模型前变化；
             // 已接纳输入必须提升为 TurnStarted + 持久消息，否则只剩历史截断，重启也无法恢复文本。
             // CR-01：上一版复制了一份落库流程并在主 try 外执行，附件、取消或存储失败会直接穿出，
             // TurnStarted 之后没有终态，原始创建错误也被覆盖。这里只记下错误，落库与终态交给主链。
-            creationFailure = { error: reportedCreationError };
+            creationFailure = { error: error };
           } else {
             // /compact 不产生用户消息，创建失败直接写终态。
             turnFailureHandled = true;
             const coreError = createTurnFailureError(
-              reportedCreationError,
+              error,
               turnAbortSignal,
               MODEL_CREATION_FAILED_MESSAGE,
             );
@@ -369,9 +242,6 @@ export async function executeTurnCommand(
               durationMs: Date.now() - turnStartedAtMs,
               turnPhase: MODEL_CREATION_TURN_PHASE,
               inputId: options?.inputId,
-              // 卡身份仍以接纳时冻结的 intent 为准，不能依赖分页窗口中的 userInput 反查。
-              highspeedCardId: options?.intent?.highspeed?.cardId,
-              highspeedFallbackUnavailable: creationFallbackUnavailable,
               traceContext: turnTraceContext,
               fallbackMessage: MODEL_CREATION_FAILED_MESSAGE,
               logEvent: "turn.failed",
@@ -445,9 +315,7 @@ export async function executeTurnCommand(
         turnTraceContext,
         "regular",
         creationFailure === undefined,
-        {
-          ...(options?.inputId === undefined ? {} : { inputId: options.inputId }),
-        },
+        options?.inputId === undefined ? {} : { inputId: options.inputId },
       );
       this.logger?.info("Turn started", {
         ...traceContextToLogContext(turnTraceContext),
@@ -730,21 +598,6 @@ export async function executeTurnCommand(
           // 终态由下方 catch 统一写入。
           throw creationFailure.error;
         }
-        if (creationFallback) {
-          // TurnStarted 与用户消息已先落库，continuous/replayable 投影都能把退回事实关联到同一输入行。
-          const fallbackEvent = this.createEvent(
-            SessionEventType.TurnExecutionModelFallback,
-            {
-              ...(options?.inputId ? { inputId: options.inputId } : {}),
-              reason: creationFallback.reason,
-              fromModelSelection: creationFallback.fromModelSelection,
-              toModelSelection: creationFallback.toModelSelection,
-            },
-            turnTraceContext,
-          );
-          await this.appendEvent(fallbackEvent, turnTraceContext);
-          events.push(fallbackEvent);
-        }
         // 配置读取曾早于输入展示/持久化，失败会让已发送消息从界面消失。
         // 在原有输入记录后固定本轮定义，错误/取消复用本层收尾，且不启动标题或模型请求。
         await this.prepareAgentDefinitions({
@@ -762,7 +615,6 @@ export async function executeTurnCommand(
             turnTraceContext,
             {
               deferIfProviderRuntimeHeadersRefresh: true,
-              offPeakExecutionId: options?.offPeakExecutionId,
             },
           );
           shouldRetryTitleGenerationAfterTurn = !titleGenerationStarted;
@@ -797,11 +649,6 @@ export async function executeTurnCommand(
         loopState = {
           activeTurn,
           ...(options?.automationId ? { automationId: options.automationId } : {}),
-          // 闲时派发轮的身份进入 loop state，供工具执行边界 deny OffPeakCreate。
-          ...(options?.offPeakTaskId ? { offPeakTaskId: options.offPeakTaskId } : {}),
-          ...(options?.offPeakExecutionId
-            ? { offPeakExecutionId: options.offPeakExecutionId }
-            : {}),
           anomalyWarningsInjected: 0,
           backgroundSubagentResultConsumed: options?.backgroundSubagentResultConsumed === true,
           workflowResultConsumed: options?.workflowResultConsumed === true,
@@ -815,18 +662,11 @@ export async function executeTurnCommand(
           ...(options?.modelExecution?.selectionScope === "execution"
             ? { modelSelectionScope: "execution" as const }
             : {}),
-          // 加速卡回退仅使用启动时快照，不随随后接纳的用户选择变化。
-          ...(!creationFallback && options?.modelExecution?.selectionFallback
-            ? {
-                selectionFallback: options.modelExecution.selectionFallback,
-                highspeedFallbackSelection,
-              }
-            : {}),
-          ...(options?.modelExecution?.subagents && effectiveExecutionSelection
+          ...(options?.modelExecution?.subagents && admittedModelSelection
             ? {
                 subagentModelOverride: {
-                  selection: effectiveExecutionSelection,
-                  requestDependencies: effectiveRequestDependencies,
+                  selection: admittedModelSelection,
+                  requestDependencies: options?.modelExecution?.requestDependencies,
                   background: options.modelExecution.subagents.background,
                 },
               }
@@ -930,7 +770,6 @@ export async function executeTurnCommand(
             displayInput,
             userMessageId,
             turnTraceContext,
-            options?.offPeakExecutionId,
           );
         }
         this.turnNumber++;
@@ -1045,9 +884,6 @@ export async function executeTurnCommand(
           durationMs: Date.now() - turnMachine.state.startedAt.getTime(),
           turnPhase: reportedCreationFailure ? MODEL_CREATION_TURN_PHASE : turnMachine.state.phase,
           inputId: options?.inputId,
-          highspeedCardId: options?.intent?.highspeed?.cardId,
-          highspeedFallbackUnavailable:
-            creationFallbackUnavailable || loopState?.highspeedFallbackUnavailable === true,
           traceContext: turnTraceContext,
           fallbackMessage,
           logEvent: "turn.failed",
@@ -1069,33 +905,22 @@ export async function executeTurnCommand(
         });
         throw coreError;
       }
-    }).then(
-      (result) => {
-        turnTelemetry.finishCompleted("assistant_message");
-        return result;
-      },
-      (error: unknown) => {
-        if (!turnFailureHandled) {
-          this.logger?.warn("Turn execution escaped lifecycle handler", {
-            ...traceContextToLogContext(turnTraceContext),
-            durationMs: Date.now() - turnStartedAtMs,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            event: "turn.lifecycle.unhandled_rejection",
-            module: "core.runtime",
-            phase: turnPhase,
-            status: "failed",
-          });
-        }
-        if (isTurnCancellationError(error, turnAbortSignal)) {
-          turnTelemetry.finishCancelled("abort_signal");
-        } else {
-          turnTelemetry.finishFailed("unhandled", "unknown", error);
-        }
-        throw error;
-      },
-    );
+    }).catch((error: unknown) => {
+      if (!turnFailureHandled) {
+        this.logger?.warn("Turn execution escaped lifecycle handler", {
+          ...traceContextToLogContext(turnTraceContext),
+          durationMs: Date.now() - turnStartedAtMs,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          event: "turn.lifecycle.unhandled_rejection",
+          module: "core.runtime",
+          phase: turnPhase,
+          status: "failed",
+        });
+      }
+      throw error;
+    });
 
-  return turnTelemetry.run(execute).finally(async () => {
+  return execute().finally(async () => {
     disposeProjectMemoryRecallPrefetch(this);
     if (targetRunHeartbeat) {
       clearInterval(targetRunHeartbeat);
@@ -1103,13 +928,6 @@ export async function executeTurnCommand(
     this.releaseTurnStart(turnId);
     clearBrowserTurnState(this.sessionId, turnId);
     this.finishActiveTurn(activeTurn);
-    offPeakTurn.release(
-      turnAbortSignal.aborted
-        ? "stopped"
-        : events.some((event) => event.type === SessionEventType.TurnError)
-          ? "failed"
-          : "succeeded",
-    );
     turnAbortScope.dispose();
     try {
       await this.browserControlPort?.turnEnded?.({

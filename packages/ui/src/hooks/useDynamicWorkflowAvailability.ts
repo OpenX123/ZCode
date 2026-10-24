@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { ICodingPlanSubscriptionService, IZCodeAgentService } from "@zcode/services";
+import type { ISettingService, IZCodeAgentService } from "@zcode/services";
 import type { DynamicWorkflowMode } from "@zcode/shared";
 import { logger } from "@/logger.js";
 import {
@@ -8,7 +8,7 @@ import {
 } from "@/store/dynamicWorkflowAvailabilityStore.js";
 
 /**
- * 读动态工作流灰度快照。
+ * 读动态工作流的本地设置投影。
  * 只读，不触发请求：取数由 Root 里的 loader 唯一负责。消费方（自动化页、run 面板）可能位于
  * 工作区级 ServiceProvider 内（远程 Host 的 accessor），让它们各自取数会把 app 级那一份覆盖掉。
  */
@@ -21,12 +21,10 @@ export function useDynamicWorkflowAvailability(): DynamicWorkflowAvailabilitySna
 }
 
 /**
- * app 会话级取数，挂在 Root 里一次。service 换了（手机 `/remote` 完成工作区桥接）会重试，
+ * app 会话级取数，挂在 Root 里一次。切换 service 后重新读取，
  * 取数与失败重试的规则见 dynamicWorkflowAvailabilityStore。
  */
-export function useDynamicWorkflowAvailabilityLoader(
-  service: ICodingPlanSubscriptionService,
-): void {
+export function useDynamicWorkflowAvailabilityLoader(service: ISettingService): void {
   const ensureLoaded = useDynamicWorkflowAvailabilityStore((state) => state.ensureLoaded);
   useEffect(() => {
     void ensureLoaded(service);
@@ -45,9 +43,9 @@ export function useDynamicWorkflowUserModeSync(params: {
   settingsLoaded: boolean;
   userMode: DynamicWorkflowMode | undefined;
   zcodeAgentService: Pick<IZCodeAgentService, "syncDynamicWorkflowUserMode">;
-  codingPlanSubscriptionService: ICodingPlanSubscriptionService;
+  settingService: ISettingService;
 }): void {
-  const { settingsLoaded, userMode, zcodeAgentService, codingPlanSubscriptionService } = params;
+  const { settingsLoaded, userMode, zcodeAgentService, settingService } = params;
   const reload = useDynamicWorkflowAvailabilityStore((state) => state.reload);
   const observedRef = useRef<{ userMode: DynamicWorkflowMode | undefined } | null>(null);
   const chainRef = useRef<Promise<void>>(Promise.resolve());
@@ -64,7 +62,7 @@ export function useDynamicWorkflowUserModeSync(params: {
           error: error instanceof Error ? error.message : String(error),
         });
       }
-      await reload(codingPlanSubscriptionService);
+      await reload(settingService);
     });
-  }, [codingPlanSubscriptionService, reload, settingsLoaded, userMode, zcodeAgentService]);
+  }, [settingService, reload, settingsLoaded, userMode, zcodeAgentService]);
 }

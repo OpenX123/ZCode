@@ -105,22 +105,12 @@ export const builtinProviderConfigRuleSchema = providerConfigRuleSchema.extend({
     group: providerGroupDataSchema.exclude(["standard-personal"]),
   }),
 });
-export const personalProviderConfigRuleSchema = providerConfigRuleSchema
-  .extend({
-    config: providerConfigDataSchema.omit({ builtinModelIds: true }).extend({
-      group: providerGroupDataSchema.extract(["standard-personal"]).nullable().optional(),
-      api: personalProviderApiDataSchema.nullable().optional(),
-    }),
-  })
-  .superRefine((rule, context) => {
-    if (rule.providerId.startsWith("account:") && rule.config.access !== undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["config", "access"],
-        message: "固定 Account Provider 的 Access 只能由 ZCode Built-in Config 声明",
-      });
-    }
-  });
+export const personalProviderConfigRuleSchema = providerConfigRuleSchema.extend({
+  config: providerConfigDataSchema.omit({ builtinModelIds: true }).extend({
+    group: providerGroupDataSchema.extract(["standard-personal"]).nullable().optional(),
+    api: personalProviderApiDataSchema.nullable().optional(),
+  }),
+});
 export const builtinProviderConfigRulesSchema = z
   .object({
     templateRules: z.array(providerTemplateConfigRuleSchema),

@@ -1,8 +1,5 @@
-// Koffi native runtime staging for the bundled CUA MCP server.
-//
-// The CUA server externalizes koffi because esbuild cannot bundle its
-// platform-dispatching `.node` requires. The installed agent has no hoisted
-// node_modules, so keep only the target binary beside the plugin.
+// Windows Agent 的 MCP Job Object 使用外部化 Koffi；依赖必须位于 glm 根的
+// node_modules，才能被 zcode.cjs 解析。当前 CUA SDK 不拥有这份原生依赖。
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -25,7 +22,7 @@ function resolveKoffiRoot(koffiPackageRoot) {
     try {
       if (JSON.parse(readFileSync(packageJson, "utf8")).name === "koffi") return candidate;
     } catch {
-      // Continue searching other installation locations.
+      // 继续检查其他安装位置。
     }
   }
   throw new Error(
@@ -43,6 +40,7 @@ export function stageKoffiIntoBundledAgents({ koffiPackageRoot, glmDir, targetPl
       "[koffi-package-assets] koffiPackageRoot, glmDir and targetPlatform are required",
     );
   }
+  if (targetPlatform.os !== "win32") return;
   const sourceRoot = resolveKoffiRoot(koffiPackageRoot);
   const platformKey = koffiPlatformKey(targetPlatform);
   const sourceNativeDir = resolve(sourceRoot, "build", "koffi", platformKey);
@@ -65,13 +63,10 @@ export function stageKoffiIntoBundledAgents({ koffiPackageRoot, glmDir, targetPl
   return resolve(targetRoot, "build", "koffi", platformKey, "koffi.node");
 }
 
-export function verifyStagedKoffi({
-  resourcesDir,
-  targetPlatform,
-  pluginRelativePath = "packages/zcode-cua-plugin",
-}) {
+export function verifyStagedKoffi({ resourcesDir, targetPlatform }) {
+  if (targetPlatform.os !== "win32") return [];
   const platformKey = koffiPlatformKey(targetPlatform);
-  const koffiRoot = resolve(resourcesDir, "glm", pluginRelativePath, "node_modules", "koffi");
+  const koffiRoot = resolve(resourcesDir, "glm", "node_modules", "koffi");
   const nativePath = resolve(koffiRoot, "build", "koffi", platformKey, "koffi.node");
   return existsSync(nativePath) && existsSync(resolve(koffiRoot, "index.js"))
     ? []

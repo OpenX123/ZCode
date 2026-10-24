@@ -7,7 +7,7 @@ import {
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { setPendingSettingsSectionIntent } from "@/lib/settingsNavigation.js";
 import { logger } from "@/logger.js";
-import { runUserAction } from "@/lib/userActionTelemetry.js";
+
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import {
   findWorkspaceHookCommandBinding,
@@ -110,27 +110,15 @@ export const WorkspaceHookPendingBanner = memo(function WorkspaceHookPendingBann
         });
       });
     }
-  }, [
-    admission,
-    commandBindings,
-    openSettingsTab,
-    sessionId,
-    workspaceIdentity,
-    workspacePath,
-  ]);
+  }, [admission, commandBindings, openSettingsTab, sessionId, workspaceIdentity, workspacePath]);
 
   const handleDismiss = useCallback(() => {
     if (admission) {
-      runUserAction({
-        input: { featureId: "conversation.blocking.hook", action: "dismiss", trigger: "button" },
-        operation: () => {
-          workspaceHookPendingDismissStore.dismiss(sessionId, admission.bundleDigest);
-          // Bug 原因：模块级 Set 的写入不属于 React 状态，memo 组件不会重渲染。
-          setDismissRevision((revision) => revision + 1);
-        },
-        completed: { resultSource: "local_commit" },
-        failureStage: "hook_dismiss",
-      });
+      (() => {
+        workspaceHookPendingDismissStore.dismiss(sessionId, admission.bundleDigest);
+        // Bug 原因：模块级 Set 的写入不属于 React 状态，memo 组件不会重渲染。
+        setDismissRevision((revision) => revision + 1);
+      })();
     }
   }, [admission, sessionId]);
 

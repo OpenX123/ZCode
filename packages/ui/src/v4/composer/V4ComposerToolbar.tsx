@@ -16,22 +16,7 @@
  * 三件套不能全部门控在 config!==null 上——草稿态会整体不渲染。
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlarmClockIcon } from "lucide-react";
-import { cn } from "@/components/lib/utils.js";
-import {
-  BUILTIN_MODEL_PROVIDER_IDS,
-  getModelProviderFamilySpec,
-  resolveModelProviderFamilySpecByProviderId,
-  ZCODE_AGENT_PROVIDER,
-  type ProviderFamilyConnectionSelection,
-  type ProviderFamilyConnectionSelectionSettings,
-  type ProviderFamilyDomain,
-  type UsageEntitlementSnapshot,
-  type ZCodeAccountAccess,
-  type ZCodeProviderAccountAccess,
-  type ZCodeConfigOption,
-  type ZCodeProvider,
-} from "@zcode/shared";
+import { ZCODE_AGENT_PROVIDER, type ZCodeConfigOption, type ZCodeProvider } from "@zcode/shared";
 import { TID_V4_MODEL_CONFIG, TID_V4_COMPOSER_INPUT } from "@zcode/shared/test-ids";
 import type {
   SessionConfigState,
@@ -41,18 +26,8 @@ import type {
 import { ModelConfigSelect, type ModelSelectGroup } from "@/ModelConfigSelect.js";
 import type { ComposerModelOptions } from "@/chat-input-toolbar/ComposerModelMenu.js";
 import { Button } from "@/components/ui/button.js";
-import { HighspeedModelIndicator } from "@/highspeed/HighspeedModelIndicator.js";
-import { formatHighspeedRemainingTime } from "@/highspeed/highspeedTime.js";
 import { ChatContextUsage } from "@/chat-input-toolbar/display.js";
-import {
-  hasChatCodingPlanUsageRemaining,
-  type ChatCodingPlanUsageRemainingConfig,
-} from "@/chat-input-toolbar/CodingPlanContextUsage.js";
-import {
-  hasChatStartPlanBalance,
-  type ChatStartPlanBalanceConfig,
-} from "@/chat-input-toolbar/StartPlanContextBalance.js";
-import { ThoughtLevelCycleControl } from "@/chat-input-toolbar/ThoughtLevelCycleControl.js";
+
 import {
   getNextThoughtLevelValue,
   getThoughtLevelLabel,
@@ -64,53 +39,22 @@ import {
   shouldShowManageModelsAction,
 } from "@/chat-input-toolbar/modelSelection.js";
 import { resolveV4ModelTriggerDisplay } from "@/v4/composer/modelTriggerDisplay.js";
-import {
-  setPendingSettingsSectionIntent,
-  setPendingSettingsUsageCodingPlanIntent,
-} from "@/lib/settingsNavigation.js";
+import { setPendingSettingsSectionIntent } from "@/lib/settingsNavigation.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import type { ModelSelectionView } from "@zcode/services";
 import type {
   ModelSelectionState,
   ModelSelectionRefreshResult,
 } from "@/hooks/useModelSelectionView.js";
-import { useProviderSettingsView } from "@/hooks/useProviderSettingsView.js";
-import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
-import { useComposerConnectionSwitch } from "@/hooks/useComposerConnectionSwitch.js";
-import {
-  buildComposerPlanGroups,
-  composerConnectionKey,
-  chooseConnectionModel,
-} from "@/lib/composerPlanGroups.js";
-import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
-import { useSettings } from "@/hooks/useSettingService.js";
-import {
-  useUsageEntitlement,
-  type UsageEntitlementRefreshOptions,
-} from "@/hooks/useUsageEntitlement.js";
+
 import { useToolbarConfigOptions } from "@/hooks/useZCodeConfig.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import {
-  createCodingPlanFunnelContext,
-  resolveCodingPlanEntryPlanState,
-} from "@/lib/codingPlanFunnelTelemetry.js";
+
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { logger } from "@/logger.js";
-import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
-import { useCodingPlanEntitlements } from "@/settings/model-provider-section/useCodingPlanEntitlements.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
 import { buildRegistryModelSelectGroups } from "@/lib/modelSelectionGroups.js";
-import {
-  buildCodingPlanUsageSources,
-  type CodingPlanUsageSource,
-} from "@/lib/codingPlanUsageSources.js";
-import {
-  type SidebarUsageCodingPlanProviderId,
-  type SidebarUsageCodingPlanSourceId,
-  writeSidebarUsageCodingPlanProviderPreference,
-} from "@/lib/sidebarUsageCodingPlanProviderPreference.js";
-import { resolveEntitledAccountProviderAccess } from "@/lib/accountProviderAccess.js";
-import { useEnterpriseCodingPlanProducts } from "@/settings/model-provider-section/useEnterpriseCodingPlanProducts.js";
+
 import {
   resolveDraftDisplayedConfig,
   resolveDraftModelThoughtOption,
@@ -127,259 +71,9 @@ const MODEL_SELECTION_LOADING_STATE: ModelSelectionState = { status: "loading" }
 /** 稳定空回调（热键 hook 单实例只处理本组件拥有的选项，其余动作占位）。 */
 function noop(): void {}
 
-function HighspeedCountdown({ expiresAt }: { expiresAt: number }) {
-  const { intl, locale } = useZCodeIntl();
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const remainingTime = formatHighspeedRemainingTime(expiresAt, now);
-  const absoluteExpiryLabel = intl.formatMessage(
-    { id: "chat.highspeed.expiresAt" },
-    {
-      time: new Date(expiresAt).toLocaleTimeString(locale, {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    },
-  );
-  const remainingTimeLabel = intl.formatMessage(
-    { id: "chat.highspeed.remainingTime" },
-    { time: remainingTime },
-  );
-
-  // Bug 根因：倒计时原先晚于 Think 折叠，在中等窄窗口继续占用固定 82px；
-  // 窄窗口只收起数值，保留可 hover 的时钟入口。
-  return (
-    <span
-      aria-label={absoluteExpiryLabel}
-      title={remainingTimeLabel}
-      data-highspeed-countdown="true"
-      className="highspeed-inline-countdown inline-flex h-7 w-[82px] shrink-0 items-center justify-center gap-1 rounded-md p-1 text-ui-caption @max-xl/composer:w-7 @max-xl/composer:gap-0 @max-xl/composer:p-0"
-    >
-      <AlarmClockIcon className="size-4 shrink-0" aria-hidden="true" />
-      <span
-        data-highspeed-countdown-value="true"
-        className="relative h-[18px] w-[54px] shrink-0 leading-4 tabular-nums @max-xl/composer:hidden"
-      >
-        <span className="absolute left-0 top-0.5">{remainingTime}</span>
-      </span>
-    </span>
-  );
-}
-
 export interface ModelSelectionSource {
   provider: string;
   model: string;
-}
-
-type V4ContextPlanConnection =
-  | { kind: "none" }
-  | {
-      family: ProviderFamilyDomain;
-      kind: "personalCoding";
-      providerId:
-        | typeof BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan
-        | typeof BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan;
-    }
-  | {
-      family: ProviderFamilyDomain;
-      kind: "teamCoding";
-      providerId:
-        | typeof BUILTIN_MODEL_PROVIDER_IDS.zaiTeamCodingPlan
-        | typeof BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan;
-      selection: Extract<ProviderFamilyConnectionSelection, { kind: "team-coding-plan" }>;
-    }
-  | {
-      family: ProviderFamilyDomain;
-      kind: "start";
-      providerId:
-        | typeof BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan
-        | typeof BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan;
-    };
-
-function resolveFamilyForPlanProviderId(providerId: string | null | undefined): {
-  family: ProviderFamilyDomain;
-  kind: "personalCoding" | "teamCoding" | "start";
-} | null {
-  switch (providerId?.trim()) {
-    case BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan:
-      return { family: "zai", kind: "personalCoding" };
-    case BUILTIN_MODEL_PROVIDER_IDS.zaiTeamCodingPlan:
-      return { family: "zai", kind: "teamCoding" };
-    case BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan:
-      return { family: "zai", kind: "start" };
-    case BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan:
-      return { family: "bigmodel", kind: "personalCoding" };
-    case BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan:
-      return { family: "bigmodel", kind: "teamCoding" };
-    case BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan:
-      return { family: "bigmodel", kind: "start" };
-    default:
-      return null;
-  }
-}
-
-function resolveV4ContextPlanConnection(params: {
-  connectionSelections?: ProviderFamilyConnectionSelectionSettings | null;
-  providerId?: string | null;
-}): V4ContextPlanConnection {
-  const providerFamily = resolveFamilyForPlanProviderId(params.providerId);
-  if (!providerFamily) {
-    return { kind: "none" };
-  }
-
-  // Start 额度属于输入框的有效模型；全局付费连接不能作为它的查询门禁。
-  if (providerFamily.kind === "start") {
-    const providerId = params.providerId?.trim();
-    if (
-      providerId !== BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan &&
-      providerId !== BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan
-    ) {
-      return { kind: "none" };
-    }
-    return {
-      family: providerFamily.family,
-      kind: "start",
-      providerId,
-    };
-  }
-
-  const selection = params.connectionSelections?.[providerFamily.family];
-  if (!selection) return { kind: "none" };
-
-  const providerId = params.providerId?.trim();
-  if (providerFamily.kind === "teamCoding" && selection.kind === "team-coding-plan") {
-    return {
-      family: providerFamily.family,
-      kind: "teamCoding",
-      providerId: providerId as
-        | typeof BUILTIN_MODEL_PROVIDER_IDS.zaiTeamCodingPlan
-        | typeof BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan,
-      selection,
-    };
-  }
-  if (providerFamily.kind !== "personalCoding" || selection.kind !== "individual-coding-plan") {
-    return { kind: "none" };
-  }
-
-  return {
-    family: providerFamily.family,
-    kind: "personalCoding",
-    providerId: providerId as
-      | typeof BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan
-      | typeof BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
-  };
-}
-
-function resolveContextTeamUsageSourceFromEntitlementSnapshot({
-  accountAccess,
-  snapshot,
-}: {
-  accountAccess?: ZCodeProviderAccountAccess | ZCodeAccountAccess | null;
-  snapshot?: UsageEntitlementSnapshot | null;
-}): CodingPlanUsageSource | null {
-  if (snapshot?.context?.scope !== "team") {
-    return null;
-  }
-  const organizationId = snapshot.context.organizationId?.trim() ?? "";
-  const projectId = snapshot.context.projectId?.trim() ?? "";
-  if (!organizationId || !projectId) {
-    return null;
-  }
-  const subscription = snapshot.subscription?.details[0] ?? null;
-  const productId =
-    snapshot.context.productId?.trim() || subscription?.productId?.trim() || "current";
-  // 原 createBigModelTeamPlanConnectionKey + bigmodelCodingPlan providerId 硬编码，
-  // zai team snapshot 也生成 bigmodel 前缀 sourceId（与设置页/usage sources 不一致）。
-  // 从 snapshot.provider.id 反查 family，生成对应前缀。
-  const familySpec = resolveModelProviderFamilySpecByProviderId(snapshot.provider?.id ?? "");
-  const family: ProviderFamilyDomain = familySpec?.id ?? "bigmodel";
-  if (!accountAccess) {
-    return null;
-  }
-  if ("mode" in accountAccess && accountAccess.mode !== "team-coding-plan") {
-    return null;
-  }
-  if (
-    "planKind" in accountAccess &&
-    (accountAccess.planKind !== "team-coding-plan" ||
-      accountAccess.productId !== productId ||
-      accountAccess.organizationId !== organizationId ||
-      accountAccess.projectId !== projectId)
-  ) {
-    return null;
-  }
-  const codingPlanProviderId = getModelProviderFamilySpec(family).teamCodingPlanProviderId;
-  const sourceId = ["team", family, productId, organizationId, projectId]
-    .map(encodeURIComponent)
-    .join(":") as SidebarUsageCodingPlanSourceId;
-  const displayName =
-    snapshot.context.displayName?.trim() || subscription?.productName?.trim() || "Team";
-
-  return {
-    id: sourceId,
-    providerId: codingPlanProviderId,
-    accountAccess: {
-      type: "zhipu-account",
-      family,
-      planKind: "team-coding-plan",
-      productId,
-      organizationId,
-      projectId,
-    },
-    label: `${familySpec?.id === "zai" ? "ZAI" : "BigModel"} - ${displayName}`,
-  };
-}
-
-function resolveContextCodingPlanUsageSource(params: {
-  accountAccess?: ZCodeProviderAccountAccess | ZCodeAccountAccess | null;
-  cachedTeamSources?: readonly CodingPlanUsageSource[];
-  entitlementSnapshot?: UsageEntitlementSnapshot | null;
-  // 原类型/守卫硬绑 bigmodelCodingPlan，zai team 上下文永远返回 null。
-  // 放开为 zai/bigmodel 两种 codingPlan providerId。
-  providerId?:
-    | typeof BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan
-    | typeof BUILTIN_MODEL_PROVIDER_IDS.zaiTeamCodingPlan;
-  teamSelection?: Extract<ProviderFamilyConnectionSelection, { kind: "team-coding-plan" }>;
-  subscribedTeamProducts: Parameters<
-    typeof buildCodingPlanUsageSources
-  >[0]["subscribedTeamProducts"];
-}): CodingPlanUsageSource | null {
-  if (!params.teamSelection) return null;
-  if (!params.accountAccess) return null;
-
-  return (
-    buildCodingPlanUsageSources({
-      accountAccesses: {
-        [resolveModelProviderFamilySpecByProviderId(params.providerId ?? "")?.id ?? "bigmodel"]:
-          params.accountAccess,
-      },
-      subscribedTeamProducts: params.subscribedTeamProducts,
-    }).find(
-      (source) =>
-        "planKind" in source.accountAccess &&
-        source.accountAccess.planKind === "team-coding-plan" &&
-        source.accountAccess.productId === params.teamSelection?.productId &&
-        source.accountAccess.organizationId === params.teamSelection?.organizationId &&
-        source.accountAccess.projectId === params.teamSelection?.projectId,
-    ) ??
-    params.cachedTeamSources?.find(
-      (source) =>
-        "planKind" in source.accountAccess &&
-        source.accountAccess.planKind === "team-coding-plan" &&
-        source.accountAccess.productId === params.teamSelection?.productId &&
-        source.accountAccess.organizationId === params.teamSelection?.organizationId &&
-        source.accountAccess.projectId === params.teamSelection?.projectId,
-    ) ??
-    resolveContextTeamUsageSourceFromEntitlementSnapshot({
-      accountAccess: params.accountAccess,
-      snapshot: params.entitlementSnapshot,
-    })
-  );
 }
 
 export interface V4ComposerToolbarProps {
@@ -402,18 +96,6 @@ export interface V4ComposerToolbarProps {
   draftConfig?: Partial<SessionConfigState>;
   usage: SessionUsageState | null;
   disabled: boolean;
-  /** Highspeed 卡生效时固定本轮模型，禁止通过选择器或快捷键切换。 */
-  modelLocked?: boolean;
-  /** 扩散尾段开始后（恢复入场则立即）展示 Highspeed 模型与倒计时。 */
-  highspeedPresented?: boolean;
-  /** 本次入场是否为 draw 新命中的激活动效；恢复入场的模型标识不做翻页。 */
-  highspeedEntranceAnimated?: boolean;
-  /** 模型翻页完成并静置后播放一次扫光。 */
-  highspeedSweepActive?: boolean;
-  /** Highspeed 卡片过期时间；有值时在模型与 Think 之间显示倒计时。 */
-  highspeedExpiresAt?: number;
-  /** draw 响应绑定的模型；只覆盖锁定期的触发器文案。 */
-  highspeedModel?: string;
   /** 单个 composer 内的配置 picker 排他 owner；只属于 renderer-local presentation。 */
   activeConfigPicker: V4ComposerConfigPicker | null;
   onConfigPickerOpenChange: (picker: V4ComposerConfigPicker, open: boolean) => void;
@@ -445,7 +127,6 @@ function V4ComposerModelControlsImpl({
   modelSelectionView = null,
   modelSelectionState = MODEL_SELECTION_LOADING_STATE,
   modelSelectionReload,
-  modelSelectionRefresh,
   provider,
   isWebRemoteControl = false,
   isMobileViewport = false,
@@ -453,12 +134,6 @@ function V4ComposerModelControlsImpl({
   draftConfig,
   usage,
   disabled,
-  modelLocked = false,
-  highspeedPresented = false,
-  highspeedEntranceAnimated = false,
-  highspeedSweepActive = false,
-  highspeedExpiresAt,
-  highspeedModel,
   activeConfigPicker,
   onConfigPickerOpenChange,
   onSelectModel,
@@ -467,7 +142,6 @@ function V4ComposerModelControlsImpl({
   onRecoverCustomModelSelection,
 }: V4ComposerToolbarProps) {
   const { intl, locale } = useZCodeIntl();
-  const { openCodingPlanUpgrade } = useCodingPlanUpgradeDialog();
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
   // 配置面读取：workspace 缺省目录（taskId=null），不读旧会话态。
   const { error: configOptionsError } = useToolbarConfigOptions(
@@ -475,26 +149,8 @@ function V4ComposerModelControlsImpl({
     null,
     workspaceIdentity,
   );
-  const providerSettingsRead = useProviderSettingsView();
-  const providerSettingsView =
-    providerSettingsRead.state.status === "ready" ? providerSettingsRead.state.view : null;
-  const providerSourcesLoading = providerSettingsRead.state.status !== "ready";
-  // 配置面存活服务读（过渡归宿 = 配置面 v4 化）：连接方式选中键喂 BigModel Team Plan 门控豁免。
-  const baseServices = useBaseWorkspaceServices();
-  const { settings: sharedSettings } = useSettings({ services: baseServices });
-  const {
-    entitlements,
-    enabledStartPlanProviderIds,
-    refresh: refreshCodingPlanEntitlements,
-  } = useCodingPlanEntitlements({
-    providerSettingsView,
-    connectionSelections: sharedSettings?.providerFamilyConnectionSelections,
-    // Context 只在用户 hover/open 时刷新，不在 composer 挂载时请求额度。
-    suppressProviderFingerprintAutoRefresh: true,
-  });
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const modelTriggerRef = useRef<HTMLSpanElement | null>(null);
-  const thoughtTriggerRef = useRef<HTMLSpanElement | null>(null);
   // Ctrl+M 热键：递增 openRequestKey 请求 ModelConfigSelect 打开菜单（旧 handleOpenModelMenuShortcut 语义）。
   const [modelMenuOpenRequestKey, setModelMenuOpenRequestKey] = useState(0);
   const [recoveryPending, setRecoveryPending] = useState(false);
@@ -507,13 +163,6 @@ function V4ComposerModelControlsImpl({
     },
     [onConfigPickerOpenChange],
   );
-  const handleThoughtPickerOpenChange = useCallback(
-    (open: boolean) => {
-      onConfigPickerOpenChange("thought", open);
-    },
-    [onConfigPickerOpenChange],
-  );
-
   const modelOption = modelSelectionView?.providers.some((provider) => provider.models.length > 0)
     ? ({
         id: "model",
@@ -531,312 +180,6 @@ function V4ComposerModelControlsImpl({
     return resolveDraftDisplayedConfig(draftConfig ?? {});
   }, [draftConfig]);
 
-  const handleOpenStartPlanUpgrade = useCallback(
-    (providerId: string) => {
-      openCodingPlanUpgrade({
-        providerId,
-        funnelContext: createCodingPlanFunnelContext({
-          providerId,
-          upgradeSource: "session_token_usage",
-          eventRegion: "app.session",
-          eventText: intl.formatMessage({ id: "chat.quota.action.upgrade" }),
-          entryPlanState: resolveCodingPlanEntryPlanState({
-            providerId,
-            displayStatus: "purchased",
-            planLevel: "start",
-          }),
-        }),
-      });
-    },
-    [intl, openCodingPlanUpgrade],
-  );
-  const handleOpenUsageDetails = useCallback(
-    (sourceId?: SidebarUsageCodingPlanSourceId) => {
-      if (sourceId) {
-        writeSidebarUsageCodingPlanProviderPreference(sourceId);
-      }
-      // 剩余额度「更多」直达 Coding Plan 使用统计（按上面写入的来源偏好选中当前套餐），
-      // 不落到应用用量；通用 Usage 入口仍走 setPendingSettingsUsageIntent。
-      setPendingSettingsUsageCodingPlanIntent();
-      openSettingsTab();
-    },
-    [openSettingsTab],
-  );
-
-  const contextPlanConnection = useMemo(
-    () =>
-      resolveV4ContextPlanConnection({
-        connectionSelections: sharedSettings?.providerFamilyConnectionSelections,
-        providerId: effectiveConfig?.provider,
-      }),
-    [effectiveConfig?.provider, sharedSettings?.providerFamilyConnectionSelections],
-  );
-  const contextAccountProviderAccess = useMemo(
-    () =>
-      contextPlanConnection.kind === "personalCoding" || contextPlanConnection.kind === "teamCoding"
-        ? resolveEntitledAccountProviderAccess(
-            providerSettingsView,
-            contextPlanConnection.providerId,
-          )
-        : null,
-    [contextPlanConnection, providerSettingsView],
-  );
-  const contextStartPlanBalanceConfig = useMemo<ChatStartPlanBalanceConfig | undefined>(() => {
-    if (contextPlanConnection.kind !== "start") {
-      return undefined;
-    }
-    const entitlement = entitlements[contextPlanConnection.providerId];
-    // Start Plan 只有具备独立 Account Access 时才挂载 hover 查询入口。
-    const startPlanEntitlementEnabled = enabledStartPlanProviderIds.includes(
-      contextPlanConnection.providerId,
-    );
-    return {
-      loading: entitlement?.loading ?? providerSourcesLoading,
-      // hover access 刷新入口不能只在 Coding Plan 配置上（onAccess）：
-      // start plan 用户 hover context 面板从不主动刷新今日余额，只能等设置页/侧栏
-      // 刷新后被动同步。接入与 Coding Plan 相同的静默 access 刷新；60s access 窗口
-      // 与 in-flight 合并由刷新策略层自动生效，不会因反复 hover 放大 billing/balance 请求。
-      ...(startPlanEntitlementEnabled
-        ? {
-            onAccess: () => refreshCodingPlanEntitlements({ silent: true, reason: "access" }),
-          }
-        : {}),
-      onUpgradeClick: () => handleOpenStartPlanUpgrade(contextPlanConnection.providerId),
-      snapshot:
-        entitlement?.snapshot?.provider?.id === contextPlanConnection.providerId
-          ? entitlement.snapshot
-          : null,
-    };
-  }, [
-    contextPlanConnection,
-    enabledStartPlanProviderIds,
-    entitlements,
-    handleOpenStartPlanUpgrade,
-    providerSourcesLoading,
-    refreshCodingPlanEntitlements,
-  ]);
-  const contextStartPlanBalance = hasChatStartPlanBalance(contextStartPlanBalanceConfig)
-    ? contextStartPlanBalanceConfig
-    : undefined;
-
-  // 按当前连接 family 拉取团队产品，避免 zai 团队误用 bigmodel 产品目录。
-  const connectionFamily =
-    resolveModelProviderFamilySpecByProviderId(effectiveConfig?.provider ?? "")?.id ??
-    sharedSettings?.providerFamilyDomain ??
-    "bigmodel";
-  const user = useZCodeStoreWithDefault((state) => state.user, undefined);
-  const connectionAuthenticated =
-    user !== null &&
-    Boolean(
-      providerSettingsView?.providers.some(
-        (p) =>
-          p.effectiveConfig.access?.type === "zhipu-account" &&
-          p.effectiveConfig.access.accountType === connectionFamily &&
-          p.enabled &&
-          p.accountState?.unavailableReason !== "not-authenticated" &&
-          (p.effectiveConfig.access.mode === "team-coding-plan" ||
-            p.accountState?.availability === "available"),
-      ),
-    );
-  const enterpriseProducts = useEnterpriseCodingPlanProducts({
-    enabled:
-      !providerSourcesLoading &&
-      (contextPlanConnection.kind === "teamCoding" || activeConfigPicker === "model") &&
-      connectionAuthenticated,
-    authenticated: connectionAuthenticated,
-    family: connectionFamily,
-  });
-  const subscribedTeamProducts = useMemo(
-    () =>
-      (connectionAuthenticated
-        ? enterpriseProducts.snapshot?.productList.filter((product) => product.subscribed === true)
-        : undefined) ?? [],
-    [connectionAuthenticated, enterpriseProducts.snapshot?.productList],
-  );
-  const authSessionSeq = useZCodeStoreWithDefault((state) => state.authSessionSeq, 0);
-  const teamUsageScope = useMemo(
-    () => ({}),
-    [baseServices, connectionFamily, user?.id, authSessionSeq],
-  );
-  const contextTeamUsageSourceCacheRef = useRef<{
-    scope: object;
-    sources: CodingPlanUsageSource[];
-  }>({ scope: teamUsageScope, sources: [] });
-  // 原因：独立来源缓存可复活已清空的目录；鉴权边界要在本次渲染就隔离，不能等待 Provider 刷新。
-  if (contextTeamUsageSourceCacheRef.current.scope !== teamUsageScope || !connectionAuthenticated)
-    contextTeamUsageSourceCacheRef.current = { scope: teamUsageScope, sources: [] };
-  const contextCodingPlanUsageProviderId =
-    contextPlanConnection.kind === "personalCoding" || contextPlanConnection.kind === "teamCoding"
-      ? contextPlanConnection.providerId
-      : undefined;
-  const contextCodingPlanUsageTeamSource = useMemo(
-    () =>
-      connectionAuthenticated && contextPlanConnection.kind === "teamCoding"
-        ? resolveContextCodingPlanUsageSource({
-            accountAccess: contextAccountProviderAccess?.access,
-            cachedTeamSources: contextTeamUsageSourceCacheRef.current.sources,
-            // 原硬取 bigmodelCodingPlan 的 entitlement snapshot，
-            // zai team plan 查不到额度。改为按 connection.providerId 取对应 snapshot。
-            entitlementSnapshot: entitlements[contextPlanConnection.providerId]?.snapshot ?? null,
-            providerId: contextPlanConnection.providerId,
-            teamSelection: contextPlanConnection.selection,
-            subscribedTeamProducts,
-          })
-        : null,
-    [
-      connectionAuthenticated,
-      teamUsageScope,
-      contextAccountProviderAccess?.access,
-      contextPlanConnection,
-      entitlements,
-      subscribedTeamProducts,
-    ],
-  );
-  useEffect(() => {
-    if (!contextCodingPlanUsageTeamSource) {
-      return;
-    }
-    const cache = contextTeamUsageSourceCacheRef.current.sources;
-    const nextCache = cache.filter((source) => source.id !== contextCodingPlanUsageTeamSource.id);
-    nextCache.unshift(contextCodingPlanUsageTeamSource);
-    // Team -> Personal(no_plan) -> Team 期间企业商品或个人 snapshot 可能短暂缺失。
-    // 保留最近解析过的团队 source，避免输入框 context 余额跟随水合顺序闪断。
-    contextTeamUsageSourceCacheRef.current = {
-      scope: teamUsageScope,
-      sources: nextCache.slice(0, 8),
-    };
-  }, [contextCodingPlanUsageTeamSource, teamUsageScope]);
-  const contextCodingPlanUsageSelectedSourceId: SidebarUsageCodingPlanSourceId | undefined =
-    contextPlanConnection.kind === "teamCoding"
-      ? contextCodingPlanUsageTeamSource?.id
-      : contextCodingPlanUsageProviderId;
-  const teamEntitlement = useUsageEntitlement({
-    enabled: !providerSourcesLoading && Boolean(contextCodingPlanUsageTeamSource),
-    includeSubscription: true,
-    // 原硬编码 bigmodelCodingPlan，zai family team plan 选中时
-    // contextCodingPlanUsageTeamSource.providerId 是 zaiCodingPlan，但这里仍传 bigmodelCodingPlan
-    // → 服务端 pickQuotaProvider 按 providerId 精确匹配选不到 zai provider →
-    // resolveAuthorization 返回 null → zai team plan 的输入框上下文用量区域不显示额度。
-    // 改为跟随 team source 的 providerId（已在 resolveContextTeamUsageSourceFromEntitlementSnapshot
-    // / resolveV4ContextPlanConnection 按 family 正确产出 zaiCodingPlan/bigmodelCodingPlan）。
-    preferredProviderId:
-      contextCodingPlanUsageTeamSource?.providerId ??
-      BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
-    accountAccess: contextCodingPlanUsageTeamSource?.accountAccess,
-    allowDisabledPreferredProvider: true,
-    requirePreferredProvider: true,
-    allowEnvApiKey: false,
-    cacheKey: contextCodingPlanUsageTeamSource?.id,
-    refreshOnMount: false,
-  });
-  const refreshTaskEntitlements = useCallback(
-    async (options?: UsageEntitlementRefreshOptions) => {
-      // Team Plan 的 context 面板使用 sourceId 隔离自己的 freshness key；任务边界刷新时
-      // 与全局 entitlement 一起发布，底层 request key 会合并相同团队请求。
-      await Promise.all([refreshCodingPlanEntitlements(options), teamEntitlement.refresh(options)]);
-    },
-    [refreshCodingPlanEntitlements, teamEntitlement.refresh],
-  );
-  const contextCodingPlanUsageProviders = useMemo(() => {
-    if (contextPlanConnection.kind !== "personalCoding" || !contextCodingPlanUsageProviderId) {
-      return [];
-    }
-    const access = contextAccountProviderAccess;
-    if (!access) return [];
-    return [
-      {
-        providerId: contextCodingPlanUsageProviderId as SidebarUsageCodingPlanProviderId,
-        accountAccess: access.access,
-        label:
-          access.label ||
-          (contextCodingPlanUsageProviderId === BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan
-            ? "Z.ai - Coding Plan"
-            : "BigModel - Coding Plan"),
-      },
-    ];
-  }, [contextAccountProviderAccess, contextCodingPlanUsageProviderId, contextPlanConnection.kind]);
-  const codingPlanUsageEntitlements = useMemo<
-    ChatCodingPlanUsageRemainingConfig["entitlements"]
-  >(() => {
-    if (contextCodingPlanUsageTeamSource) {
-      return [
-        {
-          sourceId: contextCodingPlanUsageTeamSource.id,
-          providerId: contextCodingPlanUsageTeamSource.providerId,
-          accountAccess: contextCodingPlanUsageTeamSource.accountAccess,
-          label: contextCodingPlanUsageTeamSource.label,
-          snapshot: teamEntitlement.snapshot,
-          loading: teamEntitlement.loading,
-          error: teamEntitlement.error,
-        },
-      ];
-    }
-
-    if (
-      contextPlanConnection.kind !== "personalCoding" ||
-      !contextCodingPlanUsageProviderId ||
-      contextCodingPlanUsageProviders.length === 0
-    ) {
-      return [];
-    }
-    const providerId = contextCodingPlanUsageProviderId;
-    const entitlement = entitlements[providerId];
-    return [
-      {
-        sourceId: providerId,
-        providerId,
-        accountAccess: contextCodingPlanUsageProviders[0]!.accountAccess,
-        snapshot: entitlement?.snapshot ?? null,
-        loading: entitlement?.loading ?? providerSourcesLoading,
-        error: entitlement?.error ?? null,
-      },
-    ];
-  }, [
-    contextCodingPlanUsageProviderId,
-    contextCodingPlanUsageProviders.length,
-    contextCodingPlanUsageTeamSource,
-    contextPlanConnection.kind,
-    entitlements,
-    providerSourcesLoading,
-    teamEntitlement.error,
-    teamEntitlement.loading,
-    teamEntitlement.snapshot,
-  ]);
-  const handleUsageClick = useCallback(
-    () => handleOpenUsageDetails(contextCodingPlanUsageSelectedSourceId),
-    [contextCodingPlanUsageSelectedSourceId, handleOpenUsageDetails],
-  );
-  const codingPlanUsageRemainingConfig = useMemo<
-    ChatCodingPlanUsageRemainingConfig | undefined
-  >(() => {
-    if (contextPlanConnection.kind !== "personalCoding" && !contextCodingPlanUsageTeamSource) {
-      return undefined;
-    }
-    return {
-      availableProviders: contextCodingPlanUsageProviders,
-      entitlements: codingPlanUsageEntitlements,
-      modelProvidersLoading: providerSourcesLoading,
-      onEntitlementRefresh: () => refreshTaskEntitlements({ force: true, silent: true }),
-      onAccess: () => refreshTaskEntitlements({ silent: true, reason: "access" }),
-      onUsageClick: handleUsageClick,
-      selectedProviderId: contextCodingPlanUsageSelectedSourceId,
-    };
-  }, [
-    contextCodingPlanUsageProviders,
-    contextCodingPlanUsageSelectedSourceId,
-    contextCodingPlanUsageTeamSource,
-    contextPlanConnection.kind,
-    codingPlanUsageEntitlements,
-    handleUsageClick,
-    providerSourcesLoading,
-    refreshTaskEntitlements,
-  ]);
-  const codingPlanUsageRemaining =
-    codingPlanUsageRemainingConfig &&
-    hasChatCodingPlanUsageRemaining(codingPlanUsageRemainingConfig)
-      ? codingPlanUsageRemainingConfig
-      : undefined;
-
   // 高频交互排障只走 debug，避免生产日志量随每次选择增长。
   useEffect(() => {
     if (!draftMode) return;
@@ -848,37 +191,10 @@ function V4ComposerModelControlsImpl({
     });
   }, [draftMode, effectiveConfig, modelSelectionView?.revision]);
 
-  const modelGroupLabels = useMemo(
-    () => ({
-      apiKeyLabel: intl.formatMessage({ id: "settings.modelProvider.apiKey" }),
-      apiKeyBadgeLabel: intl.formatMessage({
-        id: "settings.modelProvider.connectionMode.apiKeyBadge",
-      }),
-      codingPlanLabel: intl.formatMessage({
-        id: "settings.modelProvider.connectionMode.codingPlan",
-      }),
-      codingPlanBadgeLabel: intl.formatMessage({
-        id: "settings.modelProvider.connectionMode.codingPlanBadge",
-      }),
-      startPlanLabel: intl.formatMessage({
-        id: "settings.modelProvider.connectionMode.startPlan",
-      }),
-      startPlanBadgeLabel: intl.formatMessage({
-        id: "settings.modelProvider.connectionMode.startPlanBadge",
-      }),
-      teamPlanBadgeLabel: intl.formatMessage({
-        id: "settings.modelProvider.connectionMode.teamPlanBadge",
-      }),
-      teamPlanFallbackLabel: intl.formatMessage({
-        id: "settings.modelProvider.connectionMode.teamPlan",
-      }),
-    }),
-    [intl],
-  );
   const modelSelectGroups = useMemo<ModelSelectGroup[]>(() => {
     if (!modelSelectionView) return [];
-    return buildRegistryModelSelectGroups(displayProvider, modelSelectionView, modelGroupLabels);
-  }, [displayProvider, modelGroupLabels, modelSelectionView]);
+    return buildRegistryModelSelectGroups(displayProvider, modelSelectionView);
+  }, [displayProvider, modelSelectionView]);
 
   // 修复：恢复「管理模型」入口（老版 onManageModels = 打开设置页并定位模型供应商区）。
   const handleOpenModelProviderSettings = useCallback(() => {
@@ -942,7 +258,6 @@ function V4ComposerModelControlsImpl({
   ]);
   const handleModelValueChange = useCallback(
     (value: string, reasoningLevel?: string) => {
-      if (modelLocked) return;
       const decoded = decodeCustomModelValue(value);
       // 草稿的点击时可见模型可能只存在于 catalog，或已经被最新 draft
       // intent 覆盖，不能让 SessionPane 再从迟到的 prewarm projection 反推。
@@ -1007,66 +322,11 @@ function V4ComposerModelControlsImpl({
       effectiveConfig?.provider,
       onRecoverCustomModelSelection,
       onSelectModel,
-      modelLocked,
       modelSelectionView,
       workspaceIdentity,
       workspacePath,
     ],
   );
-
-  const planGroups = useMemo(
-    () =>
-      buildComposerPlanGroups(
-        modelSelectGroups,
-        subscribedTeamProducts,
-        providerSettingsView,
-        displayProvider,
-        modelGroupLabels,
-        sharedSettings?.providerFamilyConnectionSelections,
-      ),
-    [
-      modelSelectGroups,
-      subscribedTeamProducts,
-      providerSettingsView,
-      displayProvider,
-      modelGroupLabels,
-      sharedSettings?.providerFamilyConnectionSelections,
-    ],
-  );
-  const connectionSwitch = useComposerConnectionSwitch({
-    workspacePath,
-    workspaceIdentity,
-    agentProvider: displayProvider,
-    normalizedValue: normalizedModelValue,
-    onSelectModel: handleModelValueChange,
-    waitForPresentation: true,
-    refreshPresentation: modelSelectionRefresh,
-    presentationStatus: modelSelectionState.status,
-    presentationRevision: modelSelectionView?.revision,
-    presentationErrorRevision:
-      modelSelectionState.status === "ready"
-        ? modelSelectionState.refreshError?.revision
-        : undefined,
-  });
-  const selectedProviderId = decodeCustomModelValue(normalizedModelValue)?.providerId;
-  const selectedPlanGroup = planGroups.find((group) => {
-    const connection = group.connection;
-    if (!connection || connection.providerId !== selectedProviderId) return false;
-    const selection = sharedSettings?.providerFamilyConnectionSelections?.[connection.family];
-    return (
-      connection.selection?.kind !== "team-coding-plan" ||
-      (selection && composerConnectionKey(connection.family, selection) === connection.key)
-    );
-  });
-  const selectedPlanKey = connectionSwitch.pending
-    ? connectionSwitch.previousKey
-    : (selectedPlanGroup?.key ??
-      // 团队共用模型 value；当前过期行隐藏后，不能误选另一团队并阻止用户点击它。
-      planGroups.find(
-        (group) =>
-          group.connection?.selection?.kind !== "team-coding-plan" &&
-          group.items.some((item) => item.value === normalizedModelValue),
-      )?.key);
 
   const draftModelThoughtOption = useMemo(
     () =>
@@ -1143,42 +403,9 @@ function V4ComposerModelControlsImpl({
   // 改绑后按钮提示即时跟随（不能用硬编码文案）。
   const modelShortcutLabel = useShortcutCommandLabel("openModelMenu");
   const thoughtShortcutLabel = useShortcutCommandLabel("cycleThoughtLevel");
-  const selectConnection = connectionSwitch.select;
   // 原因：内联对象会在无关渲染时使 memo 选择器失效；按展示事实和回调缓存选项。
   const composerOptions = useMemo<ComposerModelOptions>(
     () => ({
-      providerMenu: {
-        groups: planGroups,
-        selectedKey: selectedPlanKey,
-        pending: connectionSwitch.pending,
-        // 团队目录查询不是用户的连接切换操作，不能把登录错误挂到 API 菜单。
-        error: connectionSwitch.error,
-        onSelect: (group) => {
-          // 原因：展示失败时设置可能已成功；已选连接仍须允许重试，不能被同 key 短路。
-          if (group.key === selectedPlanKey && !connectionSwitch.error) return;
-          if (group.connection) {
-            void selectConnection(group.connection, selectedPlanKey);
-          } else {
-            const model = chooseConnectionModel(
-              group.items,
-              decodeCustomModelValue(normalizedModelValue)?.modelName,
-            );
-            const providerId = decodeCustomModelValue(model?.value ?? "")?.providerId;
-            // 原因：普通 API 原先绕过连接切换 owner，缺少 loading 且会暴露旧目录。
-            if (providerId)
-              void selectConnection(
-                {
-                  key: group.key,
-                  label: group.label,
-                  providerId,
-                  family: connectionFamily,
-                  items: group.items,
-                },
-                selectedPlanKey,
-              );
-          }
-        },
-      },
       providerLabel: intl.formatMessage({ id: "chat.toolbar.combined.provider" }),
       modelsLabel: intl.formatMessage({ id: "chat.toolbar.combined.models" }),
       effortLabel: intl.formatMessage({ id: "chat.toolbar.combined.effort" }),
@@ -1192,20 +419,7 @@ function V4ComposerModelControlsImpl({
       value: String(thoughtOption?.currentValue ?? ""),
       onValueChange: handleThoughtValueChange,
     }),
-    [
-      planGroups,
-      selectedPlanKey,
-      connectionSwitch.pending,
-      connectionSwitch.error,
-      selectConnection,
-      normalizedModelValue,
-      connectionFamily,
-      intl,
-      thoughtShortcutLabel,
-      thoughtOption,
-      displayProvider,
-      handleThoughtValueChange,
-    ],
+    [intl, thoughtShortcutLabel, thoughtOption, displayProvider, handleThoughtValueChange],
   );
   const isModelOptionLocked = useCallback(() => false, []);
 
@@ -1222,9 +436,8 @@ function V4ComposerModelControlsImpl({
       : undefined;
   useToolbarShortcutBindings({
     hasAnyOption: Boolean(modelOption) || Boolean(thoughtOption),
-    toolbarDisabled: disabled || recoveryPending || connectionSwitch.pending,
-    modelMenuDisabled:
-      disabled || recoveryPending || modelLocked || connectionSwitch.pending || !modelMenuVisible,
+    toolbarDisabled: disabled || recoveryPending,
+    modelMenuDisabled: disabled || recoveryPending || !modelMenuVisible,
     modelOption,
     thoughtOption: thoughtOption ?? undefined,
     onOpenModelMenu: handleOpenModelMenuShortcut,
@@ -1261,28 +474,15 @@ function V4ComposerModelControlsImpl({
         data-usage-max={usage?.contextWindow?.maxTokens ?? ""}
         className="hidden"
       />
-      {/* Highspeed 卡激活即锁定模型；不能等动效交接完成才隐藏，否则 usage 圈圈会短暂闪现。 */}
-      {!modelLocked ? (
-        <ChatContextUsage
-          codingPlanUsageRemaining={codingPlanUsageRemaining}
-          taskUsage={taskUsage}
-          startPlanBalance={contextStartPlanBalance}
-          selectedProvider={displayProvider}
-          intl={intl}
-          locale={locale}
-          onSendCompressionCommand={onSendCompressionCommand}
-          compressionDisabled={disabled || recoveryPending}
-        />
-      ) : null}
-      {/* 加速轮的模型由本次卡决定，选型菜单此时不可用，所以指示器优先于选型加载态。 */}
-      {highspeedPresented && highspeedModel ? (
-        <HighspeedModelIndicator
-          model={highspeedModel}
-          originalModel={modelTriggerDisplay.fullLabel}
-          sweepActive={highspeedSweepActive}
-          animateEntrance={highspeedEntranceAnimated}
-        />
-      ) : modelSelectionState.status === "error" && modelSelectionReload ? (
+      <ChatContextUsage
+        taskUsage={taskUsage}
+        selectedProvider={displayProvider}
+        intl={intl}
+        locale={locale}
+        onSendCompressionCommand={onSendCompressionCommand}
+        compressionDisabled={disabled || recoveryPending}
+      />
+      {modelSelectionState.status === "error" && modelSelectionReload ? (
         <Button
           type="button"
           variant="ghost"
@@ -1302,9 +502,8 @@ function V4ComposerModelControlsImpl({
           })}
         </span>
       ) : modelMenuVisible &&
-        !providerSourcesLoading &&
-        planGroups.length === 0 &&
-        !connectionSwitch.pending ? (
+        modelSelectionState.status === "ready" &&
+        modelSelectGroups.length === 0 ? (
         // 空配置是正常状态；直接复用 Provider 设置入口，不展开无名称、无模型的菜单。
         <Button
           type="button"
@@ -1328,23 +527,20 @@ function V4ComposerModelControlsImpl({
           manageModelsLabel={manageModelsLabel}
           onManageModels={handleOpenModelProviderSettings}
           lockReasonMessage={intl.formatMessage({
-            id: modelLocked
-              ? "chat.highspeed.modelLocked"
-              : "chat.toolbar.modelSwitch.lockedByRunningTask",
+            id: "chat.toolbar.modelSwitch.lockedByRunningTask",
           })}
           isItemLocked={isModelOptionLocked}
           onValueChange={handleModelValueChange}
           disabled={
             disabled ||
             recoveryPending ||
-            modelLocked ||
             (modelSelectionState.status !== "ready" &&
               !(modelSelectionState.status === "loading" && modelSelectionState.catalog))
           }
           tooltipTitle={modelTriggerDisplay.fullLabel}
           shortcutLabel={modelShortcutLabel}
           triggerRef={modelTriggerRef}
-          open={!modelLocked && activeConfigPicker === "model"}
+          open={activeConfigPicker === "model"}
           onOpenChange={handleModelPickerOpenChange}
           openRequestKey={modelMenuOpenRequestKey}
           labelVisibilityClassName="hidden @sm/composer:inline-flex"
@@ -1354,27 +550,6 @@ function V4ComposerModelControlsImpl({
           triggerIconClassName="hidden group-data-[composer-model-icon=true]/toolbar:inline-flex"
           focusSelectorOnClose={V4_COMPOSER_INPUT_SELECTOR}
           providerSubmenuClassName={providerSubmenuClassName}
-        />
-      ) : null}
-      {highspeedPresented && highspeedExpiresAt !== undefined ? (
-        <HighspeedCountdown expiresAt={highspeedExpiresAt} />
-      ) : null}
-      {thoughtOption && (modelLocked || highspeedPresented) ? (
-        <ThoughtLevelCycleControl
-          composerCollapsePriority={3}
-          labelVisibilityClassName="inline-flex"
-          indicatorClassName="block"
-          triggerClassName={cn(highspeedPresented && "text-ui-caption")}
-          option={thoughtOption}
-          onValueChange={handleThoughtValueChange}
-          disabled={disabled || recoveryPending}
-          intl={intl}
-          provider={displayProvider}
-          shortcutLabel={thoughtShortcutLabel}
-          triggerRef={thoughtTriggerRef}
-          open={activeConfigPicker === "thought"}
-          onOpenChange={handleThoughtPickerOpenChange}
-          restoreFocusSelector={V4_COMPOSER_INPUT_SELECTOR}
         />
       ) : null}
     </>

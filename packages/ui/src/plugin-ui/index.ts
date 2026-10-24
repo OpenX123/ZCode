@@ -52,4 +52,3 @@ export {
 } from "./sidePane/pluginUiSidePaneTab.js";
 
 export { useMarketPluginUi, type MarketPluginUiTarget } from "./adapters/useMarketPluginUi.js";
-export { useUiPluginRecommendations } from "@/plugin-ui/adapters/useUiPluginRecommendations.js";

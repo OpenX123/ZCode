@@ -2,10 +2,7 @@ import { documentViewerInstance } from "@/plugin-ui/contract.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { toast } from "@/components/ui/toast.js";
 import { isRemoteWorkspaceIdentity } from "@zcode/shared";
-import { useRecommendedUiPlugins } from "@/plugin-ui/adapters/useRecommendedUiPlugins.js";
-import { resolveItemDisplayName, resolveItemDescription } from "@/settings/pluginStoreListing.js";
-import { useEffect, type ReactNode } from "react";
-import { PluginStoreAvatar } from "@/settings/PluginStoreAvatar.js";
+import { type ReactNode } from "react";
 import { PuzzleIcon, type LucideIcon } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button.js";
 import { Spinner } from "@/components/ui/spinner.js";
@@ -13,7 +10,10 @@ import { cn } from "@/components/lib/utils.js";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { OpenPluginUiSideTabRequest } from "@/plugin-ui/contract.js";
-import { resolvePluginUiSurfaceTitle } from "@/plugin-ui/adapters/usePluginUiSurfaces.js";
+import {
+  usePluginUiSurfaces,
+  resolvePluginUiSurfaceTitle,
+} from "@/plugin-ui/adapters/usePluginUiSurfaces.js";
 
 export interface PluginUiLauncherItemsProps {
   workspacePath: string;
@@ -37,167 +37,53 @@ export function buildPluginUiLauncherItemId(pluginId: string, surfaceId: string)
 export function PluginUiLauncherItems(props: PluginUiLauncherItemsProps) {
   const { intl, locale } = useZCodeIntl();
   const platform = useOptionalPlatform();
-  const {
-    entries,
-    loading,
-    prepare,
-    resolveSurface,
-    isBusy: isPluginBusy,
-    error,
-  } = useRecommendedUiPlugins(props);
-  useEffect(() => {
-    if (error) toast(error, { variant: "warning" });
-  }, [error]);
-  if (loading) {
-    const label = intl.formatMessage({ id: "common.loading" });
-    if (props.variant === "menu")
-      return (
-        <DropdownMenuItem disabled aria-label={label} data-testid="side-pane-ui-loading">
-          <span
-            aria-hidden="true"
-            className="h-4 w-40 motion-safe:animate-pulse rounded bg-surface"
-          />
-        </DropdownMenuItem>
-      );
-    return (
-      <div
-        role="status"
-        aria-label={label}
-        data-testid="side-pane-ui-loading"
-        className="col-span-full grid min-w-0 grid-cols-1 gap-x-8 gap-y-1 @min-[36rem]/launcher:grid-cols-2"
-      >
-        {[0, 1, 2, 3, 4, 5, 6, 7].map((index) => (
-          <div
-            key={index}
-            aria-hidden="true"
-            className="flex min-w-0 items-center gap-3 rounded-xl px-2 py-2.5 motion-safe:animate-pulse"
-          >
-            <span className="size-12 shrink-0 rounded-xl bg-surface" />
-            <span className="min-w-0 flex-1">
-              <span
-                className={cn(
-                  "block h-4 max-w-full rounded-sm bg-surface",
-                  index % 2 === 0 ? "w-24" : "w-32",
-                )}
-              />
-              <span className="mt-1.5 block h-3 w-36 max-w-full rounded-sm bg-surface" />
-            </span>
-            <span className="h-6 w-11 shrink-0 rounded-full bg-surface" />
-          </div>
-        ))}
-      </div>
+  const surfaces = usePluginUiSurfaces({
+    workspacePath: props.workspacePath,
+    workspaceIdentity: props.workspaceIdentity,
+    enabled: props.sessionId !== null,
+  });
+  if (!props.sessionId || surfaces.length === 0) return null;
+  const parentSessionId = props.sessionId;
+  return surfaces.map((surface) => {
+    const title = resolvePluginUiSurfaceTitle(surface.title, locale);
+    const itemId = buildPluginUiLauncherItemId(surface.pluginId, surface.id);
+    const open = () => {
+      if (
+        !platform?.pluginSandbox ||
+        props.remoteSessionId ||
+        isRemoteWorkspaceIdentity(props.workspaceIdentity ?? "")
+      ) {
+        toast(intl.formatMessage({ id: "settings.plugins.store.ui.unsupported" }));
+        return;
+      }
+      props.onOpenPluginUi({
+        parentSessionId,
+        surfaceId: surface.id,
+        serverName: surface.server,
+        pluginId: surface.pluginId,
+        resourceUri: surface.resourceUri,
+        ...documentViewerInstance(surface.resourceUri),
+        title,
+        workspacePath: props.workspacePath,
+        ...(props.workspaceIdentity ? { workspaceIdentity: props.workspaceIdentity } : {}),
+        remoteSessionId: props.remoteSessionId ?? null,
+      });
+    };
+    return props.variant === "menu" ? (
+      <DropdownMenuItem key={itemId} data-side-pane-add-item={itemId} onSelect={open}>
+        <PuzzleIcon className="size-4 text-foreground-subtle" />
+        {title}
+      </DropdownMenuItem>
+    ) : (
+      <SidePaneLauncherRow
+        key={itemId}
+        itemId={itemId}
+        icon={PuzzleIcon}
+        label={title}
+        onOpen={open}
+      />
     );
-  }
-  if (props.sessionId === null || entries.length === 0)
-    return props.variant === "menu" ? null : (
-      <p className="text-ui-base text-foreground-subtle" data-testid="side-pane-ui-empty">
-        {intl.formatMessage({ id: "sidePane.launcher.empty" })}
-      </p>
-    );
-  const sessionId = props.sessionId;
-  return (
-    <>
-      {entries.map(({ pluginId, surfaceId, item }) => {
-        const surface = item.info?.uiSurfaces?.find((candidate) => candidate.id === surfaceId);
-        const title = surface
-          ? resolvePluginUiSurfaceTitle(surface.title, locale)
-          : resolveItemDisplayName(item, locale);
-        const itemId = buildPluginUiLauncherItemId(pluginId, surfaceId);
-        // 原入口只替换加载文案，缺少持续可见的进度；图标与文案共用当前插件的忙碌态。
-        const isBusy = isPluginBusy(item);
-        const actionLabel = intl.formatMessage({
-          id: isBusy
-            ? "common.loading"
-            : !item.installed
-              ? "settings.plugins.store.install"
-              : !item.info?.enabled
-                ? "settings.plugins.store.menu.enable"
-                : "settings.plugins.store.ui.open",
-        });
-        const open = async () => {
-          if (!item.installed || !item.info?.enabled) {
-            void prepare(item);
-            return;
-          }
-          if (
-            !platform?.pluginSandbox ||
-            props.remoteSessionId ||
-            isRemoteWorkspaceIdentity(props.workspaceIdentity ?? "")
-          ) {
-            toast(intl.formatMessage({ id: "settings.plugins.store.ui.unsupported" }));
-            return;
-          }
-          const resolved = await resolveSurface(pluginId, surfaceId);
-          if (resolved === undefined) return;
-          if (!resolved) {
-            toast(intl.formatMessage({ id: "settings.plugins.store.ui.unavailable" }));
-            return;
-          }
-          props.onOpenPluginUi({
-            parentSessionId: sessionId,
-            surfaceId: resolved.id,
-            serverName: resolved.server,
-            pluginId: resolved.pluginId,
-            resourceUri: resolved.resourceUri,
-            ...documentViewerInstance(resolved.resourceUri),
-            title: resolvePluginUiSurfaceTitle(resolved.title, locale),
-            workspacePath: props.workspacePath,
-            ...(props.workspaceIdentity ? { workspaceIdentity: props.workspaceIdentity } : {}),
-            remoteSessionId: props.remoteSessionId ?? null,
-          });
-        };
-        if (props.variant === "menu") {
-          return (
-            <DropdownMenuItem
-              key={itemId}
-              data-side-pane-add-item={itemId}
-              onSelect={(event) => {
-                if (!item.installed || !item.info?.enabled) event.preventDefault();
-                void open();
-              }}
-              disabled={isBusy}
-              aria-busy={isBusy || undefined}
-            >
-              <PuzzleIcon className="size-4 text-foreground-subtle" />
-              <span className="min-w-0 flex-1 truncate">{title}</span>
-              <span className="flex items-center gap-1.5 text-foreground-subtle">
-                {isBusy ? (
-                  <Spinner
-                    data-testid="side-pane-plugin-progress"
-                    className="size-3.5 motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : null}
-                {actionLabel}
-              </span>
-            </DropdownMenuItem>
-          );
-        }
-        return (
-          <SidePaneLauncherRow
-            key={itemId}
-            itemId={itemId}
-            icon={PuzzleIcon}
-            avatar={
-              <PluginStoreAvatar
-                item={item}
-                className="size-12"
-                fallbackIcon={<PuzzleIcon className="size-6" />}
-              />
-            }
-            label={title}
-            description={
-              surface ? resolveItemDisplayName(item, locale) : resolveItemDescription(item, locale)
-            }
-            actionLabel={actionLabel}
-            loading={isBusy}
-            disabled={isBusy}
-            onOpen={open}
-          />
-        );
-      })}
-    </>
-  );
+  });
 }
 
 /**

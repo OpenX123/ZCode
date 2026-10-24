@@ -37,8 +37,7 @@ interface Timing {
   userVisibleAt?: number;
 }
 
-// SCB01/02：配置网关在 beforeSession 就保持 pending，不启用 ZCODE_OFFPEAK_MOCK。
-// 必须在网关一个配置响应都没返回的条件下证明真实 Enter -> 接纳投影 -> HTTP dispatch。
+// SCB01/02：本地配置陷阱不提供响应，验证普通发送完全不访问退休的官方配置入口。
 describe("配置等待与普通聊天隔离", () => {
   after(async () => {
     await browser.electron.restoreAllMocks();
@@ -61,6 +60,7 @@ describe("配置等待与普通聊天隔离", () => {
         }
         const before = await configStatus();
         expect(before.blocked).toBe(true);
+        expect(before.configRequests).toBe(0);
         expect(before.configResponses).toBe(0);
         await enterPrompt(marker);
         await waitForV4UserMessageContaining(marker);
@@ -87,6 +87,7 @@ describe("配置等待与普通聊天隔离", () => {
         const [request] = await getUpstreamRequestEvidence(query);
         if (!request) throw new Error("缺少 provider request evidence");
         const after = await configStatus();
+        expect(after.configRequests).toBe(0);
         expect(after.configResponses).toBe(0);
         expect(timing.enterAt).toBeGreaterThan(0);
         expect(timing.userVisibleAt).toBeGreaterThanOrEqual(timing.enterAt);
@@ -105,8 +106,8 @@ describe("配置等待与普通聊天隔离", () => {
           CONFIG_REQUEST_TIMEOUT_MS,
         );
         expect(request.status).toBe("complete");
-        expect(tools).toContain("OffPeakCreate");
-        expect(tools).toContain("OffPeakList");
+        expect(tools).not.toContain("OffPeakCreate");
+        expect(tools).not.toContain("OffPeakList");
       }
     } finally {
       const root = join(getE2EAppDataPaths().homeDir, "ZCodeProject", ".zcode-e2e", CASE_NAME);

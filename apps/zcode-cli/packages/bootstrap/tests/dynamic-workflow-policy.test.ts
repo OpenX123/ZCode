@@ -14,7 +14,6 @@ function makeContext() {
     appRuntimePreferences: {
       askUserQuestionAutoResolutionEnabled: true,
       modelIoFullRetentionEnabled: false,
-      offPeakToolEnabled: false,
       dynamicWorkflowEnabled: false,
     },
   } as unknown as ZCodeProtocolAgentServerContext;
@@ -102,7 +101,7 @@ describe("session 创建：runtimeConfig.dynamicWorkflowEnabled", () => {
 
   it.each([
     { params: { preference: true }, expected: true },
-    // per-session 显式 true 与 workspace 结论是或的关系（与 off-peak 同款）。
+    // 会话显式开启与 workspace 结论是或的关系。
     { params: { dynamicWorkflowEnabled: true, preference: false }, expected: true },
     { params: { dynamicWorkflowEnabled: false, preference: true }, expected: true },
   ])("%j", async ({ params, expected }) => {
@@ -110,10 +109,11 @@ describe("session 创建：runtimeConfig.dynamicWorkflowEnabled", () => {
   });
 
   // launch.md「On demand: activation」「How the mode travels」：mode 同序取值——本次参数优先，
-  // 再读 workspace 结论，都缺席按 alwaysOn；两个字段都必须是显式布尔。
+  // 再读 workspace 结论，都缺席按 onDemand；两个字段都必须是显式布尔。
   it.each([
     { params: {}, expected: { enabled: false, onDemand: false } },
-    { params: { dynamicWorkflowEnabled: true }, expected: { enabled: true, onDemand: false } },
+    { params: { dynamicWorkflowEnabled: true }, expected: { enabled: true, onDemand: true } },
+    { params: { preference: true }, expected: { enabled: true, onDemand: true } },
     {
       params: { dynamicWorkflowEnabled: true, dynamicWorkflowMode: "onDemand" as const },
       expected: { enabled: true, onDemand: true },

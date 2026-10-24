@@ -1,4 +1,6 @@
 {
+  "status": "historical-replay-evidence",
+  "currentApplicability": "仅记录2026-09历史受控回放，不代表当前构建验收；官方OTLP/ARMS导出已删除。当前本地计时合同见 docs/trace/local-ttft-diagnostics.md。",
   "date": "2026-09-14",
   "platform": "darwin",
   "source": "Real Electron Composer → local Host → CLI with synthetic model replay and real 300ms command Hook → actual content → decoded final OTLP; controlled model/Hook timing, not live model latency.",

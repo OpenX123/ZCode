@@ -20,7 +20,9 @@
       "response": {
         "statusCode": 200,
         "statusMessage": "OK",
-        "headers": { "content-type": "text/event-stream; charset=utf-8" },
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
         "body": "data: {\"id\":\"model-provider-restart-title\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"{\\\"title\\\":\\\"Model restart\\\"}\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"model-provider-restart-title\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
       }
     },
@@ -68,7 +70,9 @@
       "response": {
         "statusCode": 200,
         "statusMessage": "OK",
-        "headers": { "content-type": "text/event-stream; charset=utf-8" },
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
         "body": "data: {\"id\":\"model-provider-restart-r01\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"upstream-e2e-ok\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"model-provider-restart-r01\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
       }
     },
@@ -101,7 +105,7 @@
     },
     {
       "id": "model-provider-restart-r02",
-      "description": "I26 重启保留 Plan Highspeed。",
+      "description": "I26 普通 API Provider 内非首个模型重启后保持。",
       "metadata": {
         "kind": "main",
         "timingPolicy": "fast-text",
@@ -118,18 +122,20 @@
       "response": {
         "statusCode": 200,
         "statusMessage": "OK",
-        "headers": { "content-type": "text/event-stream; charset=utf-8" },
-        "body": "data: {\"id\":\"model-provider-restart-r02\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"glm-5.2-highspeed-e2e\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"upstream-e2e-ok\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"model-provider-restart-r02\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"glm-5.2-highspeed-e2e\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "body": "data: {\"id\":\"model-provider-restart-r02\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"GLM-5.3-Flash\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"upstream-e2e-ok\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"model-provider-restart-r02\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"GLM-5.3-Flash\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
       }
     },
     {
       "id": "model-provider-restart-r03",
-      "description": "I27 的旧 Start Plan 选择失效后回退 Configured Default。",
+      "description": "失效选择阻止执行，用户显式选择普通 Provider 后使用该模型。",
       "metadata": {
         "kind": "main",
         "timingPolicy": "fast-text",
         "source": "synthetic",
-        "syntheticReason": "核心断言是失效 Recent 回退后的真实请求模型，响应仅用于稳定收口。"
+        "syntheticReason": "验证失效 Recent 不自动回退，手动修复后的真实请求模型。"
       },
       "maxMatches": 1,
       "match": {
@@ -141,18 +147,20 @@
       "response": {
         "statusCode": 200,
         "statusMessage": "OK",
-        "headers": { "content-type": "text/event-stream; charset=utf-8" },
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
         "body": "data: {\"id\":\"model-provider-restart-r03\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"upstream-e2e-ok\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"model-provider-restart-r03\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
       }
     },
     {
       "id": "model-provider-restart-r04",
-      "description": "I28 的已删除模型选择失效后回退 Configured Default。",
+      "description": "失效选择阻止执行，用户显式选择普通 Provider 后使用该模型。",
       "metadata": {
         "kind": "main",
         "timingPolicy": "fast-text",
         "source": "synthetic",
-        "syntheticReason": "核心断言是失效 Recent 回退后的真实请求模型，响应仅用于稳定收口。"
+        "syntheticReason": "验证失效 Recent 不自动回退，手动修复后的真实请求模型。"
       },
       "maxMatches": 1,
       "match": {
@@ -164,7 +172,9 @@
       "response": {
         "statusCode": 200,
         "statusMessage": "OK",
-        "headers": { "content-type": "text/event-stream; charset=utf-8" },
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
         "body": "data: {\"id\":\"model-provider-restart-r04\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"upstream-e2e-ok\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"model-provider-restart-r04\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
       }
     }

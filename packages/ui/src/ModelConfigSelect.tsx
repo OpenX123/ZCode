@@ -52,7 +52,6 @@ import { RollingToolbarLabel } from "@/chat-input-toolbar/RollingToolbarLabel.js
 import {
   ComposerModelMenu,
   ComposerThoughtIndicator,
-  isGlmHighspeedModel,
   type ComposerModelOptions,
 } from "@/chat-input-toolbar/ComposerModelMenu.js";
 import { ModelInputCapabilityBadge } from "@/components/ModelInputCapabilityBadge.js";
@@ -241,27 +240,6 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
   leadingItems,
   triggerBadge,
 }: ModelConfigSelectProps) {
-  const presentation = useRef({ composerOptions, modelGroups, normalizedValue, triggerLabel });
-  if (
-    composerOptions?.providerMenu?.pending &&
-    presentation.current.composerOptions?.providerMenu
-  ) {
-    // 原因：账号刷新和草稿解析分别到达，混用新选项与旧选中值会让菜单收缩并显示“—”。
-    // loading 期间只冻结展示；回调和 pending/error 仍来自当前 owner，不影响提交事实。
-    const previous = presentation.current;
-    composerOptions = {
-      ...previous.composerOptions!,
-      onValueChange: composerOptions.onValueChange,
-      providerMenu: {
-        ...composerOptions.providerMenu,
-        groups: previous.composerOptions!.providerMenu!.groups,
-        selectedKey: previous.composerOptions!.providerMenu!.selectedKey,
-      },
-    };
-    modelGroups = previous.modelGroups;
-    normalizedValue = previous.normalizedValue;
-    triggerLabel = previous.triggerLabel;
-  } else presentation.current = { composerOptions, modelGroups, normalizedValue, triggerLabel };
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -531,10 +509,6 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
     return actions;
   }, [composerOptions, footerActions, manageModelsLabel, onManageModels, showManageModelsAction]);
 
-  const highspeed = isGlmHighspeedModel(
-    modelGroups.flatMap((group) => group.items).find((item) => item.value === normalizedValue)
-      ?.name ?? "",
-  );
   const triggerContents = showSelectionLabel ? (
     <>
       <span
@@ -554,7 +528,7 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
         data-composer-open-thought
         className="hidden group-data-[composer-model-icon=true]/toolbar:inline-flex"
       >
-        <ComposerThoughtIndicator options={composerOptions!} highspeed={highspeed} />
+        <ComposerThoughtIndicator options={composerOptions!} />
       </span>
     </>
   ) : (
@@ -574,7 +548,7 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
         />
       </span>
       {composerOptions && hasSelectedModel ? (
-        <ComposerThoughtIndicator options={composerOptions} highspeed={highspeed} />
+        <ComposerThoughtIndicator options={composerOptions} />
       ) : null}
       {triggerBadge}
       {pending ? (

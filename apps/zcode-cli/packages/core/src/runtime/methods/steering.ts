@@ -157,7 +157,6 @@ export async function steerTurn(
     request.modelSelectionScope
       ? {
           selectionScope: request.modelSelectionScope,
-          highspeedFallbackSelection: request.highspeedFallbackSelection,
         }
       : undefined,
   );
@@ -299,7 +298,6 @@ export async function enqueueDeferredInput(
     request.modelSelectionScope
       ? {
           selectionScope: request.modelSelectionScope,
-          highspeedFallbackSelection: request.highspeedFallbackSelection,
         }
       : undefined,
   );

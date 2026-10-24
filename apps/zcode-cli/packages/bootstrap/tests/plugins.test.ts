@@ -24,7 +24,6 @@ import type { ZCodeAppOptions } from "../src/app/types.js";
 import {
   configureZCodePlugin,
   describeZCodePlugin,
-  enrichCachedClaudeMarketplaceIconsForOverview,
   getZCodePluginsOverview,
   installZCodeMarketplacePlugin,
   listZCodePlugins,
@@ -41,6 +40,16 @@ import {
 import { StartupTimer } from "../src/startup-logging.js";
 
 const IOS_SIMULATOR_PLUGIN_ID = "ios-simulator@zcode-plugins-official";
+
+it("官方 Server MCP 搜图插件默认关闭", () => {
+  const imageSearch = OFFICIAL_PLUGIN_DEFINITIONS.find(
+    (definition) => definition.name === "image-search",
+  );
+  expect(imageSearch?.defaultEnabled ?? false).toBe(false);
+  expect(DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS.has("image-search@zcode-plugins-official")).toBe(
+    false,
+  );
+});
 
 it("Settings 默认启用集合与 CLI 的官方插件声明一致", () => {
   expect([...DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS].sort()).toEqual(
@@ -112,53 +121,20 @@ const BUNDLED_ANDROID_PLUGIN_DIST_PATH = fileURLToPath(
 );
 
 describe("ZCode plugins", () => {
-  it("starts cached Claude icon migration without blocking overview callers", async () => {
-    const root = await mkdtemp(join(tmpdir(), "zcode-bootstrap-icon-migration-"));
-    const pluginStorageRoot = join(root, "plugins");
-    const marketplaceRoot = join(pluginStorageRoot, "marketplaces", "claude-plugins-official");
+  it("读取插件概览不请求原厂图标 CDN", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-local-plugin-overview-"));
+    const fetch = vi.fn(() => {
+      throw new Error("概览不得请求网络");
+    });
+    vi.stubGlobal("fetch", fetch);
     try {
-      await mkdir(marketplaceRoot, { recursive: true });
-      await writeFile(
-        join(marketplaceRoot, "marketplace.json"),
-        JSON.stringify({
-          name: "claude-plugins-official",
-          plugins: [{ name: "figma", source: "./figma" }],
-        }),
-      );
-      let resolveFetch!: (response: Response) => void;
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(
-          () =>
-            new Promise<Response>((resolve) => {
-              resolveFetch = resolve;
-            }),
-        ),
-      );
-
-      expect(
-        enrichCachedClaudeMarketplaceIconsForOverview({
-          env: {},
-          pluginStorageRoot,
-          skipUserConfig: true,
-          workingDirectory: root,
-        }),
-      ).toBeUndefined();
-
-      resolveFetch(
-        new Response(
-          JSON.stringify([{ name: "figma", icon: "figma/icon.png", mimeType: "image/png" }]),
-          { status: 200 },
-        ),
-      );
-      await vi.waitFor(async () => {
-        const saved = JSON.parse(
-          await readFile(join(marketplaceRoot, "marketplace.json"), "utf8"),
-        ) as { plugins: Array<{ icon?: string }> };
-        expect(saved.plugins[0]?.icon).toBe(
-          "https://cdn-zcode.z.ai/zcode/official-plugin/assets/figma/icon.png",
-        );
+      await getZCodePluginsOverview({
+        env: {},
+        pluginStorageRoot: join(root, "plugins"),
+        skipUserConfig: true,
+        workingDirectory: root,
       });
+      expect(fetch).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
       await rm(root, { force: true, recursive: true });
@@ -204,10 +180,9 @@ describe("ZCode plugins", () => {
         await readFile(join(packageRoot, ".zcode-plugin", "plugin.json"), "utf8"),
       ) as { ui?: { surfaces?: unknown[] } };
       // 卸载后的可恢复条目没有运行时信息，商店只能靠定义里的 componentTypes 归入「UI 插件」。
-      expect(
-        plugin.componentTypes?.includes("ui") ?? false,
-        plugin.name,
-      ).toBe((pluginManifest.ui?.surfaces?.length ?? 0) > 0);
+      expect(plugin.componentTypes?.includes("ui") ?? false, plugin.name).toBe(
+        (pluginManifest.ui?.surfaces?.length ?? 0) > 0,
+      );
     }
   });
 
@@ -240,8 +215,9 @@ describe("ZCode plugins", () => {
         workingDirectory: root,
       });
       expect(outcome.plugins.find((plugin) => plugin.name === "documents")?.enabled).toBe(false);
-      for (const name of ["pdf", "presentations", "spreadsheets", "image-search"])
+      for (const name of ["pdf", "presentations", "spreadsheets"])
         expect(outcome.plugins.find((plugin) => plugin.name === name)?.enabled).toBe(true);
+      expect(outcome.plugins.find((plugin) => plugin.name === "image-search")?.enabled).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -584,10 +560,8 @@ describe("ZCode plugins", () => {
         userConfigPath,
         workingDirectory: root,
       });
-      // UI 合并时优先保留目录条目的 summary，所以目录条目与可恢复条目都必须带 "ui"。
-      expect(
-        overview.availablePlugins.find((plugin) => plugin.id === documentsId)?.componentTypes,
-      ).toContain("ui");
+      // 不再曝光默认云市场，随包插件仍可本地恢复。
+      expect(overview.availablePlugins.find((plugin) => plugin.id === documentsId)).toBeUndefined();
       expect(
         overview.restorableBuiltins.find((plugin) => plugin.id === documentsId)?.componentTypes,
       ).toEqual(["ui"]);
@@ -608,42 +582,8 @@ describe("ZCode plugins", () => {
         workingDirectory: root,
       });
 
-      expect(overview.marketplaces).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: "zcode-plugins-official",
-            isOfficial: true,
-            name: "zcode-plugins-official",
-            pluginCount: 14,
-            source: {
-              source: "url",
-              url: "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json",
-            },
-          }),
-          expect.objectContaining({
-            id: "claude-plugins-official",
-            isOfficial: true,
-            name: "claude-plugins-official",
-            pluginCount: 0,
-            source: {
-              repo: "anthropics/claude-plugins-official",
-              source: "github",
-            },
-          }),
-        ]),
-      );
-      expect(
-        JSON.parse(await readFile(join(pluginStorageRoot, "known_marketplaces.json"), "utf8")),
-      ).toMatchObject({
-        marketplaces: [
-          expect.objectContaining({
-            id: "zcode-plugins-official",
-          }),
-          expect.objectContaining({
-            id: "claude-plugins-official",
-          }),
-        ],
-      });
+      expect(overview.marketplaces).toEqual([]);
+      expect(existsSync(join(pluginStorageRoot, "known_marketplaces.json"))).toBe(false);
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -2198,7 +2138,9 @@ describe("ZCode plugins", () => {
       );
       expect(existsSync(join(pluginStorageRoot, "marketplaces", marketplaceId))).toBe(false);
       const knownBeforeRefresh = JSON.parse(
-        await readFile(join(pluginStorageRoot, "known_marketplaces.json"), "utf8"),
+        await readFile(join(pluginStorageRoot, "known_marketplaces.json"), "utf8").catch(
+          () => '{"marketplaces":[]}',
+        ),
       ) as { marketplaces: Array<{ id: string }> };
       expect(knownBeforeRefresh.marketplaces.some((item) => item.id === marketplaceId)).toBe(false);
 
@@ -2394,13 +2336,7 @@ describe("ZCode plugins", () => {
 
       expect(
         overview.marketplaces.find((marketplace) => marketplace.id === "zcode-plugins-official"),
-      ).toMatchObject({
-        pluginCount: 14,
-        source: {
-          source: "url",
-          url: "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json",
-        },
-      });
+      ).toBeUndefined();
       expect(overview.diagnostics).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -2456,7 +2392,9 @@ describe("ZCode plugins", () => {
         workingDirectory: root,
       });
       const persisted = JSON.parse(
-        await readFile(join(pluginStorageRoot, "known_marketplaces.json"), "utf8"),
+        await readFile(join(pluginStorageRoot, "known_marketplaces.json"), "utf8").catch(
+          () => '{"marketplaces":[]}',
+        ),
       ) as { marketplaces: Array<{ id: string; source: { path: string } }> };
 
       expect(result.diagnostics).toEqual([
@@ -2545,7 +2483,9 @@ describe("ZCode plugins", () => {
       expect(result.diagnostics).toEqual([expect.objectContaining({ severity: "error" })]);
       expect(existsSync(join(pluginStorageRoot, "marketplaces", marketplaceId))).toBe(false);
       const known = JSON.parse(
-        await readFile(join(pluginStorageRoot, "known_marketplaces.json"), "utf8"),
+        await readFile(join(pluginStorageRoot, "known_marketplaces.json"), "utf8").catch(
+          () => '{"marketplaces":[]}',
+        ),
       ) as { marketplaces: Array<{ id: string }> };
       expect(known.marketplaces.some((item) => item.id === marketplaceId)).toBe(false);
     } finally {

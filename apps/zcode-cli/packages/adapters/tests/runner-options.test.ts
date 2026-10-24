@@ -1,45 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  createGenerateTextOptions,
-  createStreamTextOptions,
-  shouldIncludeStreamResponseBody,
-} from "../src/model/runner-options.js";
+import { createGenerateTextOptions, createStreamTextOptions } from "../src/model/runner-options.js";
 import { isOpenCodeGoBaseUrl } from "../src/model/opencode-session.js";
 import type { ResolvedAiSdkModel } from "../src/model/runner-runtime.js";
 
 function resolved(partial: Partial<ResolvedAiSdkModel>): ResolvedAiSdkModel {
   return { properties: {}, ...partial } as ResolvedAiSdkModel;
 }
-
-describe("shouldIncludeStreamResponseBody", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.resetModules();
-  });
-
-  it("enables responseBody capture for zcode-plan openai-compatible providers", () => {
-    expect(
-      shouldIncludeStreamResponseBody(
-        resolved({
-          providerKind: "openai-compatible",
-          baseURL: "https://zcode.z.ai/api/v1/zcode-plan",
-          accountAccess: { mode: "start-plan" } as ResolvedAiSdkModel["accountAccess"],
-        }),
-      ),
-    ).toBe(true);
-  });
-
-  it("skips responseBody capture for unrelated providers", () => {
-    expect(
-      shouldIncludeStreamResponseBody(
-        resolved({
-          providerKind: "openai-compatible",
-          baseURL: "https://api.openai.com/v1",
-        }),
-      ),
-    ).toBe(false);
-  });
-});
 
 describe("isOpenCodeGoBaseUrl", () => {
   it.each(["https://opencode.ai/zen/go/v1", "https://api.opencode.ai/zen/go/v1/"])(
@@ -302,7 +268,7 @@ describe("createStreamTextOptions", () => {
     },
   );
 
-  it("passes experimental_include.responseBody for zcode-plan streams", () => {
+  it("不为旧官方套餐标记隐式采集响应正文", () => {
     const options = createStreamTextOptions({
       includeModelIO: false,
       request: {
@@ -314,7 +280,7 @@ describe("createStreamTextOptions", () => {
         modelId: "glm-5.1",
         providerKind: "openai-compatible",
         baseURL: "https://zcode.z.ai/api/v1/zcode-plan",
-        accountAccess: { mode: "start-plan" } as ResolvedAiSdkModel["accountAccess"],
+        ...({ accountAccess: { mode: "start-plan" } } as Record<string, unknown>),
       }),
       statusContext: {
         model: { providerId: "builtin:zai-coding-plan", modelId: "glm-5.1" },
@@ -325,7 +291,7 @@ describe("createStreamTextOptions", () => {
       } as never,
     });
 
-    expect(options.experimental_include).toEqual({ responseBody: true });
+    expect(options.experimental_include).toBeUndefined();
   });
 
   it("uses merged Responses provider options while transforming history", () => {

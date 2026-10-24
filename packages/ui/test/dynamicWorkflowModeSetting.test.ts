@@ -83,7 +83,7 @@ vi.mock("@/components/ui/select.js", () => ({
 
 function publish(offered: DynamicWorkflowMode, userMode?: DynamicWorkflowMode) {
   const config = applyDynamicWorkflowUserMode(
-    createDynamicWorkflowClientConfig(offered, "remote"),
+    createDynamicWorkflowClientConfig(offered, "default"),
     userMode,
   );
   useDynamicWorkflowAvailabilityStore.setState({
@@ -198,7 +198,7 @@ describe("DynamicWorkflowModeSetting（DWG-22）", () => {
     const legacy = {
       mode: "alwaysOn",
       enabled: true,
-      source: "remote",
+      source: "default",
     } as unknown as typeof config;
     expect(
       resolveDynamicWorkflowModeSettingView({ status: "ready", enabled: true, config: legacy }),

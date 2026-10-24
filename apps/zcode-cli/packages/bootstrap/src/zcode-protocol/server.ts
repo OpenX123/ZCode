@@ -1,5 +1,4 @@
 import { querySessionDebug } from "./session-debug.js";
-import { offPeakControlParamsSchema, offPeakControlResultSchema } from "@zcode/shared";
 import { createNodeNetworkCapture } from "@zcode/shared/node";
 import { networkCaptureControlSchema, zcodeProtocolNotifications } from "@zcode/shared";
 import {
@@ -111,9 +110,8 @@ import {
 } from "./mcp-ui/index.js";
 import { listPluginUiSurfaces } from "./plugin-ui-surfaces.js";
 import { updateInteractionPreferences } from "./interaction-preferences.js";
-import { refreshProviderRegistry, updateAccountProviderConfig } from "./account-provider-config.js";
+import { refreshProviderRegistry } from "./account-provider-config.js";
 import { updateModelIoPreferences } from "./model-io-preferences.js";
-import { updateOffPeakToolPolicy } from "./off-peak-tool-policy.js";
 import { updateDynamicWorkflowPolicy } from "./dynamic-workflow-policy.js";
 import { grantWorkspaceHookTrustForProtocol } from "./workspace-hook-trust.js";
 import {
@@ -258,10 +256,6 @@ export class ZCodeProtocolAgentServer {
     routeMcpServerNotification(this.context, notification);
   }
 
-  get officialMcpAuthRequestContext(): Pick<ZCodeProtocolAgentServerContext, "requestClient"> {
-    return this.context;
-  }
-
   private messageSink?: (message: ZCodeProtocolOutboundMessage) => void;
   private clientDisconnectError?: Error;
   private readonly context: ZCodeProtocolAgentServerContext;
@@ -298,7 +292,6 @@ export class ZCodeProtocolAgentServer {
       appRuntimePreferences: {
         askUserQuestionAutoResolutionEnabled: true,
         modelIoFullRetentionEnabled: false,
-        offPeakToolEnabled: false,
         // 动态工作流灰度门 fail-closed：Host 必须显式 workspace/updateDynamicWorkflowPolicy
         // 才开启。
         dynamicWorkflowEnabled: false,
@@ -594,14 +587,6 @@ export class ZCodeProtocolAgentServer {
         return await this.requireV4Gateway().plans(request.params);
       case V4_METHODS.backgroundBashOutput:
         return await this.requireV4Gateway().backgroundBashOutput(request.params);
-      case V4_METHODS.offPeakControl: {
-        const params = offPeakControlParamsSchema.parse(request.params);
-        const record = this.context.sessions.get(params.sessionId);
-        // 生命周期只存在于驻留 runtime；换票不能恢复冷会话或重放原始输入。
-        return offPeakControlResultSchema.parse(
-          record ? await record.app.runtime.controlOffPeakExecution(params) : { accepted: false },
-        );
-      }
       case V4_METHODS.conversationFileChanges:
         return await this.requireV4Gateway().fileChanges(request.params);
       case V4_METHODS.conversationFileRewindPreview:
@@ -713,16 +698,12 @@ export class ZCodeProtocolAgentServer {
         }
         return grantResult;
       }
-      case zcodeProtocolMethods.providerUpdateAccountConfig:
-        return await updateAccountProviderConfig(this.context, request.params);
       case zcodeProtocolMethods.providerRefreshRegistry:
         return await refreshProviderRegistry(this.context, request.params);
       case zcodeProtocolMethods.workspaceUpdateInteractionPreferences:
         return await updateInteractionPreferences(this.context, request.params);
       case zcodeProtocolMethods.workspaceUpdateModelIoPreferences:
         return await updateModelIoPreferences(this.context, request.params);
-      case zcodeProtocolMethods.workspaceUpdateOffPeakToolPolicy:
-        return await updateOffPeakToolPolicy(this.context, request.params);
       case zcodeProtocolMethods.workspaceUpdateDynamicWorkflowPolicy:
         return await updateDynamicWorkflowPolicy(this.context, request.params);
       case zcodeProtocolMethods.workspaceGenerateText:
@@ -985,7 +966,7 @@ export class ZCodeProtocolAgentServer {
               PROTOCOL_CLIENT_REQUEST_ERROR_CODES.timedOut,
               `Client request timed out: ${method}`,
               {
-              timeoutMs: options.timeoutMs,
+                timeoutMs: options.timeoutMs,
               },
             ),
           );

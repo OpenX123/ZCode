@@ -1,9 +1,5 @@
 import type { BrowserWindow, NativeImage } from "electron";
-import {
-  DEFAULT_ZCODE_ENDPOINT_ORIGIN,
-  buildZCodeEndpointUrls,
-  type Locale,
-} from "@zcode/shared";
+import type { Locale } from "@zcode/shared";
 
 export interface ArchitectureMismatch {
   /** 当前运行的二进制架构，例如 x64。 */
@@ -48,20 +44,10 @@ export function detectArchitectureMismatch(
   return { binaryArch, nativeArch: "arm64" };
 }
 
-export function resolveArchitectureDownloadUrl(
-  locale: Locale,
-  endpointOrigin = DEFAULT_ZCODE_ENDPOINT_ORIGIN,
-): string {
-  // 与 changelog 等外链保持一致，按应用语言分流到官网下载页。
-  const origin = buildZCodeEndpointUrls(endpointOrigin).origin;
-  return locale === "zh-CN" ? `${origin}/cn` : `${origin}/en`;
-}
-
 interface ArchitectureMismatchDialogText {
   title: string;
   message: string;
   detail: string;
-  downloadButton: string;
   dismissButton: string;
 }
 
@@ -77,9 +63,8 @@ export function formatArchitectureMismatchDialogText(
       detail:
         `你正在运行 ${mismatch.binaryArch} 版本，但本机是 ${mismatch.nativeArch}（Apple 芯片）架构，` +
         `当前通过系统转译运行，会更慢、更耗电。\n\n` +
-        `建议前往官网下载并安装 ${mismatch.nativeArch} 原生版本以获得最佳性能。`,
-      downloadButton: "前往下载",
-      dismissButton: "暂不处理",
+        `建议安装 ${mismatch.nativeArch} 原生版本以获得最佳性能。`,
+      dismissButton: "知道了",
     };
   }
 
@@ -89,9 +74,8 @@ export function formatArchitectureMismatchDialogText(
     detail:
       `You are running the ${mismatch.binaryArch} build, but this machine is ${mismatch.nativeArch}. ` +
       `It is currently running through system translation, which is slower and less power-efficient.\n\n` +
-      `Please download and install the native ${mismatch.nativeArch} build for the best performance.`,
-    downloadButton: "Download",
-    dismissButton: "Not now",
+      `Please install the native ${mismatch.nativeArch} build for the best performance.`,
+    dismissButton: "OK",
   };
 }
 
@@ -101,7 +85,7 @@ export interface ArchitectureGuardLogger {
 }
 
 /**
- * 启动时检测架构是否匹配；若用户装了错误架构的版本，弹框提示其下载原生版本。
+ * 启动时检测架构是否匹配；若用户装了错误架构的版本，弹框提示其安装原生构建。
  * 非阻塞：检测命中后异步弹框，不影响主界面继续加载。
  */
 export async function maybeWarnArchitectureMismatch(options: {
@@ -110,7 +94,7 @@ export async function maybeWarnArchitectureMismatch(options: {
   parentWindow?: BrowserWindow | null;
   icon?: NativeImage;
 }): Promise<void> {
-  const { app, dialog, shell } = await import("electron");
+  const { app, dialog } = await import("electron");
 
   const mismatch = detectArchitectureMismatch({
     runningUnderARM64Translation: app.runningUnderARM64Translation,
@@ -126,23 +110,16 @@ export async function maybeWarnArchitectureMismatch(options: {
   const text = formatArchitectureMismatchDialogText(mismatch, options.locale);
   const dialogOptions = {
     type: "warning" as const,
-    buttons: [text.downloadButton, text.dismissButton],
+    buttons: [text.dismissButton],
     defaultId: 0,
-    cancelId: 1,
+    cancelId: 0,
     title: text.title,
     message: text.message,
     detail: text.detail,
     ...(options.icon && !options.icon.isEmpty() ? { icon: options.icon } : {}),
   };
 
-  const { response } =
-    options.parentWindow && !options.parentWindow.isDestroyed()
-      ? await dialog.showMessageBox(options.parentWindow, dialogOptions)
-      : await dialog.showMessageBox(dialogOptions);
-
-  if (response === 0) {
-    const url = resolveArchitectureDownloadUrl(options.locale);
-    options.logger.info(`[architecture] 用户选择前往下载：${url}`);
-    await shell.openExternal(url);
-  }
+  await (options.parentWindow && !options.parentWindow.isDestroyed()
+    ? dialog.showMessageBox(options.parentWindow, dialogOptions)
+    : dialog.showMessageBox(dialogOptions));
 }

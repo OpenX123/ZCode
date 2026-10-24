@@ -1,4 +1,3 @@
-import type { ModelRequestSecurityState } from "./request-security.js";
 // ============================================================
 // Vercel AI SDK model runner
 // ============================================================
@@ -32,7 +31,6 @@ import {
   type AiSdkModelRetryOptions,
   type ResolvedAiSdkModelRetryOptions,
 } from "./retry-policy.js";
-import { resolveRetryOptionsForBudget } from "./retry-budget.js";
 import { DEFAULT_MODEL_STREAM_IDLE_TIMEOUT_MS } from "./stream-idle-timeout.js";
 import { runGenerateText } from "./runner-generate.js";
 import { runStreamText } from "./runner-stream.js";
@@ -45,7 +43,6 @@ import {
 } from "./runner-runtime.js";
 import { resolveToolSearchCapability } from "./tool-search.js";
 import { createModel, type ModelExecutionRequest } from "./model.js";
-import { refreshOffPeakRequestAuth } from "./off-peak-request-auth.js";
 
 export type { AiSdkModelRetryOptions } from "./retry-policy.js";
 export type {
@@ -60,7 +57,6 @@ export { normalizeUsage, toModelStreamEvent } from "./runner-normalization.js";
 
 export interface AiSdkModelAdapterOptions {
   defaultHeaders?: AiSdkModelExecutionConfig["defaultHeaders"];
-  requestSecurityState?: ModelRequestSecurityState;
   endpointRoutingPort?: import("@zcode/contracts").ProviderEndpointRoutingPort;
   network?: AiSdkNetworkConfig;
   runtime?: AiSdkModelRuntime;
@@ -95,22 +91,12 @@ export class AiSdkModelAdapter {
   private modelIoFullRetentionEnabled: boolean;
 
   constructor(options: AiSdkModelAdapterOptions) {
-    this.execution = new AiSdkModelExecution(
-      {
-        defaultHeaders: options.defaultHeaders,
-        ...(options.endpointRoutingPort
-          ? { endpointRoutingPort: options.endpointRoutingPort }
-          : {}),
-        ...(options.network ? { network: options.network } : {}),
-        ...(options.env ? { env: options.env } : {}),
-      },
-      {
-        ...(options.requestSecurityState
-          ? { requestSecurityState: options.requestSecurityState }
-          : {}),
-        ...(options.logger ? { logger: options.logger } : {}),
-      },
-    );
+    this.execution = new AiSdkModelExecution({
+      defaultHeaders: options.defaultHeaders,
+      ...(options.endpointRoutingPort ? { endpointRoutingPort: options.endpointRoutingPort } : {}),
+      ...(options.network ? { network: options.network } : {}),
+      ...(options.env ? { env: options.env } : {}),
+    });
     this.runtime = options.runtime ?? defaultRuntime;
     this.env = options.env ?? process.env;
     this.debugDir = options.debugDir;
@@ -159,62 +145,30 @@ export class AiSdkModelAdapter {
     const resolved = {
       ...boundResolution.resolved,
       properties,
-      ...(options.providerConfig.access.type === "zhipu-account"
-        ? { accountAccess: options.providerConfig.access }
-        : {}),
     };
     const optionSpecs = options.modelConfig.optionSpecs;
     const toLegacyRequest = (request: ModelExecutionRequest): AiSdkModelTextRequest => {
       const context = getCurrentModelInvocationContext();
       const {
-        refreshRuntimeHeadersBeforeAttempt: contextRefreshRuntimeHeadersBeforeAttempt,
+        refreshRuntimeHeadersBeforeAttempt: _contextRefreshRuntimeHeadersBeforeAttempt,
         ...invocationContext
       } = context ?? {};
       const shouldAttachReasoningTelemetry = request.options.reasoningLevel !== undefined;
       const selectedReasoningLevel = request.options.reasoningLevel;
       const requestAuthDependency = options.requestDependencies?.requestAuth;
-      // Bug 根因：加速卡（highspeed）与 Off-Peak 同为 Coding Plan 派生模式，本轮动态鉴权
-      // （zcode JWT + Coding Plan 双 JWT + X-Highspeed-Card-ID，见 docs/highspeed/highspeed-card-spec.md
-      // §2.2）经 modelExecution.requestAuth 下发到执行作用域 Source。若门禁只认 off-peak，highspeed
-      // 会落到下面的账号 runtime-header 刷新分支，把整包 requestAuth（含卡 ID）丢弃，加速请求因缺卡 ID/
-      // 错误鉴权被 /api/v1/highspeed 网关判 401。两种派生免签模式必须同样消费执行作用域 Source。
-      const requestAuthRequired =
-        options.providerConfig.access.type === "zhipu-account" &&
-        (options.providerConfig.access.mode === "off-peak" ||
-          options.providerConfig.access.mode === "highspeed");
-      // 调用级 runtime header Port 只服务绑定完整 Account Access 的账号型 Model；
-      // 普通 API-key Model 若也消费该 Port，会把静态鉴权误送到 Host 刷新并在请求前失败。
-      // 派生模式保留执行作用域票据/卡身份；Off-Peak 的 PAT 仍逐请求向原账号 owner 刷新。
-      const refreshRuntimeHeadersBeforeAttempt = requestAuthRequired
+      const refreshRuntimeHeadersBeforeAttempt = requestAuthDependency
         ? async (input: ModelRequestAuthSourceInput) => {
-            const requestAuth = await requestAuthDependency?.source?.resolve(input);
+            const requestAuth = await requestAuthDependency.source?.resolve(input);
+            // 显式要求动态凭据时，源缺失或空材料都必须在网络请求前失败。
             if (!hasRequestAuth(requestAuth)) {
               throw new ModelProtocolError(
                 ModelErrorCode.ModelRequestAuthMissing,
-                `Model request auth is unavailable: ${resolved.providerId}/${resolved.modelId}`,
+                "Model request auth is unavailable.",
               );
             }
-            const refreshedAuth =
-              options.providerConfig.access.type === "zhipu-account" &&
-              options.providerConfig.access.mode === "off-peak"
-                ? await refreshOffPeakRequestAuth({
-                    auth: requestAuth,
-                    input,
-                    accountAccess: options.providerConfig.access,
-                    refresh: contextRefreshRuntimeHeadersBeforeAttempt,
-                  })
-                : requestAuth;
-            return { headersApplied: true, requestAuth: refreshedAuth };
+            return { headersApplied: true, requestAuth };
           }
-        : options.providerConfig.access.type === "zhipu-account"
-          ? (contextRefreshRuntimeHeadersBeforeAttempt ??
-            (async () => {
-              throw new ModelProtocolError(
-                ModelErrorCode.ModelRequestAuthMissing,
-                `Account model request auth is unavailable: ${resolved.providerId}/${resolved.modelId}`,
-              );
-            }))
-          : undefined;
+        : undefined;
       return {
         toolSearchEnabled: request.toolSearchEnabled,
         messages: request.messages,
@@ -236,17 +190,7 @@ export class AiSdkModelAdapter {
               },
             }
           : {}),
-        ...(refreshRuntimeHeadersBeforeAttempt
-          ? {
-              refreshRuntimeHeadersBeforeAttempt: (input) =>
-                refreshRuntimeHeadersBeforeAttempt({
-                  ...input,
-                  ...(options.providerConfig.access.type === "zhipu-account"
-                    ? { accountAccess: options.providerConfig.access }
-                    : {}),
-                }),
-            }
-          : {}),
+        ...(refreshRuntimeHeadersBeforeAttempt ? { refreshRuntimeHeadersBeforeAttempt } : {}),
       };
     };
     const resolveForRequest = (
@@ -267,9 +211,6 @@ export class AiSdkModelAdapter {
               }),
             ),
             properties,
-            ...(options.providerConfig.access.type === "zhipu-account"
-              ? { accountAccess: options.providerConfig.access }
-              : {}),
           })
         : () => ({
             ...boundResolution.resolveRequest({
@@ -279,17 +220,11 @@ export class AiSdkModelAdapter {
               },
             }),
             properties,
-            ...(options.providerConfig.access.type === "zhipu-account"
-              ? { accountAccess: options.providerConfig.access }
-              : {}),
           });
     };
     return createModel({
       requestCapabilities: {
-        toolSearch: resolveToolSearchCapability(
-          options.providerConfig.api.type,
-          options.providerConfig.access,
-        ),
+        toolSearch: resolveToolSearchCapability(options.providerConfig.api.type),
       },
       providerId: resolved.providerId,
       modelId: resolved.modelId,
@@ -334,7 +269,7 @@ export class AiSdkModelAdapter {
       request: projectedRequest,
       resolveModel,
       resolved,
-      retry: resolveRetryOptionsForBudget(this.retry, projectedRequest.modelRetryBudget),
+      retry: this.retry,
       runtime: this.runtime,
       statusSink: this.statusSink,
       modelIoFullRetentionEnabled: this.modelIoFullRetentionEnabled,
@@ -354,8 +289,7 @@ export class AiSdkModelAdapter {
       request: projectedRequest,
       resolveModel,
       resolved,
-      // single-attempt 预算（带 selectionFallback 的执行作用域句柄）把 maxAttempts 收敛为 1。
-      retry: resolveRetryOptionsForBudget(this.retry, projectedRequest.modelRetryBudget),
+      retry: this.retry,
       runtime: this.runtime,
       statusSink: this.statusSink,
       streamIdleTimeoutMs: this.streamIdleTimeoutMs,

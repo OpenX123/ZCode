@@ -52,10 +52,7 @@ function DirectoryOwner({ children, isDesktop }: { children: ReactNode; isDeskto
   const platform = useOptionalPlatform();
   // 任务通知开关同时门控任务栏/托盘角标：关掉通知 = 连常驻提醒一起关闭
   // （同步 0 清空角标），侧栏蓝点作为应用内状态不受影响。
-  const notificationEnabled = useZCodeStoreWithDefault(
-    (state) => state.notificationEnabled,
-    true,
-  );
+  const notificationEnabled = useZCodeStoreWithDefault((state) => state.notificationEnabled, true);
   const unreadTaskCount = useMemo(
     () => countProjectTreeUnreadTasks(directory.tree),
     [directory.tree],

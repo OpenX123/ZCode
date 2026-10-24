@@ -19,7 +19,7 @@ import {
   openGeneralSettings,
   openPlusMenu,
   openSlashPanelWithCatalogReady,
-  readDynamicWorkflowGrayMockStatus,
+  configureLocalDynamicWorkflowMode,
   readDynamicWorkflowModeTriggerText,
   readPlusMenuAddOptionIds,
   selectDynamicWorkflowMode,
@@ -27,15 +27,12 @@ import {
 } from "../../../helpers/dynamic-workflow-gray.js";
 import { sel } from "../../../helpers/selectors.js";
 
-// DWG-08（disabled 档）：服务端 /client/configs 不下发 dynamicWorkflow key，
-// 三个入口必须同时消失——`+` 菜单的「工作流」、`/` 面板的 workflow、自动化页的「工作流」标签。
-// DWG-23（disabled 档）：服务端只给默认值，设置 › 常规的模式行照样出现，用户选「始终开启」后入口回来。
-// 服务端形状由 dynamic-workflow-config-mock-server.ts 按本文件名选档；
-// 契约见 docs/dynamic-workflow/launch.md「Gray release: the `dynamicWorkflow` feature key」。
-// E2E_DWF_GRAY：只读入口，不发送 prompt；空 provider fixture 是有意的合同。
-describe("动态工作流灰度未命中（disabled）", () => {
+// DWG-08：本地用户选择决定三个工作流入口；不访问官方配置服务。
+// E2E_DWF_GRAY：只验证入口，不发送模型请求，沿用原有case标识。
+describe("动态工作流本地关闭（disabled）", () => {
   before(async () => {
-    await prepareV4ConversationE2E();
+    await prepareV4ConversationE2E({ skipProvider: true });
+    await configureLocalDynamicWorkflowMode("disabled");
   });
   afterEach(async () => {
     const capturePath = process.env.E2E_PROVIDER_CAPTURE_PATH?.trim();
@@ -49,16 +46,6 @@ describe("动态工作流灰度未命中（disabled）", () => {
 
   it("DWG-08 关闭时 + 菜单、/ 面板与自动化页都没有工作流入口", async function () {
     this.timeout(180000);
-
-    // 0) 先证明 Host 确实从 case-local 网关取过灰度快照，且这一档没有下发 key。
-    //    否则后面的三个「缺席」断言可能只是证明 app 根本没连上这台 mock。
-    const status = await readDynamicWorkflowGrayMockStatus();
-    expect(status.scenario).toBe("disabled");
-    expect(status.mode).toBe(null);
-    await browser.waitUntil(
-      async () => (await readDynamicWorkflowGrayMockStatus()).configRequests > 0,
-      { timeout: 60000, timeoutMsg: "Host 没有向 case-local 配置网关请求 /client/configs" },
-    );
 
     // 1) `/` 面板：catalog 已送达（goal 在场）但 workflow 被整条剔除。
     const slashIds = await openSlashPanelWithCatalogReady();
@@ -84,20 +71,20 @@ describe("动态工作流灰度未命中（disabled）", () => {
     await expectTestIdAbsentThroughout(automationsPageTabTestId("workflow"));
   });
 
-  it("DWG-23 默认关闭时设置行照样出现，选「始终开启」后工作流入口回来", async function () {
+  it("DWG-23 用户关闭时设置行照样出现，选「始终开启」后工作流入口回来", async function () {
     this.timeout(240000);
 
-    // 1) 设置 › 常规：服务端没下发 key，行仍在，显示「关闭」，「默认」标签只在「关闭」上。
+    // 本地选择为关闭；固定默认值仍是 onDemand。
     await openGeneralSettings();
     await browser.waitUntil(
       async () => (await readDynamicWorkflowModeTriggerText()).includes("关闭"),
-      { timeout: 30000, timeoutMsg: "服务端默认关闭时动态工作流模式行没有出现或没有显示「关闭」" },
+      { timeout: 30000, timeoutMsg: "用户关闭时动态工作流模式行没有出现或没有显示「关闭」" },
     );
     await openDynamicWorkflowModeSelect();
     const itemText = (mode: string) =>
       $(sel(testId(TID_SETTINGS_DYNAMIC_WORKFLOW_MODE_ITEM, mode))).getText();
-    expect(await itemText("disabled")).toContain("默认");
-    expect(await itemText("onDemand")).not.toContain("默认");
+    expect(await itemText("disabled")).not.toContain("默认");
+    expect(await itemText("onDemand")).toContain("默认");
     expect(await itemText("alwaysOn")).not.toContain("默认");
     await browser.keys("Escape");
 

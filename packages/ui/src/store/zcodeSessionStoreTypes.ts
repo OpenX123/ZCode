@@ -23,7 +23,6 @@ import {
   type ZCodeSessionActiveTurnKind,
   type ZCodeContextUsageBreakdownItem,
   type InputId,
-  type SessionCreateSource,
 } from "@zcode/shared";
 import type { SessionConfigState, SubmissionMode } from "@zcode/shared/zcode-protocol-v4";
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
@@ -191,7 +190,6 @@ export interface WorkspaceZCodeUIState {
   taskUnreadByTaskId: Record<string, boolean>;
   /** 任务列表的乐观元数据，解决新 task 落盘前左侧列表显示慢半拍的问题 */
   optimisticTaskListByTaskId: Record<string, ZCodeTaskMeta>;
-  draftCreateSource: SessionCreateSource;
   /** 当前 workspace 选中的 ZCode Agent provider */
   selectedProvider: ZCodeProvider;
   /** 当前模型供应商选中键（native/custom/ghost） */
@@ -261,7 +259,6 @@ export interface ZCodeSessionStoreState {
     options?: {
       projectId?: string | null;
       taskGroupId?: string | null;
-      createSource?: SessionCreateSource;
     },
   ) => void;
   bindRuntimeProvider: (
@@ -526,7 +523,6 @@ export function createDefaultWorkspaceState(
     taskConfigOptionsStatusByTaskId: {},
     taskUnreadByTaskId: {},
     optimisticTaskListByTaskId: {},
-    draftCreateSource: "session",
     selectedProvider,
     selectedSupplierKey: buildNativeSupplierKey(selectedProvider),
     isGhostSupplier: false,

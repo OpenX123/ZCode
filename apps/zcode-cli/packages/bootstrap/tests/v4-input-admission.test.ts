@@ -4,7 +4,6 @@ import {
   isConversationInputAdmissionCommand,
   resolveInputCommandForAdmission,
 } from "../src/zcode-protocol/v4-bridge.js";
-import { inputIntentMetadata } from "../src/zcode-protocol-v4/commands/input-intent.js";
 
 function envelope(type: CommandEnvelope["type"], payload: unknown): CommandEnvelope {
   return {
@@ -35,41 +34,6 @@ describe("v4 input admission canonical intent", () => {
       text: "/compact",
       attachments: [],
     });
-  });
-
-  it("sendText admission 保留 Highspeed message metadata", () => {
-    const highspeed = {
-      schemaVersion: 1 as const,
-      cardId: "hsc-1",
-      taskId: "s-parent",
-      provider: "zai",
-      model: "glm-5",
-      issuedAt: 1_000,
-      expiresAt: 10_000,
-    };
-
-    expect(
-      resolveInputCommandForAdmission(
-        envelope("sendText", { text: "accelerate", highspeedMeta: highspeed }),
-        "s-parent",
-        vi.fn(),
-      ),
-    ).toEqual({
-      kind: "sendText",
-      text: "accelerate",
-      attachments: [],
-      highspeed,
-    });
-
-    expect(
-      inputIntentMetadata(
-        {
-          ...envelope("sendText", { text: "accelerate", highspeedMeta: highspeed }),
-          __v4Admission: { admissionSeq: 1, admittedAt: 1, queueItemId: "queue-highspeed" },
-        } as unknown as CommandEnvelope,
-        { requestedDelivery: "startNow", text: "accelerate" },
-      ).highspeed,
-    ).toEqual(highspeed);
   });
 
   it("retry 以新 commandId admission，但保留 canonical kind/delivery/attachments/provenance", () => {

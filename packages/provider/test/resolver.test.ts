@@ -13,14 +13,8 @@ import {
   createRegistryModelConfig,
   createRegistryProviderConfig,
   parsePersonalProviderConfigMap,
-  parseProviderConfigMap,
-  ZhipuAccountAccessConfig,
-  resolveAccountProviderConfigs,
 } from "../src/index.js";
-import {
-  createAccountProviderConfig,
-  createApiKeyProviderConfig,
-} from "./provider-config-fixtures.js";
+import { createApiKeyProviderConfig } from "./provider-config-fixtures.js";
 
 function completeModelConfig(
   patch: Partial<ConstructorParameters<typeof ModelPropertiesConfig>[0]> = {},
@@ -57,92 +51,6 @@ function completeModelConfig(
 
 describe("ProviderConfigResolver", () => {
   it.each([
-    [true, true, true, true],
-    [false, true, true, true],
-    [false, false, true, false],
-    [false, true, false, false],
-    [true, false, true, false],
-    [true, true, false, false],
-  ])(
-    "账号旧 enabled=%s 不再禁用，但 entitled=%s current=%s 仍控制执行资格",
-    (enabled, entitled, current, executable) => {
-      const providers = new ProviderConfigMap([
-        [
-          "account",
-          createAccountProviderConfig({
-            apiFormat: "anthropic-messages",
-            baseURL: "https://example.com",
-            models: ["m"],
-          }),
-        ],
-      ]);
-      const personal = new ProviderConfigMap([
-        { providerId: "account", enabled, config: new ProviderConfig({}) },
-      ]);
-      const result = new ProviderConfigResolver().resolve({
-        zcodeBuiltinProviders: providers,
-        personalProviders: parseProviderConfigMap(personal.toJSON()),
-        accountProviders: new ProviderConfigMap([
-          ["account", new ProviderConfig({ access: new ZhipuAccountAccessConfig({ entitled }) })],
-        ]),
-        accountStates: {
-          account: { availability: entitled ? "available" : "unavailable", entitled, current },
-        },
-        personalModels: ModelConfigRules.empty(),
-        zcodeBuiltinModelRules: new ModelConfigRules([
-          { type: "model", modelMatch: ".*", config: completeModelConfig() },
-        ]),
-      });
-      expect(result.resolvedProviders[0]).toMatchObject({
-        enabled: true,
-        models: [{ enabled: true, executable }],
-      });
-      expect(result.registryProviders.map((p) => p.providerId)).toEqual(
-        executable ? ["account"] : [],
-      );
-    },
-  );
-  it.each(["zai", "bigmodel"] as const)(
-    "%s 所有账号模式忽略旧总禁用，仍尊重模型禁用",
-    (accountType) => {
-      for (const mode of [
-        "start-plan",
-        "individual-coding-plan",
-        "team-coding-plan",
-        "off-peak",
-      ] as const) {
-        const account = createAccountProviderConfig({
-          accountType,
-          mode,
-          entitled: true,
-          apiFormat: "anthropic-messages",
-          baseURL: "https://example.com",
-          models: ["m"],
-        });
-        const result = new ProviderConfigResolver().resolve({
-          zcodeBuiltinProviders: new ProviderConfigMap([["account", account]]),
-          personalProviders: new ProviderConfigMap([
-            { providerId: "account", enabled: false, config: new ProviderConfig({}) },
-          ]),
-          accountProviders: ProviderConfigMap.empty(),
-          personalModels: ModelConfigRules.empty(),
-          zcodeBuiltinModelRules: new ModelConfigRules([
-            {
-              type: "model",
-              modelMatch: ".*",
-              config: completeModelConfig().overlay(new ModelConfig({ enabled: false })),
-            },
-          ]),
-        });
-        expect(result.resolvedProviders[0]).toMatchObject({
-          enabled: true,
-          models: [{ enabled: false, executable: false }],
-        });
-        expect(result.registryProviders).toEqual([]);
-      }
-    },
-  );
-  it.each([
     [undefined, true, true, true],
     [false, true, true, false],
     [true, false, true, false],
@@ -158,7 +66,7 @@ describe("ProviderConfigResolver", () => {
       });
       const result = new ProviderConfigResolver().resolve({
         zcodeBuiltinProviders: ProviderConfigMap.empty(),
-        accountProviders: ProviderConfigMap.empty(),
+
         personalProviders: new ProviderConfigMap([{ providerId: "p", enabled, config }]),
         personalModels: ModelConfigRules.empty(),
         zcodeBuiltinModelRules: new ModelConfigRules([
@@ -175,109 +83,32 @@ describe("ProviderConfigResolver", () => {
       expect(result.registryProviders.length > 0).toBe(executable);
     },
   );
-  it("同 endpoint 下 Start 动态成员不串入 Individual/API，同名成员仍按 Provider 隔离", () => {
-    const api = { apiFormat: "anthropic-messages" as const, baseURL: "https://same.example/v1" };
-    const providers = new ProviderConfigMap([
-      ["start", createAccountProviderConfig({ ...api, mode: "start-plan", models: ["stale"] })],
-      [
-        "individual",
-        createAccountProviderConfig({ ...api, models: ["shared", "individual-only"] }),
-      ],
-      [
-        "api",
-        createApiKeyProviderConfig({ ...api, apiKey: "fixture", models: ["shared", "api-only"] }),
-      ],
-    ]);
-    const result = new ProviderConfigResolver().resolve({
-      zcodeBuiltinProviders: providers,
-      personalProviders: ProviderConfigMap.empty(),
-      personalModels: ModelConfigRules.empty(),
-      zcodeBuiltinModelRules: new ModelConfigRules([
-        { type: "model", modelMatch: ".*", config: completeModelConfig() },
-      ]),
-      accountProviders: resolveAccountProviderConfigs({
-        configuredProviders: providers,
-        previousProviders: ProviderConfigMap.empty(),
-        connections: [
-          { providerId: "start", status: "available", models: ["shared", "start-only"] },
-          { providerId: "individual", status: "available" },
-        ],
-      }),
-      accountStates: {
-        start: { availability: "available", entitled: true, current: true },
-        individual: { availability: "available", entitled: true, current: false },
-      },
-    });
-    const members = (id: string) =>
-      result.resolvedProviders.find((p) => p.providerId === id)?.models.map((m) => m.modelId);
-    expect(members("start")).toEqual(["shared", "start-only"]);
-    expect(members("individual")).toEqual(["shared", "individual-only"]);
-    expect(members("api")).toEqual(["shared", "api-only"]);
-    expect(result.registryProviders.map((p) => p.providerId)).toEqual(["start", "api"]);
-  });
-
-  it("未选中账号保留 Settings 配置但不进入 Registry，API 与隐藏闲时不使用 current", () => {
-    const base = {
-      group: "bigmodel-family" as const,
-      builtinModelIds: ["m"],
-      api: new ProviderApiConfig({ type: "anthropic-messages", baseUrl: "https://example.com" }),
+  it("同 endpoint 的普通 API Provider 成员按身份隔离", () => {
+    const api = {
+      apiFormat: "anthropic-messages" as const,
+      baseURL: "https://same.example/v1",
+      apiKey: "test-only",
     };
     const result = new ProviderConfigResolver().resolve({
       zcodeBuiltinProviders: new ProviderConfigMap([
-        [
-          "account",
-          new ProviderConfig({
-            ...base,
-            access: new ZhipuAccountAccessConfig({
-              accountType: "bigmodel",
-              mode: "individual-coding-plan",
-            }),
-          }),
-        ],
-        [
-          "idle",
-          new ProviderConfig({
-            ...base,
-            visibility: "hidden",
-            access: new ZhipuAccountAccessConfig({ accountType: "bigmodel", mode: "off-peak" }),
-          }),
-        ],
-        [
-          "api",
-          new ProviderConfig({
-            ...base,
-            group: "standard-personal",
-            access: new ApiKeyAccessConfig({ apiKey: "key" }),
-          }),
-        ],
+        ["first", createApiKeyProviderConfig({ ...api, models: ["shared", "first-only"] })],
+        ["second", createApiKeyProviderConfig({ ...api, models: ["shared", "second-only"] })],
       ]),
       personalProviders: ProviderConfigMap.empty(),
       personalModels: ModelConfigRules.empty(),
       zcodeBuiltinModelRules: new ModelConfigRules([
         { type: "model", modelMatch: ".*", config: completeModelConfig() },
       ]),
-      accountProviders: new ProviderConfigMap(
-        ["account", "idle"].map((id) => [
-          id,
-          new ProviderConfig({ access: new ZhipuAccountAccessConfig({ entitled: true }) }),
-        ]),
-      ),
-      accountStates: {
-        account: { availability: "available", entitled: true, current: false },
-        idle: { availability: "available", entitled: true },
-      },
     });
     expect(
-      result.resolvedProviders.find((provider) => provider.providerId === "account")?.config.access
-        ?.entitled,
-    ).toBe(true);
-    expect(result.registryProviders.map((provider) => provider.providerId)).toEqual([
-      "idle",
-      "api",
+      result.registryProviders.map((provider) => [
+        provider.providerId,
+        provider.models.map((model) => model.modelId),
+      ]),
+    ).toEqual([
+      ["first", ["shared", "first-only"]],
+      ["second", ["shared", "second-only"]],
     ]);
-    expect(
-      result.resolvedProviders.find((provider) => provider.providerId === "idle")?.models[0],
-    ).toMatchObject({ executable: true, selectable: false });
   });
   it("Registry 完整类型只由受校验入口创建", () => {
     const provider = createRegistryProviderConfig(new ProviderConfig({}), ["providers", "bad"]);
@@ -329,7 +160,6 @@ describe("ProviderConfigResolver", () => {
           }),
         },
       ]),
-      accountProviders: ProviderConfigMap.empty(),
     });
 
     const candidate = result.resolvedProviders[0]?.models[0];
@@ -376,7 +206,6 @@ describe("ProviderConfigResolver", () => {
         { type: "model", modelMatch: ".*", config: completeModelConfig() },
       ]),
       personalModels: ModelConfigRules.empty(),
-      accountProviders: ProviderConfigMap.empty(),
     });
 
     expect(result.registryProviders.map((provider) => provider.providerId)).toEqual(["valid"]);
@@ -401,7 +230,6 @@ describe("ProviderConfigResolver", () => {
         { type: "model", modelMatch: ".*", config: completeModelConfig() },
       ]),
       personalModels: ModelConfigRules.empty(),
-      accountProviders: ProviderConfigMap.empty(),
     });
 
     expect(result.registryProviders).toEqual([]);
@@ -440,7 +268,6 @@ describe("ProviderConfigResolver", () => {
         { type: "model", modelMatch: "disabled", config: new ModelConfig({ enabled: false }) },
       ]),
       personalModels: ModelConfigRules.empty(),
-      accountProviders: ProviderConfigMap.empty(),
     });
 
     expect(result.registryProviders[0]?.models.map((model) => model.modelId)).toEqual(["enabled"]);
@@ -468,7 +295,6 @@ describe("ProviderConfigResolver", () => {
         { type: "model", modelMatch: "model-a", config: modelConfig },
       ]),
       personalModels: ModelConfigRules.empty(),
-      accountProviders: ProviderConfigMap.empty(),
     });
 
     expect(result.registryProviders[0]?.config).toBe(providerConfig);
@@ -521,7 +347,6 @@ describe("ProviderConfigResolver", () => {
         },
       ]),
       personalModels: ModelConfigRules.empty(),
-      accountProviders: ProviderConfigMap.empty(),
     });
 
     expect(result.registryProviders[0]?.models[0]?.modelId).toBe("glm-5");
@@ -550,7 +375,7 @@ describe("ProviderConfigResolver", () => {
           }),
         ],
       ]),
-      accountProviders: ProviderConfigMap.empty(),
+
       personalProviders: ProviderConfigMap.empty(),
       zcodeBuiltinModelRules: new ModelConfigRules([
         { type: "model", modelMatch: ".*", config: completeModelConfig() },
@@ -637,7 +462,6 @@ describe("ProviderConfigResolver", () => {
         },
       ]),
       personalModels: ModelConfigRules.empty(),
-      accountProviders: ProviderConfigMap.empty(),
     });
 
     expect(result.registryProviders[0]?.models[0]?.config.optionSpecs.reasoningLevel?.map).toBe(
@@ -646,126 +470,6 @@ describe("ProviderConfigResolver", () => {
     expect(result.registryProviders[1]?.models[0]?.config.optionSpecs.reasoningLevel?.map).toBe(
       "{'reasoning_effort': reasoningLevel}",
     );
-  });
-
-  it("按 Built-in -> Account -> Personal 叠加 Provider，并让 Personal 最终覆盖账号模型成员", () => {
-    const resolver = new ProviderConfigResolver();
-    const providerApi = new ProviderApiConfig({
-      type: "anthropic-messages",
-      baseUrl: "https://api.example.com",
-    });
-    const providerBase = {
-      group: "zai-family" as const,
-      access: new ZhipuAccountAccessConfig({
-        accountType: "zai",
-        mode: "individual-coding-plan",
-      }),
-      api: providerApi,
-      builtinModelIds: ["m1", "m2"],
-    };
-    const result = resolver.resolve({
-      zcodeBuiltinProviders: new ProviderConfigMap([
-        ["account", new ProviderConfig(providerBase)],
-        [
-          "api",
-          new ProviderConfig({
-            ...providerBase,
-            group: "standard-personal",
-            access: new ApiKeyAccessConfig({ apiKey: "test-key" }),
-          }),
-        ],
-      ]),
-      personalProviders: new ProviderConfigMap([
-        [
-          "account",
-          new ProviderConfig({
-            personalModelIds: ["m1"],
-          }),
-        ],
-      ]),
-      zcodeBuiltinModelRules: new ModelConfigRules([
-        { type: "model", modelMatch: ".*", config: completeModelConfig() },
-      ]),
-      personalModels: ModelConfigRules.empty(),
-      accountProviders: new ProviderConfigMap([
-        [
-          "account",
-          new ProviderConfig({
-            access: new ZhipuAccountAccessConfig({
-              entitled: true,
-            }),
-            builtinModelIds: ["m2"],
-          }),
-        ],
-      ]),
-    });
-
-    expect(result.registryProviders.map((provider) => provider.providerId)).toEqual([
-      "account",
-      "api",
-    ]);
-    expect(result.registryProviders[0]?.models.map((model) => model.modelId)).toEqual(["m2", "m1"]);
-    expect(result.registryProviders[0]?.config).toMatchObject({
-      access: { type: "zhipu-account" },
-      builtinModelIds: ["m2"],
-      personalModelIds: ["m1"],
-    });
-    expect(result.registryProviders[1]?.models.map((model) => model.modelId)).toEqual(["m1", "m2"]);
-  });
-
-  it("API Provider 必须取得 Personal API Key，Account Provider 的鉴权不进入静态配置", () => {
-    const resolver = new ProviderConfigResolver();
-    const providerBase = {
-      group: "standard-personal" as const,
-      api: new ProviderApiConfig({
-        type: "anthropic-messages",
-        baseUrl: "https://api.example.com",
-      }),
-      builtinModelIds: ["m1"],
-    };
-    const result = resolver.resolve({
-      zcodeBuiltinProviders: new ProviderConfigMap([
-        ["missing-key", new ProviderConfig(providerBase)],
-        ["configured", new ProviderConfig(providerBase)],
-        ["account", new ProviderConfig(providerBase)],
-      ]),
-      personalProviders: new ProviderConfigMap([
-        [
-          "configured",
-          new ProviderConfig({
-            access: new ApiKeyAccessConfig({ apiKey: "personal-key" }),
-          }),
-        ],
-      ]),
-      zcodeBuiltinModelRules: new ModelConfigRules([
-        { type: "model", modelMatch: ".*", config: completeModelConfig() },
-      ]),
-      personalModels: ModelConfigRules.empty(),
-      accountProviders: new ProviderConfigMap([
-        [
-          "account",
-          new ProviderConfig({
-            group: "standard-personal",
-            access: new ZhipuAccountAccessConfig({
-              accountType: "zai",
-              mode: "individual-coding-plan",
-              entitled: true,
-            }),
-            builtinModelIds: ["m1"],
-          }),
-        ],
-      ]),
-    });
-
-    expect(result.registryProviders.map((provider) => provider.providerId)).toEqual([
-      "configured",
-      "account",
-    ]);
-    expect(result.issues).toContainEqual({
-      code: "required-field-missing",
-      path: ["providers", "missing-key", "access"],
-      message: "缺少必填配置 providers.missing-key.access",
-    });
   });
 
   it("只把完整 Provider 与启用 Model 发布到 Registry，并保留解析问题", () => {
@@ -791,7 +495,6 @@ describe("ProviderConfigResolver", () => {
         { type: "model", modelMatch: "ok", config: completeModelConfig() },
       ]),
       personalModels: ModelConfigRules.empty(),
-      accountProviders: ProviderConfigMap.empty(),
     });
 
     expect(result.registryProviders.map((provider) => provider.providerId)).toEqual(["valid"]);

@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildCliZCodeSourceHeaders,
-  createRuntimeAiSdkModelExecutionConfig,
-} from "../src/model-config.js";
+import { createRuntimeAiSdkModelExecutionConfig } from "../src/model-config.js";
 import { createModelAdapter, type CreateModelAdapterOptions } from "../src/model-factory.js";
 
 describe("createModelAdapter", () => {
@@ -14,7 +11,7 @@ describe("createModelAdapter", () => {
 });
 
 describe("createRuntimeAiSdkModelExecutionConfig", () => {
-  it("装配来源 Header、网络和路由基础设施", () => {
+  it("保留网络与路由，不注入官方来源 Header", () => {
     const endpointRoutingPort = {
       async resolve(url: string) {
         return { routed: false, url };
@@ -29,15 +26,10 @@ describe("createRuntimeAiSdkModelExecutionConfig", () => {
           httpProxy: "http://proxy.example.com",
           noProxy: "localhost",
         },
-        sourceTitle: "electron",
       },
     );
+    expect(config).not.toHaveProperty("defaultHeaders");
     expect(config).toMatchObject({
-      defaultHeaders: {
-        "User-Agent": "ZCode/3.9.0",
-        "X-ZCode-App-Version": "3.9.0",
-        "X-Title": "Z Code@electron",
-      },
       endpointRoutingPort,
       network: {
         caCertFile: "/tmp/test-ca.pem",
@@ -51,20 +43,5 @@ describe("createRuntimeAiSdkModelExecutionConfig", () => {
     expect(createRuntimeAiSdkModelExecutionConfig({}, { network: {} })).not.toHaveProperty(
       "network",
     );
-  });
-});
-
-describe("buildCliZCodeSourceHeaders", () => {
-  it("生成运行时来源 Header，不根据模型或 Provider 推断", () => {
-    expect(
-      buildCliZCodeSourceHeaders(
-        { ZCODE_APP_VERSION: "3.9.0", ZCODE_ENV: "production" },
-        { sourceTitle: "cli" },
-      ),
-    ).toMatchObject({
-      "User-Agent": "ZCode/3.9.0",
-      "X-Title": "Z Code@cli",
-      "X-ZCode-App-Version": "3.9.0",
-    });
   });
 });

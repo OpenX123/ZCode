@@ -470,19 +470,15 @@ function stageSharpForNodeReplPlugin() {
   }
 }
 
-function stageKoffiForCuaPlugin() {
-  const cuaPluginStagedDir = resolve(glmDir, "packages", "zcode-cua-plugin");
-  if (!existsSync(resolve(cuaPluginStagedDir, ".zcode-plugin", "plugin.json"))) {
-    console.log("[prepare:agent-bundle] zcode-cua-plugin not staged, skip koffi staging");
-    return;
-  }
+function stageKoffiForAgent() {
+  if (platform !== "win32") return;
   stageKoffiIntoBundledAgents({
     koffiPackageRoot: adaptersRoot,
-    glmDir: cuaPluginStagedDir,
+    glmDir,
     targetPlatform: { os: platform, arch },
   });
   console.log(
-    `[prepare:agent-bundle] staged koffi into ${resolve(cuaPluginStagedDir, "node_modules")} (${platform}-${arch})`,
+    `[prepare:agent-bundle] staged koffi into ${resolve(glmDir, "node_modules")} (${platform}-${arch})`,
   );
 }
 
@@ -497,5 +493,5 @@ buildOfficialPluginRuntimes();
 stageBundle();
 stageOfficialPlugins();
 stageBundledSkillPack();
-stageKoffiForCuaPlugin();
+stageKoffiForAgent();
 stageSharpForNodeReplPlugin();

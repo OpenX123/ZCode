@@ -3515,11 +3515,6 @@ describe("ZCodeProtocolAgentServer", () => {
 
     await expect(
       runtimeHeadersPort?.refreshBeforeModelRequest({
-        accountAccess: {
-          type: "zhipu-account",
-          family: "zai",
-          mode: "start-plan",
-        },
         providerId: BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan,
         modelId: "glm-5.1",
         reason: "model-request",
@@ -3530,9 +3525,7 @@ describe("ZCodeProtocolAgentServer", () => {
     expect(requestClient).toHaveBeenCalledWith(
       zcodeProtocolMethods.interactionRequestProviderRuntimeHeaders,
       expect.objectContaining({
-        accountAccess: expect.objectContaining({
-          mode: "start-plan",
-        }),
+        modelSelection: expect.objectContaining({ modelId: "glm-5.1" }),
       }),
       expect.anything(),
       expect.anything(),
@@ -4837,52 +4830,6 @@ describe("ZCodeProtocolAgentServer", () => {
     expect(presentation.mode).toBe("build");
     expect("model" in presentation).toBe(false);
     expect("settings" in presentation).toBe(false);
-  });
-
-  it("通过独立协议同步 Account Config，不再从 Workspace Snapshot 反向投影", async () => {
-    const syncAccountProviderConfig = vi.fn(async () => true);
-    const server = new ZCodeProtocolAgentServer({
-      createZCodeApp: () => createFakeApp(),
-      cwd: workspace.workspacePath,
-      syncAccountProviderConfig,
-    });
-
-    const result = await requestResult(server, {
-      id: 1,
-      method: zcodeProtocolMethods.providerUpdateAccountConfig,
-      params: {
-        revision: "account-1",
-        basedOnZCodeBuiltinRevision: "zcode-builtin:1",
-        states: {
-          "account:zai-individual-coding-plan": {
-            availability: "available",
-            entitled: true,
-            current: false,
-          },
-        },
-        providers: {
-          "account:zai-individual-coding-plan": {
-            access: { type: "zhipu-account", entitled: true },
-            builtinModelIds: ["GLM-5.2"],
-          },
-        },
-      },
-    });
-
-    expect(result).toEqual({
-      receivedRevision: "account-1",
-      providerCount: 1,
-      status: "received",
-    });
-    expect(syncAccountProviderConfig).toHaveBeenCalledTimes(1);
-    const snapshot = syncAccountProviderConfig.mock.calls[0]?.[0];
-    expect(snapshot?.revision).toBe("account-1");
-    expect(snapshot?.basedOnZCodeBuiltinRevision).toBe("zcode-builtin:1");
-    expect(snapshot?.states?.["account:zai-individual-coding-plan"].current).toBe(false);
-    expect(snapshot?.providers.get("account:zai-individual-coding-plan")?.toJSON()).toEqual({
-      access: { type: "zhipu-account", entitled: true },
-      builtinModelIds: ["GLM-5.2"],
-    });
   });
 
   it("在执行前刷新 Worker 自己的 Provider Registry，不接收 Desktop 快照", async () => {

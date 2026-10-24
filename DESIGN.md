@@ -47,16 +47,9 @@ Avoid:
 
 ## Theme Modes
 
-### Full-page desktop overlays
+### 桌面窗口控件
 
-Login, Coding Plan upgrade, and Rewards surfaces must keep minimize, maximize/restore,
-and close-window controls reachable at the top right on Windows and Linux. Reuse
-`DesktopWindowControls` and the existing platform CSS variants. Keep the controls
-outside scrolling content and above page decoration, with a non-draggable hit area.
-The embedded website's close-page action remains separate from close-window.
-macOS keeps native traffic lights; ordinary Web and mobile Web hide desktop controls.
-Verify all three surfaces in both themes, including narrow windows, maximize/restore,
-minimize, and close-page versus close-window behavior.
+Windows 和 Linux 的桌面界面复用 `DesktopWindowControls` 与既有平台样式，保持右上角最小化、最大化/还原及关闭窗口可操作。控件放在滚动内容外，点击区域不可拖动。macOS 使用原生红绿灯；普通 Web 隐藏桌面控件。
 
 User-facing theme choices are:
 
@@ -75,9 +68,7 @@ Default light and dark CSS variables still exist as fallback foundations, but ne
 - **Icon Blue**: `--color-icon-blue`
   Use for browser-style links and blue icon emphasis that follows the Figma `icon/blue` role. Keep file-type icons on their own descriptor colors.
 - **Icon Purple**: `--color-icon-purple`
-  Use for Highspeed duration emphasis and other UI explicitly mapped to the Figma `icon/purple` role. Do not reuse idle-task or terminal colors directly.
-- **Highspeed Composer Material**: `--color-highspeed-composer-border-idle` with `--color-highspeed-glow-*`
-  Use only for an active Highspeed composer shell. Its stable surface and particle layer are defined by the dedicated Highspeed activation stylesheet and must not leak into ordinary inputs.
+  用于设计稿明确指定的紫色图标强调，不借用终端颜色。
 - **Accent Surface**: `--color-accent`
   Use for weak emphasis blocks, selected highlights, and low-intensity branded surfaces.
 - **Background**: `--color-background`
@@ -200,31 +191,31 @@ feature-scoped token family:
 
 ### Specialized color tokens
 
-| Token | Purpose |
-| --- | --- |
-| `--color-markdown-inline-code` | Markdown 行内代码背景，沿用 tag / label 胶囊层级 |
-| `--color-popover-header` | Popover header |
-| `--color-tab` | Tab 默认背景 |
-| `--color-tab-active` | 当前激活 tab |
-| `--color-tab-border` | Tab 分隔线 |
-| `--color-feedback-privacy-hint` | 反馈截图隐私提醒文字及叹号图标；独立一行，使用辅助说明字号 |
-| `--color-git-none` | Git 无变更状态，沿用普通文件名颜色 |
-| `--color-git-modified` | Git modified，表示已跟踪文件有未提交修改 |
-| `--color-git-added` | Git added，表示新增文件已进入工作树 / 暂存区 |
-| `--color-git-deleted` | Git deleted，表示已跟踪文件被删除 |
-| `--color-git-renamed` | Git renamed，表示已跟踪文件移动或重命名 |
-| `--color-git-untracked` | Git untracked，表示 Git 尚未跟踪的新文件 |
-| `--color-git-ignored` | Git ignored，继承弱化文本层级 |
-| `--color-git-descendant` | Git descendant，表示目录后代包含变更 |
-| `--color-file-node` | 文件 mention node 背景 |
-| `--color-file-node-hover` | 文件 mention node hover 背景 |
-| `--color-file-node-foreground` | 文件 mention node 文字 / 图标 |
-| `--color-skill-node` | Skill mention node 背景 |
-| `--color-skill-node-hover` | Skill mention node hover 背景 |
-| `--color-skill-node-foreground` | Skill mention node 文字 / 图标 |
-| `--color-command-node` | Command mention node 背景 |
-| `--color-command-node-hover` | Command mention node hover 背景 |
-| `--color-command-node-foreground` | Command mention node 文字 / 图标 |
+| Token                             | Purpose                                                    |
+| --------------------------------- | ---------------------------------------------------------- |
+| `--color-markdown-inline-code`    | Markdown 行内代码背景，沿用 tag / label 胶囊层级           |
+| `--color-popover-header`          | Popover header                                             |
+| `--color-tab`                     | Tab 默认背景                                               |
+| `--color-tab-active`              | 当前激活 tab                                               |
+| `--color-tab-border`              | Tab 分隔线                                                 |
+| `--color-feedback-privacy-hint`   | 反馈截图隐私提醒文字及叹号图标；独立一行，使用辅助说明字号 |
+| `--color-git-none`                | Git 无变更状态，沿用普通文件名颜色                         |
+| `--color-git-modified`            | Git modified，表示已跟踪文件有未提交修改                   |
+| `--color-git-added`               | Git added，表示新增文件已进入工作树 / 暂存区               |
+| `--color-git-deleted`             | Git deleted，表示已跟踪文件被删除                          |
+| `--color-git-renamed`             | Git renamed，表示已跟踪文件移动或重命名                    |
+| `--color-git-untracked`           | Git untracked，表示 Git 尚未跟踪的新文件                   |
+| `--color-git-ignored`             | Git ignored，继承弱化文本层级                              |
+| `--color-git-descendant`          | Git descendant，表示目录后代包含变更                       |
+| `--color-file-node`               | 文件 mention node 背景                                     |
+| `--color-file-node-hover`         | 文件 mention node hover 背景                               |
+| `--color-file-node-foreground`    | 文件 mention node 文字 / 图标                              |
+| `--color-skill-node`              | Skill mention node 背景                                    |
+| `--color-skill-node-hover`        | Skill mention node hover 背景                              |
+| `--color-skill-node-foreground`   | Skill mention node 文字 / 图标                             |
+| `--color-command-node`            | Command mention node 背景                                  |
+| `--color-command-node-hover`      | Command mention node hover 背景                            |
+| `--color-command-node-foreground` | Command mention node 文字 / 图标                           |
 
 Git file statuses must use `text-git-*` / `bg-git-*`, rather than borrowing diff or warning tokens.
 Mention tokens belong to prompt-editor and UserPrompt mention nodes; their background, hover,
@@ -577,7 +568,7 @@ Depth rules:
 
 ## Workspace layout
 
-Desktop and wide Web workspace content uses independent conversation, bottom terminal, and Side Pane frames. The conversation frame contains WorkspaceHeader and conversation; the optional terminal has its own frame below it, and Side Pane owns its tab bar. Frames use their own background and border, with 4px resizable gaps matching the macOS outer inset. Resize handles keep a transparent 4px hit area and show a 2px tertiary foreground (`foreground-subtlest/50`) line on hover, focus or drag. The indicator extends along the panel edge, inset by the panel radius at both ends, with rounded ends and no mask. Layout frames do not count toward content radius levels. Mobile remote control retains its single-column and drawer presentation. See [workspace independent panels](docs/design/workspace-independent-panels.md) for platform chrome and persistence boundaries.
+Desktop and wide Web workspace content uses independent conversation, bottom terminal, and Side Pane frames. The conversation frame contains WorkspaceHeader and conversation; the optional terminal has its own frame below it, and Side Pane owns its tab bar. Frames use their own background and border, with 4px resizable gaps matching the macOS outer inset. Resize handles keep a transparent 4px hit area and show a 2px tertiary foreground (`foreground-subtlest/50`) line on hover, focus or drag. The indicator extends along the panel edge, inset by the panel radius at both ends, with rounded ends and no mask. Layout frames do not count toward content radius levels. See [workspace independent panels](docs/design/workspace-independent-panels.md) for platform chrome and persistence boundaries.
 
 ## Responsive Behavior
 
@@ -593,13 +584,13 @@ Rules:
 
 ### Breakpoint roles
 
-| Breakpoint | Preferred use |
-| --- | --- |
-| `sm:` | Dialog width, button arrangement, small-screen layout corrections |
-| `md:` | Grid columns and form layout expansion |
-| `lg:` | Desktop toolbar visibility and secondary information density |
-| `xl:` | Chat and complex content arrangements |
-| `2xl:` | Wide-screen reading-width caps, not ordinary page behavior |
+| Breakpoint | Preferred use                                                     |
+| ---------- | ----------------------------------------------------------------- |
+| `sm:`      | Dialog width, button arrangement, small-screen layout corrections |
+| `md:`      | Grid columns and form layout expansion                            |
+| `lg:`      | Desktop toolbar visibility and secondary information density      |
+| `xl:`      | Chat and complex content arrangements                             |
+| `2xl:`     | Wide-screen reading-width caps, not ordinary page behavior        |
 
 Start with the unprefixed layout, then add the fewest breakpoints needed. Prefer changing
 layout, `max-width`, and visibility to repeatedly switching fixed dimensions or semantic

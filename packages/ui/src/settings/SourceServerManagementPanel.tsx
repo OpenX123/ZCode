@@ -9,8 +9,6 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog.js";
-import { useOptionalPlatform } from "@/hooks/usePlatform.js";
-import { DesktopCommandIds } from "@zcode/shared";
 /* eslint-disable max-lines -- Source/Profile/迁移三类管理操作共享同一 Host 快照和错误状态。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -187,7 +185,6 @@ export function SourceServerManagementPanel({
   const background = useRemoteConnectionProgress();
   const { intl, locale } = useZCodeIntl();
   const confirmDialog = useConfirmDialog();
-  const platform = useOptionalPlatform();
   const deferredUpdates = useDeferredSourceServerUpdates();
   const [startupAutoReconnect, setStartupAutoReconnect] = useState(
     settings?.remoteStartupAutoReconnectEnabled ?? true,
@@ -540,11 +537,6 @@ export function SourceServerManagementPanel({
     )
       return;
     switch (presentation.primaryAction) {
-      case "update-desktop":
-        void run("desktop-update", async () => {
-          await platform?.executeDesktopCommand(DesktopCommandIds.CheckForUpdates);
-        });
-        return;
       case "update-server":
         void updateProfile(profile);
         return;
@@ -640,7 +632,9 @@ export function SourceServerManagementPanel({
               )}
             </span>
           ) : null}
-          {!isOnline && !identityChangePending ? (
+          {!isOnline &&
+          !identityChangePending &&
+          presentation.primaryAction !== "update-desktop" ? (
             <Button
               type="button"
               variant="outline"
@@ -835,9 +829,7 @@ export function SourceServerManagementPanel({
           const actionBusy =
             busyOperations.has(`disconnect:${server.sourceServerId}`) ||
             busyOperations.has(`connect:${actionProfile?.profileId}`) ||
-            busyOperations.has(`update:${actionProfile?.profileId}`) ||
-            (busyOperations.has("desktop-update") &&
-              presentation.primaryAction === "update-desktop");
+            busyOperations.has(`update:${actionProfile?.profileId}`);
           const preferredConnectionErrorText = presentation.reason
             ? intl.formatMessage({ id: presentation.reason.titleId }, presentation.reason.values)
             : null;
@@ -1092,6 +1084,10 @@ export function SourceServerManagementPanel({
                 <div className="order-1 ml-auto flex flex-wrap items-center gap-1">
                   {presentation.primaryAction === "confirm-identity" && identityChangeProfile ? (
                     renderIdentityConfirmation(identityChangeProfile, "sm")
+                  ) : presentation.primaryAction === "update-desktop" ? (
+                    <p className="text-ui-xs text-remote-foreground-muted">
+                      {intl.formatMessage({ id: "remote.desktop.manualInstall" })}
+                    </p>
                   ) : presentation.primaryAction !== "none" ? (
                     <Button
                       type="button"
@@ -1300,33 +1296,23 @@ export function SourceServerManagementPanel({
                     </Button>
                   ) : null}
                   {serverState.state !== "updating" &&
+                  serverState.upgradeTarget !== "controller" &&
                   presentation.primaryAction !== "update-server" &&
                   presentation.primaryAction !== "update-desktop" ? (
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      disabled={deviceBusy || busyOperations.has("desktop-update")}
+                      disabled={deviceBusy}
                       onClick={() => {
                         const profile = serverProfiles.find(
                           (candidate) => candidate.profileId === serverState.profileId,
                         );
-                        if (serverState.upgradeTarget === "controller")
-                          void run("desktop-update", async () => {
-                            await platform?.executeDesktopCommand(
-                              DesktopCommandIds.CheckForUpdates,
-                            );
-                          });
-                        else if (profile) void updateProfile(profile);
+                        if (profile) void updateProfile(profile);
                       }}
                     >
                       {intl.formatMessage({
-                        id:
-                          serverState.upgradeTarget === "controller"
-                            ? "remote.action.update-desktop"
-                            : updateFailed
-                              ? "remote.action.retry"
-                              : "remote.action.update-server",
+                        id: updateFailed ? "remote.action.retry" : "remote.action.update-server",
                       })}
                     </Button>
                   ) : null}

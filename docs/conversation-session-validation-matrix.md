@@ -1,5 +1,7 @@
 # Conversation Session Validation Matrix
 
+> 2026-10-24 独立桌面版本：SHARE / 云分享发布与匿名页、官方账号、Start/Coding/Team Plan、奖励营销、官方更新与手机云远控相关条目均已退役。下文此类内容仅为历史验收记录，不是当前产品要求；已删除的 spec / fixture 路径不再提供执行入口。旧导入副本的本地只读展示和普通工具/工作流断言继续保留。当前范围与 H01–H07 以独立桌面规格为准。
+
 目标：把会话区 MVP case 变成可执行验证任务。case catalog 负责描述“产品应该怎样”，本文件负责描述“怎么证明它真的这样”。
 
 协议来源：
@@ -274,6 +276,6 @@ Catalog：G01、G10
 3. 最后接自动 compact，因为它需要 mock provider 支持阈值触发、重试和时间线顺序。
 4. MVP 稳定后，再把 case catalog 中其余 accepted case 批量映射到同一套 probe 模板。
 
-## Todo156 Start 后续修复
+## Todo156 Start 后续修复（已退役：2026-10-24）
 
 验收边界使用 [Todo156 SF-01～SF-19](working-memory/provider-refactor/steps/todo-156-start-plan-followup-final-decisions.md) 的最终决策。`conversation-session-start-plan-independent` 待人工复核用例补充 SF-01/02/08/10/13：付费连接下 Start 圆环、团队下拉选中、套餐名称、带参数副屏首条的关闭／确认／不了，断言实际模型请求和主输入框草稿不变。其余缓存状态组合由 `startPlanRecommendationFreshness`、`providerFamilyConnectionVisibility` 与状态卡测试覆盖；桌面／手机视口与深浅主题另走浏览器视觉用例。此记录不是 CI 转正或全部 SF 的 E2E 覆盖声明。

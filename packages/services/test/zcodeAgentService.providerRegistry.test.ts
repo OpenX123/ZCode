@@ -3,12 +3,10 @@ import {
   ProviderConfig,
   ProviderConfigMap,
   ZhipuAccountAccessConfig,
-  type AccountProviderConfigSnapshot,
   type ModelSelectionView,
 } from "@zcode/provider";
 import { zcodeProtocolMethods } from "@zcode/shared";
 import { V4_METHODS } from "@zcode/shared/zcode-protocol-v4";
-import { createAccountProviderConfig } from "./providerConfigFixtures.js";
 
 const START_PLAN_PROVIDER_ID = "account:zai-start-plan";
 const BIGMODEL_CODING_PLAN_PROVIDER_ID = "account:bigmodel-individual-coding-plan";
@@ -157,28 +155,6 @@ function createBigModelCodingPlanRegistry(params?: { revision?: string }): Regis
   };
 }
 
-function createAccountProviderConfigChangeSource(initial: AccountProviderConfigSnapshot) {
-  let snapshot = initial;
-  let listener: ((reason: string) => void) | undefined;
-  return {
-    source: {
-      async read() {
-        return snapshot;
-      },
-      onDidChange(callback: (reason: string) => void) {
-        listener = callback;
-        return () => {
-          if (listener === callback) listener = undefined;
-        };
-      },
-    },
-    emit(reason: string, next: AccountProviderConfigSnapshot) {
-      snapshot = next;
-      listener?.(reason);
-    },
-  };
-}
-
 function createModelSelectionChangeSource(initial: ModelSelectionView) {
   let view = initial;
   let listener: ((next: ModelSelectionView) => void) | undefined;
@@ -249,6 +225,7 @@ describe("createZCodeAgentService provider registry", () => {
         const model = (params as { model: { providerId: string; modelId: string } }).model;
         return createSessionSnapshot({ model, thoughtLevel: "high" });
       }
+      if (method === zcodeProtocolMethods.providerRefreshRegistry) return { refreshed: true };
       throw new Error(`Unexpected method ${method}`);
     });
     vi.resetModules();
@@ -340,94 +317,6 @@ describe("createZCodeAgentService provider registry", () => {
     await vi.waitFor(() => expect(getClient).toHaveBeenCalledTimes(1));
     await expect(service.initialize({ workspacePath: "/workspace/app" })).resolves.toMatchObject({
       available: true,
-    });
-    service.disposeAll();
-  });
-
-  it("resolves account provider request auth without a renderer round trip", async () => {
-    let requestListener: ((request: unknown) => void) | undefined;
-    const respond = vi.fn(async () => {});
-    const resolveCurrent = vi.fn(async () => ({ apiKey: "team-runtime-key" }));
-    vi.resetModules();
-    vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
-      ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        async getClient() {
-          return {
-            request: vi.fn(async (method: string) => {
-              if (method === zcodeProtocolMethods.initialize) {
-                return {
-                  available: true,
-                  protocolName: "ZCode Protocol",
-                  protocolVersion: 1,
-                  workspaceKey: "/workspace/app",
-                };
-              }
-              throw new Error(`Unexpected method ${method}`);
-            }),
-            respond,
-            respondError: vi.fn(async () => {}),
-            transportKind: "stdio",
-            onNotification: () => ({ dispose() {} }),
-            onRequest: (listener: (request: unknown) => void) => {
-              requestListener = listener;
-              return { dispose() {} };
-            },
-            onClose: () => ({ dispose() {} }),
-          };
-        }
-        disposeAll() {}
-      },
-    }));
-    const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
-    const service = createZCodeAgentService({
-      accountRequestAuthService: { resolveCurrent },
-      modelSelectionReadinessSource: createModelSelectionChangeSource(
-        createModelSelectionViewFromRegistry(createBigModelCodingPlanRegistry()),
-      ).source,
-    });
-
-    await service.initialize({ workspacePath: "/workspace/app" });
-    requestListener?.({
-      id: "agent-request-team-auth",
-      method: zcodeProtocolMethods.interactionRequestProviderRuntimeHeaders,
-      params: {
-        requestId: "team-auth-1",
-        sessionId: "sess_1",
-        workspace: {
-          workspacePath: "/workspace/app",
-          workspaceKey: "/workspace/app",
-        },
-        modelSelection: {
-          providerId: BIGMODEL_CODING_PLAN_PROVIDER_ID,
-          modelId: "GLM-5.2",
-        },
-        providerId: BIGMODEL_CODING_PLAN_PROVIDER_ID,
-        accountAccess: {
-          type: "zhipu-account",
-          accountType: "bigmodel",
-          mode: "team-coding-plan",
-          entitled: true,
-        },
-        reason: "model-request",
-      },
-    });
-
-    await vi.waitFor(() => {
-      expect(respond).toHaveBeenCalledWith("agent-request-team-auth", {
-        headersApplied: true,
-        requestAuth: { apiKey: "team-runtime-key" },
-      });
-    });
-    expect(resolveCurrent).toHaveBeenCalledWith({
-      providerId: BIGMODEL_CODING_PLAN_PROVIDER_ID,
-      modelId: "GLM-5.2",
-      accountAccess: {
-        type: "zhipu-account",
-        accountType: "bigmodel",
-        mode: "team-coding-plan",
-        entitled: true,
-      },
-      reason: "model-request",
     });
     service.disposeAll();
   });
@@ -552,7 +441,7 @@ describe("createZCodeAgentService provider registry", () => {
         await expect(command).resolves.toMatchObject({ status: "accepted" });
         expect(getView).toHaveBeenCalledTimes(1);
         expect(getClient).toHaveBeenCalledTimes(1);
-        expect(request).toHaveBeenCalledExactlyOnceWith(
+        expect(request).toHaveBeenCalledWith(
           V4_METHODS.command,
           expect.objectContaining({ commandId: "first-input", type: "sendText" }),
           expect.anything(),
@@ -612,6 +501,7 @@ describe("createZCodeAgentService provider registry", () => {
     }> = [];
     const getClient = vi.fn(async () => {
       const request = vi.fn(async (method: string) => {
+        if (method === zcodeProtocolMethods.providerRefreshRegistry) return { refreshed: true };
         throw new Error(`Unexpected method ${method}`);
       });
       const client = {
@@ -661,7 +551,13 @@ describe("createZCodeAgentService provider registry", () => {
     expect(getClient).toHaveBeenCalledWith(
       expect.objectContaining({ workspaceIdentity: secondIdentity }),
     );
-    expect(clients.every((client) => client.request.mock.calls.length === 0)).toBe(true);
+    expect(
+      clients.every((client) =>
+        client.request.mock.calls.every(
+          ([method]) => method === zcodeProtocolMethods.providerRefreshRegistry,
+        ),
+      ),
+    ).toBe(true);
 
     selectionSource.emit(
       createModelSelectionViewFromRegistry({
@@ -760,6 +656,7 @@ describe("createZCodeAgentService provider registry", () => {
           },
         };
       }
+      if (method === zcodeProtocolMethods.providerRefreshRegistry) return { refreshed: true };
       throw new Error(`Unexpected method ${method}`);
     });
     const getClient = vi.fn(async () => ({
@@ -810,219 +707,6 @@ describe("createZCodeAgentService provider registry", () => {
     service.disposeAll();
   });
 
-  it("syncs the current Environment Account Config before remote session/create", async () => {
-    const calls: string[] = [];
-    const request = vi.fn(async (method: string) => {
-      calls.push(method);
-      if (method === zcodeProtocolMethods.providerUpdateAccountConfig) {
-        return {
-          receivedRevision: "account-1",
-          status: "received" as const,
-          providerCount: 1,
-        };
-      }
-      if (method === zcodeProtocolMethods.providerRefreshRegistry) {
-        return { refreshed: true as const };
-      }
-      if (method === zcodeProtocolMethods.sessionCreate) {
-        return createSessionSnapshot({
-          model: { providerId: "e2e-primary", modelId: "deepseek-v4-flash" },
-        });
-      }
-      throw new Error(`Unexpected method ${method}`);
-    });
-    vi.resetModules();
-    vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
-      ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        async getClient() {
-          return {
-            request,
-            transportKind: "stdio",
-            onNotification: () => ({ dispose() {} }),
-            onRequest: () => ({ dispose() {} }),
-            onClose: () => ({ dispose() {} }),
-          };
-        }
-        disposeAll() {}
-      },
-    }));
-    const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
-    const accountSnapshot: AccountProviderConfigSnapshot = {
-      revision: "account-1",
-      basedOnZCodeBuiltinRevision: "zcode-builtin:1",
-      states: {
-        "account:zai-individual-coding-plan": {
-          availability: "available",
-          entitled: true,
-          current: false,
-        },
-      },
-      providers: new ProviderConfigMap([
-        [
-          "account:zai-individual-coding-plan",
-          new ProviderConfig({
-            access: new ZhipuAccountAccessConfig({ entitled: true }),
-            builtinModelIds: ["GLM-5.2"],
-          }),
-        ],
-      ]),
-    };
-    const service = createZCodeAgentService({
-      modelSelectionReadinessSource: createReadyModelSelectionSource(),
-      accountProviderConfigSource: {
-        async read() {
-          return accountSnapshot;
-        },
-        onDidChange() {
-          return () => {};
-        },
-      },
-    });
-
-    await service.createSession({
-      workspacePath: "/workspace/app",
-      workspaceIdentity: "remote:ssh:dev:/workspace/app",
-      model: { providerId: "e2e-primary", modelId: "deepseek-v4-flash" },
-    });
-
-    expect(calls).toEqual([
-      zcodeProtocolMethods.providerUpdateAccountConfig,
-      zcodeProtocolMethods.providerRefreshRegistry,
-      zcodeProtocolMethods.sessionCreate,
-    ]);
-    expect(request).toHaveBeenNthCalledWith(
-      1,
-      zcodeProtocolMethods.providerUpdateAccountConfig,
-      {
-        revision: "account-1",
-        basedOnZCodeBuiltinRevision: "zcode-builtin:1",
-        states: accountSnapshot.states,
-        providers: {
-          "account:zai-individual-coding-plan": {
-            access: {
-              type: "zhipu-account",
-              entitled: true,
-            },
-            builtinModelIds: ["GLM-5.2"],
-          },
-        },
-      },
-      expect.any(Object),
-    );
-    service.disposeAll();
-  });
-
-  it("pushes changed Account Config without rebuilding the Workspace Snapshot", async () => {
-    const accountSource = createAccountProviderConfigChangeSource({
-      revision: "account-1",
-      basedOnZCodeBuiltinRevision: "zcode-builtin:1",
-      providers: new ProviderConfigMap([
-        [
-          "account:zai-individual-coding-plan",
-          createAccountProviderConfig({
-            models: ["GLM-5.2"],
-          }),
-        ],
-      ]),
-    });
-    const request = vi.fn(async (method: string, params?: unknown) => {
-      if (method === zcodeProtocolMethods.providerUpdateAccountConfig) {
-        const revision = (params as { revision: string }).revision;
-        return { receivedRevision: revision, providerCount: 1, status: "received" as const };
-      }
-      if (method === zcodeProtocolMethods.providerRefreshRegistry) {
-        return { refreshed: true as const };
-      }
-      if (method === zcodeProtocolMethods.sessionCreate) {
-        return createSessionSnapshot({
-          model: { providerId: "e2e-primary", modelId: "model-a" },
-        });
-      }
-      throw new Error(`Unexpected method ${method}`);
-    });
-    vi.resetModules();
-    vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
-      ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        async getClient() {
-          return {
-            request,
-            transportKind: "stdio",
-            onNotification: () => ({ dispose() {} }),
-            onRequest: () => ({ dispose() {} }),
-            onClose: () => ({ dispose() {} }),
-          };
-        }
-        disposeAll() {}
-      },
-    }));
-    const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
-    const service = createZCodeAgentService({
-      modelSelectionReadinessSource: createReadyModelSelectionSource(),
-      accountProviderConfigSource: accountSource.source,
-    });
-    await service.createSession({
-      workspacePath: "/workspace/app",
-      model: { providerId: "e2e-primary", modelId: "model-a" },
-    });
-    request.mockClear();
-
-    accountSource.emit("team-plan-selected", {
-      revision: "account-2",
-      basedOnZCodeBuiltinRevision: "zcode-builtin:1",
-      providers: new ProviderConfigMap([
-        [
-          "account:zai-individual-coding-plan",
-          createAccountProviderConfig({
-            models: ["GLM-5.2"],
-          }),
-        ],
-      ]),
-    });
-
-    await vi.waitFor(() => {
-      expect(request).toHaveBeenCalledWith(
-        zcodeProtocolMethods.providerUpdateAccountConfig,
-        expect.objectContaining({ revision: "account-2" }),
-        expect.any(Object),
-      );
-    });
-    expect(request).not.toHaveBeenCalledWith(
-      "workspace/updateProviderRegistry",
-      expect.anything(),
-      expect.anything(),
-    );
-    // Source 读取也必须串行；否则旧 read 晚返回会把旧快照排在新快照之后。
-    const latest = await accountSource.source.read();
-    let releaseOldRead!: (value: AccountProviderConfigSnapshot) => void;
-    const read = vi.spyOn(accountSource.source, "read").mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          releaseOldRead = resolve;
-        }),
-    );
-    request.mockClear();
-    accountSource.emit("slow-account-query", { ...latest, revision: "account-3" });
-    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
-    accountSource.emit("new-account-query", { ...latest, revision: "account-4" });
-    await Promise.resolve();
-    await Promise.resolve();
-    const readsBeforeRelease = read.mock.calls.length;
-    releaseOldRead({ ...latest, revision: "account-3" });
-    await vi.waitFor(() => {
-      expect(
-        request.mock.calls.filter(
-          ([method]) => method === zcodeProtocolMethods.providerUpdateAccountConfig,
-        ),
-      ).toHaveLength(2);
-    });
-    const delivered = request.mock.calls
-      .filter(([method]) => method === zcodeProtocolMethods.providerUpdateAccountConfig)
-      .map(([, params]) => (params as { revision: string }).revision);
-    service.disposeAll();
-    expect(readsBeforeRelease).toBe(1);
-    expect(delivered).toEqual(["account-3", "account-4"]);
-  });
-
   it("does not push the full local registry before a V4 draft createSession command", async () => {
     const calls: string[] = [];
     const request = vi.fn(async (method: string, params?: unknown) => {
@@ -1036,6 +720,7 @@ describe("createZCodeAgentService provider registry", () => {
           result: { type: "createSession" as const, sessionId: "sess_v4_draft" },
         };
       }
+      if (method === zcodeProtocolMethods.providerRefreshRegistry) return { refreshed: true };
       throw new Error(`Unexpected method ${method}`);
     });
     vi.resetModules();
@@ -1081,9 +766,9 @@ describe("createZCodeAgentService provider registry", () => {
       status: "accepted",
       result: { type: "createSession", sessionId: "sess_v4_draft" },
     });
-    expect(calls).toEqual([V4_METHODS.command]);
+    expect(calls).toEqual([zcodeProtocolMethods.providerRefreshRegistry, V4_METHODS.command]);
     expect(request).toHaveBeenNthCalledWith(
-      1,
+      2,
       V4_METHODS.command,
       expect.objectContaining({
         type: "createSession",
@@ -1100,22 +785,14 @@ describe("createZCodeAgentService provider registry", () => {
   });
 
   it.each(["refreshed", "failed"] as const)(
-    "waits for the worker registry before switching a model with unchanged account config: %s",
+    "waits for the worker registry before switching a model with local configuration: %s",
     async (refreshResult) => {
-      const accountSource = createAccountProviderConfigChangeSource({
-        revision: "account-1",
-        basedOnZCodeBuiltinRevision: "zcode-builtin:1",
-        providers: new ProviderConfigMap([]),
-      });
       let finishRefresh!: () => void;
       const refreshGate = new Promise<void>((resolve) => {
         finishRefresh = resolve;
       });
       let waitingForRefresh = false;
       const request = vi.fn(async (method: string, params?: unknown) => {
-        if (method === zcodeProtocolMethods.providerUpdateAccountConfig) {
-          return { receivedRevision: "account-1", status: "received", providerCount: 0 };
-        }
         if (method === zcodeProtocolMethods.providerRefreshRegistry) {
           if (waitingForRefresh) {
             await refreshGate;
@@ -1130,6 +807,7 @@ describe("createZCodeAgentService provider registry", () => {
             revisionAtDecision: 1,
           };
         }
+        if (method === zcodeProtocolMethods.providerRefreshRegistry) return { refreshed: true };
         throw new Error(`Unexpected method ${method}`);
       });
       const client = {
@@ -1151,7 +829,6 @@ describe("createZCodeAgentService provider registry", () => {
       const { createZCodeAgentService } = await import("#src/zcode-agent/zcodeAgentService.js");
       const service = createZCodeAgentService({
         modelSelectionReadinessSource: createReadyModelSelectionSource(),
-        accountProviderConfigSource: accountSource.source,
       });
       const workspace = { workspacePath: "/workspace/app" };
       try {

@@ -22,11 +22,11 @@ describe("deriveChildClientPorts", () => {
   const childSessionId = createSessionId("child-session");
   const grandchildSessionId = createSessionId("grandchild-session");
 
-  it("子会话 PAT 恢复通过 core 原端口携带作用域和指纹，仍路由到根会话", async () => {
+  it("子会话动态凭据请求仍通过 core 原端口路由到根会话", async () => {
     const received: unknown[] = [];
     const response = {
       headersApplied: true,
-      requestAuth: { apiKey: "fresh-pat", accountScope: "a".repeat(64) },
+      requestAuth: { apiKey: "fresh-user-key", headers: { "X-User": "value" } },
     };
     const ports = deriveChildClientPorts(
       {
@@ -42,21 +42,17 @@ describe("deriveChildClientPorts", () => {
     const refresh = createRefreshRuntimeHeadersBeforeModelAttempt(
       { sessionId: childSessionId, ...ports } as never,
       {
-        model: { providerId: "account", modelId: "glm" } as never,
+        model: { providerId: "personal-glm", modelId: "glm" } as never,
         traceContext: { traceId: createTraceId() },
       },
     )!;
     const recovery = {
       attempt: 2,
-      expectedAccountScope: "a".repeat(64),
-      rejectedProjectTokenFingerprint: "b".repeat(64),
     };
     expect(await refresh(recovery)).toEqual(response);
     expect(received).toEqual([
       expect.objectContaining({
         sessionId: rootSessionId,
-        expectedAccountScope: recovery.expectedAccountScope,
-        rejectedProjectTokenFingerprint: recovery.rejectedProjectTokenFingerprint,
       }),
     ]);
   });

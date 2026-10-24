@@ -3,7 +3,7 @@ import { selectCombinedComposerThoughtLevel } from "./composer-model-picker.js";
 // v4 竖切（protocol-v4）conversation e2e helper。
 // 与旧 conversation-session.ts 的区别：所有定位走 TID_V4_* 常量（testid contract v2，
 // 带 paneId 维度），状态断言读 v4 pane 的 data-* 投影属性，不再依赖旧 ChatView DOM。
-// 旧 helper 的登录/工作区/provider 部分继续复用（desktop-app.ts / upstream-provider.ts）。
+// 旧 helper 的工作区/provider 部分继续复用（desktop-app.ts / upstream-provider.ts）。
 import { encodeCustomModelValue } from "@zcode/shared";
 import {
   TID_CHAT_MODE_SELECT_ITEM,
@@ -16,9 +16,6 @@ import {
   TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER,
   TID_PROMPT_SUGGESTION_OPTION,
   TID_PROMPT_SUGGESTION_PANEL,
-  TID_LOGIN_API_KEY_CONTINUE_BUTTON,
-  TID_LOGIN_API_KEY_INPUT,
-  TID_LOGIN_USE_API_KEY_BUTTON,
   TID_TASK_ITEM,
   TID_TASK_NEW_BUTTON,
   TID_V4_AUTODRAIN_TOGGLE,
@@ -78,13 +75,12 @@ import { sel } from "./selectors.js";
 import { skipOccupationOnboardingIfPresent } from "./occupation-onboarding.js";
 import { startDraftFromProject, waitForProjectRow } from "#e2e/helpers/project-sidebar";
 
-export const LOGIN_API_KEY = "e2e-login-api-key";
 export const E2E_REPLY_TOKEN = "upstream-e2e-ok";
 
 interface PrepareV4ConversationE2EOptions {
   resetDraftBeforeProvider?: boolean;
   skipProvider?: boolean;
-  /** 跳过 ensureV4ShellReady 的 ZCodeProject 等待。已登录冷启（真实凭据 seed 后 reloadSession）
+  /** 跳过 ensureV4ShellReady 的 ZCodeProject 等待。冷启动（普通 Provider seed 后 reloadSession）
    * 的 app 按 startupWorkspace 语义落在 conversation backing workspace，ZCodeProject 永远不出现；
    * 调用方需自行等待 v4 shell 就绪（如侧栏新任务按钮）。见 ANALYSIS r3-rerun §46。 */
   skipShellReady?: boolean;
@@ -156,19 +152,9 @@ export async function prepareV4ConversationE2E(options: PrepareV4ConversationE2E
 }
 
 async function ensureV4ShellReady() {
-  try {
-    // 新隔离 profile 的职业引导会遮住工作区，先复用真实 UI 跳过流程。
-    await skipOccupationOnboardingIfPresent();
-    await waitForProjectRow(DEFAULT_WORKSPACE, { timeout: 30000 });
-    return;
-  } catch (error) {
-    if (!(await hasApiKeyLoginButton())) {
-      throw error;
-    }
-    await loginWithApiKey();
-    await skipOccupationOnboardingIfPresent();
-    await waitForProjectRow(DEFAULT_WORKSPACE, { timeout: 30000 });
-  }
+  // 匿名冷启动仍可能展示职业引导，先通过真实 UI 跳过再等待夹具项目。
+  await skipOccupationOnboardingIfPresent();
+  await waitForProjectRow(DEFAULT_WORKSPACE, { timeout: 30000 });
 }
 
 async function ensureV4PreparationDraft(options: PrepareV4ConversationE2EOptions) {
@@ -203,44 +189,6 @@ async function ensureV4PreparationDraft(options: PrepareV4ConversationE2EOptions
   } else {
     await startDraftFromProject(DEFAULT_WORKSPACE);
   }
-}
-
-async function hasApiKeyLoginButton() {
-  const exists = await browser
-    .execute(
-      (currentTestId) => Boolean(document.querySelector(`[data-testid="${currentTestId}"]`)),
-      TID_LOGIN_USE_API_KEY_BUTTON,
-    )
-    .catch(() => false);
-  return Boolean(exists);
-}
-
-export async function loginWithApiKey() {
-  await clickTestIdByDom(TID_LOGIN_USE_API_KEY_BUTTON, {
-    timeout: 30000,
-    timeoutMsg: "欢迎页没有出现 API Key 登录入口",
-  });
-  await setInputValueByTestIdDom(TID_LOGIN_API_KEY_INPUT, LOGIN_API_KEY, {
-    timeout: 15000,
-    timeoutMsg: "API Key 登录输入框没有出现",
-  });
-  await browser.waitUntil(
-    async () =>
-      browser.execute((continueButtonTestId) => {
-        const button = document.querySelector<HTMLElement>(
-          `[data-testid="${continueButtonTestId}"]`,
-        );
-        return button instanceof HTMLButtonElement && !button.disabled;
-      }, TID_LOGIN_API_KEY_CONTINUE_BUTTON),
-    {
-      timeout: 15000,
-      timeoutMsg: "API Key 登录继续按钮没有变为可用",
-    },
-  );
-  await clickTestIdByDom(TID_LOGIN_API_KEY_CONTINUE_BUTTON, {
-    timeout: 15000,
-    timeoutMsg: "API Key 登录继续按钮没有出现或不可点击",
-  });
 }
 
 /** 新建草稿：点侧栏新任务按钮，等 v4 pane 回到 draft 态。 */
@@ -2270,23 +2218,81 @@ export async function denyV4PermissionWithFeedback(feedback: string, submitWithE
         ?.focus();
     });
   }
-  await browser.waitUntil(
-    () =>
-      browser.execute((hasFeedback: boolean) => {
-        const selectedDeny = document.querySelector(
-          '[role="option"][data-permission-option-kind^="reject"][aria-selected="true"]',
-        );
-        const input = document.querySelector<HTMLTextAreaElement>(
-          'textarea[aria-label="Optional feedback for the model when denying"],textarea[aria-label="拒绝时给模型的可选反馈"]',
-        );
-        return hasFeedback
-          ? !selectedDeny &&
-              document.activeElement === input &&
-              input?.parentElement?.classList.contains("bg-selected")
-          : Boolean(selectedDeny);
-      }, Boolean(feedback.trim())),
-    { timeout: 5000, timeoutMsg: "权限反馈行与普通 Deny 的独立选择状态不符合预期" },
-  );
+  try {
+    await browser.waitUntil(
+      () =>
+        browser.execute((hasFeedback: boolean) => {
+          const selectedDeny = document.querySelector(
+            '[role="option"][data-permission-option-kind^="reject"][aria-selected="true"]',
+          );
+          const input = document.querySelector<HTMLTextAreaElement>(
+            'textarea[aria-label="Optional feedback for the model when denying"],textarea[aria-label="拒绝时给模型的可选反馈"]',
+          );
+          return hasFeedback
+            ? !selectedDeny &&
+                document.activeElement === input &&
+                input?.parentElement?.classList.contains("bg-selected")
+            : Boolean(selectedDeny);
+        }, Boolean(feedback.trim())),
+      { timeout: 5000, timeoutMsg: "权限反馈行与普通 Deny 的独立选择状态不符合预期" },
+    );
+  } catch (error) {
+    // 焦点失败时保留可见性、所属 pane 和选择证据，不补焦点或放宽原断言。
+    const diagnostics = await browser
+      .execute(() => {
+        const describe = (element: Element | null) => {
+          const node = element instanceof HTMLElement ? element : null;
+          const pane = node?.closest("[data-pane-id], [data-session-id]");
+          const rect = node?.getBoundingClientRect();
+          return {
+            tag: node?.tagName ?? null,
+            label: node?.getAttribute("aria-label") ?? null,
+            testId: node?.getAttribute("data-testid") ?? null,
+            className: node?.className ?? null,
+            visible: node?.checkVisibility() ?? false,
+            rect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
+            paneId: pane?.getAttribute("data-pane-id") ?? null,
+            sessionId: pane?.getAttribute("data-session-id") ?? null,
+          };
+        };
+        return {
+          active: describe(document.activeElement),
+          inputs: Array.from(
+            document.querySelectorAll<HTMLTextAreaElement>(
+              'textarea[aria-label="Optional feedback for the model when denying"],textarea[aria-label="拒绝时给模型的可选反馈"]',
+            ),
+          ).map((element) => ({
+            ...describe(element),
+            active: element === document.activeElement,
+            valueLength: element.value.length,
+            parentClass: element.parentElement?.className ?? null,
+            dockSelectedDeny: Array.from(
+              element
+                .closest('[data-v4-composer-dock="true"]')
+                ?.querySelectorAll(
+                  '[data-permission-option-kind^="reject"][aria-selected="true"]',
+                ) ?? [],
+            ).map(describe),
+          })),
+          selectedDeny: Array.from(
+            document.querySelectorAll(
+              '[data-permission-option-kind^="reject"][aria-selected="true"]',
+            ),
+          ).map(describe),
+        };
+      })
+      .catch((diagnosticError: unknown) => ({ diagnosticError: String(diagnosticError) }));
+    console.warn("[e2e] permission feedback selection diagnostics", JSON.stringify(diagnostics));
+    const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
+    if (artifactDir) {
+      const screenshotPath = `${artifactDir}/permission-feedback-selection-${Date.now()}.png`;
+      await browser.saveScreenshot(screenshotPath).catch((screenshotError: unknown) => {
+        console.warn("[e2e] permission feedback screenshot failed", String(screenshotError));
+      });
+      console.warn("[e2e] permission feedback screenshot", screenshotPath);
+    }
+    throw error;
+  }
 
   if (submitWithEnter) {
     await input.click();

@@ -1,6 +1,7 @@
 # 01 — 普通发送的 TTFT 阶段指标与瀑布图
 
-**What to build:** 桌面本地工作区在持续前台、空闲发送且无需重试时，性能分析人员能够查看从点击发送到首有效输出的完整主阶段耗时、P50/P95 和单消息瀑布图。正文、思考、工具调用先到均能正确收口，首正文耗时另行记录。此 ticket 贯穿真实发送、跨进程关联、阶段采集、最终 OTLP 导出、查询和 E2E，完成后可独立演示和验收。
+> 2026-10-24：本历史工单中的官方 OTLP / ARMS 验收已退役，不是当前实现要求。当前边界见 [本地 TTFT 计时](../../trace/local-ttft-diagnostics.md)。
+> **What to build:** 桌面本地工作区在持续前台、空闲发送且无需重试时，性能分析人员能够查看从点击发送到首有效输出的完整主阶段耗时、P50/P95 和单消息瀑布图。正文、思考、工具调用先到均能正确收口，首正文耗时另行记录。此 ticket 贯穿真实发送、跨进程关联、阶段采集、最终 OTLP 导出、查询和 E2E，完成后可独立演示和验收。
 
 **Blocked by:** None — can start immediately.
 
@@ -27,7 +28,7 @@
 - [x] 桌面仍走 desktop-continuous，远程工作区、手机/Web、历史 hydration、replayable 恢复及自动任务不生成本地用户 TTFT；旧业务事件、RUM TTFT 和发送漏斗的口径与计数保持不变。
 - [x] 先编写“真实桌面 Composer 发送 → 最终 OTLP 接收器解码结果”的 E2E，再实现链路。复用现有对话回放与 OTLP HTTP 接收器组织方式，检查最终 Trace/Metric，而非只验证内部函数调用。
 - [x] E2E 覆盖正文、思考和工具先到、空开始事件、首正文晚到、首输出早于 ACK，以及在主阶段注入已知延迟后的归因；底层测试只补充难以稳定复现的时钟、去重和协议边界。
-- [x] 用受控样本验证 ARMS 基础分位数和单消息关联展示，保存真实运行或测试导出证据；平台验收与本地测试分开记录。2026-09-15 完成：新 service 已入库，总 P50/阶段 P95 可查，`observation_id` 去连字符等于 traceID，单条 62 span 的六阶段并集与根时长对账一致。证据见 [platform-evidence](../../monitoring/local-ttft-platform-evidence.json)。控制台界面瀑布目视确认仍未做。
+- [x] 用受控样本验证 ARMS 基础分位数和单消息关联展示，保存真实运行或测试导出证据；平台验收与本地测试分开记录。2026-09-15 完成：新 service 已入库，总 P50/阶段 P95 可查，`observation_id` 去连字符等于 traceID，单条 62 span 的六阶段并集与根时长对账一致。证据见 [platform-evidence](../../monitoring/README.md)。控制台界面瀑布目视确认仍未做。
 - [ ] 完成相关 E2E/单测、类型检查、lint、架构门禁，留下阶段合同、时钟误差、分桶和数据量上限的说明。若需要小范围预重构，在接线前完成且保持现有行为，不另起宽泛重构任务。
 
 ## 范围交接
@@ -40,7 +41,7 @@
 
 本地实现与查询配置已完成；平台最终验收、全量 CLI 验证仍未完成，因此保持 in-progress。
 
-- [阶段合同与查询](../../monitoring/local-ttft-queries.md)、[看板配置](../../monitoring/dashboards/local-ttft.json)、[最终 OTLP 证据](../../monitoring/local-ttft-evidence.json)。
+- [阶段合同与查询](../../monitoring/local-ttft-queries.md)、[看板配置](../../trace/local-ttft-diagnostics.md)、[最终 OTLP 证据](../../monitoring/local-ttft-evidence.json)。
 - 真实桌面 E2E 3/3 通过：正文、思考、工具先到；空开始；晚到正文；内容早于 ACK；命令与模型已知延迟归因。主 TTFT 与六阶段 Histogram 各有 3 个样本，无逐 attempt 放大。
 - 最终运行时钟误差上界 3.125 ms，小于 10 ms 阈值。正常正文、思考和工具三类均 quality=complete；不把失焦运行混入成功样本。
 - 根级全量单测 1707 文件通过，14991 条通过，14 条跳过；根级 typecheck、E2E typecheck、lint 和 architecture gate 通过。
@@ -59,7 +60,7 @@
 - 明细与聚合在 run 结束时即可查（首次轮询命中，上界 <5s），非逐条精确测量。
 - 未完成：控制台界面瀑布目视确认、打包版编译注入写入路径、保留期与费用。CLI 全量单测未通过项与 Windows/Linux 实机证据仍如上保留。
 
-细节见[上线清单](../../monitoring/local-ttft-rollout-checklist.md)与[平台验收证据](../../monitoring/local-ttft-platform-evidence.json)。
+细节见[上线清单](../../monitoring/local-ttft-rollout-checklist.md)与[平台验收证据](../../monitoring/README.md)。
 
 ## Standards
 

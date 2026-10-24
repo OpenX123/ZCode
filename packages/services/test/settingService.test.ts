@@ -477,6 +477,27 @@ describe("settingService", () => {
     expect((await service.get()).providerFamilyConnectionSelections).toEqual({});
   });
 
+  it("普通设置读写保留缺组织的旧 Team 字段，不自动补齐连接", async () => {
+    const home = makeTempHome();
+    const dir = join(home, ".zcode", "v2");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "setting.json");
+    const legacy = {
+      providerFamilyDomain: "bigmodel",
+      modelProviderFamilyModes: { bigmodel: "oauth" },
+      modelProviderFamilySelectedKeys: {
+        bigmodel: "team-plan:builtin:bigmodel-coding-plan:product:project",
+      },
+    };
+    writeFileSync(file, JSON.stringify(legacy));
+    const service = await createSettingServiceInHome(home);
+    await service.get();
+    await service.update({ locale: "en-US" });
+    const persisted = JSON.parse(readFileSync(file, "utf8"));
+    expect(persisted).toMatchObject({ ...legacy, locale: "en-US" });
+    expect(persisted).not.toHaveProperty("providerFamilyConnectionSelections");
+  });
+
   it("缺少 setting.json 时返回默认值", async () => {
     const home = makeTempHome();
     const service = await createSettingServiceInHome(home);

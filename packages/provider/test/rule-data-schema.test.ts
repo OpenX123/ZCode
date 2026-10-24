@@ -222,7 +222,7 @@ describe("Todo104 最终规则数据合同", () => {
             ...template,
             config: {
               ...template.config,
-              access: { type: "api-key", apiKey: "not-allowed" },
+              access: { type: "api-key", apiKey: "user-owned" },
             },
           },
         ],
@@ -265,11 +265,11 @@ describe("Todo104 最终规则数据合同", () => {
         providerRules: [
           {
             providerId: "account:zai",
-            config: { access: { type: "api-key", apiKey: "not-allowed" } },
+            config: { access: { type: "api-key", apiKey: "user-owned" } },
           },
         ],
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       personalProviderConfigRulesSchema.safeParse({ templateRules: [], providerRules: [] }).success,
     ).toBe(false);

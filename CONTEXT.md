@@ -7,7 +7,7 @@
 ### 市场与来源
 
 **Official Marketplace（官方市场）**:
-ZCode 官方运营的唯一分发渠道，市场 id 为 `zcode-plugins-official`，内容 = 内置插件 + CDN 插件。是"分发渠道"而非"作者归属"——其中可以收录社区作者的插件。
+沿用市场 id `zcode-plugins-official` 的本地随包渠道，启动时只播种仓库内置插件。该 id 保留目录兼容语义，不代表启动时连接官方服务。远端来源由用户显式添加。
 _Avoid_: 把 claude-plugins-official 称作"官方市场"；"官方"泛指一切受信市场
 
 **Builtin Plugin（内置插件）**:
@@ -15,19 +15,18 @@ _Avoid_: 把 claude-plugins-official 称作"官方市场"；"官方"泛指一切
 _Avoid_: 预装插件、bundled plugin（口语可用，文档统一"内置"）
 
 **CDN Plugin（CDN 插件）**:
-官方市场中通过官方 CDN 以 sha256 校验的 zip 包分发、按需下载安装的插件。
+用户显式配置来源后，通过 sha256 校验的远端 zip 包按需安装的插件；默认不注册官方 CDN 来源。
 _Avoid_: 网络插件、在线插件
 
 **Personal Source（个人来源）**:
 用户自行添加的一切插件来源：claude-plugins-official、git/GitHub/URL/本地目录市场、inline 插件。
 _Avoid_: 第三方市场（claude-plugins-official 也归此类，"第三方"名不副实）
 
-**Catalog Auto-Refresh（目录自动刷新）**:
-进入商店页时对 Official Marketplace 目录的节流后台刷新，用户无感知；只覆盖官方市场。
-_Avoid_: 与 Manual Refresh 混用；把它称作"检查更新"（更新角标只是刷新的副产物）
+**Local Catalog Read（本地目录读取）**:
+进入商店页时读取本地目录和已安装内容，不自动刷新官方远端来源。
 
 **Manual Refresh（手动刷新）**:
-商店页顶栏刷新按钮触发的全市场刷新，不受自动刷新节流影响。
+商店页顶栏刷新按钮显式刷新已有来源；只有用户添加的远端来源可以发起相应网络请求。
 _Avoid_: 刷新、检查更新（口语可用，文档统一"手动刷新"）
 
 ### 商店页结构
@@ -44,7 +43,7 @@ _Avoid_: 官方 tab、商店 tab
 _Avoid_: 第三方 tab、我的 tab
 
 **Featured（精选）**:
-公开分段顶部的策展区，名单由官方 CDN 目录的 `featured` 字段远程控制。仅存在于公开分段。
+公开分段顶部的策展区，名单取自当前来源目录的 `featured` 字段。仅存在于公开分段，不额外请求官方动态配置。
 _Avoid_: 与 Recommended 混用
 
 **Recommended（推荐）**:
@@ -56,9 +55,6 @@ _Avoid_: 与 Featured 混用
 
 **UI Plugin（界面插件）**:
 清单声明有效的 `ui.surfaces`，发布目录携带 `componentTypes: ["ui", …]`。未安装时使用目录能力，安装后以实际清单为准；暂停不改变分类。归属、用途和 UI 能力是独立维度。UI 专区和搜索均限定当前来源分段。
-
-**Default UI Recommendations（默认界面推荐）**:
-Side Pane 的独立精选名单，由客户端配置接口的 `uiPluginRecommendations` 下发，关联完整市场目录展示，未安装、未启用也可推荐；点击后分别安装、启用或打开真实面板。开发安装和用户安装不自动加入，与市场内完整 UI 专区不同。
 
 ### 元数据
 

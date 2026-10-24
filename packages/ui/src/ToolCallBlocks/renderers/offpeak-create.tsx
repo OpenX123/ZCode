@@ -1,7 +1,5 @@
 import { MoonIcon } from "lucide-react";
-import { TID_OFFPEAK_CREATE_CARD, TID_OFFPEAK_CREATE_OPEN } from "@zcode/shared/test-ids";
-import { Button } from "@/components/ui/button.js";
-import { cn } from "@/components/lib/utils.js";
+import { TID_OFFPEAK_CREATE_CARD } from "@zcode/shared/test-ids";
 import { useZCodeIntl, type IntlInstance } from "@/i18n/IntlProvider.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
 
@@ -121,20 +119,13 @@ export function describeOffPeakCardStatus(
   return intl.formatMessage({ id: "offPeak.chatCreated.queued" });
 }
 
-export function OffPeakCreateTaskCard({
-  task,
-  onOpenAutomationsMain,
-}: {
-  task: OffPeakCreateTaskSummary;
-  onOpenAutomationsMain?: (automationId?: string, automationTab?: "scheduled" | "idle") => void;
-}) {
+export function OffPeakCreateTaskCard({ task }: { task: OffPeakCreateTaskSummary }) {
   const { intl } = useZCodeIntl();
   const title = task.title ?? intl.formatMessage({ id: "offPeak.chatCreated.defaultTitle" });
   // 会话内创建的任务绑定并运行在当前会话；位次快照后追加一句提示。
   const statusLine = `${describeOffPeakCardStatus(task, intl)} · ${intl.formatMessage({
     id: "offPeak.chatCreated.boundHint",
   })}`;
-  const canOpenAutomations = Boolean(onOpenAutomationsMain);
 
   return (
     <div
@@ -149,20 +140,6 @@ export function OffPeakCreateTaskCard({
           <div className="truncate text-ui-base font-medium text-foreground">{title}</div>
           <div className="mt-0.5 truncate text-ui-base text-foreground-subtle">{statusLine}</div>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          data-testid={TID_OFFPEAK_CREATE_OPEN}
-          className={cn(
-            "h-auto rounded-lg border-border/70 bg-transparent px-3 py-1.5 text-ui-base text-foreground hover:bg-hover hover:text-foreground",
-            !canOpenAutomations && "opacity-50",
-          )}
-          disabled={!canOpenAutomations}
-          onClick={() => onOpenAutomationsMain?.(task.offPeakTaskId, "idle")}
-        >
-          <span>{intl.formatMessage({ id: "offPeak.chatCreated.open" })}</span>
-        </Button>
       </div>
     </div>
   );

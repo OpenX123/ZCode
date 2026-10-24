@@ -1,7 +1,6 @@
 import { isApiKeyAccess } from "@zcode/provider";
 import type {
   ConfigValidationIssue,
-  AccountProviderState,
   ModelConfigObject,
   ProviderConfigObject,
   ProviderSettingsProviderView,
@@ -18,9 +17,8 @@ export interface ProviderSettingsFormProvider extends Pick<
   /** 仅本次显式开关的外层补丁；普通字段编辑不复制继承启停值。 */
   enabledUpdate?: boolean;
   enabled: boolean;
-  /** Registry 根据当前 Official、Personal 与 Account Facts 得出的状态。 */
+  /** Registry 根据随包与 Personal 配置得出的状态。 */
   executable: boolean;
-  accountState?: AccountProviderState;
   issues?: readonly ConfigValidationIssue[];
   hasPersonalConfig: boolean;
   /** Renderer 只修改并提交这一份稀疏 Personal Overlay。 */

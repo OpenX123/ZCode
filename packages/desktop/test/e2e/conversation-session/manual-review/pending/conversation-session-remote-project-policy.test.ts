@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { basename, join } from "node:path";
 import { DEFAULT_WORKSPACE } from "../../../helpers/desktop-app.js";
 
-import { loginWithApiKey, prepareV4ConversationE2E } from "../../../helpers/v4-conversation.js";
+import { prepareV4ConversationE2E } from "../../../helpers/v4-conversation.js";
 
 /** 仅验证离线入口与真实侧栏交互；SSH 执行和手机 shared-host 使用各自链路用例。 */
 describe("远程单目录项目展示", () => {
@@ -131,12 +131,6 @@ describe("远程单目录项目展示", () => {
 
 async function refreshSidebar() {
   await browser.refresh();
-  const login = $('[data-testid="login-use-api-key-button"]');
   const project = $('[data-project-id="e2e-vpr-b"]');
-  await browser.waitUntil(
-    async () => (await login.isDisplayed()) || (await project.isDisplayed()),
-    { timeout: 45_000 },
-  );
-  if (await login.isDisplayed()) await loginWithApiKey();
   await project.waitForDisplayed({ timeout: 45_000 });
 }

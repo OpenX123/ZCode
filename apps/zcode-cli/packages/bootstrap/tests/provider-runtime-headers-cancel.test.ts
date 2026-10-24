@@ -10,7 +10,7 @@ const workspace = {
   workspaceIdentity: "ssh:host:/work",
   workspaceKey: "ssh:host:/work",
 };
-it("真实工厂同样装配唯一请求端口，完整账号事实透传而不写旧 ModelRef", async () => {
+it("真实工厂同样装配唯一请求端口，普通动态凭据透传而不写旧 ModelRef", async () => {
   const requestAuth = { apiKey: "team-key", headers: { "X-Team": "team-a" } };
   const requestClient = vi.fn(
     async (_method: string, _params: ZCodeProviderRuntimeHeadersRequestParams) => ({
@@ -31,15 +31,9 @@ it("真实工厂同样装配唯一请求端口，完整账号事实透传而不�
   const port = createZCodeApp.mock.calls[0]![0].providerRuntimeHeadersPort!;
   const input = {
     sessionId: "session",
-    providerId: "account:zai-team-coding-plan",
+    providerId: "personal-glm",
     modelId: "glm",
     traceContext: { traceId: "test-trace" },
-    accountAccess: {
-      type: "zhipu-account",
-      accountType: "zai",
-      mode: "team-coding-plan",
-      entitled: true,
-    } as const,
     reason: "model-request" as const,
   };
   vi.spyOn(Date, "now").mockReturnValue(1);
@@ -54,7 +48,6 @@ it("真实工厂同样装配唯一请求端口，完整账号事实透传而不�
     expect(first).toMatchObject({
       workspace,
       modelSelection: { providerId: input.providerId, modelId: "glm" },
-      accountAccess: input.accountAccess,
     });
     expect(first).not.toHaveProperty("modelRef");
     expect(second.requestId).not.toBe(first.requestId);
@@ -81,7 +74,7 @@ it("取消 runtime headers 反向 RPC 后向 Host 发送同一请求的专用取
     traceContext: { traceId: "test-trace" },
     sessionId: "session",
     turnId: "turn",
-    providerId: "account:zai-start-plan",
+    providerId: "personal-glm",
     modelId: "glm",
     reason: "model-request",
     abortSignal: controller.signal,
@@ -115,7 +108,7 @@ it("成功或普通错误不发送取消，保留原始响应和失败原因", a
   const input = {
     traceContext: { traceId: "test-trace" },
     sessionId: "session",
-    providerId: "account:zai-start-plan",
+    providerId: "personal-glm",
     modelId: "glm",
     reason: "model-request" as const,
   };
@@ -137,7 +130,7 @@ it("无人应答在总时限后失败并取消，迟到响应失效且下一请�
     const input = {
       traceContext: { traceId: "timeout-trace" },
       sessionId: "session",
-      providerId: "account:zai-start-plan",
+      providerId: "personal-glm",
       modelId: "glm",
       reason: "model-request" as const,
     };
@@ -180,41 +173,36 @@ it("无人应答在总时限后失败并取消，迟到响应失效且下一请�
   }
 });
 
-it("闲时 scope 经过执行投影和私有反向 RPC 保留，SSH workspace 身份不变", async () => {
+it("动态凭据经过执行投影和反向 RPC 保留，SSH workspace 身份不变", async () => {
   const { createModelExecutionContext } = await import("../src/zcode-protocol/model-execution.js");
   const {
     zcodeSessionSendParamsSchema,
     zcodeProviderRuntimeHeadersRequestParamsSchema,
     zcodeProviderRuntimeHeadersResponseSchema,
   } = await import("@zcode/shared");
-  const accountScope = "a".repeat(64);
+  const requestAuth = {
+    apiKey: "user-key",
+    apiKeyId: "user-key-id",
+    headers: { "X-User": "value" },
+  };
   const execution = createModelExecutionContext(
-    zcodeSessionSendParamsSchema.parse({
-      sessionId: "session",
-      content: "continue",
-      modelSelection: { providerId: "idle", modelId: "glm" },
-      modelExecution: {
-        selectionScope: "execution",
-        requestAuth: { apiKey: "jwt", accountScope, headers: { "X-Off-Peak-Ticket-ID": "ticket" } },
-      },
-    }).modelExecution!,
+    zcodeSessionSendParamsSchema.shape.modelExecution
+      .unwrap()
+      .parse({ selectionScope: "execution", requestAuth }),
   );
-  const auth = await execution.requestDependencies!.requestAuth!.source!.resolve({
-    attempt: 1,
-    providerId: "idle",
-    modelId: "glm",
-  });
-  expect(auth?.accountScope).toBe(accountScope);
+  await expect(
+    execution.requestDependencies!.requestAuth!.source!.resolve({
+      attempt: 1,
+      providerId: "personal-glm",
+      modelId: "glm",
+    }),
+  ).resolves.toEqual(requestAuth);
   const requestClient = vi.fn(async (_method, params) => {
     expect(zcodeProviderRuntimeHeadersRequestParamsSchema.parse(params)).toMatchObject({
-      expectedAccountScope: accountScope,
-      rejectedProjectTokenFingerprint: "b".repeat(64),
       workspace,
+      modelSelection: { providerId: "personal-glm", modelId: "glm" },
     });
-    return zcodeProviderRuntimeHeadersResponseSchema.parse({
-      headersApplied: true,
-      requestAuth: { apiKey: "fresh-pat", accountScope },
-    });
+    return zcodeProviderRuntimeHeadersResponseSchema.parse({ headersApplied: true, requestAuth });
   });
   const port = createProviderRuntimeHeadersPort(
     { requestClient, notify: vi.fn() } as unknown as ZCodeProtocolAgentServerContext,
@@ -223,18 +211,10 @@ it("闲时 scope 经过执行投影和私有反向 RPC 保留，SSH workspace �
   await expect(
     port.refreshBeforeModelRequest({
       sessionId: "session",
-      providerId: "account:bigmodel-off-peak",
+      providerId: "personal-glm",
       modelId: "glm",
       reason: "model-request",
       traceContext: { traceId: "test-trace" },
-      expectedAccountScope: auth?.accountScope,
-      rejectedProjectTokenFingerprint: "b".repeat(64),
-      accountAccess: {
-        type: "zhipu-account",
-        accountType: "bigmodel",
-        mode: "off-peak",
-        entitled: true,
-      },
     }),
-  ).resolves.toMatchObject({ requestAuth: { apiKey: "fresh-pat", accountScope } });
+  ).resolves.toMatchObject({ requestAuth });
 });

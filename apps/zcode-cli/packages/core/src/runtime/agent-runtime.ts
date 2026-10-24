@@ -1,4 +1,3 @@
-import { configureOffPeakRuntime, controlOffPeakRuntime } from "./off-peak/runtime.js";
 import {
   createTurnAgentDefinitions,
   createAgentDefinitionsReader,
@@ -139,21 +138,12 @@ import type { ProjectMemoryRecallPrefetch } from "./helpers/project-memory-recal
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
 import type { ProjectMemoryUpdate } from "./helpers/project-memory-dream.js";
 import { projectPersistentAgentMemoryTools } from "../subagent/persistent-memory.js";
-import { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 import { disposeNodeReplSession } from "../tool/handlers/node-repl.js";
 import { cloneModelSelection } from "./model-selection.js";
 
 // oxlint-disable typescript-eslint/no-unsafe-declaration-merging
 export class AgentRuntime {
-  controlOffPeakExecution(
-    input: import("@zcode/shared").OffPeakControlParams,
-  ): Promise<import("@zcode/shared").OffPeakControlResult> {
-    return controlOffPeakRuntime(
-      this as unknown as import("./internal.js").AgentRuntimeInternal,
-      input,
-    );
-  }
   private sessionId: SessionId;
   private turnNumber: number;
   private config: AgentRuntimeConfig;
@@ -263,7 +253,6 @@ export class AgentRuntime {
   private pendingModelChangeTimeline?: PendingModelChangeTimeline;
   private sessionStartHookRan = false;
   private sessionTitleGenerationAttempted = false;
-  private agentTelemetry: RuntimeTelemetryFacade;
 
   constructor(sessionId: SessionId, config: AgentRuntimeConfig, deps: AgentRuntimeDeps) {
     const runtime = this as unknown as AgentRuntimeInternal;
@@ -287,15 +276,6 @@ export class AgentRuntime {
     this.getAgentDefinitions = () =>
       projectPersistentAgentMemoryTools(definitions.get(), this.config.memory);
     this.prepareAgentDefinitions = definitions.prepare;
-    this.agentTelemetry = new RuntimeTelemetryFacade({
-      agentName: config.agentName,
-      causation: deps.agentTelemetryCausation,
-      causationMode: deps.agentTelemetryCausationMode,
-      parentSessionId: config.parentSessionId,
-      port: deps.agentTelemetry,
-      sessionId,
-      taskType: config.taskType,
-    });
     this.permissionService =
       deps.permissionService ?? new PermissionService(defaultPermissionConfig);
     this.permissionBroker = deps.permissionBroker ?? createDenyPermissionBroker();
@@ -323,10 +303,6 @@ export class AgentRuntime {
     this.providerRuntimeHeadersPort = deps.providerRuntimeHeadersPort;
     this.browserControlPort = deps.browserControlPort;
     this.modelRequestAdmission = deps.modelRequestAdmission;
-    configureOffPeakRuntime(
-      this as unknown as import("./internal.js").AgentRuntimeInternal,
-      deps.onOffPeakLifecycleEvent,
-    );
     // 旧会话的选择缺失不能阻断历史恢复；不在这里制造默认模型。
     this.sessionModelSelection =
       config.modelSelection && cloneModelSelection(config.modelSelection);

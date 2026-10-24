@@ -26,12 +26,10 @@ import {
   newToolSearchTask,
   toolSearchTurn,
   expectToolSearchDisabled,
-  expectToolSearchLoaded,
-  expectToolSearchUnloaded,
   expectToolResultPair,
   TOOLSEARCH_MODEL,
   TOOLSEARCH_PLAIN_PROVIDER,
-  TOOLSEARCH_PLAN_PROVIDER,
+  TOOLSEARCH_API_PROVIDER,
 } from "../helpers/toolsearch-desktop.js";
 import { toolSearchBlocks, type ToolSearchRecord } from "../helpers/toolsearch-provider.js";
 import { waitForToolCallBlockByToolCallId } from "../helpers/conversation-session-tool.js";
@@ -70,13 +68,11 @@ describe("ToolSearch Settings 的启动与恢复策略", () => {
     const [stillOff] = await toolSearchTurn("E2E_TOOLSEARCH_SETTINGS_ACTIVE 当前会话不热更新。");
     expectToolSearchDisabled(stillOff!);
     await newToolSearchTask();
-    const native = await toolSearchTurn(
-      "E2E_TOOLSEARCH_SETTINGS_SEARCH 搜索 TodoWrite 并记录完成。",
-    );
-    expect(native).toHaveLength(3);
-    expectToolSearchUnloaded(native[0]!);
-    expectToolSearchLoaded(native[1]!);
-    expectSuccessfulTodo(native[2]!);
+    const auto = await toolSearchTurn("E2E_TOOLSEARCH_SETTINGS_SEARCH 搜索 TodoWrite 并记录完成。");
+    expect(auto).toHaveLength(3);
+    expectLocal(auto[0]!);
+    expectLocal(auto[1]!);
+    expectSuccessfulTodo(auto[2]!);
     await expectSearchSummary();
     const autoSession = (await getV4PaneSnapshot()).sessionId!;
 
@@ -86,13 +82,13 @@ describe("ToolSearch Settings 的启动与恢复策略", () => {
     );
     expectLocal(autoLocal!);
     expect(JSON.stringify(autoLocal!.requestJson.messages)).toContain("<functions>");
-    await switchV4Model(TOOLSEARCH_PLAN_PROVIDER, TOOLSEARCH_MODEL, "");
+    await switchV4Model(TOOLSEARCH_API_PROVIDER, TOOLSEARCH_MODEL, "");
 
     await setMode("local", autoSession);
     const [stillAuto] = await toolSearchTurn(
       "E2E_TOOLSEARCH_SETTINGS_ACTIVE_AUTO 当前策略仍为 Auto。",
     );
-    expectToolSearchLoaded(stillAuto!);
+    expectLocal(stillAuto!);
     await newToolSearchTask();
     const local = await toolSearchTurn(
       "E2E_TOOLSEARCH_SETTINGS_SEARCH 搜索后通过包装入口记录完成。",
@@ -135,9 +131,9 @@ describe("ToolSearch Settings 的启动与恢复策略", () => {
     await restartIntoWorkspaceRestoringPreferences(localWorkspacePath!);
     await selectV4TaskById(localSession);
     const [coldAuto] = await toolSearchTurn("E2E_TOOLSEARCH_SETTINGS_COLD_AUTO 恢复真实搜索发现。");
-    expectToolSearchLoaded(coldAuto!);
+    expectLocal(coldAuto!);
     expectToolResultPair(coldAuto!, "toolu_settings_search");
-    expect(JSON.stringify(coldAuto!.requestJson.messages)).toContain('"type":"tool_reference"');
+    expect(JSON.stringify(coldAuto!.requestJson.messages)).not.toContain('"type":"tool_reference"');
   });
 });
 

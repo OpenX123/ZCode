@@ -1,104 +1,62 @@
-# ZCode Domain Cross-Products
+# ZCode 当前领域与交叉边界
 
-Use this reference after `zcode-feature-graph.yaml` when scanning or planning any ZCode feature. The feature graph records curated semantic relationships; this file routes the scan into deeper domains and cross-products. Neither replaces current docs, code, or live codegraph evidence. Prefer the freshest fact/spec/architecture doc and implementation when they conflict.
+先用 `zcode-feature-graph.yaml` 定位语义，再核对当前源码和规格。本分支的产品边界以 `docs/desktop/standalone-coding-harness-spec.md` 为准；历史商业、云分享和手机官方远控文档只用于理解兼容数据，不作为当前入口。
 
-## How To Use
+## 使用顺序
 
-1. Match the user request to capability aliases and declared surfaces in `zcode-feature-graph.yaml`.
-2. Classify the change as presentation, option-source, draft-default, validation, commit-effect, persistence, or recovery.
-3. Map the result to 1-4 deeper capability domains from the table below and read their current source docs.
-4. Inspect indexed implementation with codegraph: explore graph seeds, find direct callers, and trace each UI surface to its validation and commit sink. Use depth 2 by default and depth 3 only for an unresolved critical owner.
-5. Use `rg` for docs, config, generated or unindexed content after codegraph has identified the area.
-6. Record state owners before enumerating: UI local state, Zustand store, host service, desktop main, relay, agent runtime, persisted file/db, remote host, or backend API.
-7. Select dimensions that can change behavior or assertions. Collapse global axes with an invariant and keep representative cases.
-8. Always include client and workspace boundaries when relevant: `desktop-continuous` vs `web-remote-replayable`, local vs SSH/WSL/Docker, and `workspaceIdentity` vs `workspacePath`.
+1. 匹配能力及界面，区分展示、候选来源、草稿默认、校验、提交、持久化和恢复。
+2. 从下表选择相关领域，读取当前规格与代码种子。
+3. 对已索引实现先用 CodeGraph 查直接调用者和提交路径，再用 `rg` 查文档、配置或未索引内容。
+4. 明确 Renderer 草稿、Host 服务、CLI 运行时、存储和 SSH 目标的所有者。
+5. 只展开影响行为的维度，用不变量合并组合；深度默认 2，关键所有者未明时再用 3。
 
-## Capability Domains
+## 领域入口
 
-| Domain | Trigger terms | Dimensions to consider | Source docs | Code seeds |
-| --- | --- | --- | --- | --- |
-| Architecture/process boundary | app/agent, desktop, web, host process, relay, RPC, protocol, stdio | renderer/main/host/agent ownership, local vs remote service source, direct RPC vs relay attachment | `docs/architecture/zcode-code-architecture-overview.md`, `docs/architecture/message-flow.md`, `docs/architecture/rpc.md` | `packages/shared`, `packages/services/src/node.ts`, `packages/desktop/src/host`, `packages/client`, `packages/rpc` |
-| Conversation/session behavior | send, compact, goal, queue, fork, edit, stop, tool history, turn | `session.phase`, `queue.length`, `queue.autoDrain`, compact origin, goal state, target turn, tool shape, system event | `docs/conversation-protocol-declaration.md`, `docs/conversation-product-state-space.md`, `docs/testing/conversation-session-*.md` | `packages/formal-proof`, `packages/ui/src/store/zcodeSessionStore*`, `packages/ui/src/hooks/useZCodeChat*`, `packages/services/src/session/*` |
-| Cross-surface UI capability | same action in chat/settings/automation/Subagent, shared picker, shared option builder | presentation vs option-source vs draft/default vs validation vs commit effect, shared component callers, surface-local state owner, commit sink, isolation invariant | `docs/feature-impact-discovery.md`, `docs/ui/chat-model-select-menu.md`, `docs/automation-edit-status.md`, `docs/subagents-built-in-model-overrides.md` | `packages/ui/src/ModelConfigSelect.tsx`, `packages/ui/src/lib/modelSelectionGroups.ts`, `packages/ui/src/v4/composer/V4ComposerToolbar.tsx`, `packages/ui/src/settings/AutomationEditView.tsx`, `packages/ui/src/settings/SubagentsSection.tsx` |
-| Model/provider/runtime config | model switch, provider, custom provider, Coding Plan, context window, thought, runtime restart | active task vs draft, surface-local default/inherit, workspace default, task config, provider registry, runtime `defaultModelRef`, native vs custom, stale model | `docs/chat/*model-resolution-chain*.md`, `docs/model-provider-*.md`, `docs/superpowers/specs/*model*.md` | `packages/ui/src/ModelConfigSelect.tsx`, `packages/ui/src/lib/modelSelectionGroups.ts`, `packages/ui/src/hooks/useModelProviders.ts`, `packages/services/src/model-provider`, `apps/zcode-cli/packages/adapters/src/model` |
-| Mobile remote/replayable realtime | phone, mobile, `/remote`, reconnect, snapshot, replay, mirror, owner, permission recovery | `clientMode`, `deliveryKind`, mirror seq, stream watermark, gap recovery, owner lease, owner command, pending permissions/elicitations/commands, shared-host attachment | `docs/web-remote-control/web-remote-control-architecture.md`, `docs/web-remote-control/task-realtime-sync.md`, `docs/web-remote-control-task-command-queue.md` | `packages/shared/src/task-realtime.ts`, `packages/shared/src/web-remote-control.ts`, `packages/desktop/src/main/taskRealtimeBus.ts`, `packages/ui/src/hooks/useTaskStreamEvents.ts` |
-| Queue/task command | queued prompt, send now, busy, drain, accepted queue, host command | desktop renderer-local queue vs mobile host command queue, `autoDrain`, stop/interrupted, pending permission, command status, cross-client ordering | `docs/web-remote-control-task-command-queue.md`, `docs/conversation-protocol-declaration.md`, `docs/ui/chat-message-queue.md` | `packages/ui/src/store/zcodeSessionStoreQueueSlice.ts`, `packages/ui/src/hooks/useQueuedPromptActions.ts`, `packages/ui/src/lib/zcodeTurnSteerQueue.ts`, `packages/services/src/session/zcodeTaskService.ts` |
-| Workspace identity/remote runtime | workspace identity, SSH, WSL, Docker, remote session, reconnect, app global state | `workspaceIdentity`, `workspacePath`, `workspaceKey`, `remoteSessionId`, service authority, local app-global vs remote execution facts, provider registry sync | `docs/remote-workspace-session-unified-settings.md`, `docs/ssh-remote-app-global-state-authority.md`, `docs/remote/*.md`, `docs/web-remote-control/*.md` | `packages/ui/src/store/tabWorkspaceIdentity.ts`, `packages/ui/src/lib/remoteWorkspaceProviderSync.ts`, `packages/shared/src/remoteTarget.ts`, `packages/services/src/model-provider` |
-| Persistence/index/snapshot | persisted data, sqlite, task list, settings, localStorage, restore, snapshot, migration | session JSON authority, task sqlite index metadata, runtime snapshot fields, settings schema, localStorage preference, remote history, migration and fallback | `docs/task/task-sqlite-index.md`, `docs/task/task-snapshot-on-demand.md`, `docs/remote-workspace-session-unified-settings.md`, `docs/superpowers/specs/2026-06-02-app-usage-db-migration-design.md` | `packages/services/src/session/taskIndexRepo.ts`, `packages/services/src/session/legacyTaskSessionFile.ts`, `packages/shared/src/workspaceSessionRestore.ts`, `packages/ui/src/root/remoteWorkspaceSessionPersistence.ts` |
-| Rendering/performance | render perf, streaming, large tool input, markdown, Mermaid, background task, logs, CPU | active vs background task, delta size/count, parser/materialization budget, React store writes, snapshot payload size, production logging level | `docs/chat/message-render-performance.md`, `docs/performance/streaming-tool-input-backpressure.md`, `docs/performance/renderer-production-logging.md`, `docs/chat/mermaid-rendering.md` | `packages/ui/src/hooks/taskStreamEventHandlers.ts`, `packages/ui/src/lib/zcodeSessionProjection.ts`, `packages/shared/src/streaming-tool-input-preview.ts`, `packages/ui/src/logger.ts`, `packages/services/src/session/continuousStreamCoalescer.ts` |
-| Monitoring/telemetry/usage | telemetry, monitor, ARMS, `/report`, usage stats, quota, data tracking, trace | channel (`ARMS main`, `ARMS ui_perf`, `/report agent_trace`, local usage DB, monitor API), event volume, privacy, model/task ids, retry/error attribution, range | `docs/monitoring/performance-telemetry-catalog.md`, `docs/monitoring/business-monitoring.md`, `docs/usage-stats-app-coding-plan-split.md`, `docs/bigmodel-coding-plan-usage-quota.md` | `packages/ui/src/lib/appTelemetry.ts`, `packages/ui/src/lib/messageTelemetry.ts`, `packages/ui/src/lib/uiPerfArmsTelemetry.ts`, `packages/services/src/telemetry`, `packages/services/src/usage-stats` |
-| Permission/tool/MCP/subagents | approve, permission, elicitation, tool card, MCP, subagent, background agent | option response passthrough, `permissionUpdates`, pending snapshot recovery, tool lifecycle, read/write/destructive classification, MCP platform boundary, nested tool rendering | `docs/permission-project-approval.md`, `docs/mcp-platform-boundary.md`, `docs/agent-tool-call-renderer.md`, `docs/mcp-*.md` | `packages/shared/src/zcode-protocol/index.ts`, `packages/shared/src/mcp.ts`, `packages/ui/src/ToolCallBlocks*`, `packages/ui/src/store/mcpStore*` |
-| UI shell/theme/locale/responsive | theme, locale, language, mobile shell, settings UI, command center, sidebar | desktop vs mobile viewport, `zai-light`/`zai-dark`/system, persisted `zcode-theme`, locale preference, i18n keys, DESIGN.md constraints, screenshot text | `docs/ui/zai-themes.md`, `docs/ui/default-theme.md`, `docs/web-remote-control/mobile-theme-control.md`, `docs/ui/*.md` | `packages/ui/src/i18n`, `packages/ui/src/useTheme.ts`, `packages/ui/src/SettingsPage.tsx`, `packages/ui/src/WebRemoteControlMobileShell.tsx` |
-| Desktop lifecycle/logging/release | crash, ANR, update, log export, data directory, bundle, zoom | process role, renderer/main/host log path, crash source, update lifecycle, data dir override, OS-specific behavior | `docs/desktop/*.md`, `docs/desktop-bundle-size-architecture.md`, `docs/feedback-log-export-alignment.md` | `packages/desktop/src/main`, `packages/desktop/src/preload`, `packages/services/src/logger/serviceLogger.ts` |
-| File/git/terminal/diff/feedback | file tree, diff, terminal, git, feedback ticket, screenshot | local vs remote execution path, workspace scope, binary/large file rendering, terminal lifecycle, diff source, feedback attachment privacy | `docs/ui/workspace-file-tree.md`, `docs/ui/diff-viewer.md`, `docs/ui/terminal-sessions.md`, `docs/feedback-*.md` | `packages/ui/src/workspace-file-tree`, `packages/ui/src/terminal`, `packages/services/src/git`, `packages/ui/src/feedback` |
+| 领域            | 关键维度                                                                  | 文档与代码种子                                                                                                                                                       |
+| --------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 架构与进程      | Renderer/Main/Host/CLI 所有者，本地与 SSH，stdio/RPC                      | `docs/architecture/zcode-code-architecture-overview.md`、`packages/services/src/node.ts`、`packages/desktop/src/host`                                                |
+| 会话与任务      | phase、queue、stop、compact、goal、fork、edit、stream                     | `docs/conversation-protocol-declaration.md`、`docs/conversation-product-state-space.md`、`packages/ui/src/store/zcodeSessionStore*`、`packages/services/src/session` |
+| 跨界面模型选择  | 候选与默认、当前任务与草稿、校验和提交边界                                | `docs/feature-impact-discovery.md`、`ModelConfigSelect`、`buildModelSelectGroups`、`V4ComposerToolbar`、`AutomationEditView`、`SubagentsSection`                     |
+| Provider 与配置 | 普通 API Key、Personal/Built-in、Registry、默认模型、推理选项、冻结 Model | `docs/desktop/standalone-coding-harness-spec.md`、`packages/services/src/model-provider`、`packages/ui/src/hooks/useModelProviders.ts`                               |
+| SSH 配置分发    | Personal 唯一来源、目标 Registry、幂等与 CAS/回滚、重连 session id        | `docs/remote/provider-provisioning.md`、`ProviderProvisioningEnvironmentCoordinator`、`createProviderProvisioningSource`、`createProviderProvisioningTarget`         |
+| 工作区隔离      | workspaceIdentity/path、remoteSessionId、owner/lease、stale run           | `docs/remote-workspace-session-unified-settings.md`、`docs/ssh-remote-app-global-state-authority.md`、`packages/shared/src/remoteTarget.ts`                          |
+| 持久化与迁移    | 正文与索引、快照、设置、localStorage、旧记录兼容                          | `docs/task/task-sqlite-index.md`、`docs/task/task-snapshot-on-demand.md`、`taskIndexRepo`、`legacyTaskSessionFile`                                                   |
+| 渲染性能        | 流式输入、后台任务、delta、解析预算、本地日志量                           | `docs/chat/message-render-performance.md`、`docs/performance/streaming-tool-input-backpressure.md`、`packages/ui/src/lib/zcodeSessionProjection.ts`                  |
+| 本地用量与诊断  | token/latency/tool 事实、时间范围、日志和资源，不代表供应商账单           | `docs/product-capability-map.md`、`packages/services/src/usage-stats`、`packages/ui/src/settings/usage-stats`、`packages/services/src/logger/serviceLogger.ts`       |
+| 权限与扩展      | permission、elicitation、工具生命周期、MCP OAuth、Subagent 继承           | `docs/permission-project-approval.md`、`docs/mcp-platform-boundary.md`、`packages/shared/src/zcode-protocol`、`packages/ui/src/ToolCallBlocks`                       |
+| 自动化与工作流  | 本地计划、cron、状态、历史、默认 onDemand、用户选择                       | `docs/desktop/standalone-coding-harness-spec.md`、`packages/ui/src/settings/AutomationsSection.tsx`、`packages/shared/src/dynamic-workflow-feature.ts`               |
+| UI 壳与主题     | 桌面/窄屏 Web、locale、主题、Settings、键盘行为                           | `DESIGN.md`、`packages/ui/src/i18n`、`packages/ui/src/useTheme.ts`、`packages/ui/src/SettingsPage.tsx`                                                               |
+| 平台与工作台    | 本地/远端文件、PTY、Git、浏览器、进程生命周期                             | `packages/desktop/src/main`、`packages/ui/src/workspace-file-tree`、`packages/ui/src/terminal`、`packages/services/src/git`                                          |
 
-## State Owner Checklist
+## 状态权威
 
-| State or event | Authority | Mirrors/caches | Evidence to collect |
-| --- | --- | --- | --- |
-| Session messages and active turn | ZCode Agent runtime/session store | UI projection, task snapshot, replay mirror | protocol event, session snapshot, UI message tree |
-| Task list metadata | Host task sqlite index | UI task list cache, optimistic overlay | `tasks-index.sqlite` row, service list result, UI list |
-| Runtime recovery fields | Host runtime response-time snapshot | Mobile replayable UI store | `getTaskSnapshot.runtime`, stream watermark, pending permission/command UI |
-| Desktop/mobile accepted queued prompt | One CLI/runtime CommandInbox with serialized admission | client projection and pending optimistic overlay | original command ID, queue/guided/transcript/explicit terminal result, ACK/query and snapshot |
-| Unsubmitted prompt draft | Renderer draft owner | local draft persistence | draft payload and workspace/pane identity; not an accepted queue |
-| Model selected for request | Target Environment ModelFactory creates a Model from the admitted selection and current Registry | toolbar value, session selection, configured default | actual request/model trace; existing Model static facts remain frozen, subsequent ordinary turn creates a new Model |
-| Provider registry for remote workspace | Remote Environment Config, Account Source and Registry | remote Host/Worker Registry instances | target store/Registry revision, remote session id, Model creation; Local-to-Remote Provisioning writes formal stores rather than injecting Registry snapshots |
-| Workspace isolation key | `workspaceIdentity?.trim() || workspacePath` | tab/task/plugin/skill/cache keys | state bucket key, remote identity, path execution target |
-| Theme and locale | Renderer local preference plus broadcast for app windows | DOM classes, settings UI, mobile localStorage | settings value, DOM class, i18n text |
-| Telemetry | Declared event channel owner | transport queue/backend | event payload shape, sampling/aggregation rule, privacy filter |
+| 状态             | 权威                            | 可读镜像                       |
+| ---------------- | ------------------------------- | ------------------------------ |
+| 会话正文与运行态 | CLI runtime/session store       | UI projection 与 Host 转发快照 |
+| 已接受的排队输入 | CLI CommandInbox 串行 admission | UI pending optimistic overlay  |
+| 未提交输入       | Renderer 草稿                   | 本地草稿持久化                 |
+| 任务元数据       | Host tasks-index.sqlite         | UI 任务列表缓存                |
+| 模型执行         | 目标环境 Registry 创建的 Model  | UI 选择与默认值                |
+| SSH Provider     | 目标 Personal 配置与 Registry   | Host/Worker 各自 Registry 实例 |
+| 本地用量         | CLI Usage DB                    | Host bridge 与 UI 统计投影     |
+| 主题与语言       | Renderer 本地偏好和跨窗口广播   | DOM 与 Settings 展示           |
 
-## High-Risk Cross-Products
+## 需要验证的交叉场景
 
-Use these as prompts for pairwise coverage. Do not explode every axis; prune with invariants and representative cases.
+- 当前任务切模型、发送、Registry 刷新：下一次请求实际使用哪个模型？已有 Model 是否保持冻结？
+- SSH 重连与 Personal 分发：新 remoteSessionId 是否使用正确目标配置，失败是否保留已恢复工作区？
+- 排队输入与 stop/edit/fork/compact：未来输入是否保留，是否错误重排或自动提交？
+- 设置变更与工作流：Host 同步和 UI 重读是否串行，用户选择是否立即覆盖默认值？
+- 旧任务与失效套餐模型：原选择是否保持，是否明确要求配置普通 Provider？
+- 大工具输入与流式 UI：正文、摘要及最终结果是否有明确预算？
+- 本地用量与日志：统计事实来源是否正确，日志是否泄露 API Key？
+- 第三方 MCP OAuth 与普通模型 API：分别处理凭据，不重新接入官方产品登录或权益。
 
-| Cross-product | Typical question for the user |
-| --- | --- |
-| model switch x active task send x provider registry | Should send wait for pending `session/setModel`, fail fast, or continue with the old runtime model? |
-| model switch x mobile replayable restore | Is restored mobile model display read-only history, active runtime config, or a new switch target? |
-| model/provider x remote workspace reconnect | Has the new remoteSessionId registered the latest Local-to-Remote provisioning, and which target Registry facts does the next Model read? Keep initial-ready failure and reconnect warning semantics separate. |
-| queue x stop/interrupted x autoDrain | After stop, should queued prompts remain held, auto-drain, or require explicit send-now? |
-| queue x edit/fork/compact | Does the action preserve, discard, copy, or reorder future queued intent? |
-| mobile remote x permission/elicitation | If a phone reconnects after a gap, should pending blockers render from snapshot, stream replay, or both? |
-| replayable mirror x snapshot payload limit | Does a truncated snapshot cover the required watermark, or must UI wait for a fresher snapshot? |
-| rendering performance x large streaming tool input | Which client gets live preview, summary-only state, or final-only materialization? |
-| telemetry x streaming step volume | Is the event per chunk, per step, per message, or aggregated; and does it belong in ARMS or `/report`? |
-| persistence x stale task index | When index and session snapshot disagree, which source wins and what UI should show before repair? |
-| theme/locale x mobile remote | Are desktop and phone preferences intentionally independent, and how should screenshots assert copy? |
-| MCP/platform x web/mobile | Does the path call `IPlatformService`, shared-host attachment, or unsupported fallback? |
+## 不变量
 
-## Invariants To Try Before Expanding
-
-- Relay and desktop main do not own task/session/stream/queue/snapshot business state.
-- Desktop `desktop-continuous` direct stream and mobile `web-remote-replayable` recovery stream are separate semantics.
-- `workspacePath` is for execution/display; `workspaceIdentity`/`workspaceKey` is for isolation.
-- Task sqlite index is not the authority for session content or runtime settings.
-- Queue items are future user intent; compact/edit/fork should not rewrite them unless product explicitly says so.
-- Runtime snapshot fields such as pending permissions, elicitations, stream watermark, and pending commands are response-time recovery state, not persisted session JSON.
-- UI telemetry and logs must respect volume and privacy; high-frequency stream details default to debug or aggregated telemetry.
-- UI code should go through hooks/services/platform injection, not direct Repo/Runtime/window bridge calls.
-
-## Useful Codegraph And Text Seeds
-
-For indexed code, begin with exact symbols and inspect direct callers before broad impact traversal:
-
-```text
-explore ModelConfigSelect
-callers ModelConfigSelect
-callers buildModelSelectGroups
-explore ConversationProjectionStore
-impact <matched seed>, depth 2
-affected tests <matched seed>
-```
-
-Interpret these as codegraph operations, not product conclusions. Compare live callers with `zcode-feature-graph.yaml` and report undeclared surfaces as graph drift.
-
-Use focused text searches for docs, configuration, generated files, or unindexed content:
-
-```sh
-rg -n "clientMode|deliveryKind|desktop-continuous|web-remote-replayable" docs
-rg -n "workspaceIdentity|workspaceKey|remoteSessionId" docs .agents
-rg -n "modelSwitch|defaultModelRef|providerRegistry" docs
-rg -n "pendingCommands|streamWatermark|owner command|enqueueTaskCommand" docs
-rg -n "reportAppTelemetryEvent|uiPerf|agent_step|message_completion|ARMS" docs
-rg -n "zcode-theme|localePreference|IntlProvider|theme-zai" docs
-```
+- Main 只负责平台、调度和路由，CLI 拥有会话、队列与执行事实。
+- `workspacePath` 用于执行和展示，`workspaceIdentity?.trim() || workspacePath` 用于隔离。
+- tasks-index.sqlite 不拥有正文和活动运行配置。
+- 已接受输入由同一 CommandInbox 接纳；UI 只拥有草稿和乐观投影。
+- 历史兼容读取不恢复官方登录、套餐、遥测、云分享或手机远控入口。
+- UI 通过 hooks/services/platform injection 访问能力，跨包使用公开入口。

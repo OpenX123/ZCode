@@ -18,7 +18,6 @@ export const CLAUDE_OFFICIAL_PLUGIN_MARKETPLACE_ID = "claude-plugins-official";
 /** Settings 三类资源发现共用；Bootstrap 单测与官方 definition 的 defaultEnabled 机械对照。 */
 export const DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS: ReadonlySet<string> = new Set([
   "browser-use@zcode-plugins-official",
-  "image-search@zcode-plugins-official",
   "documents@zcode-plugins-official",
   "pdf@zcode-plugins-official",
   "presentations@zcode-plugins-official",
@@ -38,26 +37,7 @@ export const DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS: ReadonlySet<string> = new Set(
   // bootstrap 的「Settings 默认启用集合与 CLI 的官方插件声明一致」单测机械对照两者。
 ]);
 
-export const DEFAULT_PLUGIN_MARKETPLACES: DefaultPluginMarketplace[] = [
-  {
-    // ZCode 官方唯一市场：本地 seed 分片与 CDN 分片在 Agent storage 内合并。
-    // CDN manifest 的 name 必须与该 canonical id 一致。
-    id: ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
-    source: "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json",
-    name: ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
-    description: "Official ZCode plugins marketplace: built-in and community plugins for ZCode.",
-    pluginCount: 0,
-  },
-  {
-    id: CLAUDE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
-    source: "anthropics/claude-plugins-official",
-    name: CLAUDE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
-    description:
-      "Directory of popular Claude Code extensions including development tools, productivity plugins, and MCP integrations",
-    // 只内置官方 catalog 来源，不把远端 manifest 快照打包进仓库；首次刷新前数量未知。
-    pluginCount: 0,
-  },
-];
+export const DEFAULT_PLUGIN_MARKETPLACES: DefaultPluginMarketplace[] = [];
 
 // 商店「公开」分段只有一个 ZCode 官方市场 id，内置与 CDN 不再拆分身份。
 export const PUBLIC_STORE_MARKETPLACE_IDS = [ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID] as const;

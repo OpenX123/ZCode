@@ -1,4 +1,4 @@
-import type { Locale, RemoteTarget, UserInfo } from "@zcode/shared";
+import type { Locale, RemoteTarget } from "@zcode/shared";
 import type { LucideIcon } from "lucide-react";
 import type {
   AppProps,
@@ -8,14 +8,12 @@ import type {
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { Theme } from "@/useTheme.js";
 export { LEGACY_SINGLE_ROOT_PROJECT_PREFIX } from "@zcode/services";
-export type { WebRemoteControlMobileTaskView, WebRemoteControlStatus } from "@zcode/shared";
 export interface ProjectDevice {
   id: string;
   label: string;
   status: string;
   sourceServerId?: string;
 }
-
 export interface ProjectRowAction {
   id: string;
   label: string;
@@ -102,12 +100,13 @@ export interface ProjectSidebarProps {
   onCreateConversationTaskOnSource?: (sourceServerId: string) => void;
   onOpenFolderFromWorkspaceMenu: () => void;
   onOpenRemoteWorkspace?: AppProps["onOpenRemoteWorkspace"];
-  webRemoteControlWorkspaceSwitcher?: import("@/root/types.js").WebRemoteControlWorkspaceSwitcherApi;
   theme: Theme;
   onConnectRemote: (
     options: RemoteTarget,
     requestId?: string,
-    context?: { confirmSourceServerInstall?: boolean },
+    context?: {
+      confirmSourceServerInstall?: boolean;
+    },
     feedback?: import("@/app-shell/types.js").RemoteConnectionFeedbackOptions,
   ) => Promise<string>;
   onSelectRemoteProject: (
@@ -119,9 +118,6 @@ export interface ProjectSidebarProps {
   ) => Promise<void>;
   onCancelRemoteProject: (sessionId: string) => Promise<void>;
   onReconnectRemoteWorkspace: (workspaceKey: string) => Promise<void>;
-  onLogout?: () => void;
-  onLogin?: () => void;
-  user?: UserInfo | null;
   reconnectingRemoteWorkspaceKeys: string[];
   remoteWorkspaceRecoveryByWorkspaceKey?: Record<string, RemoteWorkspaceRecoveryStatus>;
   remoteWorkspaceErrorByWorkspaceKey: Record<string, string>;
@@ -146,6 +142,4 @@ export interface ProjectSidebarProps {
   automationsActive?: boolean;
   pluginStoreActive?: boolean;
   onFileTreeOpenChange?: (open: boolean) => void;
-  onWebRemoteTaskOpen?: (options: { crossWorkspace: boolean }) => void;
-  onWebRemoteTaskSwitchingChange?: (switching: boolean) => void;
 }

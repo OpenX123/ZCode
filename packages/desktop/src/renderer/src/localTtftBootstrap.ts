@@ -1,53 +1,19 @@
-import type { IPlatformService, LocalTtftRecord } from "@zcode/shared";
 import { LocalTtftObserver, setLocalTtftObserver } from "@zcode/ui";
 
-/** 单窗口批量出口；关闭采集只影响新输入，已启用的发送保留原决定。 */
-export function initializeDesktopLocalTtft(platform: IPlatformService): () => void {
-  if (!platform.reportLocalTtftBatch || !platform.getRendererActionTraceConfig) return () => {};
-  const rendererInstanceId = crypto.randomUUID();
-  let records: LocalTtftRecord[] = [];
-  let sequence = 0;
-  let dropped = 0;
+/** 首输出计时只写本地 debug 日志，不经过 IPC 或网络导出。 */
+export function initializeDesktopLocalTtft(): () => void {
   const observer = new LocalTtftObserver(
-    (record) => {
-      if (records.length >= 128) {
-        dropped++;
-        return;
-      }
-      records.push(record);
-    },
+    undefined,
     undefined,
     undefined,
     () => document.visibilityState === "visible" && document.hasFocus(),
   );
+  observer.enabled = true;
   setLocalTtftObserver(observer);
-  const flush = () => {
+  const sample = () => {
     observer.sampleClock();
     observer.expire();
-    while (records.length) {
-      const batch = records.splice(0, 32);
-      try {
-        platform.reportLocalTtftBatch?.({
-          version: 1,
-          rendererInstanceId,
-          sequence: sequence++,
-          records: batch,
-          dropped,
-        });
-        dropped = 0;
-      } catch {
-        dropped += batch.length;
-      }
-    }
   };
-  const apply = (config: { localTtftEnabled?: boolean }) => {
-    observer.enabled = config.localTtftEnabled === true;
-  };
-  void platform
-    .getRendererActionTraceConfig()
-    .then(apply)
-    .catch(() => {});
-  const off = platform.onRendererActionTraceConfigChanged?.(apply);
   const background = () => observer.background();
   const foreground = () => {
     if (document.visibilityState === "visible") observer.foreground();
@@ -60,13 +26,10 @@ export function initializeDesktopLocalTtft(platform: IPlatformService): () => vo
   window.addEventListener("blur", background);
   window.addEventListener("focus", foreground);
   document.addEventListener("visibilitychange", visibility);
-  const timer = setInterval(flush, 1000);
+  const timer = setInterval(sample, 1000);
   return () => {
     observer.interrupt();
-    flush();
-    records = [];
     clearInterval(timer);
-    off?.();
     setLocalTtftObserver(undefined);
     window.removeEventListener("blur", background);
     window.removeEventListener("focus", foreground);

@@ -11,9 +11,9 @@ it("normalizes MCP search hints and respects server or tool alwaysLoad independe
     alwaysLoad: true,
     searchHint: "find docs",
   });
-  expect(normalizeMcpToolDescriptor("test", input).official).toBeUndefined();
+  expect(normalizeMcpToolDescriptor("test", input)).not.toHaveProperty("official");
   expect(
-    normalizeMcpToolDescriptor("test", { ...input, _meta: {} }, undefined, false, true).alwaysLoad,
+    normalizeMcpToolDescriptor("test", { ...input, _meta: {} }, undefined, true).alwaysLoad,
   ).toBe(true);
   expect(
     normalizeMcpToolDescriptor("test", {

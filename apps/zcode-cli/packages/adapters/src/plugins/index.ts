@@ -25,6 +25,9 @@ import {
   ZCODE_OFFICIAL_PLUGIN_MARKETPLACE,
 } from "@zcode/contracts";
 import {
+  emptyOutcome,
+  emptyComponents,
+  loadPlugin,
   directoryExists,
   fileExists,
   isMissingPath,
@@ -55,9 +58,7 @@ import type {
 
 export {
   addMarketplace,
-  applyClaudePluginIcons,
   describeMarketplacePlugin,
-  enrichCachedClaudeMarketplaceIcons,
   ensureDefaultPluginMarketplaces,
   ensureMarketplaceManifestAvailable,
   getPluginDataDir,
@@ -67,7 +68,6 @@ export {
   loadMarketplaceManifestSync,
   normalizeAuthorValue,
   parseEntryStoreListing,
-  parsePluginIconSources,
   parseMarketplaceSourceInput,
   readPluginSourceIdentityPin,
   readPluginSourceSha,
@@ -102,13 +102,8 @@ export {
   type PluginUpdateStatus,
 } from "./version-compare.js";
 
-const ZCODE_MANIFEST_PATH = join(".zcode-plugin", "plugin.json");
-const CLAUDE_MANIFEST_PATH = join(".claude-plugin", "plugin.json");
-const CODEX_MANIFEST_PATH = join(".codex-plugin", "plugin.json");
-const DEFAULT_VERSION = "0.0.0";
 const FIRST_PLUGIN_PRIORITY = 1_000;
 const PRIORITY_STEP = 10;
-const PLUGIN_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const UNSUPPORTED_COMPONENT_KEYS = ["channels", "lspServers", "outputStyles", "settings"] as const;
 const SUPPORTED_HOOK_EVENTS = new Set<string>(Object.values(HookEventNameValue));
 
@@ -893,102 +888,6 @@ function scanOfficialCache(
     });
     return [];
   }
-}
-
-function loadPlugin(
-  candidate: PluginCandidate,
-  diagnostics: PluginDiagnostic[],
-): LoadedPlugin | null {
-  if (!directoryExists(candidate.rootPath)) {
-    diagnostics.push({
-      code: "plugin_root_not_found",
-      message: `Plugin root does not exist: ${candidate.rootPath}`,
-      path: candidate.rootPath,
-      severity: "warning",
-    });
-    return null;
-  }
-
-  const manifestPath = findManifest(candidate.rootPath);
-  if (!manifestPath) {
-    diagnostics.push({
-      code: "plugin_manifest_not_found",
-      message: `Plugin manifest not found: ${candidate.rootPath}`,
-      path: candidate.rootPath,
-      severity: "error",
-    });
-    return null;
-  }
-
-  const manifest = readManifest(manifestPath, diagnostics);
-  if (!manifest) return null;
-  return {
-    id: `${manifest.name}@${candidate.marketplace}`,
-    manifest,
-    manifestPath,
-    marketplace: candidate.marketplace,
-    rootPath: candidate.rootPath,
-    source: candidate.source,
-  };
-}
-
-function findManifest(rootPath: string): string | null {
-  const zcodePath = join(rootPath, ZCODE_MANIFEST_PATH);
-  if (fileExists(zcodePath)) {
-    return zcodePath;
-  }
-
-  // 兼容不同 manifest 目录约定，发现阶段按稳定优先级回退。
-  const claudePath = join(rootPath, CLAUDE_MANIFEST_PATH);
-  if (fileExists(claudePath)) {
-    return claudePath;
-  }
-  const codexPath = join(rootPath, CODEX_MANIFEST_PATH);
-  return fileExists(codexPath) ? codexPath : null;
-}
-
-function readManifest(path: string, diagnostics: PluginDiagnostic[]): PluginManifest | null {
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    if (!isRecord(parsed)) throw new Error("Manifest must be a JSON object");
-    const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
-    if (!PLUGIN_NAME_PATTERN.test(name)) throw new Error(`Invalid plugin name: ${name}`);
-    return {
-      ...parsed,
-      name,
-      version: typeof parsed.version === "string" ? parsed.version : DEFAULT_VERSION,
-    } as PluginManifest;
-  } catch (error) {
-    diagnostics.push({
-      code: "plugin_manifest_invalid",
-      message: error instanceof Error ? error.message : `Invalid plugin manifest: ${path}`,
-      path,
-      severity: "error",
-    });
-    return null;
-  }
-}
-
-function emptyOutcome(): PluginLoadOutcome {
-  return {
-    commandRoots: [],
-    diagnostics: [],
-    hooks: {},
-    mcpServers: {},
-    plugins: [],
-    skillRoots: [],
-  };
-}
-
-function emptyComponents(hookDetails: PluginHookDetail[] = []): PluginComponents {
-  return {
-    commandRoots: [],
-    hooks: {},
-    hookDetails,
-    mcpServers: {},
-    skillCount: 0,
-    skillRoots: [],
-  };
 }
 
 function resolveEnabled(config: PluginConfig, id: string, defaultEnabled: boolean): boolean {

@@ -15,11 +15,7 @@ const captured = vi.hoisted(() => ({
 vi.mock("@/ChatErrorBanner.js", async () => {
   const React = await import("react");
   return {
-    ChatErrorBanner: (props: {
-      error: { message: string };
-      onOpenModelSettings?: () => void;
-      onOpenUpgrade?: () => void;
-    }) => {
+    ChatErrorBanner: (props: { error: { message: string }; onOpenModelSettings?: () => void }) => {
       captured.chatErrorBannerProps = props;
       return React.createElement(
         "section",
@@ -156,7 +152,6 @@ function renderComposerWithError(
   message: string,
   actions: {
     onOpenModelSettings?: () => void;
-    onOpenModelUpgrade?: () => void;
     contextHeader?: ReactNode;
   } = {},
 ): string {
@@ -210,35 +205,6 @@ function renderComposerWithSnapshot(
           onSwitchMode: vi.fn(),
           ...overrides,
         }),
-      }),
-    ),
-  );
-}
-
-function renderHighspeedComposer(overrides: Record<string, unknown> = {}): string {
-  return renderToStaticMarkup(
-    createElement(
-      ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
-      createElement(AnyConversationComposer, {
-        snapshot: makeSnapshot(),
-        sessionId: "session-1",
-        workspacePath: "/workspace",
-        provider: undefined,
-        highspeedCard: {
-          cardId: "hsc-composer",
-          taskId: "session-1",
-          provider: "zai",
-          model: "glm-5.2",
-          issuedAt: 1_000,
-          expiresAt: 60_000,
-        },
-        onSendText: vi.fn(async () => {}),
-        onStop: vi.fn(),
-        onSelectModel: vi.fn(),
-        onSelectThought: vi.fn(),
-        onSwitchMode: vi.fn(),
-        ...overrides,
       }),
     ),
   );
@@ -317,17 +283,15 @@ describe("ConversationComposer error banner", () => {
     expect(html.indexOf("mock-chat-prompt-editor")).toBeGreaterThan(inputSurfaceIndex);
   });
 
-  it("forwards model recovery actions to the shared error banner", () => {
+  it("向错误横幅传递通用模型配置入口，不恢复套餐升级入口", () => {
     const onOpenModelSettings = vi.fn();
-    const onOpenModelUpgrade = vi.fn();
 
     renderComposerWithError("No model", {
       onOpenModelSettings,
-      onOpenModelUpgrade,
     });
 
     expect(captured.chatErrorBannerProps?.onOpenModelSettings).toBe(onOpenModelSettings);
-    expect(captured.chatErrorBannerProps?.onOpenUpgrade).toBe(onOpenModelUpgrade);
+    expect(captured.chatErrorBannerProps).not.toHaveProperty("onOpenUpgrade");
   });
 
   it("不再把 snapshot api retry 状态传入输入框工具条", () => {
@@ -427,50 +391,6 @@ it("离线输入栏优先显示禁发送原因，不让不可用模型控件挤�
   );
   expect(html).toContain("设备未连接，暂时无法发送");
   expect(captured.modelControlsProps).toBeNull();
-});
-
-describe("ConversationComposer Highspeed style", () => {
-  it("激活卡传递到期时间并锁定模型", () => {
-    vi.spyOn(Date, "now").mockReturnValue(1_000);
-
-    const html = renderHighspeedComposer();
-
-    expect(html).toContain('data-highspeed-composer="true"');
-    expect(captured.modelControlsProps).toMatchObject({
-      highspeedExpiresAt: 60_000,
-      modelLocked: true,
-    });
-  });
-
-  it("没有激活请求的卡（切回 Task、快照恢复）直接呈现稳定态，不重播激活动效", () => {
-    vi.spyOn(Date, "now").mockReturnValue(1_000);
-
-    const html = renderHighspeedComposer();
-
-    expect(html).toContain('data-highspeed-entrance="restore"');
-    expect(html).toContain('data-phase="stable"');
-    expect(html).not.toContain("highspeed-diffusion-canvas");
-    expect(html).toContain("highspeed-placeholder-presented");
-    expect(captured.modelControlsProps).toMatchObject({
-      highspeedPresented: true,
-      highspeedEntranceAnimated: false,
-      highspeedSweepActive: false,
-    });
-  });
-
-  it("draw 新命中的激活请求从扩散起点播放，模型与倒计时等待交接后再展示", () => {
-    vi.spyOn(Date, "now").mockReturnValue(1_000);
-
-    const html = renderHighspeedComposer({ highspeedActivationCardId: "hsc-composer" });
-
-    expect(html).toContain('data-highspeed-entrance="activation"');
-    expect(html).toContain('data-phase="diffusing"');
-    expect(html).not.toContain("highspeed-placeholder-presented");
-    expect(captured.modelControlsProps).toMatchObject({
-      highspeedPresented: false,
-      highspeedEntranceAnimated: true,
-    });
-  });
 });
 
 describe("history-first initialization", () => {

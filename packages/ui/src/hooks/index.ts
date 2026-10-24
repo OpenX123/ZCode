@@ -43,7 +43,7 @@ export { useConfirmDialog } from "./useConfirmDialog.js";
 export { useAlertDialog } from "./useAlertDialog.js";
 
 // 凭据服务
-export { useCredentials, useAuthToken } from "./useCredentials.js";
+export { useCredentials } from "./useCredentials.js";
 export { useZCodeAgentService } from "./useZCodeAgentService.js";
 
 // Git pane
@@ -54,4 +54,4 @@ export { useGitActions } from "./useGitActions.js";
 export { useWorkspaceProviderConfigFile } from "./useWorkspaceProviderConfigFile.js";
 export { useTaskNativeSessionLogFile } from "./useTaskNativeSessionLogFile.js";
 export { useTaskSessionFilePath } from "./useTaskSessionFilePath.js";
-export { useUsageStats } from "./useUsageStats.js";
+export { useAppUsageStats } from "./useUsageStats.js";

@@ -79,7 +79,7 @@ describe("Todo104 最终文件外壳", () => {
     expect(raw.revision).toBeGreaterThanOrEqual(18);
     const parsed = decodeZCodeBuiltinRelease(raw);
     expect(encodeZCodeBuiltinRelease(parsed)).toEqual(raw);
-    expect(parsed.config.providers.keys().length).toBeGreaterThan(0);
+    expect(parsed.config.providers.keys()).toEqual([]);
     expect(parsed.config.providerTemplates.keys().length).toBeGreaterThan(0);
     for (const rule of parsed.config.providers.toJSON()) {
       expect(rule.config).not.toHaveProperty("templateId");

@@ -57,7 +57,6 @@ const modelSelectionService: IModelSelectionService = {
     ...resolveEffectiveModelSelection({
       selection: input?.selection ?? null,
       registry: view as unknown as ProviderRegistryView,
-      classifyProvider: () => "ordinary",
     }),
   }),
   onDidChange: () => ({ dispose() {} }),

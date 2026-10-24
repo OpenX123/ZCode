@@ -35,7 +35,6 @@ function fixture(embeddedSearchEnabled = false) {
     includeEscalate: true,
     includeWorkflow: true,
     includeAutomation: true,
-    includeOffPeak: true,
     includeDynamicWorkflow: true,
     includeNodeRepl: true,
     includeBrowserUse: true,
@@ -166,3 +165,11 @@ it.each(["provider_disabled", "tool_unavailable"] as const)(
     expect(buildToolSearchAnnouncement({ ...input, entries: [] })).toBeUndefined();
   },
 );
+
+it("独立 Harness 的内置工具不提供官方闲时执行，普通定时与工作流仍可注册", () => {
+  const { registry } = fixture();
+  expect(registry.has("OffPeakCreate")).toBe(false);
+  expect(registry.has("OffPeakList")).toBe(false);
+  expect(registry.has("CronCreate")).toBe(true);
+  expect(registry.has("CreateWorkflow")).toBe(true);
+});

@@ -1,4 +1,4 @@
-import type { AgentTelemetryCausation, Model } from "@zcode/contracts";
+import type { Model } from "@zcode/contracts";
 import type { TraceContext } from "../deps.js";
 import {
   canStartMemoryRecall,
@@ -74,7 +74,6 @@ export function startProjectMemoryRecallPrefetch(
   const recalledPathsSnapshot = new Set(recallState.recalledPaths);
   void prefetchProjectMemories(runtime, {
     abortSignal: abortController.signal,
-    causation: runtime.agentTelemetry.captureCausation(),
     model: input.model,
     query,
     readFileStateSnapshot,
@@ -181,7 +180,6 @@ async function prefetchProjectMemories(
   runtime: AgentRuntimeInternal,
   input: {
     abortSignal: AbortSignal;
-    causation?: AgentTelemetryCausation;
     model: Model;
     query: string;
     readFileStateSnapshot: ReadFileStateMap;
@@ -191,68 +189,41 @@ async function prefetchProjectMemories(
     traceContext: TraceContext;
   },
 ): Promise<PrefetchedMemory[]> {
-  const telemetry = runtime.agentTelemetry.detached({
-    causation: input.causation,
-    executionKind: "background",
-    operation: "project_memory_recall",
-    targetKind: "project_memory",
-    traceContext: input.traceContext,
-    trigger: "turn",
+  const fileSystem = runtime.fileSystemPort!;
+  const manifest = await getMemoryRecallManifest({
+    fileSystem,
+    rootDir: input.rootDir,
+    signal: input.abortSignal,
+    state: input.state,
   });
+  if (manifest.every((entry) => input.recalledPathsSnapshot.has(entry.filePath))) {
+    return [];
+  }
 
-  return telemetry.run(async () => {
-    try {
-      const fileSystem = runtime.fileSystemPort!;
-      const manifest = await getMemoryRecallManifest({
-        fileSystem,
-        rootDir: input.rootDir,
-        signal: input.abortSignal,
-        state: input.state,
-      });
-      if (manifest.every((entry) => input.recalledPathsSnapshot.has(entry.filePath))) {
-        telemetry.setResultType("metadata");
-        telemetry.finishCompleted();
-        return [];
-      }
-
-      const selection = await runMemorySelector({
-        abortSignal: input.abortSignal,
-        model: selectorModel(input.model, runtime, input.traceContext),
-        query: input.query,
-        state: input.state,
-      });
-      const entries = filterMemorySelections({
-        manifest,
-        readFileState: input.readFileStateSnapshot,
-        recalledPaths: input.recalledPathsSnapshot,
-        selectedFilenames: selection.selectedMemories,
-      });
-      const memories = await readRecalledMemories({
-        entries,
-        fileSystem,
-        nowMs: runtime.now().getTime(),
-        signal: input.abortSignal,
-      });
-      const entryByPath = new Map(entries.map((entry) => [entry.filePath, entry]));
-      telemetry.setResultType("metadata");
-      telemetry.finishCompleted();
-      return memories.flatMap((memory) => {
-        const entry = entryByPath.get(memory.filePath);
-        return entry ? [{ entry, memory }] : [];
-      });
-    } catch (error) {
-      if (input.abortSignal.aborted || isAbortError(error)) {
-        telemetry.finishCancelled("abort_signal");
-      } else {
-        telemetry.finishFailed("execute", "internal", error);
-      }
-      throw error;
-    }
+  const selection = await runMemorySelector({
+    abortSignal: input.abortSignal,
+    model: selectorModel(input.model, runtime, input.traceContext),
+    query: input.query,
+    state: input.state,
   });
-}
+  const entries = filterMemorySelections({
+    manifest,
+    readFileState: input.readFileStateSnapshot,
+    recalledPaths: input.recalledPathsSnapshot,
+    selectedFilenames: selection.selectedMemories,
+  });
+  const memories = await readRecalledMemories({
+    entries,
+    fileSystem,
+    nowMs: runtime.now().getTime(),
+    signal: input.abortSignal,
+  });
+  const entryByPath = new Map(entries.map((entry) => [entry.filePath, entry]));
 
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
+  return memories.flatMap((memory) => {
+    const entry = entryByPath.get(memory.filePath);
+    return entry ? [{ entry, memory }] : [];
+  });
 }
 
 function selectorModel(

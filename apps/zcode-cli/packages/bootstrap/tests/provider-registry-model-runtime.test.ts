@@ -7,15 +7,11 @@ import {
   ProviderApiConfig,
   ProviderConfig,
   ProviderRegistry,
-  ZhipuAccountAccessConfig,
   type Provider,
 } from "@zcode/provider";
 import { describe, expect, it, vi } from "vitest";
 import { ApiProviderModelRuntime } from "../src/app/provider-registry-model-runtime.js";
-import {
-  createAccountProviderConfig,
-  createApiKeyProviderConfig,
-} from "./provider-config-fixtures.js";
+import { createApiKeyProviderConfig } from "./provider-config-fixtures.js";
 
 const properties = new ModelPropertiesConfig({
   requiresMfjsToolSchema: false,
@@ -138,91 +134,14 @@ describe("ApiProviderModelRuntime", () => {
     expect(created[1]?.providerConfig).toBe(second.config);
   });
 
-  it("Account Provider 直接传递账号访问配置", () => {
-    const account = provider(
-      "account-provider",
-      createAccountProviderConfig({
-        apiFormat: "anthropic-messages",
-        baseURL: "https://account.example.com",
-        models: ["model-a"],
-      }),
-    );
-    const { created, runtime } = captureRuntime(new ProviderRegistry([account]));
-    runtime.modelFactory({ selection: selection("account-provider") });
-    expect(created[0]?.providerConfig).toBe(account.config);
-    expect(created[0]?.providerConfig.access).toMatchObject({
-      type: "zhipu-account",
-    });
-  });
-
-  it("Off-Peak Provider 绑定调用方提供的请求鉴权 Source", () => {
-    const requestProvider = provider(
-      "request-provider",
-      new ProviderConfig({
-        access: new ZhipuAccountAccessConfig({ accountType: "zai", mode: "off-peak" }),
-        api: new ProviderApiConfig({
-          type: "anthropic-messages",
-          baseUrl: "https://request.example.com",
-        }),
-        builtinModelIds: ["model-a"],
-        personalModelIds: [],
-        visibility: "hidden",
-      }),
-    );
+  it("普通 API Provider 原样绑定调用方显式提供的请求鉴权 Source", () => {
     const source = { resolve: vi.fn() };
-    const { created, runtime } = captureRuntime(new ProviderRegistry([requestProvider]));
+    const { created, runtime } = captureRuntime(new ProviderRegistry([provider()]));
     runtime.modelFactory({
-      selection: selection("request-provider"),
+      selection: selection(),
       requestDependencies: { requestAuth: { source } },
     });
     expect(created[0]?.requestDependencies?.requestAuth?.source).toBe(source);
-  });
-
-  it("Highspeed 卡 Provider 同样绑定执行作用域请求鉴权 Source", () => {
-    // 回归：加速卡的 access.mode 是 "highspeed"，与 Off-Peak 共用免签网关但凭据是本轮动态
-    // 下发的 JWT + 卡 ID header。若这里漏掉 highspeed，source 在创建 Model 时被丢，runner
-    // 会在发送前抛 model_request_auth_missing（本轮加速请求根本发不出去）。
-    const highspeedProvider = provider(
-      "account:bigmodel-highspeed-card",
-      new ProviderConfig({
-        access: new ZhipuAccountAccessConfig({ accountType: "bigmodel", mode: "highspeed" }),
-        api: new ProviderApiConfig({
-          type: "anthropic-messages",
-          baseUrl: "https://highspeed.example.com",
-        }),
-        builtinModelIds: ["model-a"],
-        personalModelIds: [],
-        visibility: "hidden",
-      }),
-    );
-    const source = { resolve: vi.fn() };
-    const { created, runtime } = captureRuntime(new ProviderRegistry([highspeedProvider]));
-    runtime.modelFactory({
-      selection: selection("account:bigmodel-highspeed-card"),
-      requestDependencies: { requestAuth: { source } },
-    });
-    expect(created[0]?.requestDependencies?.requestAuth?.source).toBe(source);
-  });
-
-  it("非 Off-Peak / Highspeed 的账号模式不转发执行作用域 Source", () => {
-    // 门禁边界：Coding Plan 等静态鉴权模式不消费执行作用域 requestAuth，避免把 source
-    // 无条件透传给所有账号 Provider（防止门禁被误放宽成永远转发）。
-    const codingPlanProvider = provider(
-      "coding-plan-provider",
-      createAccountProviderConfig({
-        apiFormat: "anthropic-messages",
-        baseURL: "https://coding-plan.example.com",
-        models: ["model-a"],
-        mode: "individual-coding-plan",
-      }),
-    );
-    const source = { resolve: vi.fn() };
-    const { created, runtime } = captureRuntime(new ProviderRegistry([codingPlanProvider]));
-    runtime.modelFactory({
-      selection: selection("coding-plan-provider"),
-      requestDependencies: { requestAuth: { source } },
-    });
-    expect(created[0]?.requestDependencies).toBeUndefined();
   });
 
   it("Registry 拥有 Provider 时，缺失 Model 不回退旧事实源", () => {

@@ -8,7 +8,6 @@ import {
   TID_CHAT_MODEL_SELECT_GROUP,
   TID_CHAT_MODEL_SELECT_TRIGGER,
   TID_SETTINGS_BACK_BUTTON,
-  TID_LOGIN_TRIGGER,
   TID_MODEL_PROVIDER_ADD_PROVIDER_BUTTON,
   TID_MODEL_PROVIDER_ADD_MODEL_BUTTON,
   TID_MODEL_PROVIDER_API_KEY_INPUT,
@@ -139,17 +138,17 @@ describe("设置页 UI polish E2E", () => {
     ).toEqual({ right: "6px", bottom: "6px", top: 6 });
   });
 
-  it("UP-01: 头像菜单按 language、theme、zoom 顺序展示偏好入口", async function () {
+  it("UP-01: 偏好菜单按 language、theme、zoom 顺序展示偏好入口", async function () {
     this.timeout(60000);
 
-    await clickVisibleTestId(TID_LOGIN_TRIGGER, {
+    await clickVisibleTestId("sidebar-preferences-trigger", {
       timeout: 15000,
-      timeoutMsg: "侧边栏头像菜单入口没有出现",
+      timeoutMsg: "侧边栏偏好菜单入口没有出现",
     });
 
     await browser.waitUntil(async () => (await readVisibleProfileMenuItems()).length >= 3, {
       timeout: 15000,
-      timeoutMsg: "头像菜单的偏好入口没有完整展开",
+      timeoutMsg: "偏好菜单的偏好入口没有完整展开",
     });
     const menuSnapshot = await readVisibleProfileMenuItems();
     if (process.platform === "darwin") {
@@ -186,7 +185,7 @@ describe("设置页 UI polish E2E", () => {
       const menu = Array.from(
         document.querySelectorAll<HTMLElement>('[data-slot="dropdown-menu-content"]'),
       ).find((element) => element.getBoundingClientRect().width > 0);
-      if (!menu) throw new Error("头像菜单浮层没有出现");
+      if (!menu) throw new Error("偏好菜单浮层没有出现");
       return {
         shell: getComputedStyle(menu).borderTopLeftRadius,
         items: Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).map(
@@ -203,7 +202,7 @@ describe("设置页 UI polish E2E", () => {
     const zoomIndex = menuSnapshot.findIndex((text) => /界面缩放|Interface zoom/.test(text));
 
     if (languageIndex < 0 || themeIndex < 0 || zoomIndex < 0) {
-      throw new Error(`头像菜单偏好入口不完整：${JSON.stringify(menuSnapshot)}`);
+      throw new Error(`偏好菜单偏好入口不完整：${JSON.stringify(menuSnapshot)}`);
     }
     expect(themeIndex).toBeGreaterThan(languageIndex);
     expect(zoomIndex).toBeGreaterThan(themeIndex);
@@ -213,7 +212,7 @@ describe("设置页 UI polish E2E", () => {
       async () =>
         (await readVisibleProfileMenuItems()).length === 0 &&
         (await browser.execute(() => getComputedStyle(document.body).pointerEvents)) !== "none",
-      { timeout: 10000, timeoutMsg: "头像菜单未关闭或指针屏障尚未释放" },
+      { timeout: 10000, timeoutMsg: "偏好菜单未关闭或指针屏障尚未释放" },
     );
   });
 

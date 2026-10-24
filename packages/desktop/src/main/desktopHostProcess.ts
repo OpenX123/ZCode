@@ -1,5 +1,3 @@
-import { ingestToolExecResource } from "./desktopResourceTelemetry.js";
-import { ingestMcpResourceSamples } from "./processResourceMcpTelemetrySource.js";
 /* eslint-disable max-lines -- host process 统一处理 main↔host 生命周期、日志、ZCode Agent，拆分前先保持跨进程消息收口。 */
 import {
   type HostAgentProcessErrorResponse,
@@ -9,9 +7,6 @@ import {
   type HostAgentProcessSpawnedResponse,
   type HostCuaOperationStateResponse,
   type HostMcpTelemetryResponse,
-  type HostSessionCreateTelemetryResponse,
-  type HostPluginTelemetryResponse,
-  type RemoteTarget,
   type TaskRealtimeHostDeliveryKind,
   type WorkspacePurpose,
   formatZCodeHostProcessName,
@@ -41,7 +36,6 @@ import { join } from "node:path";
 import { BroadcastHub } from "./broadcastHub.js";
 import { bindDatabaseStartupRelay } from "./databaseStartupRelay.js";
 import { getMainLaunchPartialMarks } from "./desktopLaunchMarks.js";
-import { ingestHostNetworkObservations } from "./desktopNetworkTelemetry.js";
 import {
   buildHostProcessEnv,
   hostModulePath,
@@ -49,7 +43,6 @@ import {
 } from "./desktopRuntimeEnv.js";
 import { ingestHostNetworkCapture } from "./resourceManagerNetwork.js";
 import { buildHostE2ECoverageEnv } from "./e2eCoverage.js";
-import { createFeedbackLogArchiveFromExportLogs } from "./exportLogs.js";
 import { createHostLogRelay } from "./hostLogRelay.js";
 import { ingestCliResourceSample } from "./processResourceCliSource.js";
 import { ingestHostSelfResourceSample } from "./processResourceSelfHeapSource.js";
@@ -115,11 +108,7 @@ export function listDisposingHostProcesses(): ElectronUtilityProcess[] {
   return Array.from(disposingHostProcesses);
 }
 
-export function loadWindow(
-  win: BrowserWindow,
-  page: "index" | "login" = "index",
-  bootstrap?: WindowBootstrapOptions,
-): Promise<void> {
+export function loadWindow(win: BrowserWindow, bootstrap?: WindowBootstrapOptions): Promise<void> {
   const query = Object.fromEntries(
     Object.entries({
       restoreSession:
@@ -134,24 +123,22 @@ export function loadWindow(
     }).filter((entry): entry is [string, string] => entry[1] != null),
   );
 
-  if (page === "index") {
-    const partial = getMainLaunchPartialMarks();
-    query[LAUNCH_MARKS_QUERY_KEY] = serializeLaunchMarks({
-      ...partial,
-      loadUrl: Date.now(), // T3
-    });
-  }
+  const partial = getMainLaunchPartialMarks();
+  query[LAUNCH_MARKS_QUERY_KEY] = serializeLaunchMarks({
+    ...partial,
+    loadUrl: Date.now(), // T3
+  });
 
   // 生产包不能信任继承环境中的开发服务器地址，否则会被本机开发会话劫持为空白页。
   if (!app.isPackaged && process.env["ELECTRON_RENDERER_URL"]) {
     const base = process.env["ELECTRON_RENDERER_URL"];
-    const url = new URL(page === "login" ? `${base}/login.html` : base);
+    const url = new URL(base);
     for (const [key, value] of Object.entries(query)) {
       url.searchParams.set(key, value);
     }
     return win.loadURL(url.toString());
   } else {
-    return win.loadFile(join(import.meta.dirname, `../renderer/${page}.html`), {
+    return win.loadFile(join(import.meta.dirname, "../renderer/index.html"), {
       query,
     });
   }
@@ -187,8 +174,6 @@ export function spawnHostProcess(
     onAgentProcessReady?: (event: HostAgentProcessReadyResponse) => void;
     onAgentProcessSpawned?: (event: HostAgentProcessSpawnedResponse) => void;
     onMcpTelemetry?: (event: HostMcpTelemetryResponse) => void;
-    onPluginTelemetry?: (event: HostPluginTelemetryResponse) => void;
-    onSessionCreateTelemetry?: (event: HostSessionCreateTelemetryResponse) => void;
     onCuaOperationStateChanged?: (
       source: ElectronUtilityProcess,
       event: HostCuaOperationStateResponse,
@@ -203,20 +188,8 @@ export function spawnHostProcess(
       error?: string;
       failureKind?: "transient" | "permanent";
     }) => void;
-    /** host → main：闲时任务派发结果，转交给 scheduler 结算（与 cron 独立）。 */
-    onOffPeakRunResult?: (result: {
-      offPeakTaskId: string;
-      ok: boolean;
-      lifecycleManaged?: true;
-      conversationId?: string;
-      sessionId?: string;
-      error?: string;
-      failureKind?: "transient" | "permanent";
-    }) => void;
     /** host 中 manual run 落库后请求 main 立即唤醒 scheduler。 */
     onCronSchedulerWakeRequested?: (automationId: string) => void;
-    /** host 中闲时任务翻 schedulable 后请求 main 立即唤醒 scheduler。 */
-    onOffPeakSchedulerWakeRequested?: (offPeakTaskId?: string) => void;
     // browser-use：main 用 WebContentsView+CDP 执行一条命令。实现由宿主注入；缺省则 backend_unavailable。
     handleBrowserExecuteRequest?: (params: {
       win: BrowserWindow;
@@ -277,9 +250,6 @@ export function spawnHostProcess(
   );
   dependencies.logger.info(`[spawnHostProcess] host module path: ${hostModulePath}`);
   dependencies.logger.info(`[spawnHostProcess] glm binary path: ${glmBinaryPath ?? "<not found>"}`);
-  dependencies.logger.info(
-    `[spawnHostProcess] BIGMODEL_OAUTH_APP_SECRET source: ${process.env.BIGMODEL_OAUTH_APP_SECRET ? "process" : dependencies.hostProcessLocalEnv.BIGMODEL_OAUTH_APP_SECRET ? "dotenv" : "fallback"}`,
-  );
 
   // 远程连接与本地服务共享 window Host，进程级 stdout 没有请求身份。
   // 连接进度改由 HostResponseTypes.RemoteWorkspaceConnectionLog 按 requestId 上报。
@@ -311,11 +281,6 @@ export function spawnHostProcess(
       hostLogRelay.onStructuredLog(result.data);
       return;
     }
-
-    if (result.data.type === HostResponseTypes.NetworkTelemetryBatch) {
-      ingestHostNetworkObservations(result.data.observations);
-      return;
-    }
     if (result.data.type === HostResponseTypes.NetworkCaptureBatch) {
       ingestHostNetworkCapture(result.data.batch, child.pid ?? 0);
       return;
@@ -338,35 +303,6 @@ export function spawnHostProcess(
 
     if (result.data.type === HostResponseTypes.ResourceUsageSnapshotResult) {
       resolveHostResourceUsageResult(label, result.data);
-      return;
-    }
-
-    if (result.data.type === HostResponseTypes.ToolExecResource) {
-      ingestToolExecResource(result.data.sample, result.data.runtimeSurface);
-      return;
-    }
-
-    if (result.data.type === HostResponseTypes.McpResourceSamples) {
-      ingestMcpResourceSamples(
-        result.data.samples,
-        result.data.runtimeSurface,
-        result.data.environmentKey,
-      );
-      return;
-    }
-
-    if (result.data.type === HostResponseTypes.McpTelemetry) {
-      dependencies.onMcpTelemetry?.(result.data);
-      return;
-    }
-
-    if (result.data.type === HostResponseTypes.PluginTelemetry) {
-      dependencies.onPluginTelemetry?.(result.data);
-      return;
-    }
-
-    if (result.data.type === HostResponseTypes.SessionCreateTelemetry) {
-      dependencies.onSessionCreateTelemetry?.(result.data);
       return;
     }
 
@@ -431,29 +367,6 @@ export function spawnHostProcess(
     if (result.data.type === HostResponseTypes.CuaOperationState) {
       // Main 只投影 Host 已经判定的 turn 状态，不在这里重复解析 session/tool 业务事件。
       dependencies.onCuaOperationStateChanged?.(child, result.data);
-      return;
-    }
-
-    if (result.data.type === HostResponseTypes.FeedbackLogArchiveRequest) {
-      const request = result.data;
-      void createFeedbackLogArchiveFromExportLogs(request.sourceDir)
-        .then((archive) => {
-          child.postMessage({
-            type: HostMessageTypes.FeedbackLogArchiveResult,
-            requestId: request.requestId,
-            ok: true,
-            path: archive.path,
-            size: archive.size,
-          });
-        })
-        .catch((error) => {
-          child.postMessage({
-            type: HostMessageTypes.FeedbackLogArchiveResult,
-            requestId: request.requestId,
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
       return;
     }
 
@@ -551,26 +464,8 @@ export function spawnHostProcess(
       return;
     }
 
-    if (result.data.type === HostResponseTypes.OffPeakRunResult) {
-      dependencies.onOffPeakRunResult?.({
-        offPeakTaskId: result.data.offPeakTaskId,
-        ok: result.data.ok,
-        lifecycleManaged: result.data.lifecycleManaged,
-        conversationId: result.data.conversationId,
-        sessionId: result.data.sessionId,
-        error: result.data.error,
-        failureKind: result.data.failureKind,
-      });
-      return;
-    }
-
     if (result.data.type === HostResponseTypes.CronSchedulerWakeRequest) {
       dependencies.onCronSchedulerWakeRequested?.(result.data.automationId);
-      return;
-    }
-
-    if (result.data.type === HostResponseTypes.OffPeakSchedulerWakeRequest) {
-      dependencies.onOffPeakSchedulerWakeRequested?.(result.data.offPeakTaskId);
       return;
     }
 

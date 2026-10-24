@@ -9,3 +9,5 @@ session record 始终是 residencyFinalizationCount 的唯一 owner；租约不�
 ```
 
 不创建队列、缓存、定时器或第二份会话状态。同步异常与异步失败均保留原错误。
+
+独立桌面模式不接纳官方闲时 ticket、工具开关、换票控制或生命周期通知。执行材料投影只保留通用的单次执行选择与用户自有请求鉴权；历史事件的 `offPeakTaskId` 不触发执行或重新调度。

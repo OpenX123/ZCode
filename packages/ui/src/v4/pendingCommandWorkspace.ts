@@ -1,4 +1,3 @@
-import type { SessionCreateSource } from "@zcode/shared";
 import type { ComposerRecentReceipt } from "@/lib/composerRecent.js";
 export interface PendingCommandClientContext {
   composer?: ComposerRecentReceipt & { draftId?: string; submittedText?: string };
@@ -8,7 +7,6 @@ export interface PendingCommandClientContext {
   };
   projectId?: string | null;
   taskGroupId?: string | null;
-  sessionCreateSource?: SessionCreateSource;
 }
 
 interface WorkspaceScopedPendingCommand {

@@ -25,4 +25,4 @@ Todo103 G13-B；来源 `8e3e10df4d`、`ee30f2ad33`。
 1. 真实挂载 SessionPane，点击 Composer 回调：命令仍携投影中的执行 ID，并记录 button 来源。
 2. 不可停止的 Session：不得发 stop 命令，记录 skipped 来源。
 3. Logger 生产分支测试：lifecycle 经桌面桥转发，普通 info 不转发；无桌面桥不抛错。
-4. 既有停止 / 队列 E2E 保留，最终整合时复验；本项不改变桌面 continuous 或手机 replayable 的路由及状态语义。
+4. 既有停止 / 队列 E2E 保留，最终整合时复验；本项不改变桌面 continuous 的路由及状态语义。

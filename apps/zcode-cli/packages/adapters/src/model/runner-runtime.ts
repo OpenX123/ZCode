@@ -1,4 +1,3 @@
-import type { RequestVerificationReason } from "@zcode/shared";
 import { generateText as aiGenerateText, streamText as aiStreamText } from "ai";
 import type {
   ModelProperties,
@@ -6,7 +5,6 @@ import type {
   ModelTextRequest,
   TraceContext,
 } from "@zcode/contracts";
-import type { ZCodeProviderAccountAccess } from "@zcode/shared";
 import type { AiSdkResolvedModel } from "./model-execution.js";
 
 export type AiSdkGenerateTextOptions = Parameters<typeof aiGenerateText>[0];
@@ -15,7 +13,6 @@ export type AiSdkStreamTextOptions = Parameters<typeof aiStreamText>[0];
 export type AiSdkStreamTextResult = ReturnType<typeof aiStreamText>;
 export type ResolvedAiSdkModel = AiSdkResolvedModel & {
   properties: ModelProperties;
-  accountAccess?: ZCodeProviderAccountAccess;
 };
 
 export interface AiSdkModelRuntime {
@@ -26,14 +23,10 @@ export interface AiSdkModelRuntime {
 export interface AiSdkModelTextRequest extends ModelTextRequest {
   abortSignal?: AbortSignal;
   traceContext?: TraceContext;
-  // Start Plan 的账号鉴权材料按 attempt 刷新；adapter 内部 retry 也是真实模型请求，
-  // 必须在每个 attempt 发送前给 core/host 一个刷新机会。
+  // 用户提供的执行凭据按每次真实请求解析，不写回共享模型目录。
   refreshRuntimeHeadersBeforeAttempt?: (input: {
-    accountAccess?: ZCodeProviderAccountAccess;
-    expectedAccountScope?: string;
-    rejectedProjectTokenFingerprint?: string;
     attempt: number;
-    reason?: RequestVerificationReason;
+    reason?: "model-request";
     abortSignal?: AbortSignal;
     providerId: string;
     modelId: string;

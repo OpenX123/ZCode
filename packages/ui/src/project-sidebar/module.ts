@@ -4,14 +4,7 @@
  */
 export const projectSidebarModule = {
   id: "project-sidebar",
-  requires: [
-    "services",
-    "shared",
-    "ui",
-    "conversation-workspace-target",
-    "web-remote-control-ui",
-    "remote-connection-flow",
-  ],
+  requires: ["services", "shared", "ui", "conversation-workspace-target", "remote-connection-flow"],
   provides: ["project-sidebar"],
   publicEntrypoints: [
     "index.tsx",

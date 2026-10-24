@@ -9,13 +9,6 @@ export {
   type ProviderSettingsProviderView,
   type ProviderSettingsView,
 } from "./model-provider/providerFacadeServices.js";
-export {
-  createAccountRequestAuthService,
-  type IAccountRequestAuthService,
-  type AccountRequestAuthInput,
-  type AccountRequestAuthMaterial,
-  type AccountRequestAuthResolver,
-} from "./model-provider/accountRequestAuthService.js";
 export { IProviderProvisioningTargetService } from "./model-provider/providerProvisioning.js";
 export {
   collectServiceMemoryDiagnostics,
@@ -25,27 +18,6 @@ export {
 
 // Accessor
 export type { IServiceAccessor } from "./accessor.js";
-export {
-  ConversationShareServiceError,
-  createUnsupportedConversationShareService,
-  IConversationShareService,
-} from "./conversation-share/conversationShare.js";
-export type {
-  ConversationShareSelection,
-  ConversationSharePublishProgress,
-  ConversationShareImportProgress,
-  ImportConversationShareInput,
-  ImportConversationShareResult,
-  ImportedConversationShare,
-  ConversationShareServiceErrorKind,
-  ConversationShareFailureIssue,
-  ConversationShareFailureIssueCode,
-  ConversationSharePreflightInput,
-  ConversationSharePreflightResult,
-  ConversationShareAllowedArtifact,
-  ConversationShareTurnPreflightResult,
-  PublishTextConversationInput,
-} from "./conversation-share/conversationShare.js";
 // Conversation share 的具体实现依赖 Node 文件系统，只能从 @zcode/services/node 引入；
 // 根入口必须保持 browser-safe，避免 renderer 解析到 node:* 模块。
 export {
@@ -57,8 +29,6 @@ export {
 // File service — IFileService is both a type (interface) and value (descriptor)
 export { IFileService } from "./file/file.js";
 export { IMediaPreviewService } from "./media-preview/mediaPreview.js";
-export { ICloudContentService } from "#src/cloud-content/cloudContent.js";
-export { IMarketingTouchService } from "#src/marketing-touch/marketingTouch.js";
 export type { MediaPreviewPreparation } from "./media-preview/mediaPreview.js";
 
 // Git service — IGitService is both a type (interface) and value (descriptor)
@@ -232,7 +202,6 @@ export type { SessionRealtimePort } from "./session/sessionRealtimePort.js";
 export { IFileWatcherService } from "./fileWatcher/fileWatcher.js";
 
 // OAuth service — IOAuthService is both a type (interface) and value (descriptor)
-export { IOAuthService } from "./oauth/oauth.js";
 
 // UsageStats service — IUsageStatsService is both a type (interface) and value (descriptor)
 export { IUsageStatsService } from "./usage-stats/usageStats.js";
@@ -242,22 +211,8 @@ export { IUsageStatsService } from "./usage-stats/usageStats.js";
 export type { IStorageService, StorageRootSpec } from "./storage/contract.js";
 
 // CodingPlanSubscription service — ICodingPlanSubscriptionService is both a type (interface) and value (descriptor)
-export {
-  ICodingPlanSubscriptionService,
-  type OffPeakClientConfig,
-} from "./coding-plan-subscription/codingPlanSubscription.js";
-export {
-  IClientScenesService,
-  type ClientSceneConfig,
-  type ClientSceneItem,
-  type ClientSceneOption,
-  type ClientSceneResponseBody,
-  type ClientScenesResponse,
-} from "./client-scenes/clientScenes.js";
 export { isValidCronExpr } from "./session/automationCronValidation.js";
 // 闲时任务管理服务（与 automation 服务面独立）；接口/描述符 browser-safe。
-export { IOffPeakTaskService } from "./session/offPeakTask.js";
-export type { OffPeakUpdateTaskParams } from "./session/offPeakTask.js";
 
 // Skills service — ISkillsService is both a type (interface) and value (descriptor)
 export { ISkillsService } from "./skills/skills.js";
@@ -282,7 +237,7 @@ export {
 // Plugins service — IPluginsService is both a type (interface) and value (descriptor)
 export { IPluginsService } from "./plugins/plugins.js";
 // 设置页插件管理薄服务（UI 平台能力面不再直触 zcodeAgentService）
-export { IPluginManagementService, withPluginTelemetry } from "./plugins/pluginManagement.js";
+export { IPluginManagementService } from "./plugins/pluginManagement.js";
 
 // Subagents service — ISubagentsService is both a type (interface) and value (descriptor)
 export { ISubagentsService } from "./subagents/subagents.js";
@@ -292,8 +247,6 @@ export { ICommandsService } from "./commands/commands.js";
 
 export { ISettingsSyncService } from "./settings-sync/settingsSync.js";
 
-export { IFeedbackService } from "./feedback/feedback.js";
-export type { FeedbackUploadProgress } from "./feedback/feedback.js";
 export { IPromptAttachmentTransferService } from "./prompt-attachment-transfer/promptAttachmentTransfer.js";
 export type {
   PromptAttachmentStageParams,
@@ -373,15 +326,6 @@ export {
   type PluginUiSurfaceEntry,
   type PluginUiWorkspaceTarget,
 } from "./plugin-ui-bridge/contract.js";
-export { IClientConfigService } from "./client-config/clientConfig.js";
-
-export { IHighspeedCardService } from "./highspeed/highspeedCard.js";
-export {
-  HighspeedCardService,
-  createHighspeedHttpTransport,
-  buildHighspeedTurnExecution,
-} from "./highspeed/highspeedCardService.js";
-export { createHighspeedMockTransport } from "./highspeed/highspeedMockTransport.js";
 
 export { IGenUiService } from "./gen-ui/contract.js";
 export type { GenUiPrepareParams } from "./gen-ui/contract.js";
@@ -395,3 +339,5 @@ export type {
   GroupNode,
   MoveGroupNode,
 } from "#src/task-groups/contract.js";
+
+export type { ImportedConversationShare } from "./zcode-session/zcodeSession.js";

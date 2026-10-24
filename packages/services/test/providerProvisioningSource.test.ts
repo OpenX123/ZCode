@@ -6,51 +6,36 @@ import {
   NodePersonalProviderConfigRepository,
   encodeProviderConfigFile,
 } from "@zcode/provider-node";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { createCredentialCipherProvider } from "../src/credential/providers/credentialCipherProvider.js";
-import {
-  listProviderProvisioningCredentialKeys,
-  createProviderProvisioningSource,
-} from "../src/model-provider/providerProvisioningSource.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { createProviderProvisioningSource } from "../src/model-provider/providerProvisioningSource.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
-function personalRepository(root: string) {
-  const repo = new NodePersonalProviderConfigRepository({
-    filePath: join(root, "provider_config.json"),
+async function fixture() {
+  const root = await mkdtemp(join(tmpdir(), "zcode-provider-provisioning-source-"));
+  const filePath = join(root, "provider_config.json");
+  const repository = new NodePersonalProviderConfigRepository({
+    filePath,
     pollingIntervalMs: false,
   });
   cleanups.push(async () => {
-    repo.dispose();
+    repository.dispose();
     await rm(root, { recursive: true, force: true });
   });
-  return repo;
+  const source = createProviderProvisioningSource({
+    personalRepository: repository,
+    personalConfigFilePath: filePath,
+  });
+  return { root, filePath, repository, source };
 }
 
 describe("Provider Provisioning Source", () => {
-  it("exports sparse Personal Config, default, account settings and only provider credentials", async () => {
-    const root = await mkdtemp(join(tmpdir(), "zcode-provider-provisioning-source-"));
-    const credentialsPath = join(root, "credentials.json");
-    const cipher = createCredentialCipherProvider({ env: { ZCODE_CREDENTIAL_SECRET: "source" } });
-    await writeFile(
-      credentialsPath,
-      JSON.stringify({
-        "oauth:active_provider": cipher.encrypt("zai"),
-        "oauth:zai:access_token": cipher.encrypt("oauth-token"),
-        "account-provider:individual-coding-plan:provider:account:user:api-key":
-          cipher.encrypt("coding-plan-key"),
-        "account-provider:custom-provider:identity": cipher.encrypt("account-user-id"),
-        "ssh:password": cipher.encrypt("must-not-export"),
-        "ssh:malformed": { unexpected: true },
-        "account-provider:coding-plan:legacy:account:user:api-key": "enc:v1:broken",
-        "account-provider:coding-plan:malformed:account:user:api-key": { invalid: true },
-      }),
-      "utf8",
-    );
-    const repository = personalRepository(root);
-    await repository.update(() => ({
+  it("只导出完整 Personal 快照与默认选择，不读取账号或凭据", async () => {
+    const f = await fixture();
+    await writeFile(join(f.root, "credentials.json"), "{broken");
+    await f.repository.update(() => ({
       providers: parsePersonalProviderConfigMap({
         providerRules: [
           {
@@ -68,57 +53,33 @@ describe("Provider Provisioning Source", () => {
       providerOrder: ["custom"],
       defaultModelSelection: { providerId: "custom", modelId: "model-a" },
     }));
-    const source = createProviderProvisioningSource({
-      personalRepository: repository,
-      settingService: {
-        get: vi.fn(async () => ({
-          providerFamilyDomain: "zai",
-          providerFamilyConnectionSelections: { zai: { kind: "individual-coding-plan" } },
-        })),
-      } as never,
-      credentialFilePath: credentialsPath,
-      personalConfigFilePath: join(root, "provider_config.json"),
-      cipherProvider: cipher,
-    });
-
-    const snapshot = await source.read("sync-source");
-    expect(await listProviderProvisioningCredentialKeys(credentialsPath)).toEqual([
-      "oauth:active_provider",
-      "oauth:zai:access_token",
-    ]);
+    const snapshot = await f.source.read("sync-source");
     expect(snapshot.schemaVersion).toBe(2);
     expect(snapshot.personalConfig).toEqual(
-      encodeProviderConfigFile(await repository.read()).config,
+      encodeProviderConfigFile(await f.repository.read()).config,
     );
     expect(snapshot.personalConfig.defaultModelSelection).toEqual({
       providerId: "custom",
       modelId: "model-a",
     });
-    expect(snapshot.credentials).toEqual([
-      { scope: "oauth-session", key: "oauth:active_provider", value: "zai" },
-      { scope: "oauth-session", key: "oauth:zai:access_token", value: "oauth-token" },
-    ]);
+    expect(snapshot.credentials).toEqual([]);
+    expect(snapshot.accountSettings).toEqual({
+      providerFamilyDomain: null,
+      providerFamilyConnectionSelections: {},
+    });
     expect(snapshot).not.toHaveProperty("sourceRevision");
-    repository.dispose();
   });
 
-  it("still rejects malformed allowlist credential records", async () => {
-    const root = await mkdtemp(join(tmpdir(), "zcode-provider-provisioning-source-"));
-    const credentialsPath = join(root, "credentials.json");
-    await writeFile(
-      credentialsPath,
-      JSON.stringify({ "oauth:active_provider": { malformed: true } }),
-      "utf8",
+  it("首次无 Personal 文件时允许导出空配置，坏文件不能降级为旧内存快照", async () => {
+    const f = await fixture();
+    expect((await f.source.read("empty")).personalConfig.providerConfigRules.providerRules).toEqual(
+      [],
     );
-    const source = createProviderProvisioningSource({
-      personalRepository: personalRepository(root),
-      settingService: { get: vi.fn(async () => ({})) } as never,
-      credentialFilePath: credentialsPath,
-      personalConfigFilePath: join(root, "provider_config.json"),
-    });
-
-    await expect(source.read("sync-malformed-allowlist")).rejects.toThrow(
-      "Credential allowlist value must be a string",
-    );
+    await f.repository.update(() => ({
+      providers: parsePersonalProviderConfigMap({ providerRules: [] }),
+      models: ModelConfigRules.empty(),
+    }));
+    await writeFile(f.filePath, "{broken");
+    await expect(f.source.read("corrupt")).rejects.toThrow("无法同步");
   });
 });

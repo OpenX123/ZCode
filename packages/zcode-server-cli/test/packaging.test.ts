@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -332,6 +333,13 @@ describe("stageRelease", () => {
 
   it("stages a Windows target with a cmd launcher and zip archive", async () => {
     const fixture = await makeStageFixture();
+    await writeFile(fixture.agentBundlePath, 'module.exports = require("koffi");\n', "utf8");
+    await writeFakePackage(fixture.workspaceNodeModulesDir, "koffi", {
+      files: {
+        "build/koffi/win32_x64/koffi.node": "windows-koffi-binary",
+        "build/koffi/darwin_arm64/koffi.node": "host-koffi-binary",
+      },
+    });
     const toolsDir = join(await makeTempDir(), "tools");
     await writeFakeNativeTools(toolsDir, { ripgrep: "rg.exe", ugrep: "ugrep.exe" });
     const staged = await stageRelease({
@@ -341,6 +349,19 @@ describe("stageRelease", () => {
       ...fixture,
     });
     expect(staged.archivePath).toMatch(/\.zip$/u);
+    // 桌面闭包迁移不能影响 Server：其 Agent 仍从 runtime/node_modules 解析 Koffi。
+    const runtimeDir = join(staged.releaseDir, "runtime");
+    const requireFromAgent = createRequire(join(runtimeDir, "zcode.cjs"));
+    expect(requireFromAgent.resolve("koffi")).toBe(
+      await realpath(join(runtimeDir, "node_modules/koffi/index.js")),
+    );
+    expect(staged.packagedDependencies).toContain("koffi");
+    await expect(
+      stat(join(runtimeDir, "node_modules/koffi/build/koffi/win32_x64/koffi.node")),
+    ).resolves.toBeTruthy();
+    await expect(
+      stat(join(runtimeDir, "node_modules/koffi/build/koffi/darwin_arm64")),
+    ).rejects.toThrow();
     expect(await readFile(join(staged.releaseDir, "bin", "zcode.cmd"), "utf8")).toContain(
       "node.exe",
     );

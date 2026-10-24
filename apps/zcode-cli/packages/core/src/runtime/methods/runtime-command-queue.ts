@@ -1,5 +1,4 @@
 import { traceContextToLogContext } from "../deps.js";
-import { refreshOffPeakWork } from "../off-peak/runtime.js";
 import type { RuntimeCommand, TaskNotificationRuntimeCommand } from "../command-queue.js";
 import { uuidv7 } from "@zcode/shared";
 import type { AgentRuntimeInternal } from "../internal.js";
@@ -29,11 +28,6 @@ export function enqueueRuntimeCommand(this: AgentRuntimeInternal, command: Runti
       : command.mode === "subagent-message"
         ? command.agentId
         : undefined;
-  // 任务卡取消封住该执行的迟到通知；聊天 Stop 不设置此标记，保持原有唤起行为。
-  if (sourceTaskId && this.runtimeTaskRegistry.get(sourceTaskId)?.offPeakCancelled) return;
-  const offPeakExecutionId =
-    sourceTaskId && this.runtimeTaskRegistry.get(sourceTaskId)?.offPeakExecutionId;
-  if (offPeakExecutionId) command = { ...command, offPeakExecutionId };
   this.runtimeCommandQueue.enqueue(command);
   if (command.mode === "task-notification") {
     this.logger?.info?.("Background task notification enqueued into runtime command queue", {
@@ -76,7 +70,6 @@ export async function drainRuntimeCommandQueue(this: AgentRuntimeInternal): Prom
     }
   } finally {
     this.runtimeCommandDrainActive = false;
-    refreshOffPeakWork(this);
   }
 
   if (this.runtimeCommandQueue.hasPending() && this.foregroundPromotionLease === undefined) {
@@ -288,7 +281,6 @@ async function runRuntimeCommand(
       });
       const messageId = await persistSubagentMessageCommand.call(this, command);
       await this.executeTurnCommand(command.text, undefined, {
-        offPeakExecutionId: command.offPeakExecutionId,
         abortSignal: foregroundExecution.controller.signal,
         inputSource: "subagent_message",
         inputVisibility: "model-only",
@@ -363,7 +355,6 @@ async function runTaskNotificationBatch(
       module: "core.runtime",
     });
     await this.executeTurnCommand(persisted.text, undefined, {
-      offPeakExecutionId: firstCommand.offPeakExecutionId,
       // wake 缺 inputId，telemetry 借用了持久化 msg_*，与普通 main turn 分叉。
       // 每个独立 batch 使用同一 UUID v7 规则；持久化消息仍使用 recordedInputMessageId。
       inputId: uuidv7(),

@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { PersistedToolSearchContentSchema } from "./tool-search.js";
-import { OFFICIAL_MCP_TOOL_ERROR_CODES } from "@zcode/shared";
 import {
   MCP_APPS_RESOURCE_URI_MAX_CHARS,
   MCP_APPS_CONTENT_MAX_BYTES,
@@ -237,15 +236,6 @@ export const mcpToolResultDisplayPayloadSchema = z
     serverName: z.string().min(1).max(MCP_TOOL_DISPLAY_MAX_NAME_CHARS),
     toolName: z.string().min(1).max(MCP_TOOL_DISPLAY_MAX_NAME_CHARS),
     description: z.string().min(1).max(MCP_TOOL_DISPLAY_MAX_DESCRIPTION_CHARS).optional(),
-    /**
-     * 官方 Server MCP 判定本次调用不可用时下发的结构化标识（额度耗尽 / 无 Coding Plan）。
-     * 只在 tool result 为 isError 且该 MCP 为官方来源时出现，UI 据此在输入框上方提示。
-     * 与 code 同源：`@zcode/shared` 的 OFFICIAL_MCP_TOOL_ERROR_CODES。
-     */
-    unavailable: z
-      .object({ code: z.enum(OFFICIAL_MCP_TOOL_ERROR_CODES) })
-      .strict()
-      .optional(),
     // 与 `@zcode/shared` v4 toolDisplay 的 mcp_tool.ui 同步；两侧都是 strict，缺一处会被 zod 静默 strip。
     ui: mcpToolDisplayUiPayloadSchema.optional(),
   })
@@ -382,7 +372,21 @@ export function parseToolResultDisplayPayload(
  * 每个 stripper 只认自己那一个 kind，只改在场的键，别的 kind 原样进入解析。
  */
 function scrubPersistedDisplay(display: unknown): unknown {
-  return stripProviderStopFromGetWorkflowRunError(stripWithdrawnRefinedNames(display));
+  return stripRetiredMcpUnavailable(
+    stripProviderStopFromGetWorkflowRunError(stripWithdrawnRefinedNames(display)),
+  );
+}
+
+/**
+ * 旧 MCP 结果可能保存套餐不可用标记；仅在读取投影中剥离，避免严格校验丢弃整块工具显示。
+ * 新写入契约已移除此字段，历史文件保持原样，其他未知字段仍由严格契约拒绝。
+ */
+function stripRetiredMcpUnavailable(display: unknown): unknown {
+  if (!isPlainRecord(display) || display.kind !== "mcp_tool" || !("unavailable" in display)) {
+    return display;
+  }
+  const { unavailable: _dropped, ...rest } = display;
+  return rest;
 }
 
 /**

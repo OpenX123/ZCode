@@ -1,12 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  ProviderConfigMap,
-  extractManualModelConfig,
-  type AccountProviderConfigSnapshot,
-  type ProviderSource,
-} from "@zcode/provider";
+import { ProviderConfigMap, extractManualModelConfig } from "@zcode/provider";
 import {
   NodePersonalProviderConfigRepository,
   NodeZCodeBuiltinProviderConfigSource,
@@ -18,7 +13,6 @@ import {
   createProviderRuntime,
   createProviderRuntimeFromConfigRuntime,
 } from "../src/model-provider/providerRuntime.js";
-import { createAccountProviderConfig } from "./providerConfigFixtures.js";
 
 async function readBuiltinRevision(filePath: string): Promise<string> {
   const source = new NodeZCodeBuiltinProviderConfigSource({
@@ -29,20 +23,6 @@ async function readBuiltinRevision(filePath: string): Promise<string> {
     return (await source.read()).revision;
   } finally {
     source.dispose();
-  }
-}
-
-class StaticAccountSource implements ProviderSource<AccountProviderConfigSnapshot> {
-  constructor(readonly snapshot: AccountProviderConfigSnapshot) {}
-
-  readonly refresh = vi.fn(async () => this.snapshot);
-
-  async read(): Promise<AccountProviderConfigSnapshot> {
-    return this.snapshot;
-  }
-
-  onDidChange(): () => void {
-    return () => {};
   }
 }
 
@@ -196,26 +176,6 @@ describe("ProviderRuntime", () => {
     expect(() => runtime.start()).toThrow("已 dispose");
   });
 
-  it("释放组合根拥有的 Account Source", async () => {
-    const root = await mkdtemp(join(tmpdir(), "zcode-provider-runtime-account-dispose-"));
-    const zcodeBuiltinFilePath = join(root, "zcode-builtin.json");
-    await writeFile(zcodeBuiltinFilePath, JSON.stringify(emptyZCodeBuiltinRelease()), "utf8");
-    const configRuntime = createProviderConfigRuntime({
-      zcodeBuiltinFilePath,
-      personalFilePath: join(root, "personal.json"),
-      watch: false,
-    });
-    const disposeAccountSource = vi.fn();
-    const runtime = createProviderRuntimeFromConfigRuntime({
-      configRuntime,
-      disposeAccountSource,
-    });
-
-    runtime.dispose();
-
-    expect(disposeAccountSource).toHaveBeenCalledTimes(1);
-  });
-
   it("首次 Facade 调用会等待 Runtime 就绪，无需 Entry 先显式 start", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-provider-runtime-ready-"));
     const zcodeBuiltinFilePath = join(root, "zcode-builtin.json");
@@ -233,284 +193,6 @@ describe("ProviderRuntime", () => {
       { revision: 1, providers: [] },
     ]);
 
-    runtime.dispose();
-  });
-
-  it("组装 Config、Account Access、Registry 与 Facade", async () => {
-    const root = await mkdtemp(join(tmpdir(), "zcode-provider-runtime-"));
-    const zcodeBuiltinFilePath = join(root, "zcode-builtin.json");
-    await writeFile(
-      zcodeBuiltinFilePath,
-      JSON.stringify({
-        schemaVersion: 1,
-        revision: 1,
-        config: {
-          providerConfigRules: {
-            providerRules: [
-              {
-                providerId: "account-plan",
-                config: {
-                  group: "zai-family",
-                  access: {
-                    type: "zhipu-account",
-                    accountType: "zai",
-                    mode: "individual-coding-plan",
-                    entitled: false,
-                  },
-                  api: {
-                    type: "anthropic-messages",
-                    baseUrl: "https://plan.example.com",
-                  },
-                  builtinModelIds: ["model-a"],
-                },
-              },
-            ],
-            templateRules: [],
-          },
-          modelConfigRules: {
-            modelRules: [
-              {
-                modelMatch: ".*",
-                config: {
-                  properties: {
-                    requiresMfjsToolSchema: false,
-                    contextWindow: 200000,
-                    inputFormat: {
-                      supportsText: true,
-                      supportsImage: false,
-                      supportsVideo: false,
-                      supportsAudio: false,
-                      supportsPdf: false,
-                    },
-                    outputFormat: { supportsText: true },
-                    supportsToolCall: true,
-                    supportsJsonSchemaOutput: true,
-                    supportsNativeWebSearch: false,
-                    supportsMidConversationSystem: false,
-                  },
-                  optionSpecs: {
-                    reasoningLevel: {
-                      values: ["disabled"],
-                      map: "{}",
-                    },
-                    maxOutputTokens: {
-                      max: 32000,
-                      map: "{'max_tokens': maxOutputTokens}",
-                    },
-                  },
-                  enabled: true,
-                },
-              },
-            ],
-            modelApiRules: [],
-            providerSiteRules: [],
-            templateModelRules: [],
-            builtinProviderModelRules: [],
-          },
-        },
-      }),
-      "utf8",
-    );
-    const accountSource = new StaticAccountSource({
-      revision: "account-1",
-      basedOnZCodeBuiltinRevision: await readBuiltinRevision(zcodeBuiltinFilePath),
-      providers: new ProviderConfigMap([
-        [
-          "account-plan",
-          createAccountProviderConfig({
-            models: ["model-a"],
-            entitled: true,
-          }),
-        ],
-      ]),
-    });
-    // 首选值必须来自显式 Configured Default；不能依赖已取消的“首个模型自动补档”。
-    await seedDefault(join(root, "personal.json"), {
-      providerId: "account-plan",
-      modelId: "model-a",
-      options: { reasoningLevel: "disabled" },
-    });
-    const runtime = createProviderRuntime({
-      zcodeBuiltinFilePath,
-      personalFilePath: join(root, "personal.json"),
-      accountSource,
-      watch: false,
-    });
-
-    await runtime.start();
-    const snapshot = runtime.registryService.getSnapshot()!;
-
-    expect(snapshot.registry.providers[0]).toMatchObject({
-      providerId: "account-plan",
-      config: {
-        access: {
-          type: "zhipu-account",
-        },
-        builtinModelIds: ["model-a"],
-      },
-    });
-    expect(await runtime.modelSelection.getView()).toEqual({
-      revision: 1,
-      preferredSelection: {
-        providerId: "account-plan",
-        modelId: "model-a",
-        options: { reasoningLevel: "disabled" },
-      },
-      providers: [
-        {
-          providerId: "account-plan",
-          config: {
-            access: {
-              type: "zhipu-account",
-              accountType: "zai",
-              mode: "individual-coding-plan",
-              entitled: true,
-            },
-            api: {
-              type: "anthropic-messages",
-              baseUrl: "https://plan.example.com",
-            },
-            builtinModelIds: ["model-a"],
-            group: "zai-family",
-          },
-          models: [
-            {
-              modelId: "model-a",
-              config: expect.any(Object),
-            },
-          ],
-        },
-      ],
-    });
-
-    const selectionListener = vi.fn();
-    const subscription = runtime.modelSelection.onDidChange(selectionListener);
-
-    await runtime.providerSettings.refresh("account-provider-ready");
-    expect((await runtime.modelSelection.getView()).providers).toHaveLength(1);
-    subscription.dispose();
-
-    await runtime.providerSettings.refresh("purchase-complete");
-    expect(accountSource.refresh).toHaveBeenCalledWith("settings:purchase-complete");
-
-    runtime.dispose();
-  });
-
-  it("设置页连通性测试使用最新 Settings Provider 判断账号访问方式", async () => {
-    const root = await mkdtemp(join(tmpdir(), "zcode-provider-runtime-connectivity-"));
-    const zcodeBuiltinFilePath = join(root, "zcode-builtin.json");
-    await writeFile(
-      zcodeBuiltinFilePath,
-      JSON.stringify({
-        schemaVersion: 1,
-        revision: 1,
-        config: {
-          providerConfigRules: {
-            providerRules: [
-              {
-                providerId: "account-plan",
-                config: {
-                  group: "zai-family",
-                  access: {
-                    type: "zhipu-account",
-                    accountType: "zai",
-                    mode: "individual-coding-plan",
-                    entitled: false,
-                  },
-                  api: {
-                    type: "anthropic-messages",
-                    baseUrl: "https://plan.example.com",
-                  },
-                  builtinModelIds: ["model-a"],
-                },
-              },
-            ],
-            templateRules: [],
-          },
-          modelConfigRules: {
-            modelRules: [
-              {
-                modelMatch: ".*",
-                config: {
-                  properties: {
-                    requiresMfjsToolSchema: false,
-                    contextWindow: 200000,
-                    inputFormat: {
-                      supportsText: true,
-                      supportsImage: false,
-                      supportsVideo: false,
-                      supportsAudio: false,
-                      supportsPdf: false,
-                    },
-                    outputFormat: { supportsText: true },
-                    supportsToolCall: true,
-                    supportsJsonSchemaOutput: true,
-                    supportsNativeWebSearch: false,
-                    supportsMidConversationSystem: false,
-                  },
-                  optionSpecs: {
-                    reasoningLevel: {
-                      values: ["disabled"],
-                      map: "{}",
-                    },
-                    maxOutputTokens: {
-                      max: 32000,
-                      map: "{'max_tokens': maxOutputTokens}",
-                    },
-                  },
-                  enabled: true,
-                },
-              },
-            ],
-            modelApiRules: [],
-            providerSiteRules: [],
-            templateModelRules: [],
-            builtinProviderModelRules: [],
-          },
-        },
-      }),
-      "utf8",
-    );
-    const accountSource = new StaticAccountSource({
-      revision: "account-1",
-      basedOnZCodeBuiltinRevision: await readBuiltinRevision(zcodeBuiltinFilePath),
-      providers: new ProviderConfigMap([
-        [
-          "account-plan",
-          createAccountProviderConfig({
-            models: ["model-a"],
-            entitled: true,
-          }),
-        ],
-      ]),
-    });
-    const testConnectivity = vi.fn(async () => ({ success: true as const }));
-    const runtime = createProviderRuntime({
-      zcodeBuiltinFilePath,
-      personalFilePath: join(root, "personal.json"),
-      accountSource,
-      testConnectivity,
-      watch: false,
-    });
-    const settingsView = await runtime.providerSettings.getView();
-    const provider = settingsView.providers.find(
-      (candidate) => candidate.providerId === "account-plan",
-    )!;
-    const model = provider.models.find((candidate) => candidate.modelId === "model-a")!;
-
-    await runtime.providerSettings.testModelConnectivity({
-      workspacePath: "/remote/workspace",
-      workspaceIdentity: "ssh:server:/remote/workspace",
-      providerId: provider.providerId,
-      modelId: model.modelId,
-    });
-
-    expect(testConnectivity).toHaveBeenCalledWith({
-      workspacePath: "/remote/workspace",
-      workspaceIdentity: "ssh:server:/remote/workspace",
-      providerId: "account-plan",
-      modelId: "model-a",
-    });
     runtime.dispose();
   });
 

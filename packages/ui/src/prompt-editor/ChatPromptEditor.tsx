@@ -115,7 +115,7 @@ export function ChatPromptEditor({
   isDraggingOver?: boolean;
   dragAttachmentHint?: string;
   topContent?: ReactNode;
-  /** 与输入正文同一行的前置内容；Highspeed 使用紧凑 Fast 标签。 */
+  /** 与输入正文同一行的前置内容。 */
   inputLeadingContent?: ReactNode;
   leadingActions?: ReactNode;
   attachmentAction?: {

@@ -433,38 +433,6 @@ describe("narrow provider navigation", () => {
   });
 });
 
-describe("GLM Highspeed max effort", () => {
-  it.each([
-    ["GLM-5.3-Highspeed", true],
-    ["glm-5.3-HIGHSPEED", true],
-    ["GLM-5.3-FlashX", true],
-    ["glm-5.3-FLASHx", true],
-    ["FlashX", false],
-    ["DeepSeek-FlashX", false],
-    ["GLM-5.3", false],
-    ["DeepSeek-Highspeed", false],
-  ])("derives the effect from model name %s", (modelName, enabled) => {
-    render(createElement(Harness, { modelName }));
-
-    expect(screen.getByTestId("composer-thought-meter").getAttribute("data-highspeed")).toBe(
-      String(enabled),
-    );
-
-    expect(
-      document.querySelector(".composer-thought-slider-fill")?.getAttribute("data-highspeed"),
-    ).toBe(String(enabled));
-    fireEvent.change(screen.getByRole("slider"), { target: { value: "1" } });
-    expect(screen.queryByTestId("composer-thought-bubbles")).toBeNull();
-    expect(document.querySelector(".composer-thought-slider-fill")?.getAttribute("data-max")).toBe(
-      "false",
-    );
-    fireEvent.click(screen.getAllByRole("menuitemradio", { name: "GLM-5.3", exact: true }).at(-1)!);
-    expect(
-      document.querySelector(".composer-thought-slider-fill")?.getAttribute("data-highspeed"),
-    ).toBe("false");
-  });
-});
-
 it("hides the effort area when a selected model has no effort capability", () => {
   render(createElement(Harness, { levelsOverride: [] }));
   expect(screen.getByRole("menuitemradio", { name: "GLM-5.3", exact: true })).toBeTruthy();

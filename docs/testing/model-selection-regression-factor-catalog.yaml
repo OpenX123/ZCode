@@ -5,6 +5,7 @@ status: planning
 language: zh-CN
 sourceOfTruth:
   productSemantics:
+    - docs/desktop/standalone-coding-harness-spec.md
     - docs/conversation-product-state-space.md
     - docs/conversation-protocol-declaration.md
     - docs/conversation-product-protocol.md
@@ -25,7 +26,6 @@ sourceOfTruth:
     - packages/provider-node/src/model-selection-config-repository.ts
     - packages/provider-node/src/zcode-builtin-release.ts
     - packages/provider-node/src/zcode-builtin-provider-config-source.ts
-    - packages/provider-node/src/zcode-builtin-remote-synchronizer.ts
     - apps/zcode-cli/packages/bootstrap/src/app/provider-registry-model-runtime.ts
     - apps/zcode-cli/packages/adapters/src/model/runner.ts
     - apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/model-config.ts
@@ -41,9 +41,9 @@ decisionBacklog:
   questionnaireFile: docs/testing/model-selection-regression-decision-questionnaire.md
   purpose: 将因子目录中不适合直接假设的隐含产品决策、契约冲突和实现核验项单独管理
   totalEntries: 114
-  decisionEntries: 64
+  decisionEntries: 61
   contractConflictEntries: 12
-  proofEntries: 38
+  proofEntries: 34
   note: totalEntries 不等于需要用户逐条拍板的数量；proofEntries 是已有口径需要补证据，contractConflictEntries 是文档或实现需要先收敛。
 
 statuses:
@@ -706,13 +706,7 @@ constraints:
       all:
         - dimension: surface
           in:
-            [
-              chat-draft,
-              chat-existing-session,
-              automation-editor,
-              user-subagent,
-              builtin-subagent,
-            ]
+            [chat-draft, chat-existing-session, automation-editor, user-subagent, builtin-subagent]
         - dimension: provider-source
           in: [zcode-builtin, account-builtin, personal, remote-host-mirror]
     decision: signature-class-representative

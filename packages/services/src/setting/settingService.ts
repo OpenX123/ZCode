@@ -1,11 +1,7 @@
 import { readFile, mkdir, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import type {
-  AppSettings,
-  ProviderFamilyDomain,
-  ProviderFamilyConnectionSelectionSettings,
-} from "@zcode/shared";
+import type { AppSettings } from "@zcode/shared";
 import {
   appSettingsPatchSchema,
   appSettingsSchema,
@@ -25,7 +21,6 @@ import {
   readLegacyAccountConnectionSettingsFile,
   readIncompleteLegacyTeamConnections,
   retainLegacyAccountConnectionFields,
-  type LegacyTeamConnection,
 } from "#src/setting/legacyAccountConnectionSettings.js";
 const MAX_RECENT_PROJECTS = 10;
 const SETTINGS_PARSE_RETRY_DELAY_MS = 300;
@@ -191,8 +186,8 @@ async function writeSettingsAt(
   const raw = await readLegacyAccountConnectionSettingsFile(settingsFile);
   const rollbackFields = retainLegacyAccountConnectionFields(raw);
   const persisted = { ...rollbackFields, ...settings };
-  // 旧 Team 尚待 OAuth 补组织时，schema 的默认 {} 不是用户的新选择。
-  // 普通偏好保存必须保留新字段缺席；只有迁移提交或用户显式选连接才结束旧导入。
+  // 旧 Team 缺少组织信息时，schema 的默认 {} 不是用户的新选择。
+  // 普通偏好保存必须保留新字段缺席，不捏造账号或组织信息。
   if (!commitAccountSelection && readIncompleteLegacyTeamConnections(raw).length > 0) {
     delete persisted.providerFamilyConnectionSelections;
   }
@@ -213,15 +208,12 @@ export function createSettingService(): ISettingService {
   return createSettingServiceWithMigrations().service;
 }
 
-/** Host 私有迁移入口，不加入 Setting RPC；普通 get/update 从不等待 OAuth 查询。 */
+/** Host 私有设置装配入口；工作区投影与磁盘迁移共用同一个写队列。 */
 export function createSettingServiceWithMigrations(): {
   service: ISettingService;
   setWorkspaceProjection: (
     reader: (settings: AppSettings) => Promise<WorkspaceSettingsProjection>,
   ) => void;
-  prepareLegacyAccountConnections: (
-    resolveOrganization: (connection: LegacyTeamConnection) => Promise<string | null>,
-  ) => Promise<readonly ProviderFamilyDomain[]>;
 } {
   // 原因：每次 IO 动态读 HOME 会让旧异步投影写进后来实例的目录。
   // 在实例创建时取值，既支持测试/Host 注入，也让读取、文件锁与替换始终同源。
@@ -388,76 +380,11 @@ export function createSettingServiceWithMigrations(): {
     },
   };
 
-  let inFlight: Promise<readonly ProviderFamilyDomain[]> | null = null;
-  let migrationComplete = false;
   return {
     service,
     setWorkspaceProjection(reader) {
       if (workspaceProjection) throw new Error("settings.workspace-projection-already-bound");
       workspaceProjection = reader;
-    },
-    prepareLegacyAccountConnections(resolveOrganization) {
-      // 已完成导入后不让每次请求鉴权重复读迁移文件。恢复旧备份需要重启 Host。
-      if (migrationComplete) return Promise.resolve([]);
-      if (inFlight) return inFlight;
-      const run = async (): Promise<readonly ProviderFamilyDomain[]> => {
-        await service.get();
-        const original = await readLegacyAccountConnectionSettingsFile(getSettingsFile());
-        const incomplete = readIncompleteLegacyTeamConnections(original);
-        if (incomplete.length === 0) return [];
-        // 网络在写队列外：代理设置读取及用户操作均可继续，不形成 get -> HTTP -> get 循环。
-        const resolved = await Promise.all(
-          incomplete.map(async (connection) => ({
-            ...connection,
-            organizationId: await resolveOrganization(connection).catch(() => null),
-          })),
-        );
-        await enqueueSettingsWrite(async (shouldCommit, enterCommitPhase) => {
-          const latest = await readLegacyAccountConnectionSettingsFile(getSettingsFile());
-          // 只核对迁移输入，不因普通语言/窗口设置变化丢失合法结果，也不覆盖用户新账号意图。
-          if (
-            Object.hasOwn(latest, "providerFamilyConnectionSelections") ||
-            latest.providerFamilyDomain !== original.providerFamilyDomain ||
-            JSON.stringify(retainLegacyAccountConnectionFields(latest)) !==
-              JSON.stringify(retainLegacyAccountConnectionFields(original))
-          )
-            return;
-          if (resolved.some((entry) => !entry.organizationId?.trim())) return;
-          const migrated = appSettingsSchema.parse(migrateLegacyAccountConnectionSettings(latest));
-          const selections: ProviderFamilyConnectionSelectionSettings = {
-            ...migrated.providerFamilyConnectionSelections,
-          };
-          for (const { family, productId, projectId, organizationId } of resolved) {
-            selections[family] = {
-              kind: "team-coding-plan",
-              productId,
-              projectId,
-              organizationId: organizationId!.trim(),
-            };
-          }
-          await writeSettings(
-            await projectSettings({ ...migrated, providerFamilyConnectionSelections: selections }),
-            shouldCommit,
-            enterCommitPhase,
-            true,
-          );
-        });
-        return readIncompleteLegacyTeamConnections(
-          await readLegacyAccountConnectionSettingsFile(getSettingsFile()),
-        ).map((entry) => entry.family);
-      };
-      const pending = run();
-      inFlight = pending;
-      void pending.then(
-        (unresolved) => {
-          migrationComplete = unresolved.length === 0;
-          if (inFlight === pending) inFlight = null;
-        },
-        () => {
-          if (inFlight === pending) inFlight = null;
-        },
-      );
-      return pending;
     },
   };
 }

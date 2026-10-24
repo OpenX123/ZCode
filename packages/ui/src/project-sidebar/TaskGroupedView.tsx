@@ -251,7 +251,6 @@ export function TaskGroupedView({
     activeWorkspacePath: workspacePath,
     activeWorkspaceIdentity: workspaceIdentity,
     activeTaskId,
-    mobileActiveTaskKey: presentation.mobileActiveTaskKey,
     onSelectTask: (path: string, id: string, identity?: string) => {
       const task = findTaskInGroupedView(
         authoritativeView,

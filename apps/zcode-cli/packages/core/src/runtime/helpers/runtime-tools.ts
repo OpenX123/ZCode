@@ -65,10 +65,7 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     includeEscalate: Boolean(deps.workflowEscalatePort),
     includeWorkflow: Boolean(deps.workflowPort),
     includeAutomation: Boolean(deps.automationPort) && runtime.config.taskType !== "subagent_child",
-    // offPeakPort 只在 host 下发 offPeakToolEnabled 时注入（灰度/远程门在 host 端），
-    // 端口存在即代表曝光允许；subagent 子会话与 automation 同规则不暴露。
-    includeOffPeak: Boolean(deps.offPeakPort) && runtime.config.taskType !== "subagent_child",
-    // 动态工作流灰度门：与 off-peak 相反，
+    // 动态工作流门：
     // 这里不能用端口在场做判据——十个工具的端口在任何 CLI 里都装配齐全，灰度是 Host 的决定。
     // 取值收在 tool-allowlist.ts，与分支刷新那个入口共用同一个推导。
     includeDynamicWorkflow: resolveRuntimeDynamicWorkflowToolsIncluded(runtime),
@@ -152,8 +149,6 @@ function createRuntimeToolExecutor(
 ): ToolExecutor {
   const browserUseEnabled = resolveRuntimeBrowserUseEnabled(runtime, deps);
   return createToolExecutor({
-    agentTelemetry: runtime.agentTelemetry.port,
-    agentTelemetryActorKind: runtime.agentTelemetry.actorKind,
     registry: runtime.registry,
     permissionService: runtime.permissionService,
     permissionBroker: runtime.permissionBroker,
@@ -188,7 +183,6 @@ function createRuntimeToolExecutor(
     workflowEscalatePort: deps.workflowEscalatePort,
     artifactStore: deps.artifactStore,
     automationPort: deps.automationPort,
-    offPeakPort: deps.offPeakPort,
     topicResourcePort: deps.topicResourcePort,
     sessionStore: deps.sessionStore,
     sessionModePort: createRuntimeSessionModePort(runtime),

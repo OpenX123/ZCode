@@ -745,7 +745,7 @@ export interface ModelSelectedPayload {
 }
 
 /**
- * 执行 Selection 退回会话 Selection 的原因，与 @zcode/shared 的 selectionFallback 规则同值域：
+ * 仅用于读取旧加速卡回退事件；实时执行链路不再发布这些事件。
  * 卡过期由声明的 provider 错误码命中，其余任何加速请求失败归为 request_failed。
  */
 export type TurnExecutionModelFallbackReason =

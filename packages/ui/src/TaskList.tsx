@@ -134,7 +134,7 @@ export const TaskList = memo(function TaskList({
     // 新建会话如果在按钮点击时就立即 createTask，会把"空任务"也持久化到列表里，
     // 用户只是想先打开输入框，侧边栏却会平白多出一条没有任何消息的记录。
     // 这里改成进入 workspace 级草稿态，等用户真正发送首条消息时再自动创建 task。
-    startDraft(workspacePath, undefined, workspaceIdentity, { createSource: "project" });
+    startDraft(workspacePath, undefined, workspaceIdentity, {});
   }, [readOnlyReason, startDraft, workspaceIdentity, workspacePath]);
 
   const handleArchiveTaskFromInline = useCallback(

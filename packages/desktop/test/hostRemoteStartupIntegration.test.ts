@@ -23,7 +23,6 @@ function compile(source: string) {
 
 interface RemoteServices {
   generation: number;
-  clientConfig?: object;
 }
 interface ReconnectEvent {
   sourceServerId: string;
@@ -50,7 +49,6 @@ describe("Window Host 的 Source 重连与数据库启动整合", () => {
       const registrations: {
         generation: number;
         disposed: boolean;
-        config?: object;
         telemetrySupported: boolean;
       }[] = [];
       let reconnect: ((event: ReconnectEvent) => void) | undefined;
@@ -62,7 +60,6 @@ describe("Window Host 的 Source 重连与数据库启动整合", () => {
         serverId: "source-1",
         capabilities: { processResourceTelemetry: true },
       };
-      const clientConfig = { config: "host" };
       const manager = {
         connect: async () => ({
           services: { generation: 1 },
@@ -80,8 +77,7 @@ describe("Window Host 的 Source 重连与数据库启动整合", () => {
         `${compile(node.getText(source))};createWindowRemoteConnectionHandle;`,
         {
           connectSourceServerTarget,
-          activeServices: { get: () => clientConfig },
-          IClientConfigService: {},
+          activeServices: {},
           sourceServerDirectory: {
             ensureProfile: async () => ({ profileId: "profile-1" }),
             snapshot: async () => ({ servers: [] }),
@@ -93,10 +89,8 @@ describe("Window Host 的 Source 重连与数据库启动整合", () => {
           remoteMediaRangePreviewEnabled: false,
           createServerRemoteWorkspaceServiceCollection: (params: {
             connectionServices: RemoteServices;
-            clientConfigService: object;
           }) => ({
             generation: params.connectionServices.generation,
-            clientConfig: params.clientConfigService,
           }),
           resolveResourceTelemetryEnvironmentKey: () => "environment",
           registerHostServiceResourceTelemetry: (params: {
@@ -106,7 +100,6 @@ describe("Window Host 的 Source 重连与数据库启动整合", () => {
             const registration = {
               generation: params.services.generation,
               disposed: false,
-              config: params.services.clientConfig,
               telemetrySupported: params.telemetrySupported,
             };
             registrations.push(registration);
@@ -142,10 +135,9 @@ describe("Window Host 的 Source 重连与数据库启动整合", () => {
         {
           generation: 1,
           disposed: true,
-          config: clientConfig,
           telemetrySupported: initialTelemetryCapability === true,
         },
-        { generation: 2, disposed: false, config: clientConfig, telemetrySupported: true },
+        { generation: 2, disposed: false, telemetrySupported: true },
       ]);
       await handle.dispose();
       expect(registrations.every((registration) => registration.disposed)).toBe(true);
@@ -229,7 +221,6 @@ describe("Window Host 的 Source 重连与数据库启动整合", () => {
         createE2ERepoWikiGenerationFixtureFromEnv: () => undefined,
         createSettingServiceWithMigrations: () => ({
           service: {},
-          prepareLegacyAccountConnections() {},
         }),
         createHostApiNetworkTransport: () => ({ fetch() {} }),
         initializeHostApiNetworkTransportOwner: async (params: { establishOwner(): unknown }) =>

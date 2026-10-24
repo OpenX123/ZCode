@@ -27,8 +27,7 @@ const shouldPrepareWindowsCuaHelper =
 // 到屏幕底部，仍可用），所以无条件挂在 darwin 上不会让构建变脆。
 const shouldPrepareMacosWindowBounds = target.os === "darwin";
 
-// 本机桌面包不再内置 glm 原生二进制（prepare:glm），改为内置 agent 的 JS bundle（prepare:agent-bundle），
-// 运行时由 app 的 Electron Node runtime 执行。Source Server 资源由独立 stage:remote-assets 入口负责。
+// 本机桌面使用源码 Agent bundle 与 Electron Node runtime；SSH 资源也从本仓库源码构建。
 const localRuntimeScripts = [
   "prepare:agent-bundle",
   ...(shouldPrepareWindowsCuaHelper ? ["prepare:windows-cua-helper"] : []),
@@ -51,6 +50,13 @@ function runTimedPnpmScript(scriptName) {
     );
   }
 }
+
+// Server 构建也会重建并清空本机 Agent 暂存目录；必须先完成它，再由桌面准备步骤
+// 最终写入完整插件闭包，避免安装包只剩 Agent 和 dev CUA 资源。
+runCommand(pnpmCommand, ["prepare:remote-assets"], {
+  cwd: resolve(desktopRoot, "../.."),
+  env: process.env,
+});
 
 for (const scriptName of localRuntimeScripts) {
   runTimedPnpmScript(scriptName);

@@ -24,12 +24,6 @@
   transition: width 120ms ease-out;
 }
 
-/* 普通档和入口竖条共用 Highspeed 蓝色，避免渐变退场后回到普通模型的绿色。 */
-.composer-thought-slider-fill[data-highspeed="true"],
-[data-highspeed="true"] > .composer-thought-meter-fill {
-  background: var(--color-blue-500);
-}
-
 .composer-thought-slider-fill::before {
   /* 纯色与渐变背景无法直接插值；常驻渐变层用透明度过渡，反向调档也不会瞬切。 */
   content: "";
@@ -43,15 +37,6 @@
     270deg in oklch shorter hue,
     var(--composer-thought-max-accent) 0%,
     var(--color-success) 100%
-  );
-}
-
-/* 仅 GLM Highspeed 使用蓝→紫；OKLab 直接插值，避免原绿色起点带来青色过渡。 */
-.composer-thought-slider-fill[data-highspeed="true"]::before {
-  background: linear-gradient(
-    90deg in oklab,
-    var(--color-blue-500) 0%,
-    var(--color-purple-500) 100%
   );
 }
 

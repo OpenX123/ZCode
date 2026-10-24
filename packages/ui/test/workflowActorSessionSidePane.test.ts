@@ -184,7 +184,6 @@ describe("WorkflowActorSessionSidePane", () => {
       readOnly: true,
       // 关键一行：读的是 actor 会话，不是父会话，也不是 run id。
       sessionId: "dwf-dwfrun-1-actor_1@2",
-      telemetryVisible: true,
       workspacePath: "/workspace",
     });
   });
@@ -214,12 +213,16 @@ describe("WorkflowActorSessionSidePane", () => {
     });
   });
 
-  it("非 focused 时不上报前台 telemetry", () => {
+  it("非 focused 时仍保留 actor 会话与只读 pane", () => {
     renderToStaticMarkup(
       createElement(WorkflowActorSessionSidePane, { tab: tabOf(), focused: false }),
     );
 
-    expect(paneState.props).toMatchObject({ focused: false, telemetryVisible: false });
+    expect(paneState.props).toMatchObject({
+      focused: false,
+      readOnly: true,
+      sessionId: "dwf-dwfrun-1-actor_1@2",
+    });
   });
 });
 

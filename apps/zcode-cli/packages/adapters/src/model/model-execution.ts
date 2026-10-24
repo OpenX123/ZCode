@@ -1,4 +1,3 @@
-import { withoutRequestVerificationHeaders } from "@zcode/shared";
 /* eslint-disable max-lines -- AI SDK 模型执行装配集中维护 provider factory、鉴权和网络错误适配，拆分会让状态同步更脆弱。 */
 // ============================================================
 // Vercel AI SDK model execution
@@ -14,7 +13,6 @@ import {
   type ModelOptionValues,
 } from "@zcode/model-option-map";
 import {
-  type Logger,
   type ModelId,
   type ModelProviderId,
   type ModelRequestAuth,
@@ -23,8 +21,6 @@ import {
 import type { RegistryProviderConfig } from "@zcode/provider";
 import { withOpenRouterAttributionHeaders } from "@zcode/shared";
 import { createAnthropicCompatFetch } from "./anthropic-stream-compat.js";
-import { createModelRequestSecurityState } from "./request-security-edition/index.js";
-import type { ModelRequestSecurityState, ModelRequestSecurityPort } from "./request-security.js";
 import { createOpenAIResponsesJsonCompatFetch } from "./openai-responses-json-compat.js";
 import { createModelOptionMapFetch, type RawRequestBodyCapture } from "./model-option-map-fetch.js";
 import { createNetworkProxyFetch } from "../network/proxy-fetch.js";
@@ -32,7 +28,6 @@ import { createProviderEndpointRoutingFetch } from "./provider-endpoint-routing-
 import { normalizeModelTlsFailure } from "./failure-tls.js";
 import {
   mergeModelRequestHeaders,
-  withoutModelAuthHeaders,
   withoutModelQuerySourceHeader,
 } from "./model-request-headers.js";
 
@@ -59,8 +54,6 @@ export interface AiSdkModelExecutionConfig {
 }
 
 export interface AiSdkModelExecutionOptions {
-  requestSecurityState?: ModelRequestSecurityState;
-  logger?: Logger;
   transport?: ProviderFetch;
 }
 
@@ -79,7 +72,6 @@ export interface AiSdkResolvedModel {
   providerKind: AiSdkProviderKind;
   providerOptions?: Record<string, unknown>;
   rawRequestBodyCapture?: RawRequestBodyCapture;
-  requestObservations?: ModelRequestSecurityPort;
 }
 
 export interface AiSdkBoundModelResolution {
@@ -168,21 +160,15 @@ export class AiSdkModelExecution {
   private readonly defaultHeaders: Record<string, string>;
   private readonly network: AiSdkNetworkConfig;
   private readonly endpointRoutingPort?: ProviderEndpointRoutingPort;
-  private readonly logger?: Logger;
   private readonly baseTransport?: ProviderFetch;
   private readonly providerTransports = new Map<string, ProviderFetch>();
-  private readonly requestSecurity: ModelRequestSecurityPort;
 
   constructor(config: AiSdkModelExecutionConfig = {}, options: AiSdkModelExecutionOptions = {}) {
     this.env = config.env ?? process.env;
     this.defaultHeaders = { ...config.defaultHeaders };
     this.network = { ...config.network };
     this.endpointRoutingPort = config.endpointRoutingPort;
-    this.logger = options.logger;
     this.baseTransport = options.transport;
-    this.requestSecurity = (
-      options.requestSecurityState ?? createModelRequestSecurityState()
-    ).createExecution({ logger: options.logger });
   }
 
   /**
@@ -257,7 +243,7 @@ export class AiSdkModelExecution {
       optionValues,
       rawRequestBodyCapture,
       snapshot.supportsJsonSchemaOutput,
-      snapshot.providerConfig.access?.type === "zhipu-account" ? requestAuth?.apiKeyId : undefined,
+      requestAuth?.apiKeyId,
     );
     return {
       baseURL: providerConfig.baseURL,
@@ -268,7 +254,6 @@ export class AiSdkModelExecution {
       providerKind: providerConfig.kind,
       providerOptions: providerConfig.providerOptions,
       rawRequestBodyCapture,
-      requestObservations: this.requestSecurity,
     };
   }
 
@@ -293,13 +278,8 @@ export class AiSdkModelExecution {
           apiKeyId,
         })
       : networkTransport;
-    const requestTransport = this.requestSecurity.protectTransport({
-      providerId,
-      providerConfig,
-      transport: providerTransport,
-    });
     const fetch = createProviderBusinessErrorFetch({
-      fetch: requestTransport,
+      fetch: providerTransport,
       providerId,
       providerKind: providerConfig.kind,
     });
@@ -385,9 +365,7 @@ function toAiSdkProviderConfig(
   config: RegistryProviderConfig,
 ): AiSdkProviderConfig {
   const common = {
-    ...(config.access.type !== "zhipu-account" && config.access.apiKey
-      ? { apiKey: config.access.apiKey }
-      : {}),
+    ...(config.access.apiKey ? { apiKey: config.access.apiKey } : {}),
     baseURL: config.api.baseUrl,
     ...(config.api.headers ? { headers: { ...config.api.headers } } : {}),
     providerOptions: { apiFormat: config.api.type },
@@ -409,16 +387,11 @@ function applyModelRequestAuth(
   requestAuth: ModelRequestAuth | undefined,
 ): AiSdkProviderConfig {
   if (!requestAuth) return providerConfig;
-  const staticHeaders = withoutRequestVerificationHeaders(providerConfig.headers);
-  // 账号动态身份头必须先清理静态认证头，避免 SDK 优先使用旧凭据。
-  const headers =
-    providerConfig.access.type === "zhipu-account"
-      ? withoutModelAuthHeaders(staticHeaders)
-      : staticHeaders;
+  const staticHeaders = providerConfig.headers;
   return {
     ...providerConfig,
     ...(requestAuth.apiKey ? { apiKey: requestAuth.apiKey } : {}),
-    headers: mergeModelRequestHeaders(headers, requestAuth.headers),
+    headers: mergeModelRequestHeaders(staticHeaders, requestAuth.headers),
   };
 }
 

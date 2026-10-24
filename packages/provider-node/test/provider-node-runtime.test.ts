@@ -19,7 +19,6 @@ import {
   createNodeProviderRuntimePathEnv,
   materializeZCodeBuiltinProviderConfig,
   encodeProviderConfigFile,
-  resolveZCodeBuiltinCachePaths,
   resolveNodeProviderRuntimePaths,
   ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV,
   ZCODE_PERSONAL_PROVIDER_CONFIG_FILE_ENV,
@@ -152,16 +151,7 @@ describe("@zcode/provider-node", () => {
       supportsMidConversationSystem: true,
       supportsNativeWebSearch: false,
     });
-    expect(snapshot.providers.get("account:zai-start-plan")?.access).toMatchObject({
-      type: "zhipu-account",
-      accountType: "zai",
-      mode: "start-plan",
-    });
-    expect(snapshot.providers.get("account:zai-offpeak-idle-plan")?.access).toMatchObject({
-      type: "zhipu-account",
-      accountType: "zai",
-      mode: "off-peak",
-    });
+    expect(snapshot.providers.keys()).toEqual([]);
     expect(snapshot.providerTemplates?.get("deepseek")?.config.access).toMatchObject({
       type: "api-key",
     });
@@ -517,40 +507,25 @@ describe("@zcode/provider-node", () => {
     second.dispose();
   });
 
-  it("Endpoint-scoped Config Runtime 向 Agent 暴露当前 Endpoint 的 Active 路径", async () => {
+  it("Config Runtime 向 Agent 暴露唯一随包路径且不建立下载检查定时器", async () => {
     const root = await temporaryDirectory();
     const zcodeBuiltinFilePath = join(root, "zcodeBuiltin.json");
-    const environmentConfigRoot = join(root, "environment");
-    const personalFilePath = join(root, "config.json");
-    const endpointOrigin = "https://api.example.com";
     await writeZCodeBuiltin(zcodeBuiltinFilePath, "zcodeBuiltin-model");
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const runtime = new NodeProviderConfigRuntime({
       zcodeBuiltinFilePath,
-      personalFilePath,
-      zcodeBuiltinEnvironment: {
-        environmentConfigRoot,
-        platform: "darwin-aarch64",
-        appVersion: "3.9.2",
-        resolveEndpointOrigin: () => endpointOrigin,
-        fetchRelease: async () => null,
-        watch: false,
-      },
+      personalFilePath: join(root, "config.json"),
+      personalPollingIntervalMs: false,
       watch: false,
     });
-
-    await runtime.start();
-
-    await expect(runtime.resolveZCodeBuiltinActiveFilePath()).resolves.toBe(
-      resolveZCodeBuiltinCachePaths({
-        environmentConfigRoot,
-        platform: "darwin-aarch64",
-        appVersion: "3.9.2",
-        zcodeEndpointOrigin: endpointOrigin,
-      }).activeFilePath,
-    );
-    // start 不等待后台下载；释放临时目录前等待首轮控制文件 lease 收尾，不能和 rm 竞态。
-    await runtime.refreshZCodeBuiltin();
-    runtime.dispose();
+    try {
+      await runtime.start();
+      expect(runtime.zcodeBuiltinFilePath).toBe(zcodeBuiltinFilePath);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      runtime.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it("正式 Personal Config 损坏时保留原文件且不误调 Legacy Importer", async () => {

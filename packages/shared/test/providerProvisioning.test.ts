@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { hostResponseMessageSchema, providerProvisioningResultSchema } from "@zcode/shared";
+import {
+  hostResponseMessageSchema,
+  providerProvisioningResultSchema,
+  providerProvisioningTriggerSchema,
+} from "@zcode/shared";
 
 describe("Provisioning 安全错误码契约", () => {
+  it("仅允许本地 Provider 配置触发同步，不响应旧账号或凭据事件", () => {
+    expect(providerProvisioningTriggerSchema.parse("personal-config")).toBe("personal-config");
+    expect(providerProvisioningTriggerSchema.safeParse("account-settings").success).toBe(false);
+    expect(providerProvisioningTriggerSchema.safeParse("credential").success).toBe(false);
+  });
   it.each([undefined, "target-refresh-failed"])("兼容结果的可选错误码 %s", (errorCode) => {
     const result = {
       syncId: "fixture",

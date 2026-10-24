@@ -14,7 +14,7 @@ import {
   openDynamicWorkflowModeSelect,
   openGeneralSettings,
   openPlusMenu,
-  readDynamicWorkflowGrayMockStatus,
+  configureLocalDynamicWorkflowMode,
   readDynamicWorkflowModeTriggerText,
   readPlusMenuAddOptionIds,
   selectDynamicWorkflowMode,
@@ -22,13 +22,12 @@ import {
 } from "../../../helpers/dynamic-workflow-gray.js";
 import { sel } from "../../../helpers/selectors.js";
 
-// DWG-23（docs/dynamic-workflow/launch.md「The user's choice」）：服务端下发 alwaysOn（文件名命中
-// always-on 档），用户在设置 › 常规里选「关闭」后，自动化页退回「自动化」、新草稿的 + 菜单没有工作流；
-// 再选回带「默认」标签的「始终开启」，设置文件里的选择被删除（跟随服务端），工作流入口回来。
-// E2E_DWF_GRAY：只读入口，不发送 prompt；空 provider fixture 是有意的合同。
-describe("动态工作流用户选择（服务端 alwaysOn）", () => {
+// DWG-23：默认onDemand，用户关闭后入口消失；恢复本地默认后入口回来。
+// E2E_DWF_GRAY：只验证入口，不发送模型请求，沿用原有case标识。
+describe("动态工作流用户选择（本地 onDemand）", () => {
   before(async () => {
-    await prepareV4ConversationE2E();
+    await prepareV4ConversationE2E({ skipProvider: true });
+    await configureLocalDynamicWorkflowMode("onDemand");
   });
   afterEach(async () => {
     const capturePath = process.env.E2E_PROVIDER_CAPTURE_PATH?.trim();
@@ -43,24 +42,17 @@ describe("动态工作流用户选择（服务端 alwaysOn）", () => {
   it("DWG-23 设置行显示默认值；选关闭后入口消失，选回默认删除选择", async function () {
     this.timeout(240000);
 
-    const status = await readDynamicWorkflowGrayMockStatus();
-    expect(status.scenario).toBe("alwaysOn");
-    await browser.waitUntil(
-      async () => (await readDynamicWorkflowGrayMockStatus()).configRequests > 0,
-      { timeout: 60000, timeoutMsg: "Host 没有向 case-local 配置网关请求 /client/configs" },
-    );
-
-    // 1) 设置 › 常规：未选择时显示服务端下发的「始终开启」，「默认」标签只在它上面。
+    // 本地固定默认值为onDemand，未设置时不依赖远端配置。
     await openGeneralSettings();
     await browser.waitUntil(
-      async () => (await readDynamicWorkflowModeTriggerText()).includes("始终开启"),
-      { timeout: 30000, timeoutMsg: "动态工作流模式行没有显示服务端默认的「始终开启」" },
+      async () => (await readDynamicWorkflowModeTriggerText()).includes("通过命令启用"),
+      { timeout: 30000, timeoutMsg: "动态工作流模式行没有显示本地默认的「通过命令启用」" },
     );
     await openDynamicWorkflowModeSelect();
     const itemText = (mode: string) =>
       $(sel(testId(TID_SETTINGS_DYNAMIC_WORKFLOW_MODE_ITEM, mode))).getText();
-    expect(await itemText("alwaysOn")).toContain("默认");
-    expect(await itemText("onDemand")).not.toContain("默认");
+    expect(await itemText("alwaysOn")).not.toContain("默认");
+    expect(await itemText("onDemand")).toContain("默认");
     expect(await itemText("disabled")).not.toContain("默认");
     await browser.keys("Escape");
 
@@ -90,9 +82,9 @@ describe("动态工作流用户选择（服务端 alwaysOn）", () => {
       { timeout: 30000, timeoutMsg: "选择「关闭」后新草稿的 + 菜单仍有工作流" },
     );
 
-    // 5) 选回带「默认」的「始终开启」：设置文件里的选择被删除（跟随服务端），工作流标签回来。
+    // 5) 选回固定默认onDemand：删除显式选择，工作流标签恢复。
     await openGeneralSettings();
-    await selectDynamicWorkflowMode("alwaysOn");
+    await selectDynamicWorkflowMode("onDemand");
     await browser.waitUntil(async () => !("dynamicWorkflowMode" in (await readSettings())), {
       timeout: 15000,
       timeoutMsg: "选回默认模式后设置文件里仍留着 dynamicWorkflowMode",

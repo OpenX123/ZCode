@@ -1,4 +1,6 @@
 {
+  "status": "historical-replay-evidence",
+  "currentApplicability": "仅记录2026-09历史受控回放，不代表当前构建验收；官方OTLP/ARMS导出已删除。当前本地计时合同见 docs/trace/local-ttft-diagnostics.md。",
   "runId": "desktop-e2e-20260914065825460-p98341-a1be9784bec76dad",
   "collectedAt": "2026-09-14",
   "source": "real Composer → window Host → CLI replay provider → actual Renderer content → decoded OTLP protobuf receiver",

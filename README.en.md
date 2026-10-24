@@ -4,14 +4,12 @@
   <img src="public/logo/icons/1024x1024.png" alt="ZCode" width="128" height="128" />
 </div>
 <p align="center">
-  <a href="https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=47ag983c-8fcb-4d6d-814b-5395193a712c&amp;qr_code=true">Feishu community</a> ·
-  <a href="https://discord.gg/z9aBcQXZQ3">Discord</a>
-</p>
-<p align="center">
   <a href="README.md">简体中文</a> | English
 </p>
 
-ZCode is an AI coding workspace with desktop, browser, and terminal interfaces. This repository contains the clients, backend services, shared UI, and Agent CLI and runtime source code.
+ZCode is a standalone coding harness with desktop, local Web, and terminal interfaces. Configure your own API provider without an official account. Sessions, tools, Skills, plugins, MCP, Subagents, SSH workspaces, automations, dynamic workflows, and local usage statistics remain available. Standard GLM / Z.ai APIs use the same provider configuration as other APIs.
+
+Official login, subscriptions and quotas, referral marketing, cloud configuration, telemetry uploads, feedback uploads, cloud sharing, official mobile remote control, and official automatic updates have been removed. See the [standalone coding harness specification](docs/desktop/standalone-coding-harness-spec.md) for the current scope.
 
 ## Updates
 
@@ -55,7 +53,7 @@ pnpm dev:desktop
 pnpm dev:desktop:test
 ```
 
-`pnpm dev:desktop` defaults to `pnpm dev:desktop:prod` and uses production service configuration. The startup script prepares local runtime assets, builds the desktop Agent, then starts Electron and source watchers.
+`pnpm dev:desktop` defaults to `pnpm dev:desktop:prod` and uses local configuration. The startup script prepares local runtime assets, builds the desktop Agent, then starts Electron and source watchers.
 
 Set `ZCODE_DATA_BASE_DIR` to use a separate development data directory. For example, on macOS / Linux:
 
@@ -74,7 +72,7 @@ pnpm dev:web
 ZCODE_SERVER_WORKSPACE=/path/to/project pnpm dev:web
 ```
 
-This starts both the Web development server (default: `http://localhost:5173`) and the backend (default: `http://localhost:3030`). Open the Web development server in your browser. `/ws` and general `/api` requests are proxied to the local backend; `/api/v1/oauth/token` is proxied separately to the configured product service.
+This starts both the Web development server (default: `http://localhost:5173`) and the backend (default: `http://localhost:3030`). Open the Web development server in your browser. `/ws` and `/api` requests are proxied to the local backend.
 
 After changing Agent source code, run `pnpm --filter @zcode/cli... build` and restart the service. To validate the complete distribution, extract and run it as described under Packaging → ZCode CLI distribution below.
 
@@ -128,7 +126,7 @@ See the [UI Plugin guide](UI_PLUGIN.en.md) for the Excalidraw workflow, supporte
 
 ## Configuration
 
-The root [.env.example](.env.example) provides sample service URLs and build configuration. Copy it to `.env` as needed and place local overrides in `.env.local`. Select the Desktop development environment with `dev:desktop:test` or `dev:desktop:prod`.
+The root [.env.example](.env.example) provides sample local runtime and build configuration. Copy it to `.env` as needed and place local overrides in `.env.local`. Select the Desktop development environment with `dev:desktop:test` or `dev:desktop:prod`.
 
 | Setting                              | Purpose                                                                                 |
 | ------------------------------------ | --------------------------------------------------------------------------------------- |
@@ -219,4 +217,4 @@ Open `http://127.0.0.1:3030` to validate the complete flow, with one backend ser
 
 ## Project Notice
 
-See [NOTICE.md](NOTICE.md) for feature and promotion scope, maintenance policy, execution and data risks, licensing, and third-party copyright information.
+See [NOTICE.md](NOTICE.md) for feature scope, execution and data risks, licensing, and third-party copyright information.

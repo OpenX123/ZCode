@@ -446,12 +446,6 @@ describe("workflow concurrency governor — ticket 上的事件映射（决策 2
     });
   });
 
-  it("offpeak_queued 归 throttled：减 cap 并按 Retry-After 冷却", () => {
-    const { governor, admitNow, clock } = makeGovernor();
-    outcome.retryScheduled(admitNow(), "offpeak_queued", { retryAfterMs: 60_000, delayMs: 60_000 });
-    expect(governor.snapshot(KEY_A)).toMatchObject({ cap: 6, cooldownUntil: clock.now() + 60_000 });
-  });
-
   it("timeout / 5xx 的 retry_scheduled 只清 streak，不减 cap（决策 6）", () => {
     const { governor, admitNow } = makeGovernor();
     outcome.completed(admitNow());

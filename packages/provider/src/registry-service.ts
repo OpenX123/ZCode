@@ -11,19 +11,13 @@ import {
   type Provider,
   type ProviderModel,
 } from "./resolver.js";
-import type {
-  AccountProviderConfigSnapshot,
-  ProviderConfigSnapshot,
-  ProviderSource,
-} from "./sources.js";
+import type { ProviderConfigSnapshot, ProviderSource } from "./sources.js";
 
 export interface ProviderRegistryServiceSnapshot {
   readonly sourceRevisions: {
     readonly config: string;
-    readonly account: string;
   };
   readonly config: ProviderConfigSnapshot;
-  readonly account: AccountProviderConfigSnapshot;
   readonly resolution: ProviderConfigResolution;
   readonly registry: ProviderRegistryView;
 }
@@ -40,7 +34,6 @@ export interface ProviderRegistryServiceRefreshErrorEvent {
 
 export interface ProviderRegistryServiceDependencies {
   readonly configSource: ProviderSource<ProviderConfigSnapshot>;
-  readonly accountSource: ProviderSource<AccountProviderConfigSnapshot>;
   readonly resolver?: ProviderConfigResolver;
 }
 
@@ -52,7 +45,6 @@ interface RefreshWaiter {
 
 export class ProviderRegistryService {
   readonly #configSource: ProviderSource<ProviderConfigSnapshot>;
-  readonly #accountSource: ProviderSource<AccountProviderConfigSnapshot>;
   readonly #resolver: ProviderConfigResolver;
   readonly #registry = new ProviderRegistry();
   readonly #changeListeners = new Set<(event: ProviderRegistryServiceChangedEvent) => void>();
@@ -69,7 +61,6 @@ export class ProviderRegistryService {
 
   constructor(dependencies: ProviderRegistryServiceDependencies) {
     this.#configSource = dependencies.configSource;
-    this.#accountSource = dependencies.accountSource;
     this.#resolver = dependencies.resolver ?? new ProviderConfigResolver();
   }
 
@@ -79,7 +70,6 @@ export class ProviderRegistryService {
       this.#started = true;
       this.#sourceDisposers.push(
         this.#configSource.onDidChange((reason) => this.#refreshFromSource("config", reason)),
-        this.#accountSource.onDidChange((reason) => this.#refreshFromSource("account", reason)),
       );
       await this.#requestRefresh("start");
       return;
@@ -140,7 +130,7 @@ export class ProviderRegistryService {
     this.#errorListeners.clear();
   }
 
-  #refreshFromSource(source: "config" | "account", reason: string): void {
+  #refreshFromSource(source: "config", reason: string): void {
     if (this.#disposed) return;
     void this.#requestRefresh(`${source}:${reason || "changed"}`).catch(() => {
       // Source 驱动的后台刷新通过 onDidRefreshError 报告；调用栈没有 Promise 消费者。
@@ -185,12 +175,8 @@ export class ProviderRegistryService {
       this.#pendingReasons.clear();
 
       let config: ProviderConfigSnapshot;
-      let account: AccountProviderConfigSnapshot;
       try {
-        [config, account] = await Promise.all([
-          this.#configSource.read(),
-          this.#accountSource.read(),
-        ]);
+        config = await this.#configSource.read();
       } catch (error) {
         if (generation < this.#requestedGeneration) continue;
         this.#completedGeneration = generation;
@@ -202,16 +188,7 @@ export class ProviderRegistryService {
       if (generation < this.#requestedGeneration) continue;
       this.#assertNotDisposed();
 
-      if (account.basedOnZCodeBuiltinRevision !== config.zcodeBuiltinRevision) {
-        // Built-in 已变化但 Account 仍基于旧事实时，继续服务上一份完整 Registry。
-        // 当前 generation 结束；等待 Account Source 的后续 change 再一次性发布最终组合。
-        this.#completedGeneration = generation;
-        if (this.#snapshot) this.#resolveRefreshWaiters(generation, this.#snapshot);
-        reasons.clear();
-        continue;
-      }
-
-      if (this.#hasSameSourceRevisions(config, account)) {
+      if (this.#hasSameSourceRevisions(config)) {
         this.#completedGeneration = generation;
         this.#resolveRefreshWaiters(generation, this.#snapshot!);
         reasons.clear();
@@ -225,18 +202,14 @@ export class ProviderRegistryService {
           personalProviders: config.personalProviders,
           zcodeBuiltinModelRules: config.zcodeBuiltinModelRules,
           personalModels: config.personalModels,
-          accountProviders: account.providers,
-          accountStates: account.states,
           personalProviderOrder: config.personalProviderOrder,
         });
         this.#registry.replace(resolution.registryProviders, [...reasons].join(","));
         const snapshot = Object.freeze({
           sourceRevisions: Object.freeze({
             config: config.revision,
-            account: account.revision,
           }),
           config: Object.freeze({ ...config }),
-          account: freezeAccountSnapshot(account),
           resolution,
           registry: this.#registry.getView(),
         });
@@ -272,14 +245,8 @@ export class ProviderRegistryService {
     this.#refreshWaiters.splice(0, this.#refreshWaiters.length, ...remaining);
   }
 
-  #hasSameSourceRevisions(
-    config: ProviderConfigSnapshot,
-    account: AccountProviderConfigSnapshot,
-  ): boolean {
-    return (
-      this.#snapshot?.sourceRevisions.config === config.revision &&
-      this.#snapshot.sourceRevisions.account === account.revision
-    );
+  #hasSameSourceRevisions(config: ProviderConfigSnapshot): boolean {
+    return this.#snapshot?.sourceRevisions.config === config.revision;
   }
 
   #emitChanged(snapshot: ProviderRegistryServiceSnapshot, reasons: ReadonlySet<string>): void {
@@ -301,15 +268,4 @@ export class ProviderRegistryService {
   #assertNotDisposed(): void {
     if (this.#disposed) throw new Error("ProviderRegistryService 已 dispose");
   }
-}
-
-function freezeAccountSnapshot(
-  snapshot: AccountProviderConfigSnapshot,
-): AccountProviderConfigSnapshot {
-  return Object.freeze({
-    revision: snapshot.revision,
-    basedOnZCodeBuiltinRevision: snapshot.basedOnZCodeBuiltinRevision,
-    providers: snapshot.providers,
-    ...(snapshot.states ? { states: snapshot.states } : {}),
-  });
 }

@@ -40,7 +40,7 @@ describe("Provider Provisioning Environment Coordinator", () => {
     await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
 
     const saveA = coordinator.requestAll("personal-config");
-    const saveB = coordinator.requestAll("credential");
+    const saveB = coordinator.requestAll("configured-default");
     finishFirst?.();
     await Promise.all([registration.initialSync, saveA, saveB]);
 

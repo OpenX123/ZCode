@@ -30,8 +30,7 @@ const cuaPluginRuntimeStagingEnv = {
   ZCODE_CUA_DEV_MODE: "1",
 };
 // 修复原因：桌面 Agent 构建有普通 pnpm 和 bootstrap:with-remote 直跑 tsc 两条路径。
-// 过去两条路径分别维护依赖顺序，新增 @zcode/telemetry 后只更新了 bootstrap 依赖，
-// 干净 CI 中 telemetry/dist 尚不存在，bootstrap 会因无法解析类型入口而失败。
+// 两条路径若分别维护依赖顺序，干净 CI 中可能因依赖产物尚未生成而失败。
 // 两条路径统一从这一份有序清单派生，避免后续新增 workspace 依赖时再次漂移。
 const cliWorkspaceBuilds = [
   { packageName: "@zcode/shared-types", packageDir: "shared-types" },
@@ -49,7 +48,6 @@ const cliWorkspaceBuilds = [
   { packageName: "@zcode/core", packageDir: "core" },
   { packageName: "@zcode/adapters", packageDir: "adapters" },
   { packageName: "@zcode/i18n", packageDir: "i18n" },
-  { packageName: "@zcode/telemetry", packageDir: "telemetry" },
   { packageName: "@zcode/bootstrap", packageDir: "bootstrap" },
 ];
 // 官方插件 manifest 可以在 server.js 缺失时被 filesystem seed，直到 session

@@ -22,7 +22,10 @@ import {
   resolveDesktopProductIdentity,
 } from "./scripts/desktop-product-identity.mjs";
 import { createWindowsPowerShellSecurityArgs } from "./scripts/powershell-command.mjs";
-import { isSharpRequiredByComputerUse, verifyStagedSharp } from "./scripts/sharp-package-assets.mjs";
+import {
+  isSharpRequiredByComputerUse,
+  verifyStagedSharp,
+} from "./scripts/sharp-package-assets.mjs";
 import { isRealComputerUseProducerInstalled } from "./scripts/computer-use-producer.mjs";
 import { verifyStagedKoffi } from "./scripts/koffi-package-assets.mjs";
 import {
@@ -93,24 +96,7 @@ const asarCliPath = resolve(
   "asar.js",
 );
 const REQUIRED_ASAR_RUNTIME_MODULES = [
-  "module-details-from-path",
-  "@opentelemetry/api-logs",
-  // Bugfix: telemetry 的 OTLP exporter 会在启动阶段加载 sdk-metrics。pnpm 开发态可从
-  // workspace 根目录解析，但 electron-builder 不会稳定复制这条 hoisted 依赖，导致安装包启动即崩溃。
-  // 将 sdk-metrics 作为闭包根注入，同时递归带齐它的 OpenTelemetry 运行时依赖。
-  "@opentelemetry/sdk-metrics",
-  // Bugfix：主进程的本地 TTFT / renderer 动作追踪导出器使用 OTLP proto 导出链。pnpm hoisted 布局下
-  // electron-builder 会把 otlp-transformer 打进 app.asar，却漏拷其传递依赖 protobufjs，已安装应用启动即报
-  // Cannot find module protobufjs/minimal（开源侧 3.14.0 arm64 DMG 实测复现）。以两个 proto exporter
-  // 作为闭包根注入，递归带齐 otlp-transformer、protobufjs 与 @protobufjs/* 全链。
-  "@opentelemetry/exporter-trace-otlp-proto",
-  "@opentelemetry/exporter-metrics-otlp-proto",
   "pngjs",
-  // Bugfix: @arms/rum-core 把 @babel/runtime 声明成 peerDependency，pnpm 安装时可由 peer 解析兜住，
-  // 但 electron-builder 重打 app.asar 时不会因为 @arms/rum-electron 本体进包，就稳定把这个 peer 运行时一起带上。
-  // 线上已出现安装包启动即报 Cannot find module '@babel/runtime/helpers/interopRequireDefault'，
-  // 这里显式把 @babel/runtime 作为闭包根注入，确保 ARMS 主进程埋点链路在生产包内可解析。
-  "@babel/runtime",
   // Bugfix: @zcode/services 的代理连通性探测会动态 require("undici") 取 ProxyAgent。
   // tsup 虽然把 services 代码并进了主/host 产物，但不会把这个运行时 require 的包内联进去，
   // electron-builder 产物又可能漏掉 hoisted 的 undici，最终 mac 安装包启动即报 Cannot find module "undici"。
@@ -139,11 +125,6 @@ const REQUIRED_ASAR_RUNTIME_MODULES = [
   "asn1",
   "bcrypt-pbkdf",
   "tweetnacl",
-  // electron-updater → builder-util-runtime → debug 运行时 require("ms")。
-  // pnpm hoisted 布局下 electron-builder 偶发漏拷这个叶子依赖；3.4.0(ci/cua-v0.3.17 打的)
-  // 已在线上触发安装包启动即报 Cannot find module 'ms'（Require stack: debug/src/common.js），
-  // 自动更新链路直接崩。ms 是叶子包，显式注入即可让 debug 在 app.asar 内稳定解析。
-  "ms",
 ];
 // pacman 依赖必须使用 Arch 官方仓库中的包名。electron-builder 的历史默认集合包含
 // 已移除的 libappindicator-gtk3/http-parser，且缺少 Electron 实际需要的运行库；显式
@@ -488,14 +469,14 @@ function assertPackagedCuaSharp(context) {
   }
 }
 
-function assertPackagedCuaKoffi(context) {
+function assertPackagedAgentKoffi(context) {
   const problems = verifyStagedKoffi({
     resourcesDir: resolvePackagedResourcesDir(context),
     targetPlatform,
   });
   if (problems.length > 0) {
     throw new Error(
-      `CUA plugin koffi runtime is incomplete in the packaged app:\n- ${problems.join("\n- ")}`,
+      `Agent koffi runtime is incomplete in the packaged app:\n- ${problems.join("\n- ")}`,
     );
   }
 }
@@ -672,7 +653,7 @@ export default {
       assertPackagedNodePtyPrebuild(context),
     );
     runTimedSync("afterPack:assertPackagedCuaSharp", () => assertPackagedCuaSharp(context));
-    runTimedSync("afterPack:assertPackagedCuaKoffi", () => assertPackagedCuaKoffi(context));
+    runTimedSync("afterPack:assertPackagedAgentKoffi", () => assertPackagedAgentKoffi(context));
     runTimedSync("afterPack:assertPackagedCuaHelper", () => assertPackagedCuaHelper(context));
     if (actualWindowsTarget && shouldPackageComputerUseHelper) {
       await runTimedAsync("afterPack:finalizePackagedWindowsCuaHelper", () =>
@@ -702,6 +683,11 @@ export default {
       }
     : {}),
   extraResources: [
+    {
+      from: "mock-cdn",
+      to: "remote-assets",
+      filter: [`releases/${buildMetadata.appVersion}/**/*`],
+    },
     { from: resolve(workspaceRoot, noticesFileName), to: noticesFileName },
     ...(targetPlatform.os === "darwin"
       ? [
@@ -722,12 +708,6 @@ export default {
           },
         ]
       : []),
-    {
-      // 正式包不能依赖仓库目录读取社区、反馈等内置兜底配置。
-      // 显式放入 resources/config，与主进程的 process.resourcesPath 解析保持一致。
-      from: resolve(workspaceRoot, "config/default.json"),
-      to: "config/default.json",
-    },
     {
       // Provider Registry 的 ZCode Built-in Config 是静态 Provider/Model 事实的唯一内置来源。
       // 显式随包发布，避免正式 Host 回退到旧 Catalog/Preset hardcode。
@@ -788,6 +768,17 @@ export default {
       to: "glm",
       filter: ["**/*", "!**/*.map"],
     },
+    // electron-builder 跳过 extraResources 根下的 node_modules，Windows Agent 的
+    // Koffi 必须单独映射；CUA 插件目录不是 Agent 的依赖解析祖先。
+    ...(targetPlatform.os === "win32"
+      ? [
+          {
+            from: `bundled-agents/${targetPlatform.key}/glm/node_modules`,
+            to: "glm/node_modules",
+            filter: ["**/*", "!**/*.map"],
+          },
+        ]
+      : []),
     {
       // agent shell 之前完全依赖宿主系统 PATH，GUI 启动时经常拿不到用户自己装的 rg。
       // 这里把 ripgrep 作为桌面端内置 runtime tool 打进 resources/tools，
@@ -805,7 +796,7 @@ export default {
   // postinstall 会先优先复用 node-pty 自带的 Windows 预编译产物，其他平台再按需 electron-rebuild。
   // 打包阶段统一复用安装时准备好的原生文件，避免 electron-builder 再触发一轮不受控的本地编译。
   npmRebuild: false,
-  // OAuth deep link 协议注册（macOS 打包后需要 Info.plist 中声明 CFBundleURLTypes）
+  // 工作区 deep link 协议注册（macOS 打包后需要 Info.plist 中声明 CFBundleURLTypes）
   protocols: [
     {
       // 协议处理器的展示名之前使用小写 scheme，打包产物里的协议描述无法体现产品名。
@@ -927,16 +918,5 @@ export default {
     installerIcon: "build/icon_installer.ico",
     uninstallerIcon: "build/icon_installer.ico",
     installerHeaderIcon: "build/icon_installer.ico",
-  },
-  detectUpdateChannel: false,
-  publish: {
-    provider: "generic",
-    // 当前 OSS/CDN 对多 Range 请求返回 206，但 Content-Type 仍是 application/x-msdownload，
-    // electron-updater 会因缺少 multipart/byteranges 直接回退整包下载。关闭 multiple range 后仍走差分，
-    // 只是按单 Range 顺序拉取差异块，避免 Windows 用户更新时从约 15MB 退化成 300MB+ 全量包。
-    useMultipleRangeRequest: false,
-    // 新客户端运行时使用服务端 manifest provider；这里仅保留 electron-builder 必需的
-    // generic publish 占位，避免打包产物继续携带可配置的旧 stable feed。
-    url: "http://localhost:8081",
   },
 };

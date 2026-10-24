@@ -1,13 +1,7 @@
-import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
 import { clearAppData } from "../helpers/desktop-app.js";
-import { skipOccupationOnboardingIfPresent } from "../helpers/occupation-onboarding.js";
+import { restartIntoWorkspace } from "../helpers/model-provider-restart.js";
+import { setupToolSearchDesktop, TOOLSEARCH_API_PROVIDER } from "../helpers/toolsearch-desktop.js";
 import {
-  restartIntoWorkspace,
-  seedBigModelConnectionSelection,
-  seedBigModelOAuthCredential,
-} from "../helpers/model-provider-restart.js";
-import {
-  prepareV4ConversationE2E,
   switchV4Model,
   sendV4Prompt,
   waitForV4TimelineContaining,
@@ -22,23 +16,15 @@ import {
 } from "../helpers/toolsearch-provider.js";
 
 describe("ToolSearch Desktop 默认关闭与冷恢复", () => {
-  const providerId = BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan;
+  const providerId = TOOLSEARCH_API_PROVIDER;
   after(async () => {
     await browser.electron.restoreAllMocks();
     await clearAppData();
   });
 
-  it("TS01/TS04: Coding Plan 默认完整目录，直接执行 TodoWrite 后冷恢复保持关闭", async function () {
+  it("TS01/TS04: 普通 API 默认完整目录，直接执行 TodoWrite 后冷恢复保持关闭", async function () {
     this.timeout(180_000);
-    // 批量运行时会保留测试账号，但新 renderer profile 仍需完成职业引导。
-    await skipOccupationOnboardingIfPresent();
-    await prepareV4ConversationE2E({ skipProvider: true });
-    await restartIntoWorkspace({
-      afterElectronProcessExit: async () => {
-        await seedBigModelConnectionSelection({ kind: "individual-coding-plan" });
-        await seedBigModelOAuthCredential();
-      },
-    });
+    await setupToolSearchDesktop();
     await switchV4Model(providerId, "GLM-5.3", "");
     await sendV4Prompt("E2E_TOOLSEARCH_INITIAL 请搜索 TodoWrite，然后记录已完成的验证任务。");
     await waitForV4TimelineContaining(TOOLSEARCH_DONE, 60_000);

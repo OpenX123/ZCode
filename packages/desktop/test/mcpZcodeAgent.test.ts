@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { CliMcpSource } from "../src/mcp.js";
+import type { CliMcpSource } from "@zcode/shared";
 import { MCP_SOURCE_DESCRIPTORS, getSourceDescriptor } from "../src/main/mcpUserDirectory/types.js";
 import {
   loadCliMcpFromUserDirectory,

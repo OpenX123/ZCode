@@ -16,9 +16,9 @@ decisionRule: >-
   进入验证队列而不是再次向用户提问；pruned-by-contract 只能在引用 invariant 后剪枝。
 summary:
   totalEntries: 114
-  decisionEntries: 64
+  decisionEntries: 61
   contractConflictEntries: 12
-  proofEntries: 38
+  proofEntries: 34
   note: "decisionEntries 只表示需要产品/契约决策的 undefined 项，不代表只有这些项需要测试。"
 evidenceConventions:
   - "newer-design: 较新的 Provider refactor interaction/selection design"
@@ -1667,34 +1667,23 @@ entries:
 
   - id: DEC-103
     domain: config-release
-    status: resolved-needs-proof
+    status: pruned-by-contract
     question: "Bundled 与 Active/LKG Built-in Release revision 相同但内容不同，是否信任 Bundled、保留 Active、还是阻止启动？"
-    options: ["信任 Bundled 并原子修复 Active", "信任 Active/LKG", "整份 release 无效并阻止启动"]
-    recommendation: "当前实现倾向 Bundled 作为可信基线；补充同 revision conflict 的 source、rewrite 和 Registry snapshot 证据。"
+    recommendation: "2026-10-24 已退役：Built-in 仅读取随包文件，不提供 Active/LKG、远端下载或刷新协调。"
     evidence:
-      [
-        "runtime: selectReleaseCandidate returns bundled on same-revision content conflict",
-        "code comment: Active cache invalidation must not block trusted Bundled",
-      ]
-    blockingCases: [MSR-REG-017, MSR-MIGRATION-006]
+      - "invariant: docs/desktop/standalone-coding-harness-spec.md 的随包唯一来源边界"
+      - "tests: packages/provider-node/test/zcode-builtin-release.test.ts 验证旧缓存不被读取或改写"
+    blockingCases: []
 
   - id: DEC-104
     domain: config-release
-    status: undefined
+    status: pruned-by-contract
     question: "Active/LKG revision 高于当前 Bundled revision 时，是否允许它驱动候选，还是必须等待 bundled upgrade？"
-    options:
-      [
-        "允许 newer valid Active/LKG，Bundled 作为 fallback",
-        "只信 Bundled",
-        "高 revision 一律视为未来版本并隔离",
-      ]
-    recommendation: "需要明确 release compatibility policy；不能只由‘取最新 revision’这一实现细节替代产品契约。"
+    recommendation: "2026-10-24 已退役：Built-in 仅读取随包文件，不提供 Active/LKG、远端下载或刷新协调。"
     evidence:
-      [
-        "runtime: selectReleaseCandidate chooses highest valid revision",
-        "risk: downgrade, forward-compatibility and offline startup",
-      ]
-    blockingCases: [MSR-REG-018, MSR-MIGRATION-006]
+      - "invariant: docs/desktop/standalone-coding-harness-spec.md 的随包唯一来源边界"
+      - "tests: packages/provider-node/test/zcode-builtin-release.test.ts 验证旧缓存不被读取或改写"
+    blockingCases: []
 
   - id: DEC-105
     domain: config-release
@@ -1716,83 +1705,53 @@ entries:
 
   - id: DEC-106
     domain: config-release
-    status: resolved-needs-proof
+    status: pruned-by-contract
     question: "远端 release fetch 期间 endpointKey 变化时，旧响应是否必须丢弃且不写 Active/LKG？"
-    options:
-      [
-        "丢弃旧响应并释放旧 lease",
-        "仍写入后由新 endpoint 覆盖",
-        "合并两个 endpoint 的 provider facts",
-      ]
-    recommendation: "丢弃旧响应；endpoint 是 release identity 的一部分，不能合并。"
+    recommendation: "2026-10-24 已退役：Built-in 仅读取随包文件，不提供 Active/LKG、远端下载或刷新协调。"
     evidence:
-      [
-        "runtime: synchronizer re-resolves endpointKey after fetch and returns skipped on change",
-        "AGENTS: remote identity and workspace boundaries",
-      ]
-    blockingCases: [MSR-REMOTE-008, MSR-REG-018]
+      - "invariant: docs/desktop/standalone-coding-harness-spec.md 的随包唯一来源边界"
+      - "tests: packages/provider-node/test/zcode-builtin-release.test.ts 验证旧缓存不被读取或改写"
+    blockingCases: []
 
   - id: DEC-107
     domain: config-release
-    status: resolved-needs-proof
+    status: pruned-by-contract
     question: "共享 refresh control 文件损坏、schema 不支持或 lease 遗留时，是否可以在锁内重建并继续 refresh？"
-    options:
-      [
-        "控制文件是可重建协调事实，锁内重建",
-        "控制文件损坏即永久阻止",
-        "每个进程忽略文件并并发 refresh",
-      ]
-    recommendation: "锁内重建；网络请求不持有文件锁，继续保持单 lease。"
+    recommendation: "2026-10-24 已退役：Built-in 仅读取随包文件，不提供 Active/LKG、远端下载或刷新协调。"
     evidence:
-      [
-        "runtime: readControl invalid JSON/schema returns emptyControl",
-        "runtime: refresh uses withFileLock and releases lease after network",
-      ]
-    blockingCases: [MSR-REMOTE-008, MSR-OBS-005]
+      - "invariant: docs/desktop/standalone-coding-harness-spec.md 的随包唯一来源边界"
+      - "tests: packages/provider-node/test/zcode-builtin-release.test.ts 验证旧缓存不被读取或改写"
+    blockingCases: []
 
   - id: DEC-108
     domain: config-release
-    status: undefined
+    status: pruned-by-contract
     question: "force refresh 是否可以绕过 nextEligibleAt，是否可以抢占其他进程有效 lease？"
-    options: ["force 只绕过 backoff，不抢占有效 lease", "force 可以抢占", "force 永远排队等待"]
-    recommendation: "force 不得破坏有效 lease；否则会引入重复 fetch 和 revision race。"
+    recommendation: "2026-10-24 已退役：Built-in 仅读取随包文件，不提供 Active/LKG、远端下载或刷新协调。"
     evidence:
-      [
-        "runtime: refresh distinguishes leaseUntil from nextEligibleAt",
-        "risk: multi-process refresh and duplicate provider release requests",
-      ]
-    blockingCases: [MSR-REMOTE-008, MSR-REG-020]
+      - "invariant: docs/desktop/standalone-coding-harness-spec.md 的随包唯一来源边界"
+      - "tests: packages/provider-node/test/zcode-builtin-release.test.ts 验证旧缓存不被读取或改写"
+    blockingCases: []
 
   - id: DEC-109
     domain: config-release
-    status: undefined
+    status: pruned-by-contract
     question: "远端 fetch 返回 null（资源不存在）与网络/解析失败的处理是否不同？"
-    options:
-      [
-        "null 标记 missing 并保留现有 Active；异常进入 backoff",
-        "两者都清空 Active",
-        "两者都无限重试",
-      ]
-    recommendation: "missing、stale、unchanged、error 分开建模；不可因一次 fetch 失败清空可用 Registry。"
+    recommendation: "2026-10-24 已退役：Built-in 仅读取随包文件，不提供 Active/LKG、远端下载或刷新协调。"
     evidence:
-      [
-        "runtime: synchronizer has missing result and failureCount/backoff paths",
-        "factor: recovery-state and registry-state are separate dimensions",
-      ]
-    blockingCases: [MSR-REMOTE-009, MSR-REG-021]
+      - "invariant: docs/desktop/standalone-coding-harness-spec.md 的随包唯一来源边界"
+      - "tests: packages/provider-node/test/zcode-builtin-release.test.ts 验证旧缓存不被读取或改写"
+    blockingCases: []
 
   - id: DEC-110
     domain: config-release
-    status: resolved-needs-proof
+    status: pruned-by-contract
     question: "远端 release 同 revision 同内容、同 revision 不同内容、低 revision、高 revision 是否对应稳定的 updated/unchanged/stale/error 结果？"
-    options: ["结果严格可区分且不改变错误状态", "都视为 unchanged", "都覆盖 Active"]
-    recommendation: "保持结果可区分；same-revision conflict 必须 fail closed 或回到 Bundled，不可覆盖。"
+    recommendation: "2026-10-24 已退役：Built-in 仅读取随包文件，不提供 Active/LKG、远端下载或刷新协调。"
     evidence:
-      [
-        "runtime: applyRemoteRelease implements updated/unchanged/stale and same-revision conflict",
-        "tests: packages/provider-node/test/zcode-builtin-release.test.ts",
-      ]
-    blockingCases: [MSR-REG-017, MSR-REMOTE-009]
+      - "invariant: docs/desktop/standalone-coding-harness-spec.md 的随包唯一来源边界"
+      - "tests: packages/provider-node/test/zcode-builtin-release.test.ts 验证旧缓存不被读取或改写"
+    blockingCases: []
 
   - id: DEC-111
     domain: config-release

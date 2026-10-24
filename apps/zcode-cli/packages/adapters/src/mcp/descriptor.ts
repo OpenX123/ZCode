@@ -11,7 +11,6 @@ export function normalizeMcpToolDescriptor(
   serverName: string,
   tool: unknown,
   timeoutMs?: number,
-  official?: boolean,
   alwaysLoad?: boolean,
 ): McpToolDescriptor {
   const record = isRecord(tool) ? tool : {};
@@ -34,9 +33,6 @@ export function normalizeMcpToolDescriptor(
     inputSchema: normalizeInputSchema(record.inputSchema),
     outputSchema: isRecord(record.outputSchema) ? (record.outputSchema as JsonSchema) : undefined,
     annotations: normalizeAnnotations(record.annotations),
-    // 只有 http 官方 MCP 的 tool error 标识才被信任——那种形态的响应来自已校验 origin 的
-    // ZCode 后端，插件伪造不了（判据与代价见 mcp.port.ts 的 official 字段说明）。
-    ...(official ? { official: true } : {}),
     // 可见性独立于 UI 呈现——没有 resourceUri 的 app-only 数据工具也不能进模型工具表。
     visibility: readMcpToolVisibility(record._meta),
     ...(ui ? { ui } : {}),

@@ -11,7 +11,6 @@ import { chromium } from "playwright-core";
 import { registerProviderPresentationCases } from "./provider-settings-presentation-cases.mjs";
 import { registerProviderModelEditorCases } from "./provider-model-editor-cases.mjs";
 import { registerProgressiveModelEditorCases } from "./provider-model-editor-progressive-cases.mjs";
-import { registerOffPeakEligibilityCases } from "./offpeak-eligibility-cases.mjs";
 
 const root = fileURLToPath(new URL("../../../../../../", import.meta.url));
 const entry = "/packages/ui/test/browser/manual-review/pending/provider-settings-batch.fixture.tsx";
@@ -61,7 +60,6 @@ after(async () => {
 });
 
 const artifacts = join(tmpdir(), "zcode-provider-settings-batch");
-registerOffPeakEligibilityCases(() => ({ browser, origin }));
 registerProviderPresentationCases(() => ({ browser, origin, artifacts }));
 registerProviderModelEditorCases(() => ({ browser, origin, artifacts }));
 registerProgressiveModelEditorCases(() => ({ browser, origin, artifacts }));

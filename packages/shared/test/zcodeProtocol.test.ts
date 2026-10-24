@@ -1020,30 +1020,20 @@ describe("ZCode Protocol", () => {
     ).toThrow();
   });
 
-  it.each(["start-plan", "individual-coding-plan", "team-coding-plan", "off-peak"] as const)(
-    "runtime headers 直接接受 Registry zhipu access mode: %s",
-    (mode) => {
-      const parsed = zcodeProviderRuntimeHeadersRequestParamsSchema.parse({
-        requestId: `request-${mode}`,
-        sessionId: "sess_1",
-        workspace,
-        modelSelection: model,
-        providerId: `account:${mode}`,
-        accountAccess: {
-          type: "zhipu-account",
-          accountType: "bigmodel",
-          mode,
-          entitled: true,
-        },
-        reason: "model-request",
-      });
-
-      expect(parsed.accountAccess).toEqual({
-        type: "zhipu-account",
-        accountType: "bigmodel",
-        mode,
-        entitled: true,
-      });
+  it.each(["accountAccess", "expectedAccountScope", "rejectedProjectTokenFingerprint"])(
+    "runtime headers 拒绝退役的官方字段：%s",
+    (field) => {
+      expect(() =>
+        zcodeProviderRuntimeHeadersRequestParamsSchema.parse({
+          requestId: "legacy-request",
+          sessionId: "sess_1",
+          workspace,
+          modelSelection: model,
+          providerId: "personal",
+          reason: "model-request",
+          [field]: "legacy",
+        }),
+      ).toThrow();
     },
   );
 

@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vitest";
-import {
-  createRegistryProviderConfig,
-  parseProviderConfig,
-  serializeRegistryProviderConfig,
-} from "../src/index.js";
+import { createRegistryProviderConfig, parseProviderConfig, isApiKeyAccess } from "../src/index.js";
 
-describe("Manual Coding Plan access", () => {
-  it("保留显式 type、管理入口和 Key，不要求账号事实", () => {
+describe("历史 Coding Plan Key 兼容读取", () => {
+  it("历史套餐 Key 保留原类型和磁盘材料，但不获得执行或普通 Key 编辑准入", () => {
     const base = parseProviderConfig({
       group: "standard-personal",
       access: {
@@ -20,8 +16,8 @@ describe("Manual Coding Plan access", () => {
       parseProviderConfig({ access: { type: "zhipu-coding-plan-api-key", apiKey: "id.secret" } }),
     );
     const result = createRegistryProviderConfig(configured);
-    if (!result.ok) throw new Error("manual key should be complete without account state");
-    expect(serializeRegistryProviderConfig(result.config)).toEqual(configured.toJSON());
+    expect(result.ok).toBe(false);
+    expect(isApiKeyAccess(configured.access)).toBe(false);
     expect(configured.toJSON().access).toEqual({ ...base.toJSON().access, apiKey: "id.secret" });
     expect(parseProviderConfig(configured.toJSON()).toJSON()).toEqual(configured.toJSON());
     expect(() =>

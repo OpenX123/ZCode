@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { join } from "node:path";
 import {
   TID_MODEL_PROVIDER_NAV_ITEM,
   TID_SETTINGS_SECTION_NAV,
@@ -82,14 +81,6 @@ describe("C91-04 connectivity whitelist prompt", () => {
       });
       const paths = getE2EAppDataPaths();
       const beforeConfig = await readFile(paths.configFile, "utf8");
-      const connection = async () => {
-        const settings = JSON.parse(await readFile(join(paths.appDataDir, "setting.json"), "utf8"));
-        return {
-          domain: settings.providerFamilyDomain,
-          connections: settings.providerFamilyConnectionSelections,
-        };
-      };
-      const beforeConnection = await connection();
       const beforeSelection = await getV4DraftThoughtState(paths.workspace);
       await clickTestIdByDom(TID_TASK_SETTINGS_BUTTON);
       await clickTestIdByDom(testId(TID_SETTINGS_SECTION_NAV, "modelProvider"));
@@ -128,7 +119,6 @@ describe("C91-04 connectivity whitelist prompt", () => {
         expect(body.tools).toBeUndefined();
       }
       expect(await readFile(paths.configFile, "utf8")).toBe(beforeConfig);
-      expect(await connection()).toEqual(beforeConnection);
       expect(await getV4DraftThoughtState(paths.workspace)).toEqual(beforeSelection);
     } finally {
       server.closeAllConnections();

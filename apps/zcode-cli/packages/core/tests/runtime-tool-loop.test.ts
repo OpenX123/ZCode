@@ -61,7 +61,6 @@ import { createToolRegistry } from "../src/tool/registry.js";
 import { BackgroundTaskTracker } from "../src/tool/executor/background-tasks.js";
 import type { ToolExecutionContext } from "../src/tool/types.js";
 import { createTestSessionEventStore } from "./test-event-store.js";
-import { START_PLAN_BUSY_AUTO_RETRY_EXHAUSTED_MESSAGE } from "../src/runtime/methods/streaming-recovery.js";
 import type { StableConversationForkChildMetadata } from "../src/runtime/types.js";
 import { formatSubagentMessage } from "../src/runtime/methods/subagent-messages.js";
 import type { BashBackgroundLifecycleExecutionPort } from "../src/tool/handlers/bash-background-lifecycle.js";
@@ -6092,15 +6091,14 @@ describe("AgentRuntime tool loop", () => {
     });
   });
 
-  it("retries Start Plan 3010 before injecting verifier nextAction", async () => {
-    vi.useFakeTimers();
+  it("普通 Provider 的目标验证保留 nextAction 并继续执行", async () => {
     const sessionId = createSessionId("runtime-target-verify-fail");
     const eventStore = createTestSessionEventStore();
     const sessionStore = new RecordingSessionStore();
     const requests: any[] = [];
     const observations: TestModelExecutionObservation[] = [];
     let modelCallCount = 0;
-    const providerId = "account:bigmodel-start-plan";
+    const providerId = "personal:goal-verifier";
 
     const runtime = createTestAgentRuntime(
       sessionId,
@@ -6128,9 +6126,6 @@ describe("AgentRuntime tool loop", () => {
               };
             }
             if (modelCallCount === 2) {
-              throw createProviderBusyError(providerId);
-            }
-            if (modelCallCount === 3) {
               return {
                 finishReason: "stop",
                 providerMetadata: undefined,
@@ -6154,45 +6149,39 @@ describe("AgentRuntime tool loop", () => {
       },
     );
 
-    try {
-      await runtime.ensureSessionPersistedForExternalActivity("/goal Verify fail");
-      await sessionStore.setTarget({
-        objective: "Implement target, not just a plan",
-        sessionID: sessionId,
-      });
+    await runtime.ensureSessionPersistedForExternalActivity("/goal Verify fail");
+    await sessionStore.setTarget({
+      objective: "Implement target, not just a plan",
+      sessionID: sessionId,
+    });
 
-      await runtime.executeTurn("finish target too early");
-      const resultPromise = runtime.continueActiveTargetIfIdle({
-        verifyBeforeContinue: true,
-      });
-      await vi.advanceTimersByTimeAsync(1_000);
-      const result = await resultPromise;
-      const stored = await sessionStore.readTarget({ sessionID: sessionId });
-      const events = await eventStore.getEvents(sessionId);
-      const nextModelContext = requests[3]?.messages
-        .map((message: any) => message.content)
-        .join("\n");
+    await runtime.executeTurn("finish target too early");
+    const resultPromise = runtime.continueActiveTargetIfIdle({
+      verifyBeforeContinue: true,
+    });
+    const result = await resultPromise;
+    const stored = await sessionStore.readTarget({ sessionID: sessionId });
+    const events = await eventStore.getEvents(sessionId);
+    const nextModelContext = requests[2]?.messages
+      .map((message: any) => message.content)
+      .join("\n");
 
-      expect(result?.response).toBe("continuing target");
-      expect(modelCallCount).toBe(4);
-      expect(observations[1]?.invocationContext?.modelRequestSessionType).toBe("main");
-      expect(observations[2]?.invocationContext?.modelRequestSessionType).toBe("main");
-      expect(stored?.status).toBe("active");
-      expect(nextModelContext).toContain("completion verifier");
-      expect(nextModelContext).toContain("A completed plan does not prove the target is complete.");
-      expect(nextModelContext).toContain("Inspect the implementation and run the requested tests.");
-      expect(nextModelContext).toContain("Continue working toward the active session goal.");
-      expect(nextModelContext).not.toContain("GoalUpdate");
-      expect(
-        events.some(
-          (event) =>
-            event.type === SessionEventType.ModelComplete &&
-            (event.payload as any).querySource === GOAL_COMPLETION_VERIFICATION_QUERY_SOURCE,
-        ),
-      ).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(result?.response).toBe("continuing target");
+    expect(modelCallCount).toBe(3);
+    expect(observations[1]?.invocationContext?.modelRequestSessionType).toBe("main");
+    expect(stored?.status).toBe("active");
+    expect(nextModelContext).toContain("completion verifier");
+    expect(nextModelContext).toContain("A completed plan does not prove the target is complete.");
+    expect(nextModelContext).toContain("Inspect the implementation and run the requested tests.");
+    expect(nextModelContext).toContain("Continue working toward the active session goal.");
+    expect(nextModelContext).not.toContain("GoalUpdate");
+    expect(
+      events.some(
+        (event) =>
+          event.type === SessionEventType.ModelComplete &&
+          (event.payload as any).querySource === GOAL_COMPLETION_VERIFICATION_QUERY_SOURCE,
+      ),
+    ).toBe(true);
   });
 
   it("completes the goal when post-turn completion verification fails open", async () => {
@@ -10012,389 +10001,12 @@ describe("AgentRuntime tool loop", () => {
     });
   });
 
-  it.each([
-    { expectedPartStatus: "completed", executionState: "completed" as const },
-    { expectedPartStatus: "error", executionState: "running" as const },
-  ])(
-    "settles a $executionState streaming tool before execution-model fallback",
-    async ({ executionState, expectedPartStatus }) => {
-      const sessionId = createSessionId(`runtime-execution-fallback-tool-${executionState}`);
-      const eventStore = createTestSessionEventStore();
-      const sessionStore = new RecordingSessionStore();
-      const registry = createToolRegistry();
-      const toolStarted = deferred();
-      const toolCompleted = deferred();
-      const highspeedProviderId = "account:zai-highspeed-card";
-      let toolHandlerCallCount = 0;
-      let fallbackRequest: any;
-
-      registry.register({
-        inputSchema: {},
-        metadata: {
-          concurrentSafe: true,
-          destructive: false,
-          name: "FallbackRead",
-          needsApproval: false,
-          readOnly: true,
-          riskLevel: "low",
-          sideEffectScope: "none",
-        },
-        handler: async (_input: unknown, _context: ToolExecutionContext) => {
-          toolHandlerCallCount++;
-          toolStarted.resolve();
-          if (executionState === "running") {
-            // 模拟 handler 尚未返回；executor 在 fallback abort 后生成明确的 cancellation result。
-            await new Promise<never>(() => {});
-          }
-          toolCompleted.resolve();
-          return "fallback-read-ok";
-        },
-      });
-
-      const runtime = createTestAgentRuntime(
-        sessionId,
-        {
-          mode: "yolo",
-          modelSelection: createTestModelSelection("user-provider/user-model"),
-          modelStreaming: "on",
-          titleGeneration: { enabled: false },
-        },
-        {
-          eventStore,
-          sessionStore,
-          toolRegistry: registry,
-          modelFactory: createTestModelFactory({
-            async generateText() {
-              throw new Error("streaming runtime must not call generateText");
-            },
-            async *streamText(request: any, observation) {
-              const providerId = String(observation.model.providerId);
-              if (providerId !== highspeedProviderId) {
-                fallbackRequest = request;
-                yield { type: "text_delta", text: "fallback completed" };
-                yield {
-                  type: "finish",
-                  finishReason: "stop",
-                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-                };
-                return;
-              }
-
-              yield {
-                type: "tool_call",
-                toolCall: { id: "fallback-read", name: "FallbackRead", input: {} },
-              };
-              await toolStarted.promise;
-              if (executionState === "completed") await toolCompleted.promise;
-              yield { type: "text_delta", text: "discarded accelerated tail" };
-              throw Object.assign(new Error("highspeed stream disconnected"), {
-                code: "model_request_failed",
-                context: {
-                  providerId,
-                  modelId: "GLM-5.3",
-                  reason: "network_error",
-                  retryable: true,
-                  source: "network",
-                },
-                name: "AiSdkModelAdapterError",
-              });
-            },
-          } as never),
-        },
-      );
-
-      const result = await runtime.executeTurn("fallback after streamed tool", undefined, {
-        inputId: `command-fallback-tool-${executionState}`,
-        intent: {
-          sourceCommandId: `command-fallback-tool-${executionState}`,
-          kind: "sendText",
-          requestedDelivery: "start-now",
-          modelSelection: { providerId: highspeedProviderId, modelId: "GLM-5.3" },
-        },
-        modelExecution: {
-          selectionScope: "execution",
-          selectionFallback: {
-            providerId: highspeedProviderId,
-            rules: [{ reason: "highspeed_request_failed" }],
-          },
-        },
-      });
-
-      expect(result.response).toBe("fallback completed");
-      expect(toolHandlerCallCount).toBe(1);
-      const fallbackAssistant = fallbackRequest.messages.find(
-        (message: any) => message.role === "assistant" && message.toolCalls?.length > 0,
-      );
-      expect(fallbackAssistant).toMatchObject({
-        providerId: highspeedProviderId,
-        modelId: "GLM-5.3",
-        toolCalls: [{ id: "fallback-read", name: "FallbackRead", input: {} }],
-      });
-      const fallbackToolResult = fallbackRequest.messages.find(
-        (message: any) => message.role === "tool" && message.toolCallId === "fallback-read",
-      );
-      expect(fallbackToolResult).toMatchObject({
-        role: "tool",
-        toolCallId: "fallback-read",
-        toolName: "FallbackRead",
-      });
-      if (executionState === "completed") {
-        expect(fallbackToolResult.content).toBe("fallback-read-ok");
-      } else {
-        expect(String(fallbackToolResult.content)).toContain("Tool execution cancelled");
-      }
-
-      const persistedParts = sessionStore.partsBySession.get(sessionId) ?? [];
-      const persistedToolParts = persistedParts.filter(
-        (part): part is Extract<MessagePart, { type: "tool" }> => part.type === "tool",
-      );
-      expect(persistedToolParts).toHaveLength(1);
-      expect(persistedToolParts[0]?.state.status).toBe(expectedPartStatus);
-
-      const discardedAssistant = sessionStore.messagesBySession
-        .get(sessionId)
-        ?.find(
-          (message) =>
-            message.role === "assistant" &&
-            message.providerId === highspeedProviderId &&
-            message.error?.name === STREAM_RECOVERY_DISCARDED_ERROR_NAME,
-        );
-      expect(discardedAssistant).toMatchObject({
-        finish: STREAM_RECOVERY_DISCARDED_FINISH,
-        error: { name: STREAM_RECOVERY_DISCARDED_ERROR_NAME },
-      });
-
-      const coldHistory = new MessageHistoryImpl();
-      await hydrateMessageHistoryFromSession({
-        history: coldHistory,
-        messages: await sessionStore.messages({ sessionID: sessionId }),
-      });
-      const coldEntries = coldHistory.toRuntimeEntries();
-      expect(coldEntries).toContainEqual(
-        expect.objectContaining({
-          message: expect.objectContaining({
-            role: "assistant",
-            toolCalls: [{ id: "fallback-read", name: "FallbackRead", input: {} }],
-          }),
-        }),
-      );
-      expect(coldEntries).toContainEqual(
-        expect.objectContaining({
-          message: expect.objectContaining({
-            role: "tool",
-            toolCallId: "fallback-read",
-          }),
-        }),
-      );
-      const serializedColdEntries = JSON.stringify(coldEntries);
-      expect(serializedColdEntries).not.toContain("[Tool execution was interrupted before resume]");
-      expect(serializedColdEntries).not.toContain("discarded accelerated tail");
-
-      const turnComplete = (await eventStore.getEvents(sessionId)).findLast(
-        (event) => event.type === SessionEventType.TurnComplete,
-      );
-      expect(turnComplete?.payload).toMatchObject({ historyRoundCount: 2 });
-    },
-  );
-
-  it.each([
-    { expectedPartStatus: "completed", executionState: "completed" as const },
-    { expectedPartStatus: "error", executionState: "running" as const },
-  ])(
-    "settles a $executionState streaming tool when execution fallback has no resolvable target",
-    async ({ executionState, expectedPartStatus }) => {
-      const sessionId = createSessionId(
-        `runtime-execution-fallback-unavailable-tool-${executionState}`,
-      );
-      const eventStore = createTestSessionEventStore();
-      const sessionStore = new RecordingSessionStore();
-      const registry = createToolRegistry();
-      const toolStarted = deferred();
-      const toolCompleted = deferred();
-      const highspeedProviderId = "account:zai-highspeed-card";
-      const unavailableFallbackProviderId = "ghost-provider";
-      const streamedProviders: string[] = [];
-      let toolHandlerCallCount = 0;
-
-      registry.register({
-        inputSchema: {},
-        metadata: {
-          concurrentSafe: true,
-          destructive: false,
-          name: "UnavailableFallbackRead",
-          needsApproval: false,
-          readOnly: true,
-          riskLevel: "low",
-          sideEffectScope: "none",
-        },
-        handler: async () => {
-          toolHandlerCallCount++;
-          toolStarted.resolve();
-          if (executionState === "running") {
-            await new Promise<never>(() => {});
-          }
-          toolCompleted.resolve();
-          return "unavailable-fallback-read-ok";
-        },
-      });
-
-      const highspeedModelFactory = createTestModelFactory({
-        async generateText() {
-          throw new Error("streaming runtime must not call generateText");
-        },
-        async *streamText(_request: any, observation) {
-          const providerId = String(observation.model.providerId);
-          streamedProviders.push(providerId);
-          yield {
-            type: "tool_call",
-            toolCall: {
-              id: "unavailable-fallback-read",
-              name: "UnavailableFallbackRead",
-              input: {},
-            },
-          };
-          await toolStarted.promise;
-          if (executionState === "completed") await toolCompleted.promise;
-          throw Object.assign(new Error("highspeed unavailable-target stream failed"), {
-            code: "model_request_failed",
-            context: {
-              providerId,
-              modelId: "GLM-5.3",
-              reason: "network_error",
-              retryable: true,
-              source: "network",
-            },
-            name: "AiSdkModelAdapterError",
-          });
-        },
-      } as never);
-      const runtime = createTestAgentRuntime(
-        sessionId,
-        {
-          mode: "yolo",
-          modelSelection: createTestModelSelection("user-provider/user-model"),
-          modelStreaming: "on",
-          titleGeneration: { enabled: false },
-        },
-        {
-          eventStore,
-          sessionStore,
-          toolRegistry: registry,
-          modelFactory: (factoryInput) => {
-            if (factoryInput.selection.providerId === unavailableFallbackProviderId) {
-              throw new Error("fallback provider is unavailable");
-            }
-            return highspeedModelFactory(factoryInput);
-          },
-        },
-      );
-      runtime.setSessionModelSelection(undefined);
-
-      const failure = (await runtime
-        .executeTurn("fail after streamed tool without fallback target", undefined, {
-          inputId: `command-unavailable-fallback-tool-${executionState}`,
-          intent: {
-            sourceCommandId: `command-unavailable-fallback-tool-${executionState}`,
-            kind: "sendText",
-            requestedDelivery: "start-now",
-            modelSelection: { providerId: highspeedProviderId, modelId: "GLM-5.3" },
-          },
-          modelExecution: {
-            selectionScope: "execution",
-            selectionFallback: {
-              providerId: highspeedProviderId,
-              rules: [{ reason: "highspeed_request_failed" }],
-              target: { providerId: unavailableFallbackProviderId, modelId: "ghost-model" },
-            },
-          },
-        })
-        .then(
-          () => undefined,
-          (error: unknown) => error,
-        )) as (Error & { cause?: unknown }) | undefined;
-
-      expect(failure).toBeInstanceOf(Error);
-      const causeMessage = failure?.cause instanceof Error ? failure.cause.message : undefined;
-      expect([failure?.message, causeMessage]).toContain(
-        "highspeed unavailable-target stream failed",
-      );
-      expect(streamedProviders).toEqual([highspeedProviderId]);
-      expect(toolHandlerCallCount).toBe(1);
-
-      const persistedToolParts = (sessionStore.partsBySession.get(sessionId) ?? []).filter(
-        (part): part is Extract<MessagePart, { type: "tool" }> => part.type === "tool",
-      );
-      expect(persistedToolParts).toHaveLength(1);
-      expect(persistedToolParts[0]?.state.status).toBe(expectedPartStatus);
-
-      const projectToolHistory = (entries: ReturnType<MessageHistoryImpl["toRuntimeEntries"]>) =>
-        entries.flatMap((entry) => {
-          const message = (entry as any).message;
-          if (!message) return [];
-          if (
-            message.role === "assistant" &&
-            message.toolCalls?.some(
-              (toolCall: { id: string }) => toolCall.id === "unavailable-fallback-read",
-            )
-          ) {
-            return [
-              {
-                role: message.role,
-                toolCalls: message.toolCalls,
-              },
-            ];
-          }
-          if (message.role === "tool" && message.toolCallId === "unavailable-fallback-read") {
-            return [
-              {
-                content: message.content,
-                role: message.role,
-                toolCallId: message.toolCallId,
-                toolName: message.toolName,
-              },
-            ];
-          }
-          return [];
-        });
-      const liveToolHistory = projectToolHistory(
-        (runtime as any).messageHistory.toRuntimeEntries(),
-      );
-      const coldHistory = new MessageHistoryImpl();
-      await hydrateMessageHistoryFromSession({
-        history: coldHistory,
-        messages: await sessionStore.messages({ sessionID: sessionId }),
-      });
-      const coldToolHistory = projectToolHistory(coldHistory.toRuntimeEntries());
-      expect(coldToolHistory).toEqual(liveToolHistory);
-      expect(coldToolHistory).toHaveLength(2);
-      if (executionState === "completed") {
-        expect(JSON.stringify(coldToolHistory)).toContain("unavailable-fallback-read-ok");
-      }
-      expect(JSON.stringify(coldToolHistory)).not.toContain(
-        "[Tool execution was interrupted before resume]",
-      );
-
-      const events = await eventStore.getEvents(sessionId);
-      expect(
-        events.some((event) => event.type === SessionEventType.TurnExecutionModelFallback),
-      ).toBe(false);
-      expect(
-        events.some(
-          (event) =>
-            event.type === SessionEventType.StreamingToolLedgerUpdated &&
-            (event.payload as any).status === "tool_abandoned",
-        ),
-      ).toBe(false);
-    },
-  );
-
-  it("resets output continuation after fallback settles a streaming tool anchor", async () => {
+  it("普通流恢复提交工具 anchor 后重置输出续写计数", async () => {
     const sessionId = createSessionId("runtime-execution-fallback-tool-resets-continuation");
     const eventStore = createTestSessionEventStore();
     const registry = createToolRegistry();
     const toolCompleted = deferred();
-    const highspeedProviderId = "account:zai-highspeed-card";
-    let highspeedCallCount = 0;
+    let modelCallCount = 0;
     let fallbackCallCount = 0;
     let toolHandlerCallCount = 0;
 
@@ -10431,12 +10043,11 @@ describe("AgentRuntime tool loop", () => {
           async generateText() {
             throw new Error("streaming runtime must not call generateText");
           },
-          async *streamText(_request: any, observation) {
-            const providerId = String(observation.model.providerId);
-            if (providerId === highspeedProviderId) {
-              highspeedCallCount++;
-              if (highspeedCallCount <= 3) {
-                yield { type: "text_delta", text: `accelerated part ${highspeedCallCount}` };
+          async *streamText() {
+            modelCallCount++;
+            if (modelCallCount <= 4) {
+              if (modelCallCount <= 3) {
+                yield { type: "text_delta", text: `accelerated part ${modelCallCount}` };
                 yield { type: "finish", finishReason: "length", usage: {} };
                 return;
               }
@@ -10449,10 +10060,10 @@ describe("AgentRuntime tool loop", () => {
                 },
               };
               await toolCompleted.promise;
-              throw Object.assign(new Error("highspeed failed after continuation tool"), {
+              throw Object.assign(new Error("network failed after continuation tool"), {
                 code: "model_request_failed",
                 context: {
-                  providerId,
+                  providerId: "user-provider",
                   modelId: "GLM-5.3",
                   reason: "network_error",
                   retryable: true,
@@ -10479,25 +10090,10 @@ describe("AgentRuntime tool loop", () => {
       },
     );
 
-    const result = await runtime.executeTurn("continue through fallback tool anchor", undefined, {
-      inputId: "command-fallback-tool-continuation-reset",
-      intent: {
-        sourceCommandId: "command-fallback-tool-continuation-reset",
-        kind: "sendText",
-        requestedDelivery: "start-now",
-        modelSelection: { providerId: highspeedProviderId, modelId: "GLM-5.3" },
-      },
-      modelExecution: {
-        selectionScope: "execution",
-        selectionFallback: {
-          providerId: highspeedProviderId,
-          rules: [{ reason: "highspeed_request_failed" }],
-        },
-      },
-    });
+    const result = await runtime.executeTurn("continue through recovered tool anchor");
 
     expect(result.response).toBe("fallback completed");
-    expect(highspeedCallCount).toBe(4);
+    expect(modelCallCount).toBe(6);
     expect(fallbackCallCount).toBe(2);
     expect(toolHandlerCallCount).toBe(1);
   });
@@ -10737,7 +10333,7 @@ describe("AgentRuntime tool loop", () => {
     expect(retryStartedPayloads.every((payload) => payload.maxRetries === 10)).toBe(true);
   });
 
-  it("marks Start Plan busy stream recovery exhaustion in the final turn error", async () => {
+  it("普通限流流恢复耗尽后保留原始错误", async () => {
     const sessionId = createSessionId("runtime-start-plan-busy-recovery-exhausted");
     const eventStore = createTestSessionEventStore();
     let modelCallCount = 0;
@@ -10754,7 +10350,7 @@ describe("AgentRuntime tool loop", () => {
           async *streamText() {
             modelCallCount++;
             yield { type: "text_delta", text: `partial ${modelCallCount}` };
-            const error = new Error("当前系统繁忙，请稍后再试或升级账户。") as Error & {
+            const error = new Error("当前系统繁忙，请稍后再试。") as Error & {
               code?: string;
               context?: Record<string, unknown>;
             };
@@ -10783,143 +10379,59 @@ describe("AgentRuntime tool loop", () => {
     ).toHaveLength(10);
     expect(turnErrorPayload.error).toMatchObject({
       code: "3010",
-      message: START_PLAN_BUSY_AUTO_RETRY_EXHAUSTED_MESSAGE,
+      message: "当前系统繁忙，请稍后再试。",
     });
     expect(turnErrorPayload.error.detail).toContain("provider_code=3010");
   });
 
-  it("does not retry Start Plan busy admission failures on the first turn", async () => {
-    const sessionId = createSessionId("runtime-start-plan-first-admission-busy-no-retry");
-    const eventStore = createTestSessionEventStore();
-    const providerId = "account:zai-start-plan";
-    let modelCallCount = 0;
+  it.each(["personal:test-provider", "account:zai-start-plan"])(
+    "首 token 前失败不按 Provider 追加套餐重试（%s）",
+    async (providerId) => {
+      const sessionId = createSessionId("runtime-start-plan-first-admission-busy-no-retry");
+      const eventStore = createTestSessionEventStore();
+      let modelCallCount = 0;
 
-    const runtime = createTestAgentRuntime(
-      sessionId,
-      {
-        mode: "yolo",
-        modelSelection: {
-          modelId: "GLM-5.2" as never,
-          providerId: providerId as never,
+      const runtime = createTestAgentRuntime(
+        sessionId,
+        {
+          mode: "yolo",
+          modelSelection: {
+            modelId: "GLM-5.2" as never,
+            providerId: providerId as never,
+          },
+          modelStreaming: "on",
         },
-        modelStreaming: "on",
-      },
-      {
-        eventStore,
-        modelFactory: createTestModelFactory({
-          async generateText() {
-            throw new Error("generateText should not be used");
-          },
-          async *streamText() {
-            modelCallCount++;
-            yield { type: "error", error: createProviderBusyError(providerId) };
-          },
-        } as never),
-      },
-    );
+        {
+          eventStore,
+          modelFactory: createTestModelFactory({
+            async generateText() {
+              throw new Error("generateText should not be used");
+            },
+            async *streamText() {
+              modelCallCount++;
+              if (modelCallCount === 1) {
+                yield { type: "text_delta", text: "first completed" };
+                yield { type: "finish", finishReason: "stop", usage: {} };
+                return;
+              }
+              yield { type: "error", error: createProviderBusyError(providerId) };
+            },
+          } as never),
+        },
+      );
 
-    await expect(runtime.executeTurn("first prompt")).rejects.toMatchObject({
-      type: CoreErrorType.ModelError,
-    });
+      await runtime.executeTurn("first prompt");
+      await expect(runtime.executeTurn("second prompt")).rejects.toMatchObject({
+        type: CoreErrorType.ModelError,
+      });
 
-    const events = await eventStore.getEvents(sessionId);
-    expect(modelCallCount).toBe(1);
-    expect(
-      events.filter((event) => event.type === SessionEventType.StreamRecoveryRetryStarted),
-    ).toHaveLength(0);
-  });
-
-  it("retries Start Plan busy admission failures after a visible turn", async () => {
-    vi.useFakeTimers();
-    const sessionId = createSessionId("runtime-start-plan-second-admission-busy-retry");
-    const eventStore = createTestSessionEventStore();
-    const sessionStore = new RecordingSessionStore();
-    const providerId = "account:zai-start-plan";
-    const requestModel = {
-      modelId: "GLM-5.2" as never,
-      providerId: providerId as never,
-    };
-    const selectedModel = createTestModelSelection("provider-new/model-new");
-    let modelCallCount = 0;
-
-    const runtime = createTestAgentRuntime(
-      sessionId,
-      {
-        mode: "yolo",
-        modelSelection: createTestModelSelection(requestModel),
-        modelStreaming: "on",
-      },
-      {
-        eventStore,
-        sessionStore,
-        modelFactory: createTestModelFactory({
-          async generateText() {
-            throw new Error("generateText should not be used");
-          },
-          async *streamText() {
-            modelCallCount++;
-            if (modelCallCount === 1) {
-              yield { type: "text_delta", text: "first done" };
-              yield {
-                type: "finish",
-                finishReason: "stop",
-                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-              };
-              return;
-            }
-            if (modelCallCount === 2) {
-              runtime.setSessionModelSelection(createTestModelSelection(selectedModel));
-              yield {
-                type: "error",
-                error: createProviderBusyError(providerId),
-              };
-              return;
-            }
-            yield { type: "text_delta", text: "second done" };
-            yield {
-              type: "finish",
-              finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            };
-          },
-        } as never),
-      },
-    );
-
-    try {
-      const first = await runtime.executeTurn("first prompt");
-      const secondPromise = runtime.executeTurn("second prompt");
-      await vi.advanceTimersByTimeAsync(1_000);
-      const second = await secondPromise;
       const events = await eventStore.getEvents(sessionId);
-      const retryStartedPayloads = events
-        .filter((event) => event.type === SessionEventType.StreamRecoveryRetryStarted)
-        .map((event) => event.payload as any);
-
-      expect(first.response).toBe("first done");
-      expect(second.response).toBe("second done");
-      expect(modelCallCount).toBe(3);
-      expect(retryStartedPayloads).toHaveLength(1);
-      expect(retryStartedPayloads[0]).toMatchObject({
-        retryNumber: 1,
-        maxRetries: 2,
-      });
+      expect(modelCallCount).toBe(2);
       expect(
-        sessionStore.messagesBySession
-          .get(sessionId)
-          ?.find(
-            (message) =>
-              message.role === "assistant" &&
-              message.finish === "start_plan_admission_retry_discarded",
-          ),
-      ).toMatchObject({
-        modelId: requestModel.modelId,
-        providerId: requestModel.providerId,
-      });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+        events.filter((event) => event.type === SessionEventType.StreamRecoveryRetryStarted),
+      ).toHaveLength(0);
+    },
+  );
 
   it("continues stream recovery with a synthetic failed result for side-effecting tools", async () => {
     const sessionId = createSessionId("runtime-stream-side-effect-recovery");

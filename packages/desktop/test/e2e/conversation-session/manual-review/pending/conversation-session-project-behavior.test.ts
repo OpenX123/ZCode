@@ -2,7 +2,6 @@ import { DatabaseSync } from "node:sqlite";
 import { join, basename } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { waitForWorkspaceApp, DEFAULT_WORKSPACE } from "../../../helpers/desktop-app.js";
-import { loginWithApiKey } from "#e2e/helpers/v4-conversation";
 import { TID_AUTOMATIONS_OPEN } from "@zcode/shared/test-ids";
 
 const projectId = "e2e-project-behavior";
@@ -75,13 +74,6 @@ describe("虚拟项目旧产品体验", () => {
       db.close();
     }
     await browser.refresh();
-    // 匿名回放夹具在重载后可能显示连接入口；先走真实登录 UI，避免误把欢迎页当成项目丢失。
-    const login = $('[data-testid="login-use-api-key-button"]');
-    await browser.waitUntil(
-      async () => (await login.isDisplayed()) || (await $(rowSelector).isDisplayed()),
-      { timeout: 45_000 },
-    );
-    if (await login.isDisplayed()) await loginWithApiKey();
     await $(rowSelector).waitForDisplayed({ timeout: 45_000 });
   });
 

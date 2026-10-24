@@ -16,7 +16,7 @@ interface EnvironmentLane {
 }
 
 /**
- * Main 进程只协调 Environment 身份和执行代际；配置与凭据始终由被选中的 Host 现读现传。
+ * Main 进程只协调 Environment 身份和执行代际；Personal 配置由被选中的 Host 现读现传。
  */
 export class ProviderProvisioningEnvironmentCoordinator {
   readonly #lanes = new Map<string, EnvironmentLane>();

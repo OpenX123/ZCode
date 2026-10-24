@@ -20,7 +20,9 @@ export function writeBundledOfficialMarketplacePartitionSync(input: {
     manifest: input.manifest,
     version: 1,
   } satisfies BundledMarketplacePartition);
-  return rebuildOfficialMarketplaceSync(input.storageRoot);
+  // 启动 seed 仅激活随包目录；旧 CDN 分片留在磁盘，不覆盖本地资产。
+  writeJsonFileSync(partitionPath(input.storageRoot, MERGED_MARKETPLACE_FILE), input.manifest);
+  return input.manifest;
 }
 
 export function writeCdnOfficialMarketplacePartitionSync(input: {
@@ -32,17 +34,11 @@ export function writeCdnOfficialMarketplacePartitionSync(input: {
   return rebuildOfficialMarketplaceSync(input.storageRoot);
 }
 
-export function loadBundledOfficialPluginRootsSync(
-  storageRoot: string,
-): string[] | undefined {
+export function loadBundledOfficialPluginRootsSync(storageRoot: string): string[] | undefined {
   const bundledPartition = readBundledPartition(storageRoot);
   if (!bundledPartition) return undefined;
 
-  const officialCacheRoot = resolve(
-    storageRoot,
-    "cache",
-    ZCODE_OFFICIAL_PLUGIN_MARKETPLACE,
-  );
+  const officialCacheRoot = resolve(storageRoot, "cache", ZCODE_OFFICIAL_PLUGIN_MARKETPLACE);
   return readPluginEntries(bundledPartition.manifest).flatMap((plugin) => {
     const name = readPluginName(plugin);
     const cachePath = typeof plugin.cachePath === "string" ? plugin.cachePath : undefined;

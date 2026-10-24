@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -34,6 +34,65 @@ function descriptor(contents: string) {
 describe("Source Server release resolver", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it.each(["local-download-upload", "remote-download"] as const)(
+    "无显式镜像时 %s 不读取旧缓存地址或旧归档",
+    async (assetInstallMode) => {
+      const root = await mkdtemp(join(tmpdir(), "zcode-retired-release-cache-"));
+      const cacheDir = join(root, "source-server", ZCODE_VERSION);
+      const contents = "retired-source-server";
+      const cachedDescriptor = descriptor(contents);
+      cachedDescriptor.archives[0]!.urls = ["https://retired.example.test/old-server.tar.gz"];
+      await mkdir(cacheDir, { recursive: true });
+      await writeFile(
+        join(cacheDir, "source-server-release.json"),
+        JSON.stringify(cachedDescriptor),
+      );
+      await writeFile(join(cacheDir, fileName), contents);
+      const fetch = vi.fn(async () => new Response(contents));
+      try {
+        await expect(
+          resolveSourceServerReleaseAsset(
+            probe,
+            { remoteCacheDir: root },
+            { ...target, assetInstallMode },
+            { fetch },
+          ),
+        ).rejects.toThrow("Source Server 本地产物缺失");
+        expect(fetch).not.toHaveBeenCalled();
+        expect(await readFile(join(cacheDir, fileName), "utf8")).toBe(contents);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("显式镜像失败时不回退旧 descriptor 中的远程地址", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-release-mirror-failed-"));
+    const cacheDir = join(root, "source-server", ZCODE_VERSION);
+    const cachedDescriptor = descriptor("retired");
+    cachedDescriptor.archives[0]!.urls = ["https://retired.example.test/old-server.tar.gz"];
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(join(cacheDir, "source-server-release.json"), JSON.stringify(cachedDescriptor));
+    const fetch = vi.fn(
+      async (_input: string | URL | Request) => new Response(null, { status: 503 }),
+    );
+    try {
+      await expect(
+        resolveSourceServerReleaseAsset(
+          probe,
+          { remoteCdnBaseUrl: "https://mirror.example.test/releases", remoteCacheDir: root },
+          target,
+          { fetch },
+        ),
+      ).rejects.toThrow("Unable to resolve Source Server release descriptor");
+      expect(
+        fetch.mock.calls.every(([url]) => String(url).startsWith("https://mirror.example.test/")),
+      ).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("previews descriptor metadata without downloading the archive", async () => {
     const fetch = vi.fn(async (url: string | URL | Request) => {
       if (String(url).endsWith("source-server-release.json"))
@@ -53,27 +112,34 @@ describe("Source Server release resolver", () => {
       fetch.mock.calls.every(([url]) => String(url).endsWith("source-server-release.json")),
     ).toBe(true);
   });
-  it("uses and verifies a staged local archive for local-download-upload", async () => {
-    const root = await mkdtemp(join(tmpdir(), "zcode-source-release-local-"));
-    const releaseDir = join(root, "releases", ZCODE_VERSION);
-    const contents = "local-source-server";
-    await mkdir(releaseDir, { recursive: true });
-    await writeFile(join(releaseDir, fileName), contents);
-    await writeFile(
-      join(releaseDir, "source-server-release.json"),
-      JSON.stringify(descriptor(contents)),
-    );
+  it.each(["local-download-upload", "remote-download"] as const)(
+    "%s 无显式镜像时校验并使用随包源码归档",
+    async (assetInstallMode) => {
+      const root = await mkdtemp(join(tmpdir(), "zcode-source-release-local-"));
+      const releaseDir = join(root, "releases", ZCODE_VERSION);
+      const contents = "local-source-server";
+      await mkdir(releaseDir, { recursive: true });
+      await writeFile(join(releaseDir, fileName), contents);
+      await writeFile(
+        join(releaseDir, "source-server-release.json"),
+        JSON.stringify(descriptor(contents)),
+      );
 
-    const release = await resolveSourceServerReleaseAsset(probe, { mockCdnDir: root }, target);
+      const release = await resolveSourceServerReleaseAsset(
+        probe,
+        { mockCdnDir: root },
+        { ...target, assetInstallMode },
+      );
 
-    expect(release).toMatchObject({
-      localArchivePath: join(releaseDir, fileName),
-      target: "linux-x64",
-      version: ZCODE_VERSION,
-      sha256: sha256(contents),
-      sizeBytes: Buffer.byteLength(contents),
-    });
-  });
+      expect(release).toMatchObject({
+        localArchivePath: join(releaseDir, fileName),
+        target: "linux-x64",
+        version: ZCODE_VERSION,
+        sha256: sha256(contents),
+        sizeBytes: Buffer.byteLength(contents),
+      });
+    },
+  );
 
   it("uses the staged local archive for development even when SSH prefers remote download", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-source-release-dev-local-"));

@@ -553,3 +553,15 @@ test("terminal picker refreshes an empty catalog and switches model and effort w
     else reactEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
   }
 });
+
+test("独立 harness 不提供官方账号命令，空模型仅提示配置", async () => {
+  const f = fixture();
+  f.setCatalog([]);
+  const command = createCommandCenter(f.deps);
+  const help = await command("/help", {});
+  assert.doesNotMatch(help.response, /\/login|\/logout|Coding Plan/);
+  const result = await command("hello", {});
+  assert.doesNotMatch(result.response, /\/login|Coding Plan/);
+  assert.match(result.response, /provider|模型|供应商/i);
+  assert.equal(f.defaultWrites.length, 0);
+});

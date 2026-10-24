@@ -5,6 +5,10 @@ import type { ZCodeConfigOption } from "@zcode/shared";
 import type { SessionConfigState } from "@zcode/shared/zcode-protocol-v4";
 import type { IModelSelectionService, ModelSelectionView } from "@zcode/services";
 import { resolveEffectiveModelSelection, type ProviderRegistryView } from "@zcode/provider";
+import {
+  resetDynamicWorkflowAvailabilityStoreForTests,
+  useDynamicWorkflowAvailabilityStore,
+} from "@/store/dynamicWorkflowAvailabilityStore.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useDraftConfigControl as useActualDraftConfigControl } from "@/v4/composer/useDraftConfigControl.js";
 import {
@@ -139,7 +143,6 @@ function useDraftConfigControl(
           ? resolveEffectiveModelSelection({
               selection: input.selection,
               registry: view as unknown as ProviderRegistryView,
-              classifyProvider: () => "ordinary",
             })
           : {}),
       }),
@@ -600,6 +603,7 @@ describe("useDraftConfigControl slash command hydration", () => {
   });
 
   beforeEach(() => {
+    resetDynamicWorkflowAvailabilityStoreForTests();
     selectionServices.clear();
     prepareWorkspaceMock.mockReset();
     toastMock.mockReset();
@@ -717,6 +721,53 @@ describe("useDraftConfigControl slash command hydration", () => {
 
     act(() => root.unmount());
   });
+
+  it.each([false, true])(
+    "工作流模式变化刷新已有目录，迟到旧结果不覆盖新模式（迟到=%s）",
+    async (late) => {
+      const workspacePath = `/workflow-policy-${late}`;
+      const store = useZCodeSessionStore.getState();
+      const workflowCommands = [...CUSTOM_COMMANDS, { name: "workflow", description: "Workflow" }];
+      store.setConfigOptions(workspacePath, WORKSPACE_PRESENTATION);
+      store.setSlashCommands(workspacePath, workflowCommands);
+      useDynamicWorkflowAvailabilityStore.setState({ status: "ready", enabled: true });
+      let resolveRead!: (value: unknown) => void;
+      prepareWorkspaceMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRead = resolve;
+          }),
+      );
+      function Probe() {
+        useDraftConfigControl({ workspacePath, sessionId: null, modelSelectionView: null });
+        return null;
+      }
+      const root = createRoot(installMinimalDom());
+      await act(async () => root.render(createElement(Probe)));
+      expect(prepareWorkspaceMock).not.toHaveBeenCalled();
+      await act(async () => useDynamicWorkflowAvailabilityStore.setState({ enabled: false }));
+      expect(prepareWorkspaceMock).toHaveBeenCalledTimes(1);
+      if (late) {
+        await act(async () => useDynamicWorkflowAvailabilityStore.setState({ enabled: true }));
+      }
+      await act(async () =>
+        resolveRead({ configOptions: WORKSPACE_PRESENTATION, slashCommands: CUSTOM_COMMANDS }),
+      );
+      expect(store.getWorkspaceState(workspacePath).slashCommands).toEqual(
+        late ? workflowCommands : CUSTOM_COMMANDS,
+      );
+      if (!late) {
+        prepareWorkspaceMock.mockResolvedValueOnce({
+          configOptions: WORKSPACE_PRESENTATION,
+          slashCommands: workflowCommands,
+        });
+        await act(async () => useDynamicWorkflowAvailabilityStore.setState({ enabled: true }));
+        expect(prepareWorkspaceMock).toHaveBeenCalledTimes(2);
+        expect(store.getWorkspaceState(workspacePath).slashCommands).toEqual(workflowCommands);
+      }
+      act(() => root.unmount());
+    },
+  );
 
   it("从 active task 新建草稿时不再从旧 workspace presentation 继承选择", async () => {
     const workspacePath = "/inherited-draft-workspace";

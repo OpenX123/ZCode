@@ -213,7 +213,7 @@ describe("v4 原生 createSession", () => {
     expect(sendInput).not.toHaveBeenCalled();
   });
 
-  it("创建 draft record 时透传 Off-Peak 工具面 flag（D49：v4 是桌面新会话的实际创建路径）", async () => {
+  it("旧调用方的闲时工具开关不会进入新 draft record", async () => {
     const record = makeRecord({ app: makeApp(), persistence: "deferred" });
     const { host, createSessionRecord } = makeCreateHost(record);
 
@@ -222,8 +222,9 @@ describe("v4 原生 createSession", () => {
     );
 
     expect(createSessionRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ workspaceId: "/w", offPeakToolEnabled: true }),
+      expect.objectContaining({ workspaceId: "/w" }),
     );
+    expect(createSessionRecord.mock.calls[0]?.[0]).not.toHaveProperty("offPeakToolEnabled");
   });
 
   it("带 firstInput：经原生 prompt turn 提交（draft 提升 + inputId=commandId 锚点）", async () => {

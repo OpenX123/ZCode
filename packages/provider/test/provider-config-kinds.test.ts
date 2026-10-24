@@ -123,7 +123,7 @@ describe("ProviderConfig access / api boundaries", () => {
     ).toThrow();
   });
 
-  it("把隐藏性与智谱闲时模式解析为正式 Provider 配置", () => {
+  it("历史闲时 Access 可读但不再是可执行 Provider 配置", () => {
     const config = parseProviderConfig({
       group: "zai-family",
       visibility: "hidden",
@@ -137,7 +137,7 @@ describe("ProviderConfig access / api boundaries", () => {
 
     expect(config.visibility).toBe("hidden");
     expect(config.access).toBeInstanceOf(ZhipuAccountAccessConfig);
-    expect(config.validateComplete()).toEqual([]);
+    expect(config.validateComplete().length).toBeGreaterThan(0);
     expect(JSON.parse(JSON.stringify(config))).toEqual({
       group: "zai-family",
       visibility: "hidden",
@@ -183,7 +183,7 @@ describe("ProviderConfig access / api boundaries", () => {
     );
   });
 
-  it("Account 层可以在最后补入账号约束和模型成员", () => {
+  it("历史账号稀疏字段合并不再授予 Registry 准入", () => {
     const zcodeBuiltin = new ProviderConfig({
       group: "zai-family",
       access: new ZhipuAccountAccessConfig({
@@ -202,12 +202,10 @@ describe("ProviderConfig access / api boundaries", () => {
       builtinModelIds: ["glm-5"],
     });
 
-    expect(zcodeBuiltin.validateComplete(["providers", "plan"])).toContainEqual({
-      code: "required-field-missing",
-      path: ["providers", "plan", "access", "entitled"],
-      message: "缺少必填配置 providers.plan.access.entitled",
-    });
-    expect(zcodeBuiltin.overlay(account).validateComplete()).toEqual([]);
+    expect(zcodeBuiltin.validateComplete(["providers", "plan"])).not.toEqual([]);
+    const merged = zcodeBuiltin.overlay(account);
+    expect(merged.access?.toJSON()).toMatchObject({ type: "zhipu-account", entitled: true });
+    expect(merged.validateComplete()).not.toEqual([]);
   });
 
   it("API Key Access 必须在最终 Overlay 后取得 API Key", () => {

@@ -8,12 +8,10 @@ import {
   getCapturedZCodeCuaBrokerCredentials,
   isCuaDevModeRequested,
   isZCodeCuaInternalFeatureEnabled,
-  readZCodeAgentTelemetryEnv,
   readZCodeToolEnvPassthroughEnv,
   resetCapturedZCodeCuaBrokerCredentialsForTest,
   sanitizeZCodeRuntimeEnv,
-  getCapturedZCodeAgentTelemetryEnv,
-  resetCapturedZCodeAgentTelemetryEnvForTest,
+  sanitizeZCodeRuntimeEnvInPlace,
 } from "../src/runtimeEnv.js";
 
 describe("runtimeEnv", () => {
@@ -138,43 +136,24 @@ describe("runtimeEnv", () => {
     }
   });
 
-  it("captures Agent OTLP config privately and never passes auth or identity through to tools", () => {
-    resetCapturedZCodeAgentTelemetryEnvForTest();
+  it("旧遥测变量被清洗且不能通过 tool passthrough 恢复", () => {
     const sourceEnv = {
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://arms.example.com/v1/traces",
-      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "Authorization=secret",
-      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://arms.example.com/v1/metrics",
-      OTEL_EXPORTER_OTLP_METRICS_HEADERS: "Authorization=metric-secret",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://telemetry.example/v1/traces",
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "Authorization=fixture",
+      OTEL_UNKNOWN_SECRET: "fixture",
+      ZCODE_TELEMETRY_USER_SUBJECT_ID: "fixture-user",
+      ZCODE_MODEL_TELEMETRY_ENABLED: "1",
       PATH: "/usr/bin:/bin",
-      ZCODE_TELEMETRY_USER_SUBJECT_ID: "opaque-user",
     };
     expect(sanitizeZCodeRuntimeEnv(sourceEnv)).toEqual({ PATH: "/usr/bin:/bin" });
-    expect(getCapturedZCodeAgentTelemetryEnv()).toMatchObject({
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://arms.example.com/v1/traces",
-      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "Authorization=secret",
-      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://arms.example.com/v1/metrics",
-      OTEL_EXPORTER_OTLP_METRICS_HEADERS: "Authorization=metric-secret",
-      ZCODE_TELEMETRY_USER_SUBJECT_ID: "opaque-user",
-    });
-    const toolEnv = readZCodeToolEnvPassthroughEnv(buildZCodeToolEnvPassthroughEnv(sourceEnv));
-    expect(toolEnv).not.toHaveProperty("OTEL_EXPORTER_OTLP_TRACES_HEADERS");
-    expect(toolEnv).not.toHaveProperty("OTEL_EXPORTER_OTLP_METRICS_HEADERS");
-    expect(toolEnv).not.toHaveProperty("ZCODE_TELEMETRY_USER_SUBJECT_ID");
-  });
-
-  it("extracts only the allowlisted Agent telemetry env", () => {
+    const inPlace = { ...sourceEnv };
+    sanitizeZCodeRuntimeEnvInPlace(inPlace);
+    expect(inPlace).toEqual({ PATH: "/usr/bin:/bin" });
+    expect(readZCodeToolEnvPassthroughEnv(buildZCodeToolEnvPassthroughEnv(sourceEnv))).toEqual({});
     expect(
-      readZCodeAgentTelemetryEnv({
-        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: " https://arms.example.com/v1/traces ",
-        OTEL_UNKNOWN_SECRET: "must-not-pass",
-        PATH: "/bin",
-        ZCODE_MODEL_TELEMETRY_ENABLED: "1",
-        ZCODE_TELEMETRY_RUNTIME_DISTRIBUTION: " packaged ",
+      readZCodeToolEnvPassthroughEnv({
+        [ZCODE_TOOL_ENV_PASSTHROUGH_ENV_KEY]: JSON.stringify(sourceEnv),
       }),
-    ).toEqual({
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://arms.example.com/v1/traces",
-      ZCODE_MODEL_TELEMETRY_ENABLED: "1",
-      ZCODE_TELEMETRY_RUNTIME_DISTRIBUTION: "packaged",
-    });
+    ).toEqual({});
   });
 });

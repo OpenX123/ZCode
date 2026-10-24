@@ -1,39 +1,15 @@
-# Monitoring 文档入口
+# 本地诊断文档入口
 
-本目录保留 App/RUM、Conversation 业务事件、资源监控、产品专项埋点和测试监控。
-CLI Agent 的 OpenTelemetry 执行链路已独立到
-[`docs/trace/`](../trace/README.md)，不再与其他监控文档混放。
+状态：2026-10-24 独立桌面版本。官方 `/report`、ARMS、OTLP 导出与商业事件监控已经退役；旧专题文件仅保留退休说明，相关远端 dashboard JSON 和平台验收配置已删除。
 
-## App、Renderer 与进程
+当前可用能力：
 
-- [性能监控](./performance-monitoring.md)
-- [性能埋点事件字典](./performance-telemetry-catalog.md)
-- [ARMS Electron 监控](./arms-browser-monitoring.md)
-- [Agent 进程崩溃 ARMS 上报](./agent-process-crash-arms.md)
-- [全进程 CPU / 内存监控埋点](./process-resource-telemetry.md)
-- [全进程资源仪表盘与查询](./dashboards/process-resource-dashboard.md)
-- [MCP 进程生命周期 ARMS 上报](./mcp-process-arms-telemetry.md)
-- [进程内存本地诊断日志](./memory-diagnostics-log.md)
+- [本地 TTFT 计时](../trace/local-ttft-diagnostics.md)：Renderer 本地阶段观察与 debug 日志。
+- [进程内存本地诊断](memory-diagnostics-log.md)：本机日志和领域计数器。
+- [Session 停止来源诊断](session-stop-source-diagnostics.md)：停止按钮与 Esc 的生命周期日志。
+- [资源管理器](../electron/resource-manager.md)与[网络请求观测](../electron/resource-manager-network.md)：用户打开窗口时的本地诊断。
+- [工程 E2E 指标看板](e2e-metrics-bitable-dashboard.md)：显式 CI 工程任务，独立于 App 默认运行流程。
 
-## Conversation 与业务事件
+默认运行不向原厂发送诊断数据。边界与验收见[独立桌面规格](../desktop/standalone-coding-harness-spec.md)。
 
-- [V4 对话埋点兼容规范](./conversation-telemetry-v4.md)
-- [业务质量监控](./business-monitoring.md)
-- [Agent Step 真实模型与 Token 归属](./agent-step-model-token-attribution.md)
-
-## 产品专项
-
-- [Plan Usage ARMS 自定义事件](./plan-usage-arms-telemetry.md)
-- [远程场景使用量埋点 V1](./remote-usage-telemetry-v1.md)
-- [远程工作区连接 ARMS 自定义事件](./remote-usage-arms-telemetry.md)
-- [Off-Peak Task telemetry V1](./off-peak-task-telemetry-v1.md)
-- [Session 首次打开 ARMS 埋点](./session-open-telemetry.md)
-- [定时任务 / 闲时任务消息埋点](./automation-message-telemetry.md)
-
-## 工程质量
-
-- [E2E Metrics Bitable Dashboard](./e2e-metrics-bitable-dashboard.md)
-
-本目录中的文档只负责各自监控通道或产品功能，不得重新定义 CLI Agent Trace 的 Span、
-Attribute、Event、Metric、隐私和统计口径。相关变更统一更新
-[`docs/trace/cli-agent-telemetry.md`](../trace/cli-agent-telemetry.md)。
+`local-ttft-evidence.json` 与 `local-ttft-diagnostics-evidence.json` 仅保留历史受控回放事实，不能用于声明当前构建、真实模型 API 或跨平台验收通过。

@@ -23,7 +23,7 @@ import {
   setupToolSearchDesktop,
   TOOLSEARCH_MODEL,
   TOOLSEARCH_PLAIN_PROVIDER,
-  TOOLSEARCH_PLAN_PROVIDER,
+  TOOLSEARCH_API_PROVIDER,
   toolSearchTurn,
 } from "../helpers/toolsearch-desktop.js";
 
@@ -46,7 +46,7 @@ describe("ToolSearch provider、续写和历史生命周期", () => {
     expectToolSearchDisabled(off!);
     expectToolResultPair(off!, TOOLSEARCH_TODO_CALL_ID);
     expect(JSON.stringify(off!.requestJson.messages)).not.toContain("tool_reference");
-    await switchV4Model(TOOLSEARCH_PLAN_PROVIDER, TOOLSEARCH_MODEL, "");
+    await switchV4Model(TOOLSEARCH_API_PROVIDER, TOOLSEARCH_MODEL, "");
     const [on] = await toolSearchTurn("E2E_TOOLSEARCH_ON 继续。");
     expectToolSearchDisabled(on!);
     expectToolResultPair(on!, TOOLSEARCH_TODO_CALL_ID);
@@ -78,7 +78,7 @@ describe("ToolSearch provider、续写和历史生命周期", () => {
   });
 
   for (const disabledDuringCompact of [false, true]) {
-    it(`TS04: ${disabledDuringCompact ? "普通 provider" : "Coding Plan"} 默认关闭期间 compact 后冷恢复`, async function () {
+    it(`TS04: ${disabledDuringCompact ? "普通 provider" : "普通 API"} 默认关闭期间 compact 后冷恢复`, async function () {
       this.timeout(240_000);
       await newToolSearchTask();
       await toolSearchTurn("E2E_TOOLSEARCH_INITIAL 搜索并执行后压缩。");
@@ -95,7 +95,7 @@ describe("ToolSearch provider、续写和历史生命周期", () => {
       expect(JSON.stringify(after!.requestJson.messages)).not.toContain(TOOLSEARCH_TODO_CALL_ID);
       await restartIntoWorkspace();
       await selectV4TaskById(sessionId);
-      await switchV4Model(TOOLSEARCH_PLAN_PROVIDER, TOOLSEARCH_MODEL, "");
+      await switchV4Model(TOOLSEARCH_API_PROVIDER, TOOLSEARCH_MODEL, "");
       const cold = await toolSearchTurn("E2E_TOOLSEARCH_COLD_COMPACT 检查首请求。");
       expect(cold).toHaveLength(1);
       expectToolSearchDisabled(cold[0]!);

@@ -15,24 +15,13 @@ import {
 import type { ModelMessageContent } from "@zcode/contracts";
 import type { ToolEntry, ToolHandler } from "../types.js";
 import { WORKFLOW_TOOL_DESCRIPTION } from "./workflow-description.js";
-import { assertNotOffPeakTurn } from "./off-peak.js";
 
 const WORKFLOW_TOOL_NAME = "Workflow";
-/**
- * D52：Workflow 的脚本子会话由 script-workflow-child-runtime 按父会话常驻选择建模型，
- * 不携带闲时轮的 modelExecution，同样会落到用户 Coding Plan，闲时轮内一并拒绝。
- */
-const OFF_PEAK_WORKFLOW_HINT = "Run the child work with foreground Agent calls instead.";
-
 const WORKFLOW_LAUNCH_TIMEOUT_MS = 30_000;
 const WORKFLOW_MODEL_BYTES = 24_000;
 
 const workflowHandler: ToolHandler = async (input, context) => {
   const parsed = WorkflowInputSchema.parse(input) as WorkflowInput;
-  assertNotOffPeakTurn(context, WORKFLOW_TOOL_NAME, {
-    hint: OFF_PEAK_WORKFLOW_HINT,
-    recoverable: true,
-  });
   if (!context.workflowPort) {
     throw createCoreError(
       CoreErrorType.ConfigurationError,

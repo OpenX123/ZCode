@@ -27,7 +27,6 @@ vi.mock("@/v4/ConversationRowView.js", async () => {
       React.createElement("div", {
         "data-testid": "mock-assistant-actions",
       }),
-    readAssistantFeedback: () => null,
     ConversationRowView: (props: (typeof rowViewProps)[number]) => {
       rowViewProps.push(props);
       return React.createElement("div", {

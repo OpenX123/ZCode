@@ -1,5 +1,5 @@
 import { skipOccupationOnboardingIfPresent } from "../helpers/occupation-onboarding.js";
-import { ModelConfig, ProviderConfig } from "@zcode/provider";
+import { ModelConfig } from "@zcode/provider";
 import { NodePersonalProviderConfigRepository } from "@zcode/provider-node";
 import { clearAppData, getE2EAppDataPaths } from "../helpers/desktop-app.js";
 import { refreshSeededOpenAIProvidersThroughSettings } from "../helpers/custom-openai-provider.js";
@@ -11,18 +11,17 @@ import {
   selectUpstreamThoughtLevelValue,
 } from "../helpers/upstream-provider.js";
 import {
-  E2E_BIGMODEL_PLAN_PROVIDER_ID,
-  E2E_PLAN_TURBO_MODEL,
+  E2E_GLM_PROVIDER_ID,
+  E2E_GLM_TURBO_MODEL,
   restartIntoWorkspace,
   restartIntoWorkspacePreservingProfile,
   seedTurboAgentStartupModel,
-  seedBigModelOAuthCredential,
-  seedBigModelConnectionSelection,
   seedGlobalAgentReasoningLevel,
   seedPersistedModelSelection,
+  seedReplayProvider,
   waitForDraftThoughtLevelState,
   waitForLastSelectedAgentConfig,
-  waitForPlanModelIoRequest,
+  waitForModelIoRequest,
   waitForSelectedModel,
 } from "../helpers/model-provider-restart.js";
 import {
@@ -116,7 +115,7 @@ describe("模型 Provider Turbo 重启恢复 E2E", () => {
     await restartWithTurboProviderFixture();
     await selectTurboBeforeRestart("disabled");
     await restartIntoWorkspacePreservingProfile();
-    await waitForSelectedModel(E2E_BIGMODEL_PLAN_PROVIDER_ID, E2E_PLAN_TURBO_MODEL);
+    await waitForSelectedModel(E2E_GLM_PROVIDER_ID, E2E_GLM_TURBO_MODEL);
     await waitForDraftThoughtLevelState({ current: "disabled", values: ["disabled", "enabled"] });
   });
 
@@ -125,14 +124,14 @@ describe("模型 Provider Turbo 重启恢复 E2E", () => {
     await restartWithTurboProviderFixture();
     await selectTurboBeforeRestart("enabled");
     await restartIntoWorkspacePreservingProfile();
-    await waitForSelectedModel(E2E_BIGMODEL_PLAN_PROVIDER_ID, E2E_PLAN_TURBO_MODEL);
+    await waitForSelectedModel(E2E_GLM_PROVIDER_ID, E2E_GLM_TURBO_MODEL);
     await waitForDraftThoughtLevelState({ current: "enabled", values: ["disabled", "enabled"] });
     const marker = "E2E_MODEL_PROVIDER_RESTART_T02";
     const prompt = `${marker}: Reply with exactly "${E2E_REPLY_TOKEN}" and no other text.`;
     await sendV4Prompt(prompt);
     await waitForV4TimelineContaining(E2E_REPLY_TOKEN);
-    const request = await waitForPlanModelIoRequest(marker);
-    expect(request?.model).toBe(E2E_PLAN_TURBO_MODEL);
+    const request = await waitForModelIoRequest(marker);
+    expect(request?.model).toBe(E2E_GLM_TURBO_MODEL);
     expect(request?.thinking?.type).toBe("enabled");
   });
 
@@ -152,7 +151,7 @@ describe("模型 Provider Turbo 重启恢复 E2E", () => {
         async () => (await slider.getValue()) === (thoughtLevel === "enabled" ? "1" : "0"),
       );
       expect(await trigger.getAttribute("aria-expanded")).toBe("true");
-      await waitForSelectedModel(E2E_BIGMODEL_PLAN_PROVIDER_ID, E2E_PLAN_TURBO_MODEL);
+      await waitForSelectedModel(E2E_GLM_PROVIDER_ID, E2E_GLM_TURBO_MODEL);
       await waitForDraftThoughtLevelState({
         current: thoughtLevel,
         values: ["disabled", "enabled"],
@@ -190,81 +189,53 @@ async function restartWithTurboProviderFixture() {
   // 统一在 Electron 进程树退出屏障内写入，让新进程成为唯一 reader/writer。
   await restartIntoWorkspace({
     afterElectronProcessExit: async () => {
-      await seedBigModelConnectionSelection({
-        kind: "team-coding-plan",
-        productId: "product-team-a",
-        organizationId: "org-team-a",
-        projectId: "proj-team-a",
+      await seedReplayProvider({
+        id: E2E_GLM_PROVIDER_ID,
+        name: "GLM API E2E",
+        models: [
+          {
+            id: E2E_GLM_TURBO_MODEL,
+            reasoningLevel: {
+              values: ["disabled", "enabled"],
+              map: '{"thinking":{"type": reasoningLevel}}',
+            },
+          },
+        ],
       });
-      await seedBigModelOAuthCredential();
-      // Turbo 已不在当前账号默认模型目录；显式加入隔离配置并启用，不依赖线上默认目录。
-      const repository = new NodePersonalProviderConfigRepository({
-        filePath: getE2EAppDataPaths().configFile,
-        pollingIntervalMs: false,
-      });
-      try {
-        await repository.update((current) => ({
-          ...current,
-          providers: current.providers.setRule({
-            providerId: E2E_BIGMODEL_PLAN_PROVIDER_ID,
-            config: (
-              current.providers.get(E2E_BIGMODEL_PLAN_PROVIDER_ID) ?? new ProviderConfig()
-            ).overlay(new ProviderConfig({ personalModelIds: [E2E_PLAN_TURBO_MODEL] })),
-          }),
-          models: current.models.setExact(
-            E2E_BIGMODEL_PLAN_PROVIDER_ID,
-            E2E_PLAN_TURBO_MODEL,
-            (
-              current.models.getExact(E2E_BIGMODEL_PLAN_PROVIDER_ID, E2E_PLAN_TURBO_MODEL) ??
-              new ModelConfig()
-            ).overlay(new ModelConfig({ enabled: true })),
-          ),
-        }));
-      } finally {
-        repository.dispose();
-      }
     },
   });
 }
 
 async function selectTurboBeforeRestart(thoughtLevel: "disabled" | "enabled") {
   await selectTurboDraft(thoughtLevel);
-  // Replay 动态 provider 没有正式内建 Coding Plan 的完整关系数据，Agent 日志会记录
+  // 隔离动态 Provider 的会话持久态可能尚未写入完整关系数据，Agent 日志会记录
   // session.model_selection.persist_failed(FK)，因此不能把该 fixture 缺失的落盘副作用
   // 当成恢复 case 的前置条件。真实 UI/Agent 状态确认后补齐 renderer 原子偏好元组，
   // 让本 case 专注验证下一次启动是否正确消费该持久态。
   await seedPersistedModelSelection({
-    modelId: E2E_PLAN_TURBO_MODEL,
-    providerId: E2E_BIGMODEL_PLAN_PROVIDER_ID,
+    modelId: E2E_GLM_TURBO_MODEL,
+    providerId: E2E_GLM_PROVIDER_ID,
     reasoningLevel: thoughtLevel,
   });
   await waitForLastSelectedAgentConfig({
-    model: E2E_PLAN_TURBO_MODEL,
+    model: E2E_GLM_TURBO_MODEL,
     thoughtLevel,
   });
   // 用户真实切换会同步写 Agent 的全局 reasoningLevel；E2E 的动态 provider
   // session store 不保证跨 Agent 进程保留这条副作用，因此在 schema ready 后补齐状态。
   await seedGlobalAgentReasoningLevel(thoughtLevel);
-  await seedTurboAgentStartupModel(E2E_BIGMODEL_PLAN_PROVIDER_ID, E2E_PLAN_TURBO_MODEL);
+  await seedTurboAgentStartupModel(E2E_GLM_PROVIDER_ID, E2E_GLM_TURBO_MODEL);
 }
 
 async function selectTurboDraft(thoughtLevel: "disabled" | "enabled") {
   // 修复原因：直接写 localStorage 只伪造了 renderer 偏好，没有触发真实选择动作对
   // deferred session / Agent 状态的同步；重启后旧 workspace model 会反向覆盖该偏好。
   // 这里走真实工具栏交互，使前置状态与用户手动选择 Turbo + 思考档位完全一致。
-  // 内建 Coding Plan 在设置页显示产品固定名称，不能用 fixture name 判断刷新完成；
-  // 打开 provider 分区本身已经触发 getAll()，返回工作区后再等工具栏 catalog 收敛。
+  // 打开 Provider 设置触发目录刷新，再等待工具栏消费新的 Personal 配置。
   await refreshSeededOpenAIProvidersThroughSettings([]);
-  await selectUpstreamProviderModelById(E2E_PLAN_TURBO_MODEL, {
-    providerId: E2E_BIGMODEL_PLAN_PROVIDER_ID,
-    providerName: "BigModel Coding Plan E2E",
-    providerGroupKey: JSON.stringify([
-      "bigmodel",
-      "team-coding-plan",
-      "product-team-a",
-      "org-team-a",
-      "proj-team-a",
-    ]),
+  await selectUpstreamProviderModelById(E2E_GLM_TURBO_MODEL, {
+    providerId: E2E_GLM_PROVIDER_ID,
+    providerName: "GLM API E2E",
     includePlainModelFallback: false,
   });
   // Turbo 切换后 UI 会先投影默认档位；若目标恰好等于投影值，通用 helper 会因
@@ -272,7 +243,7 @@ async function selectTurboDraft(thoughtLevel: "disabled" | "enabled") {
   // 切回目标，确保 disabled/enabled 两条 case 都建立真实用户交互产生的持久状态。
   await selectUpstreamThoughtLevelValue(thoughtLevel === "enabled" ? "disabled" : "enabled");
   await selectUpstreamThoughtLevelValue(thoughtLevel);
-  await waitForSelectedModel(E2E_BIGMODEL_PLAN_PROVIDER_ID, E2E_PLAN_TURBO_MODEL);
+  await waitForSelectedModel(E2E_GLM_PROVIDER_ID, E2E_GLM_TURBO_MODEL);
   await waitForDraftThoughtLevelState({
     current: thoughtLevel,
     values: ["disabled", "enabled"],

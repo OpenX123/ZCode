@@ -1,6 +1,7 @@
 # 02 — 排队、重试和异常发送的阶段归因
 
-**What to build:** 在普通发送的完整观测链路上，让性能分析人员能够解释真实慢消息：展开请求准备子阶段，区分排队、重试、用户确认、失败取消和前后台影响，检查未收口消息及数据质量，并在 ARMS 中完成这些场景的分位数、结果比例和瀑布图分析。
+> 2026-10-24：本历史工单中的官方 OTLP / ARMS 验收已退役，不是当前实现要求。当前边界见 [本地 TTFT 计时](../../trace/local-ttft-diagnostics.md)。
+> **What to build:** 在普通发送的完整观测链路上，让性能分析人员能够解释真实慢消息：展开请求准备子阶段，区分排队、重试、用户确认、失败取消和前后台影响，检查未收口消息及数据质量，并在 ARMS 中完成这些场景的分位数、结果比例和瀑布图分析。
 
 **Blocked by:** [01 — 普通发送的 TTFT 阶段指标与瀑布图](01-local-send-stage-observability.md)。其稳定关联、时间合同、导出 schema 和最终 OTLP 测试接收器是本 ticket 的真实前置条件；须在 01 完成后开始。
 
@@ -73,7 +74,7 @@ ARMS 写入/权限/保留/费用、Windows/Linux 实机和扩大灰度均独立�
 
 本地实现完成，仍保留 **in-progress**：第19项的Windows/Linux实机、第20–21项的平台验收和第22项的既有CLI失败未满足完整完成条件。前18项的勾选表示本地代码与对应自动化/数据合同完成，不能当作ARMS平台展示验收。
 
-- [查询/统计单位/资源合同](../../monitoring/local-ttft-queries.md)、[看板模板](../../monitoring/dashboards/local-ttft.json)、[本次真实桌面出口与性能证据](../../monitoring/local-ttft-diagnostics-evidence.json)。
+- [查询/统计单位/资源合同](../../monitoring/local-ttft-queries.md)、[看板模板](../../trace/local-ttft-diagnostics.md)、[本次真实桌面出口与性能证据](../../monitoring/local-ttft-diagnostics-evidence.json)。
 - TTFT02 真实桌面 E2E **6/6**：排队转正与后台返回、取消、503重试后首输出、400失败、guide隔离、二次确认与send-now；真实300ms Hook归因，首提交到确认结束约409.6ms用户等待，根requestId指向实际成功attempt。
 - 最终 OTLP **6个成功根/6个总Histogram样本/36个主阶段样本**，8个首输出前物理attempt观察；532个Span身份全部唯一，最大实测对齐误差 **3.379ms**，6个成功根质量均complete。指标标签无消息、工作区、用户或请求关联ID。
 - 01兼容回归真实桌面 **3/3**：正文/思考/工具先到、空开始、首输出早于ACK、晚到正文及六阶段对账均通过。两套用例继续位于manual-review/pending，未自行晋升正式/Docker suite。
@@ -99,7 +100,7 @@ ARMS再次只读查询近1小时新service为0；可查询既有logstore，不�
 - 标签为受控低基数，未发现关联 ID 泄漏进指标标签；本次未观察到 `dropped` 序列。
 - 仍未完成：控制台界面瀑布目视确认、打包版编译注入写入路径、容量/费用/保留期核对、Windows/Linux 实机、扩大灰度。灰度开关保持默认关闭。
 
-细节见[上线清单](../../monitoring/local-ttft-rollout-checklist.md)与[平台验收证据](../../monitoring/local-ttft-platform-evidence.json)。
+细节见[上线清单](../../monitoring/local-ttft-rollout-checklist.md)与[平台验收证据](../../monitoring/README.md)。
 
 ### Standards
 

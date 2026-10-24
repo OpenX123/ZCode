@@ -386,7 +386,7 @@ describe("SourceServerManagementPanel", () => {
     },
   );
 
-  it("本机过旧时显示更新桌面端，仍可打开连接配置", async () => {
+  it("本机过旧时提示手动安装兼容构建，不提供官方更新动作，仍可打开连接配置", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.states[0] = {
       profileId: "preferred",
@@ -403,11 +403,8 @@ describe("SourceServerManagementPanel", () => {
     } as never;
     const onConnectProfile = vi.fn();
     render(createElement(SourceServerManagementPanel, { management, onConnectProfile }));
-    await waitFor(() =>
-      expect(
-        screen.getAllByRole("button", { name: "remote.action.update-desktop" }).length,
-      ).toBeGreaterThan(0),
-    );
+    expect(await screen.findByText("remote.desktop.manualInstall")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "remote.action.update-desktop" })).toBeNull();
     expect(screen.getByText("remote.status.needsUpdate")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "remote.action.connect" }));
     expect(onConnectProfile).toHaveBeenCalledWith("preferred");

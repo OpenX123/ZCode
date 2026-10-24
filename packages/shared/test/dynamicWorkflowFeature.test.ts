@@ -9,88 +9,38 @@ import {
   ZCODE_DYNAMIC_WORKFLOW_MODE_ENV,
 } from "../src/dynamic-workflow-feature.js";
 
-// DWG-01（docs/dynamic-workflow/launch.md「Gray release: the `dynamicWorkflow` feature key」）：
-// 远端取值、缺省 fail-closed、本地覆盖优先级三件事都由这个纯函数裁决，三端共用。
-
-function remote(mode: unknown) {
-  return { mode };
-}
-
-describe("resolveDynamicWorkflowClientConfig（DWG-01）", () => {
-  it("远端合法取值原样生效，onDemand 与 alwaysOn 同为开启", () => {
-    expect(resolveDynamicWorkflowClientConfig({ remote: remote("alwaysOn") })).toEqual({
-      mode: "alwaysOn",
-      enabled: true,
-      source: "remote",
-      offeredMode: "alwaysOn",
-    });
-    expect(resolveDynamicWorkflowClientConfig({ remote: remote("onDemand") })).toEqual({
-      mode: "onDemand",
-      enabled: true,
-      source: "remote",
-      offeredMode: "onDemand",
-    });
-    expect(resolveDynamicWorkflowClientConfig({ remote: remote("disabled") })).toEqual({
-      mode: "disabled",
-      enabled: false,
-      source: "remote",
-      offeredMode: "disabled",
-    });
+describe("本地动态工作流模式", () => {
+  it.each([undefined, null, {}, { mode: "disabled" }, { mode: "alwaysOn" }, "alwaysOn"])(
+    "忽略旧 remote 输入 %j，默认 onDemand",
+    (remote) => {
+      expect(resolveDynamicWorkflowClientConfig({ remote })).toEqual({
+        mode: "onDemand",
+        enabled: true,
+        source: "default",
+        offeredMode: "onDemand",
+      });
+    },
+  );
+  it("不读取 remote 对象内容", () => {
+    const remote = {
+      get mode() {
+        throw new Error("不应读取远端模式");
+      },
+    };
+    expect(resolveDynamicWorkflowClientConfig({ remote }).mode).toBe(DEFAULT_DYNAMIC_WORKFLOW_MODE);
   });
-
-  it.each([
-    ["key 缺失", undefined],
-    ["显式 null", null],
-    ["非法枚举", remote("bogus")],
-    ["mode 不是字符串", remote(1)],
-    ["对象里没有 mode", {}],
-    ["远端下发字符串而非对象", "alwaysOn"],
-  ])("远端 %s 时 fail-closed 到 default", (_name, value) => {
-    expect(resolveDynamicWorkflowClientConfig({ remote: value })).toEqual({
-      mode: DEFAULT_DYNAMIC_WORKFLOW_MODE,
-      enabled: false,
-      source: "default",
-      offeredMode: DEFAULT_DYNAMIC_WORKFLOW_MODE,
-    });
+  it.each(["disabled", "onDemand", "alwaysOn"] as const)("本地环境覆盖为 %s", (mode) => {
+    expect(
+      resolveDynamicWorkflowClientConfig({
+        env: { [ZCODE_DYNAMIC_WORKFLOW_MODE_ENV]: ` ${mode} ` },
+      }),
+    ).toEqual({ mode, enabled: mode !== "disabled", source: "override", offeredMode: mode });
   });
-
-  it("本地覆盖优先于远端（含把远端的开关掉）", () => {
+  it.each(["", "yes"])("非法环境覆盖 %s 回到默认", (mode) => {
     expect(
-      resolveDynamicWorkflowClientConfig({
-        remote: remote("disabled"),
-        env: { [ZCODE_DYNAMIC_WORKFLOW_MODE_ENV]: "alwaysOn" },
-      }),
-    ).toEqual({ mode: "alwaysOn", enabled: true, source: "override", offeredMode: "alwaysOn" });
-    expect(
-      resolveDynamicWorkflowClientConfig({
-        remote: remote("alwaysOn"),
-        env: { [ZCODE_DYNAMIC_WORKFLOW_MODE_ENV]: "disabled" },
-      }),
-    ).toEqual({ mode: "disabled", enabled: false, source: "override", offeredMode: "disabled" });
-  });
-
-  it("非法或空覆盖被忽略，继续按远端裁决", () => {
-    expect(
-      resolveDynamicWorkflowClientConfig({
-        remote: remote("alwaysOn"),
-        env: { [ZCODE_DYNAMIC_WORKFLOW_MODE_ENV]: "yes" },
-      }),
-    ).toEqual({ mode: "alwaysOn", enabled: true, source: "remote", offeredMode: "alwaysOn" });
-    expect(
-      resolveDynamicWorkflowClientConfig({
-        remote: undefined,
-        env: { [ZCODE_DYNAMIC_WORKFLOW_MODE_ENV]: "" },
-      }).source,
+      resolveDynamicWorkflowClientConfig({ env: { [ZCODE_DYNAMIC_WORKFLOW_MODE_ENV]: mode } })
+        .source,
     ).toBe("default");
-  });
-
-  it("覆盖值允许首尾空白（shell 传参常见）", () => {
-    expect(
-      resolveDynamicWorkflowClientConfig({
-        remote: undefined,
-        env: { [ZCODE_DYNAMIC_WORKFLOW_MODE_ENV]: " alwaysOn " },
-      }),
-    ).toEqual({ mode: "alwaysOn", enabled: true, source: "override", offeredMode: "alwaysOn" });
   });
 });
 
@@ -105,23 +55,23 @@ describe("normalizeDynamicWorkflowMode / isDynamicWorkflowModeEnabled", () => {
   });
 });
 
-// DWG-18（launch.md「The user's choice」）：服务端只给默认值，用户的明确选择永远生效。
+// 用户的明确选择永远取代默认模式。
 describe("applyDynamicWorkflowUserMode（DWG-18）", () => {
   const offer = (mode: "disabled" | "onDemand" | "alwaysOn") =>
-    createDynamicWorkflowClientConfig(mode, "remote");
+    createDynamicWorkflowClientConfig(mode, "default");
 
   it("功能已提供时，用户选择取代提供的模式，默认值仍记在 offeredMode", () => {
     expect(applyDynamicWorkflowUserMode(offer("onDemand"), "alwaysOn")).toEqual({
       mode: "alwaysOn",
       enabled: true,
-      source: "remote",
+      source: "default",
       offeredMode: "onDemand",
       userMode: "alwaysOn",
     });
     expect(applyDynamicWorkflowUserMode(offer("alwaysOn"), "disabled")).toEqual({
       mode: "disabled",
       enabled: false,
-      source: "remote",
+      source: "default",
       offeredMode: "alwaysOn",
       userMode: "disabled",
     });
@@ -131,7 +81,7 @@ describe("applyDynamicWorkflowUserMode（DWG-18）", () => {
     expect(applyDynamicWorkflowUserMode(offer("disabled"), "alwaysOn")).toEqual({
       mode: "alwaysOn",
       enabled: true,
-      source: "remote",
+      source: "default",
       offeredMode: "disabled",
       userMode: "alwaysOn",
     });
@@ -159,7 +109,7 @@ describe("applyDynamicWorkflowUserMode（DWG-18）", () => {
   it("resolveDynamicWorkflowClientConfig 接收 userMode，覆盖值仍只决定提供的模式", () => {
     expect(
       resolveDynamicWorkflowClientConfig({
-        remote: remote("alwaysOn"),
+        remote: { mode: "alwaysOn" },
         env: { [ZCODE_DYNAMIC_WORKFLOW_MODE_ENV]: "onDemand" },
         userMode: "disabled",
       }),
@@ -180,9 +130,9 @@ describe("applyDynamicWorkflowUserMode（DWG-18）", () => {
   });
 
   it("readDynamicWorkflowOfferedMode：没有 offeredMode 的快照（旧 Host）或读不懂的值返回 undefined", () => {
-    // 新 UI（例如手机远控 bundle）连旧 Host 时，快照只有生效的 mode / enabled，没有 offeredMode；
+    // 旧 Host 快照只有生效的 mode / enabled，没有 offeredMode；
     // 旧 Host 不认用户选择，所以不能把设置行摆出来。
-    const legacy = { mode: "alwaysOn", enabled: true, source: "remote" } as unknown as Parameters<
+    const legacy = { mode: "alwaysOn", enabled: true, source: "default" } as unknown as Parameters<
       typeof readDynamicWorkflowOfferedMode
     >[0];
     expect(readDynamicWorkflowOfferedMode(legacy)).toBeUndefined();

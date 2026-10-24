@@ -4979,83 +4979,6 @@ describe("AgentRuntime manual compact", () => {
     );
   });
 
-  it("keeps reactive compact closed across Start Plan admission retry", async () => {
-    vi.useFakeTimers();
-    const sessionId = createSessionId("runtime-reactive-compact-start-plan-guard");
-    const eventStore = createTestSessionEventStore();
-    const providerId = "account:zai-start-plan";
-    let compactAttempts = 0;
-    let targetModelRequests = 0;
-    let targetTurnActive = false;
-    const runtime = createTestAgentRuntime(
-      sessionId,
-      {
-        modelSelection: {
-          modelId: "GLM-5.2" as never,
-          providerId: providerId as never,
-        },
-        modelStreaming: "on",
-        systemPrompt: "You are a reactive compact Start Plan guard test agent.",
-      },
-      {
-        eventStore,
-        modelFactory: createTestModelFactory(
-          withStreamTextFromGenerateText({
-            async generateText(request) {
-              const lastContent = providerContentToText(request.messages.at(-1)?.content);
-              if (lastContent.includes("create a detailed summary")) {
-                compactAttempts++;
-                return {
-                  finishReason: "stop",
-                  text: "<summary>Keep the Start Plan reactive guard sequence.</summary>",
-                  usage: { inputTokens: 50, outputTokens: 10, totalTokens: 60 },
-                };
-              }
-
-              if (!targetTurnActive) {
-                return {
-                  finishReason: "stop",
-                  text: "warmup complete",
-                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-                };
-              }
-
-              targetModelRequests++;
-              if (targetModelRequests === 1 || targetModelRequests === 3) {
-                throw createContextExceededError();
-              }
-              throw createStartPlanBusyError(providerId);
-            },
-          }) as never,
-        ),
-      },
-    );
-
-    try {
-      await runtime.executeTurn("first Start Plan guard warmup");
-      await runtime.executeTurn("second Start Plan guard warmup");
-      targetTurnActive = true;
-      const turnPromise = runtime.executeTurn("keep Start Plan retry in the same model step");
-      const rejection = expect(turnPromise).rejects.toMatchObject({
-        type: CoreErrorType.ModelContextExceeded,
-      });
-      await vi.advanceTimersByTimeAsync(1_000);
-      await rejection;
-
-      const events = await eventStore.getEvents(sessionId);
-      expect(targetModelRequests).toBe(3);
-      expect(compactAttempts).toBe(1);
-      expect(
-        events.filter((event) => event.type === SessionEventType.StreamRecoveryRetryStarted),
-      ).toHaveLength(1);
-      expect(
-        events.filter((event) => event.type === SessionEventType.CompactBoundary),
-      ).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("reopens reactive compact only after the full sibling tool batch completes", async () => {
     const sessionId = createSessionId("runtime-reactive-compact-after-tool-batch");
     const eventStore = createTestSessionEventStore();
@@ -5678,21 +5601,6 @@ function createRetryableStreamTimeoutError(): Error {
   error.context = {
     reason: "stream_idle_timeout",
     retryable: true,
-  };
-  return error;
-}
-
-function createStartPlanBusyError(providerId: string): Error {
-  const error = new Error("model admission concurrency limit exceeded") as Error & {
-    code?: string;
-    context?: Record<string, unknown>;
-  };
-  error.code = "model_rate_limited";
-  error.context = {
-    providerCode: "3010",
-    providerId,
-    reason: "rate_limited",
-    retryable: false,
   };
   return error;
 }

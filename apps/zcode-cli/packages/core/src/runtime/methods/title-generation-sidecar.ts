@@ -11,14 +11,13 @@ import type {
   SessionEvent,
   TraceContext,
 } from "../deps.js";
-import type { AgentTelemetryCausation, ModelRequestDependencies } from "@zcode/contracts";
+import type { ModelRequestDependencies } from "@zcode/contracts";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-headers.js";
 import { recordModelUsageFact } from "./usage-observability.js";
 import { createRuntimeModel } from "./runtime-model.js";
 import { cloneModelSelection } from "../model-selection.js";
 import { auxiliaryModelOptions } from "../../model/auxiliary-model-options.js";
-import { getOffPeakExecution } from "../off-peak/runtime.js";
 
 export interface TitleModelContext {
   selection: ModelSelection | undefined;
@@ -26,25 +25,9 @@ export interface TitleModelContext {
   release(): void;
 }
 
-export function retainTitleModelContext(
-  runtime: AgentRuntimeInternal,
-  offPeakExecutionId?: string,
-): TitleModelContext {
-  const explicitSelection = runtime.config.titleGeneration?.modelSelection;
-  const execution = getOffPeakExecution(runtime);
-  const idle = execution && !execution.lifecycle.terminal && !execution.lifecycle.ownedByUser;
-  // 标题先异步读库，主轮可能在此期间结束；必须在入队时冻结选择并独立保留票据。
-  if (!explicitSelection && idle && execution.executionId === offPeakExecutionId) {
-    const binding = execution.authority.createBinding();
-    return {
-      selection: cloneModelSelection(execution.selection),
-      requestDependencies: binding.requestDependencies,
-      release: () => binding.release(),
-    };
-  }
-  // 独立标题遵循自己的配置；未归属闲时执行的调用不能借用临时 Session 闲时模型。
+export function retainTitleModelContext(runtime: AgentRuntimeInternal): TitleModelContext {
   const selection =
-    explicitSelection ?? (idle ? execution.ordinarySelection : runtime.getSessionModelSelection());
+    runtime.config.titleGeneration?.modelSelection ?? runtime.getSessionModelSelection();
   return { selection: selection && cloneModelSelection(selection), release() {} };
 }
 
@@ -82,42 +65,6 @@ export async function generateTitleCandidate(
   this: AgentRuntimeInternal,
   input: string,
   options: {
-    causation?: AgentTelemetryCausation;
-    messageID?: MessageId;
-    querySource: string;
-    traceContext: TraceContext;
-    modelContext?: TitleModelContext;
-  },
-): Promise<{ modelSelection: ModelSelection; title: string; traceContext: TraceContext } | null> {
-  const titleTelemetry = this.agentTelemetry.detached({
-    causation: options.causation,
-    executionKind: "background",
-    operation:
-      options.querySource === GOAL_SUMMARY_TITLE_QUERY_SOURCE
-        ? "goal_title_generation"
-        : "session_title_generation",
-    targetKind: options.querySource === GOAL_SUMMARY_TITLE_QUERY_SOURCE ? "goal" : "session",
-    trigger: "turn",
-    traceContext: options.traceContext,
-  });
-  return titleTelemetry.run(async () => {
-    try {
-      const result = await generateTitleCandidateImpl.call(this, input, options);
-      titleTelemetry.setResultType(result ? "metadata" : "other");
-      titleTelemetry.finishCompleted();
-      return result;
-    } catch (error) {
-      titleTelemetry.finishFailed("execute", "unknown", error);
-      throw error;
-    }
-  });
-}
-
-async function generateTitleCandidateImpl(
-  this: AgentRuntimeInternal,
-  input: string,
-  options: {
-    causation?: AgentTelemetryCausation;
     messageID?: MessageId;
     querySource: string;
     traceContext: TraceContext;

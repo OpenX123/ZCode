@@ -131,10 +131,7 @@ import type {
   ZCodeTaskTerminalOutcome,
 } from "../session/zcodeTaskService.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
-import {
-  AUTOMATION_MUTATION_TOOL_NAMES,
-  OFF_PEAK_MUTATION_TOOL_NAMES,
-} from "#src/zcode-agent/automationToolPolicy.js";
+import { AUTOMATION_MUTATION_TOOL_NAMES } from "#src/zcode-agent/automationToolPolicy.js";
 import type { ISettingService } from "#src/setting/setting.js";
 import type {
   SessionMessageDeliveryResult,
@@ -308,7 +305,6 @@ export function createZCodeTaskServiceAdapter(
 
   function resolvePromptToolDenylist(params: {
     automationId?: string;
-    offPeakTaskId?: string;
     toolDenylist?: string[];
   }): string[] | undefined {
     const toolDenylist = new Set(params.toolDenylist);
@@ -317,12 +313,6 @@ export function createZCodeTaskServiceAdapter(
     // automationId；cronAutomationId 仅保留任务归属和 UI 展示语义。
     if (params.automationId) {
       for (const toolName of AUTOMATION_MUTATION_TOOL_NAMES) {
-        toolDenylist.add(toolName);
-      }
-    }
-    // 闲时派发轮纵深隐藏 OffPeakCreate；不与 automation 分支合并（cron 轮放行）。
-    if (params.offPeakTaskId) {
-      for (const toolName of OFF_PEAK_MUTATION_TOOL_NAMES) {
         toolDenylist.add(toolName);
       }
     }

@@ -5,13 +5,10 @@ import { describe, expect, it } from "vitest";
 import { createNodePluginAdapter } from "../src/plugins/index.js";
 
 const PLUGIN_NAME = "always-load-plugin";
-const OFFICIAL_AUTH = { type: "zcode_official", provider: "jwt_token" };
 const TRANSPORTS = {
   stdio: { type: "stdio", command: "node" },
   http: { type: "http", url: "https://mcp.example.test/mcp" },
   sse: { type: "sse", url: "https://mcp.example.test/sse" },
-  officialStdio: { type: "stdio", command: "node", auth: OFFICIAL_AUTH },
-  officialHttp: { type: "http", url: "https://mcp.example.test/mcp", auth: OFFICIAL_AUTH },
 };
 
 describe.each(["file", "manifest"] as const)("plugin MCP alwaysLoad from %s", (source) => {

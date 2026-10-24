@@ -52,11 +52,6 @@ async function setup() {
     await rm(directory, { recursive: true, force: true });
   });
   await personal.update(() => config("Before"));
-  const settings = {
-    get: vi.fn(async () => accountSettings),
-    update: vi.fn(async () => undefined),
-  };
-  const account = { refresh: vi.fn(async () => undefined) };
   const registry = {
     refresh: vi.fn(async () => ({ sourceRevisions: { config: "config:fixture" } })),
     validateSelection: vi.fn<(selection: ModelSelection) => ModelSelectionValidation>(() => ({
@@ -66,13 +61,6 @@ async function setup() {
   const target = createProviderProvisioningTarget({
     personalRepository: personal,
     providerRuntime: { start: async () => undefined, registryService: registry } as never,
-    accountProviderSource: account as never,
-    settingService: settings as never,
-    credentialService: {
-      load: async () => null,
-      save: async () => undefined,
-      delete: async () => undefined,
-    } as never,
     personalConfigFilePath: filePath,
     stateFilePath: join(directory, "provisioning.json"),
   });
@@ -85,7 +73,7 @@ async function setup() {
       credentials: [],
     });
   }
-  return { directory, filePath, personal, settings, account, registry, target, envelope };
+  return { directory, filePath, personal, registry, target, envelope };
 }
 
 describe("Todo104 分发同文件原子边界", () => {
@@ -144,7 +132,7 @@ describe("Todo104 分发同文件原子边界", () => {
   });
 
   it("Source 读取期间文件被另一个写入更新时拒绝旧快照，不拼接默认选择", async () => {
-    const { directory, filePath, personal, settings } = await setup();
+    const { filePath, personal } = await setup();
     const read = personal.read.bind(personal);
     vi.spyOn(personal, "read").mockImplementationOnce(async () => {
       const previous = await read();
@@ -156,21 +144,21 @@ describe("Todo104 分发同文件原子边界", () => {
     });
     const source = createProviderProvisioningSource({
       personalRepository: personal,
-      settingService: settings as never,
-      credentialFilePath: join(directory, "credentials.json"),
       personalConfigFilePath: filePath,
     });
     await expect(source.read("stale-read")).rejects.toThrow("无法同步");
     expect((await read()).defaultModelSelection?.modelId).toBe("new-default");
   });
 
-  it("写入其他域时 Personal 已发生变化，前向替换也必须保留并发值", async () => {
-    const { personal, settings, target, envelope } = await setup();
-    settings.update.mockImplementationOnce(async () => {
-      await personal.update((current) => ({
+  it("捕获快照后 Personal 已发生变化，前向替换必须保留并发值", async () => {
+    const { personal, target, envelope } = await setup();
+    const update = personal.update.bind(personal);
+    vi.spyOn(personal, "update").mockImplementationOnce(async (mutate) => {
+      await update((current) => ({
         ...current,
         defaultModelSelection: { providerId: "fixture", modelId: "new-before-apply" },
       }));
+      return update(mutate);
     });
     expect(await target.apply(envelope(false))).toMatchObject({ status: "rollback_failed" });
     const current = await personal.read();
@@ -179,11 +167,9 @@ describe("Todo104 分发同文件原子边界", () => {
   });
 
   it("Source 从同一快照导出完整 Personal；不再携带重复默认或 sourceRevision", async () => {
-    const { directory, filePath, personal, settings } = await setup();
+    const { filePath, personal } = await setup();
     const source = createProviderProvisioningSource({
       personalRepository: personal,
-      settingService: settings as never,
-      credentialFilePath: join(directory, "credentials.json"),
       personalConfigFilePath: filePath,
     });
     const result = await source.read("read-one");
@@ -217,9 +203,9 @@ describe("Todo104 分发同文件原子边界", () => {
   });
 
   it("后续刷新失败时整份恢复 Provider 和默认选择", async () => {
-    const { personal, account, target, envelope } = await setup();
+    const { personal, registry, target, envelope } = await setup();
     const before = encodeProviderConfigFile(await personal.read());
-    account.refresh.mockRejectedValueOnce(new Error("refresh failed"));
+    registry.refresh.mockRejectedValueOnce(new Error("refresh failed"));
     expect(await target.apply(envelope(false))).toMatchObject({
       status: "failed",
       rolledBack: true,
@@ -231,8 +217,8 @@ describe("Todo104 分发同文件原子边界", () => {
   it.each(["provider", "default"])(
     "刷新失败前另一个写入修改 %s，不能用旧回滚覆盖",
     async (field) => {
-      const { personal, account, target, envelope } = await setup();
-      account.refresh.mockImplementationOnce(async () => {
+      const { personal, registry, target, envelope } = await setup();
+      registry.refresh.mockImplementationOnce(async () => {
         await personal.update((current) =>
           field === "provider"
             ? {

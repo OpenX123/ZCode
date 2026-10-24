@@ -3,12 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  AccountProviderService,
   ModelConfig,
   ModelConfigRules,
   ModelOptionSpecsConfig,
   ModelPropertiesConfig,
-  ProviderConfigMap,
   parsePersonalProviderConfigMap,
   resolveInitialModelSelection,
 } from "@zcode/provider";
@@ -118,15 +116,7 @@ async function createFixture(root: string) {
     watch: false,
     personalPollingIntervalMs: false,
   });
-  // 本测试无账号Provider；权益解析固定为空，事务与Registry、四类Store均使用真实实现。
-  const account = new AccountProviderService({
-    configSource: config.configService,
-    resolve: async () => ({ providers: ProviderConfigMap.empty(), states: {} }),
-  });
-  const runtime = createProviderRuntimeFromConfigRuntime({
-    configRuntime: config,
-    accountSource: account,
-  });
+  const runtime = createProviderRuntimeFromConfigRuntime({ configRuntime: config });
   // 默认选择只是 Personal 文件的一个字段，与 Provisioning 走同一份 Repository。
   const defaults = new NodeModelSelectionConfigRepository({
     personalRepository: config.personalRepository,
@@ -140,20 +130,16 @@ async function createFixture(root: string) {
   const target = createProviderProvisioningTarget({
     providerRuntime: runtime,
     personalRepository: config.personalRepository,
-    accountProviderSource: account,
-    credentialService: credentials,
-    settingService: settings,
     personalConfigFilePath: personal,
     stateFilePath: state,
-    listProvisioningCredentialKeys: async () => ["oauth:zai:access_token"],
   });
   await settings.update({ locale: "en-US", providerFamilyDomain: "bigmodel" });
   await credentials.save("ssh:r3-sentinel", "not-provisioned");
+  await credentials.save("oauth:zai:access_token", "old-value");
   const baseline = await target.apply(envelope("baseline", "old-value"));
   expect(baseline).toMatchObject({ status: "applied" });
   return {
     runtime,
-    account,
     defaults,
     personalRepository: config.personalRepository,
     credentials,
@@ -165,7 +151,6 @@ async function createFixture(root: string) {
     builtin,
     dispose() {
       runtime.dispose();
-      account.dispose();
       defaults.dispose();
     },
   };
@@ -188,7 +173,7 @@ describe("R3A-PRV-08/09 正式磁盘Store与Registry事务", () => {
     if (root) await rm(root, { recursive: true, force: true });
   });
 
-  it.each(["settings", "credentials", "personal"] as const)(
+  it.each(["personal"] as const)(
     "PRV-08 %s提交后报错，逆序恢复正式存储及内存Registry",
     async (stage) => {
       const before = await readFile(fixture.personal, "utf8");
@@ -200,8 +185,6 @@ describe("R3A-PRV-08/09 正式磁盘Store与Registry事务", () => {
           throw new Error(`R3_FAULT_AFTER_${stage}`);
         }) as never);
       };
-      if (stage === "settings") inject(fixture.settings, "update");
-      if (stage === "credentials") inject(fixture.credentials, "save");
       if (stage === "personal") inject(fixture.personalRepository, "update");
       const result = await fixture.target.apply(envelope(`fail-${stage}`, "new-value"));
       expect(result).toMatchObject({ status: "failed", rolledBack: true });
@@ -239,7 +222,9 @@ describe("R3A-PRV-08/09 正式磁盘Store与Registry事务", () => {
       "already-applied",
     );
     expect(await readFile(fixture.personal, "utf8")).toBe(after);
-    expect(await fixture.credentials.load("oauth:zai:access_token")).toBe("newest-value");
+    expect(
+      (await fixture.runtime.configService.read()).personalProviders.get("r3-store")?.access,
+    ).toMatchObject({ apiKey: "newest-value" });
     expect(fixture.runtime.registryService.validateSelection(selection).ok).toBe(true);
     expect(JSON.parse(await readFile(fixture.state, "utf8")).records).toHaveLength(3);
   });
@@ -369,39 +354,16 @@ describe("R3A-PRV-05/06/07/10/11 完整替换、allowlist 凭据、窄设置与�
     expect(fixture.runtime.registryService.validateSelection(selection).ok).toBe(true);
   });
 
-  it("PRV-06 allowlist 凭据同名删除传播、新值经目标 cipher 重加密；非 allowlist 凭据不变", async () => {
-    await fixture.credentials.save("mcp:oauth:r3:token", "mcp-not-allowlisted");
-    const result = await fixture.target.apply(
-      customEnvelope("cred-delete", {
-        providerRules: [providerEntry("old-value")],
-        models: ModelConfigRules.empty().setExact("r3-store", "r3-model", completeModel()),
-        defaultModelSelection: selection,
-        credentials: [],
-      }),
-    );
+  it("旧信封凭据字段不影响目标已有凭据，Personal 同步仍然完成", async () => {
+    const before = await readFile(join(fixture.dir, "credentials.json"), "utf8");
+    const result = await fixture.target.apply(envelope("ignore-credentials", "new-value"));
     expect(result).toMatchObject({ status: "applied", credentialCount: 0 });
-    expect(await fixture.credentials.load("oauth:zai:access_token")).toBeNull();
+    expect(await readFile(join(fixture.dir, "credentials.json"), "utf8")).toBe(before);
+    expect(await fixture.credentials.load("oauth:zai:access_token")).toBe("old-value");
     expect(await fixture.credentials.load("ssh:r3-sentinel")).toBe("not-provisioned");
-    expect(await fixture.credentials.load("mcp:oauth:r3:token")).toBe("mcp-not-allowlisted");
-
-    const restored = await fixture.target.apply(
-      customEnvelope("cred-restore", {
-        providerRules: [providerEntry("old-value")],
-        models: ModelConfigRules.empty().setExact("r3-store", "r3-model", completeModel()),
-        defaultModelSelection: selection,
-        credentials: [
-          { scope: "oauth-session", key: "oauth:zai:access_token", value: "re-encrypted" },
-        ],
-      }),
-    );
-    expect(restored.status).toBe("applied");
-    expect(await fixture.credentials.load("oauth:zai:access_token")).toBe("re-encrypted");
-    const raw = await readFile(join(fixture.dir, "credentials.json"), "utf8");
-    expect(raw).not.toContain("re-encrypted");
-    expect(raw).not.toContain("mcp-not-allowlisted");
   });
 
-  it("PRV-07 只改约定的账号窄字段，locale 等其它设置与 Built-in 文件不变", async () => {
+  it("旧信封账号设置被忽略，目标设置与 Built-in 文件不变", async () => {
     await fixture.settings.update({ locale: "zh-CN", terminalInheritSystemProfile: false });
     const builtinBefore = await readFile(fixture.builtin, "utf8");
     const result = await fixture.target.apply(
@@ -420,8 +382,7 @@ describe("R3A-PRV-05/06/07/10/11 完整替换、allowlist 凭据、窄设置与�
     expect(settings).toMatchObject({
       locale: "zh-CN",
       terminalInheritSystemProfile: false,
-      providerFamilyDomain: "zai",
-      providerFamilyConnectionSelections: { zai: { kind: "individual-coding-plan" } },
+      providerFamilyDomain: "bigmodel",
     });
     expect(await readFile(fixture.builtin, "utf8")).toBe(builtinBefore);
   });
@@ -514,7 +475,9 @@ describe("R3A-PRV-05/06/07/10/11 完整替换、allowlist 凭据、窄设置与�
   });
 
   it("PRV-02 Target 结果只会是 applied / already-applied / failed / rollback_failed 之一，失败不登记", async () => {
-    vi.spyOn(fixture.account, "refresh").mockRejectedValueOnce(new Error("R3_FIRST_APPLY_FAULT"));
+    vi.spyOn(fixture.runtime.registryService, "refresh").mockRejectedValueOnce(
+      new Error("R3_FIRST_APPLY_FAULT"),
+    );
     const failed = await fixture.target.apply(envelope("first-apply-failed", "v2"));
     expect(failed).toMatchObject({ status: "failed", rolledBack: true });
     expect(await readFile(fixture.state, "utf8")).not.toContain("first-apply-failed");

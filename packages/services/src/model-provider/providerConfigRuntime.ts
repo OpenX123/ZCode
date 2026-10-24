@@ -11,10 +11,6 @@ import { importLegacyPersonalProviderConfig } from "./legacyPersonalProviderConf
 
 export interface ProviderConfigRuntimeOptions {
   readonly zcodeBuiltinFilePath: string;
-  readonly zcodeBuiltinActiveFilePath?: string;
-  readonly zcodeBuiltinRemote?: NodeProviderConfigRuntimeOptions["zcodeBuiltinRemote"];
-  readonly zcodeBuiltinEnvironment?: NodeProviderConfigRuntimeOptions["zcodeBuiltinEnvironment"];
-  readonly onZCodeBuiltinRefreshError?: (error: unknown) => void;
   readonly onPersonalConfigRecovery?: (event: PersonalProviderConfigRecoveryEvent) => void;
   readonly onPersonalConfigPollingError?: (error: unknown) => void;
   readonly personalFilePath?: string;
@@ -34,10 +30,6 @@ export class ProviderConfigRuntime {
   constructor(options: ProviderConfigRuntimeOptions) {
     const runtimeOptions: NodeProviderConfigRuntimeOptions = {
       zcodeBuiltinFilePath: options.zcodeBuiltinFilePath,
-      zcodeBuiltinActiveFilePath: options.zcodeBuiltinActiveFilePath,
-      zcodeBuiltinRemote: options.zcodeBuiltinRemote,
-      zcodeBuiltinEnvironment: options.zcodeBuiltinEnvironment,
-      onZCodeBuiltinRefreshError: options.onZCodeBuiltinRefreshError,
       onPersonalConfigRecovery: options.onPersonalConfigRecovery,
       onPersonalConfigPollingError: options.onPersonalConfigPollingError,
       personalFilePath:
@@ -65,16 +57,8 @@ export class ProviderConfigRuntime {
     return this.#runtime.personalRepository;
   }
 
-  resolveZCodeBuiltinActiveFilePath(): Promise<string> {
-    return this.#runtime.resolveZCodeBuiltinActiveFilePath();
-  }
-
-  refreshZCodeBuiltin(options?: { readonly force?: boolean }) {
-    return this.#runtime.refreshZCodeBuiltin(options);
-  }
-
-  onDidCheckZCodeBuiltin(listener: () => Promise<void>): () => void {
-    return this.#runtime.onDidCheckZCodeBuiltin(listener);
+  get zcodeBuiltinFilePath(): string {
+    return this.#runtime.zcodeBuiltinFilePath;
   }
 
   dispose(): void {

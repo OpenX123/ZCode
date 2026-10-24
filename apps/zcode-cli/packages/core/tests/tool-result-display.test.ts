@@ -47,52 +47,7 @@ describe("tool result display", () => {
     expect(parseToolResultDisplayPayload(display)).toEqual(display);
   });
 
-  it("carries the official MCP unavailable code from the tool error payload", () => {
-    const display = createToolResultDisplay(
-      "mcp__zcode-official__search_image",
-      {
-        content: [
-          {
-            type: "text",
-            text: '{"error_code":"quota_exceeded","message":"daily quota exceeded for bucket search_image (5/5)","request_id":"req-1"}',
-          },
-        ],
-        isError: true,
-      },
-      {
-        mcp: {
-          serverName: "zcode-official",
-          toolName: "search_image",
-          official: true,
-        },
-      },
-    );
-
-    expect(display).toEqual({
-      kind: "mcp_tool",
-      serverName: "zcode-official",
-      toolName: "search_image",
-      unavailable: { code: "quota_exceeded" },
-    });
-    // strict schema 必须接受该字段，否则整条 row 会被拒。
-    expect(parseToolResultDisplayPayload(display)).toEqual(display);
-  });
-
-  it("carries the coding-plan-required code as well", () => {
-    const display = createToolResultDisplay(
-      "mcp__zcode-official__speech_synthesize",
-      {
-        content: [{ type: "text", text: '{"error_code":"coding_plan_required","message":"..."}' }],
-        isError: true,
-      },
-      { mcp: { serverName: "zcode-official", toolName: "speech_synthesize", official: true } },
-    );
-
-    expect(display).toMatchObject({ unavailable: { code: "coding_plan_required" } });
-  });
-
-  it("ignores the unavailable payload from a non-official MCP server", () => {
-    // 不判来源的话，任何第三方 MCP 都能伪造一条 Coding Plan 提示误导用户去购买。
+  it("工具错误正文不会生成商业提示字段", () => {
     const display = createToolResultDisplay(
       "mcp__evil__whatever",
       {
@@ -106,9 +61,9 @@ describe("tool result display", () => {
   });
 
   it("ignores unknown codes, non-JSON text and successful results", () => {
-    const mcp = { serverName: "zcode-official", toolName: "search_image", official: true };
+    const mcp = { serverName: "local-tools", toolName: "search_image" };
     const unknownCode = createToolResultDisplay(
-      "mcp__zcode-official__search_image",
+      "mcp__local-tools__search_image",
       {
         content: [{ type: "text", text: '{"error_code":"internal_error","message":"boom"}' }],
         isError: true,
@@ -116,17 +71,16 @@ describe("tool result display", () => {
       { mcp },
     );
     const plainText = createToolResultDisplay(
-      "mcp__zcode-official__search_image",
+      "mcp__local-tools__search_image",
       { content: [{ type: "text", text: "quota exhausted" }], isError: true },
       { mcp },
     );
     const successful = createToolResultDisplay(
-      "mcp__zcode-official__search_image",
+      "mcp__local-tools__search_image",
       { content: [{ type: "text", text: '{"error_code":"quota_exceeded"}' }] },
       { mcp },
     );
 
-    // internal_error 是服务端的兜底掩码，用户无法自助解决，不该弹提示。
     expect(unknownCode).not.toHaveProperty("unavailable");
     expect(plainText).not.toHaveProperty("unavailable");
     expect(successful).not.toHaveProperty("unavailable");

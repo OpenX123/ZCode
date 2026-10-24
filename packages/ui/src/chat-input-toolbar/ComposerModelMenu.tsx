@@ -1,6 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
 import { ScrollFadeViewport } from "@/components/ui/scroll-fade-viewport.js";
-import type { ComposerPlanGroup } from "@/lib/composerPlanGroups.js";
 import type { ModelSelectGroup } from "@/ModelConfigSelect.js";
 import { isNoThoughtLevel } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import { ComposerEffortHeading } from "@/chat-input-toolbar/ComposerEffortHeading.js";
@@ -28,20 +27,7 @@ const EFFORT_BUBBLES = [
   { top: 7, size: 4, duration: 3.6, delay: -3.1 },
 ];
 
-const HIGHSPEED_BUBBLES = Array.from({ length: 32 }, (_, index) => ({
-  ...EFFORT_BUBBLES[index % EFFORT_BUBBLES.length]!,
-  duration: (8 + (index % 5)) / 10,
-  delay: -index * 0.137,
-}));
-
 export interface ComposerModelOptions {
-  providerMenu?: {
-    groups: readonly ComposerPlanGroup[];
-    selectedKey?: string;
-    pending: boolean;
-    error: string | null;
-    onSelect: (group: ComposerPlanGroup) => void;
-  };
   providerLabel: string;
   modelsLabel: string;
   effortLabel: string;
@@ -62,18 +48,7 @@ export function getComposerThoughtDisplay(options: ComposerModelOptions) {
   return { label: current?.label ?? "—", progress };
 }
 
-export function isGlmHighspeedModel(name: string) {
-  // GLM FlashX 与 Highspeed 共用视觉；只按显示名称判定，避免误命中其他品牌。
-  return /glm/i.test(name) && /highspeed|flashx/i.test(name);
-}
-
-export function ComposerThoughtIndicator({
-  options,
-  highspeed = false,
-}: {
-  options: ComposerModelOptions;
-  highspeed?: boolean;
-}) {
+export function ComposerThoughtIndicator({ options }: { options: ComposerModelOptions }) {
   const { label, progress } = getComposerThoughtDisplay(options);
   return (
     <>
@@ -86,7 +61,6 @@ export function ComposerThoughtIndicator({
       <span
         aria-hidden="true"
         data-testid="composer-thought-meter"
-        data-highspeed={highspeed}
         data-progress={progress}
         className="relative hidden h-4 w-1 shrink-0 overflow-hidden rounded-full bg-foreground/10 group-data-[composer-compact=true]/combined:block"
       >
@@ -120,19 +94,16 @@ export function ComposerModelMenu({
 }) {
   // 无可用模型的分组仍可浏览配置；实际选择始终由 Composer owner 回传。
   const [browse, setBrowse] = useState<{ key: string; selection: string } | null>(null);
-  const menuGroups: readonly ComposerPlanGroup[] = options.providerMenu?.groups ?? groups;
-  const selected =
-    menuGroups.find((group) => group.key === options.providerMenu?.selectedKey) ??
-    menuGroups.find((group) => group.items.some((item) => item.value === normalizedValue));
+  const menuGroups = groups;
+  const selected = menuGroups.find((group) =>
+    group.items.some((item) => item.value === normalizedValue),
+  );
   const group =
     (browse?.selection === normalizedValue
       ? menuGroups.find((item) => item.key === browse.key)
       : undefined) ??
     selected ??
     menuGroups[0];
-  // 视觉只由选中模型名称派生，避免供应商名或内部 value 含 highspeed 时误触发。
-  const modelName = selected?.items.find((item) => item.value === normalizedValue)?.name ?? "";
-  const highspeed = isGlmHighspeedModel(modelName);
   const currentGroupSelected = group?.key === selected?.key && Boolean(selected);
   const currentIndex = options.levels.findIndex((level) => level.value === options.value);
   const { label } = getComposerThoughtDisplay(options);
@@ -140,8 +111,7 @@ export function ComposerModelMenu({
   const catalogPending = groups.length === 0 && Boolean(normalizedValue);
   const showEffort = options.levels.length > 0 || catalogPending;
   const [hoveredStop, setHoveredStop] = useState<string | null>(null);
-  const sliderDisabled =
-    Boolean(options.providerMenu?.pending) || !currentGroupSelected || options.levels.length < 2;
+  const sliderDisabled = !currentGroupSelected || options.levels.length < 2;
   const sliderProgress =
     options.levels.length > 1 && currentIndex >= 0 && currentGroupSelected
       ? (currentIndex / (options.levels.length - 1)) * 100
@@ -157,26 +127,10 @@ export function ComposerModelMenu({
     <>
       <ComposerProviderMenu
         groups={menuGroups}
-        error={options.providerMenu?.error}
-        disabled={options.providerMenu?.pending}
-        loading={options.providerMenu?.pending}
-        isDisabled={(candidate) => Boolean((candidate as ComposerPlanGroup).connection?.disabled)}
-        separatorBeforeKey={
-          options.providerMenu
-            ? menuGroups.find(
-                (candidate) =>
-                  !candidate.connection && !candidate.key.startsWith("registry-provider:account:"),
-              )?.key
-            : undefined
-        }
         group={group}
         label={options.providerLabel}
         providerFooter={providerFooter}
         onSelect={(candidate) => {
-          if (options.providerMenu) {
-            options.providerMenu.onSelect(candidate as ComposerPlanGroup);
-            return;
-          }
           setBrowse({ key: candidate.key, selection: normalizedValue });
           // 复用唯一选择链路，供应商页只负责导航，不缓存模型状态。
           const model =
@@ -191,11 +145,7 @@ export function ComposerModelMenu({
           {options.modelsLabel}
         </DropdownMenuLabel>
         {group ? renderConnection(group) : null}
-        <ScrollFadeViewport
-          className="max-h-60 flex-initial"
-          inert={options.providerMenu?.pending || undefined}
-          data-composer-model-list
-        >
+        <ScrollFadeViewport className="max-h-60 flex-initial" data-composer-model-list>
           {group ? renderItems(group.items) : null}
         </ScrollFadeViewport>
         {showEffort ? (
@@ -247,7 +197,6 @@ export function ComposerModelMenu({
                       <div
                         className="composer-thought-slider-fill absolute inset-y-0 left-0 overflow-hidden rounded-full"
                         data-max={sliderFilled && currentIndex === options.levels.length - 1}
-                        data-highspeed={highspeed && currentGroupSelected}
                         style={{
                           width: sliderFilled
                             ? `calc(14px + (100% - 28px) * ${sliderProgress / 100})`
@@ -261,24 +210,22 @@ export function ComposerModelMenu({
                             data-testid="composer-thought-bubbles"
                             className="composer-thought-bubbles absolute inset-0"
                           >
-                            {(highspeed ? HIGHSPEED_BUBBLES : EFFORT_BUBBLES).map(
-                              (bubble, index) => (
+                            {EFFORT_BUBBLES.map((bubble, index) => (
+                              <span
+                                key={index}
+                                className="composer-thought-bubble absolute inset-x-0"
+                                style={{
+                                  top: bubble.top,
+                                  animationDuration: `${bubble.duration}s`,
+                                  animationDelay: `${bubble.delay}s`,
+                                }}
+                              >
                                 <span
-                                  key={index}
-                                  className="composer-thought-bubble absolute inset-x-0"
-                                  style={{
-                                    top: bubble.top,
-                                    animationDuration: `${bubble.duration}s`,
-                                    animationDelay: `${bubble.delay}s`,
-                                  }}
-                                >
-                                  <span
-                                    className="block rounded-full bg-white"
-                                    style={{ width: bubble.size, height: bubble.size }}
-                                  />
-                                </span>
-                              ),
-                            )}
+                                  className="block rounded-full bg-white"
+                                  style={{ width: bubble.size, height: bubble.size }}
+                                />
+                              </span>
+                            ))}
                           </div>
                         ) : null}
                       </div>

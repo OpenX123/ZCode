@@ -55,7 +55,6 @@ export const ProjectTaskRow = memo(function Row({
         pinnedTasks={task.pinned ? rows : EMPTY}
         activeTaskId={activeId}
         isWorkspaceActive={presentation.activeWorkspaceKey === workspaceKey}
-        mobileActiveTaskKey={presentation.mobileActiveTaskKey}
         onOpenFileTree={
           presentation.onOpenTaskFiles &&
           showFiles &&

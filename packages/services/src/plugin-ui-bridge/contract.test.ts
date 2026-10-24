@@ -81,39 +81,27 @@ describe("plugin-ui-bridge contract", () => {
   });
 });
 
-describe("plugin UI telemetry", () => {
-  it.each([false, true])(
-    "reports tool outcome without request or response content (failure=%s)",
-    async (isError) => {
-      const reportTelemetryEvent = vi.fn().mockRejectedValue(new Error("offline"));
-      const result = { content: [{ type: "text" as const, text: "private output" }], isError };
-      const service = createPluginUiBridgeService({
-        reportTelemetryEvent,
-        callMcpToolForUi: async () => result,
-      });
-      const params = {
-        workspacePath: "/private/path",
-        sessionId: "session",
-        pluginId: "demo@market",
-        serverName: "server",
-        toolName: "tool",
-        callId: "call",
-        arguments: { secret: "private input" },
-        instance: {
-          runtimeId: "agent",
-          generation: 1,
-          token: "private token",
-          appIdentity: "a".repeat(64),
-        },
-      };
-      expect(await service.callTool(params)).toBe(result);
-      expect(reportTelemetryEvent).toHaveBeenCalledTimes(1);
-      expect(reportTelemetryEvent.mock.calls[0]![0].eventExtraDetail).toMatchObject({
-        plugin_id: "demo@market",
-        action: "ui_tool_call",
-        result: isError ? "failure" : "success",
-      });
-      expect(JSON.stringify(reportTelemetryEvent.mock.calls)).not.toContain("private");
-    },
-  );
+describe("插件 UI 工具调用合同", () => {
+  it.each([false, true])("原样转发工具结果（isError=%s）", async (isError) => {
+    const result = { content: [{ type: "text" as const, text: "private output" }], isError };
+    const callMcpToolForUi = vi.fn(async () => result);
+    const service = createPluginUiBridgeService({ callMcpToolForUi });
+    const params = {
+      workspacePath: "/private/path",
+      sessionId: "session",
+      pluginId: "demo@market",
+      serverName: "server",
+      toolName: "tool",
+      callId: "call",
+      arguments: { secret: "private input" },
+      instance: {
+        runtimeId: "agent",
+        generation: 1,
+        token: "private token",
+        appIdentity: "a".repeat(64),
+      },
+    };
+    expect(await service.callTool(params)).toBe(result);
+    expect(callMcpToolForUi).toHaveBeenCalledWith(params, undefined);
+  });
 });

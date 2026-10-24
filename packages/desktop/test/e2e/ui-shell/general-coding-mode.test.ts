@@ -1,7 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  TID_LOGIN_TRIGGER,
   TID_SETTINGS_BACK_BUTTON,
   TID_SETTINGS_PAGE,
   TID_SETTINGS_SECTION_NAV,
@@ -24,7 +23,7 @@ describe("办公与编程模式 M1", () => {
     await clearAppData();
   });
 
-  it("MODE-01 设置页与头像菜单共用偏好，刷新后保留", async () => {
+  it("MODE-01 设置页与偏好菜单共用偏好，刷新后保留", async () => {
     await clickTestIdByDom(TID_TASK_SETTINGS_BUTTON);
     await $(`[data-testid="${TID_SETTINGS_PAGE}"]`).waitForDisplayed();
     // 界面模式已迁到常规设置并更名 office，旧 appearance/general 断言无法进入待测交互。
@@ -37,7 +36,9 @@ describe("办公与编程模式 M1", () => {
     await clickTestIdByDom(TID_SETTINGS_BACK_BUTTON);
     await switchMode("coding");
     await browser.refresh();
-    await $(`[data-testid="${TID_LOGIN_TRIGGER}"]`).waitForDisplayed({ timeout: 30000 });
+    await $(`[data-testid="sidebar-preferences-trigger"]`).waitForDisplayed({
+      timeout: 30000,
+    });
     await waitForMode("coding");
     expect(await $(`[data-testid="${TID_TERMINAL_TOGGLE}"]`).isExisting()).toBe(true);
   });
@@ -121,15 +122,16 @@ async function switchMode(mode: "office" | "coding") {
   await browser.waitUntil(
     async () => !(await $('[data-slot="dropdown-menu-content"]').isExisting()),
   );
-  await $(`[data-testid="${TID_LOGIN_TRIGGER}"]`).waitForDisplayed();
-  await $(`[data-testid="${TID_LOGIN_TRIGGER}"]`).click();
+  await $(`[data-testid="sidebar-preferences-trigger"]`).waitForDisplayed();
+  await $(`[data-testid="sidebar-preferences-trigger"]`).click();
   await clickText('[role="menuitem"]', "界面模式");
   await clickText('[role="menuitemradio"]', mode === "office" ? "办公模式" : "编程模式");
   await browser.keys("Escape");
   await waitForMode(mode);
   await browser.waitUntil(
     async () =>
-      (await $(`[data-testid="${TID_LOGIN_TRIGGER}"]`).getAttribute("aria-expanded")) === "false",
+      (await $(`[data-testid="sidebar-preferences-trigger"]`).getAttribute("aria-expanded")) ===
+      "false",
   );
 }
 
@@ -154,7 +156,7 @@ async function clickText(selector: string, text: string) {
     );
   } catch (error) {
     const diagnostic = await browser.execute(() => ({
-      trigger: document.querySelector('[data-testid="login-trigger"]')?.outerHTML,
+      trigger: document.querySelector('[data-testid="sidebar-preferences-trigger"]')?.outerHTML,
       menus: [...document.querySelectorAll('[role*="menu"]')].map((item) => ({
         role: item.getAttribute("role"),
         text: item.textContent,

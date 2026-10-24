@@ -4,12 +4,6 @@ import { RemoteConnectionNavigationDot } from "@/remote-connection/RemoteConnect
 import { resolveRemoteConnectionNavigationPresentation } from "@/lib/remoteConnectionPresentation.js";
 /* oxlint-disable eslint(max-lines) */
 import { ArrowLeft, Rocket, type LucideIcon } from "lucide-react";
-import { useStore } from "zustand";
-import {
-  marketingNavigation,
-  finishMarketingNavigation,
-  marketingSettingsSections,
-} from "@/lib/marketingNavigation.js";
 import {
   useCallback,
   useEffect,
@@ -24,16 +18,12 @@ import type {
   IntegratedTerminalShellOption,
   IntegratedTerminalShellSelection,
   Locale,
-  UsageEntitlementSnapshot,
-  UserInfo,
   ZCodeInteractionBehavior,
 } from "@zcode/shared";
-import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
 import {
   TID_SETTINGS_BACK_BUTTON,
   TID_SETTINGS_PAGE,
   TID_SETTINGS_SECTION_NAV,
-  TID_SETTINGS_USAGE_TAB,
   testId,
 } from "@zcode/shared/test-ids";
 import { Button } from "@/components/ui/button.js";
@@ -43,8 +33,6 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { logger } from "@/logger.js";
 import { getPathLeaf } from "@/lib/path.js";
-import { useProviderSettingsView } from "@/hooks/useProviderSettingsView.js";
-import { useUsageEntitlement } from "@/hooks/useUsageEntitlement.js";
 import {
   addPendingSettingsSectionListener,
   clearPendingSettingsPluginOrigin,
@@ -56,33 +44,17 @@ import {
   consumePendingSettingsPluginScopeKey,
   consumePendingSettingsPluginTab,
   consumePendingSettingsModelProviderTarget,
-  consumePendingSettingsUsageTab,
   resolveSettingsSection,
   setPendingSettingsSectionIntent,
-  shouldFallbackSettingsUsageTabToApp,
   writeLastSettingsSectionPreference,
   type SettingsModelProviderTarget,
 } from "@/lib/settingsNavigation.js";
-import { readSidebarUsageCodingPlanSourcePreference } from "@/lib/sidebarUsageCodingPlanProviderPreference.js";
-import {
-  resolveEntitledAccountProviderAccess,
-  resolveEntitledAccountProviderAccessFingerprint,
-} from "@/lib/accountProviderAccess.js";
-import { buildUsageEntitlementCacheKey } from "@/lib/usageEntitlementCache.js";
 import { ArchiveManagement, useOptionalProjectDirectory } from "@/project-sidebar/index.js";
 import { resolveRecentRemoteProjectPreference } from "@/project-sidebar/remote-project-connection.js";
 import { ModelProviderSection } from "@/settings/ModelProviderSection.js";
-import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
-import { useEnterpriseCodingPlanProducts } from "@/settings/model-provider-section/useEnterpriseCodingPlanProducts.js";
-import { UsageStatsSection, type UsageStatsSectionTab } from "@/settings/UsageStatsSection.js";
-import {
-  buildCodingPlanUsageSources,
-  type CodingPlanUsageSource,
-} from "@/settings/usage-stats/CodingPlanUsagePanel.js";
-import { buildPersonalCodingPlanUsageSource } from "@/lib/codingPlanUsageSources.js";
+import { UsageStatsSection } from "@/settings/UsageStatsSection.js";
 import { SubagentsSection } from "@/settings/SubagentsSection.js";
 import { AutomationsSection } from "@/settings/AutomationsSection.js";
-import { SegmentPill } from "@/settings/PluginStoreListView.js";
 import { PluginsSection } from "@/settings/PluginsSection.js";
 import { HooksSection } from "@/settings/HooksSection.js";
 import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSection.js";
@@ -129,126 +101,6 @@ import { useOptionalRemoteWorkspaceController } from "@/remote/useRemoteWorkspac
 import { AppearanceSectionContent } from "./settingsCodePreview.js";
 import type { SettingsSectionId } from "@/lib/settingsNavigation.js";
 import { requestPluginStoreOpen } from "@/lib/pluginStoreNavigation.js";
-import {
-  runUserAction,
-  runUserActionAsync,
-  type UserActionResult,
-  type UserActionTrigger,
-} from "@/lib/userActionTelemetry.js";
-import type { SettingsUserActionFeatureId } from "@/lib/userActionTraceCatalog.js";
-
-function runSettingsActionAsync<T>(options: {
-  featureId: SettingsUserActionFeatureId;
-  action: string;
-  trigger: UserActionTrigger;
-  operation: () => Promise<T>;
-  completed: UserActionResult;
-  failureStage?: string;
-}): Promise<T> {
-  return runUserActionAsync({
-    input: {
-      featureId: options.featureId,
-      action: options.action,
-      trigger: options.trigger,
-    },
-    operation: options.operation,
-    completed: options.completed,
-    failureStage: options.failureStage ?? "settings_commit",
-  });
-}
-
-function SettingsUsageProviderTabs({
-  activeTab,
-  codingPlanSources,
-  onTabChange,
-}: {
-  activeTab: UsageStatsSectionTab;
-  codingPlanSources: CodingPlanUsageSource[];
-  onTabChange: (tab: UsageStatsSectionTab) => void;
-}) {
-  const { intl } = useZCodeIntl();
-  const tabItems = [
-    {
-      id: "app" as const,
-      label: intl.formatMessage({ id: "settings.usage.tab.appUsage" }),
-    },
-    ...codingPlanSources.map((source, index) => ({
-      id: createSettingsUsageCodingPlanTabId(source.id),
-      label: resolveSettingsUsageCodingPlanTabLabel({
-        defaultLabel: intl.formatMessage({
-          id: "settings.usage.tab.codingPlan",
-        }),
-        hasMultiplePersonalSources:
-          codingPlanSources.filter((item) => !isTeamCodingPlanUsageSource(item)).length > 1,
-        index,
-        source,
-      }),
-    })),
-  ];
-  const visibleActiveTab =
-    activeTab === "codingPlan" && codingPlanSources[0]
-      ? createSettingsUsageCodingPlanTabId(codingPlanSources[0].id)
-      : activeTab;
-
-  return (
-    <div className="flex items-center gap-1.5">
-      {tabItems.map((item) => (
-        <SegmentPill
-          key={item.id}
-          active={visibleActiveTab === item.id}
-          label={item.label}
-          testId={testId(TID_SETTINGS_USAGE_TAB, item.id)}
-          onClick={() => onTabChange(item.id)}
-        />
-      ))}
-    </div>
-  );
-}
-
-function isTeamCodingPlanUsageSource(source: CodingPlanUsageSource): boolean {
-  return "planKind" in source.accountAccess && source.accountAccess.planKind === "team-coding-plan";
-}
-
-function createSettingsUsageCodingPlanTabId(sourceId: string): UsageStatsSectionTab {
-  return `codingPlan:${sourceId}`;
-}
-
-function resolveSettingsUsageCodingPlanSourceId(tab: UsageStatsSectionTab): string | null {
-  return tab.startsWith("codingPlan:") ? tab.slice("codingPlan:".length) : null;
-}
-
-function resolveSettingsUsageCodingPlanTabLabel({
-  defaultLabel,
-  hasMultiplePersonalSources,
-  source,
-}: {
-  defaultLabel: string;
-  hasMultiplePersonalSources: boolean;
-  index: number;
-  source: CodingPlanUsageSource;
-}): string {
-  if (isTeamCodingPlanUsageSource(source)) {
-    return source.label.replace(/^BigModel\s*-\s*/i, "").trim() || source.label;
-  }
-  if (hasMultiplePersonalSources) {
-    return source.label.replace(/\s*-\s*Coding Plan$/i, "").trim() || source.label;
-  }
-  return defaultLabel;
-}
-
-function hasActiveCodingPlanSnapshot(
-  snapshot: UsageEntitlementSnapshot | null,
-  providerId: string,
-): boolean {
-  return (
-    snapshot?.provider?.id === providerId &&
-    snapshot.unavailableReason !== "no_plan" &&
-    (Boolean(snapshot.subscription?.details.length) ||
-      // quota 暂时失败时服务仍能确认当前 provider，但旧过滤条件会把
-      // Coding Plan tab 当成未开通套餐删除。只有明确 no_plan 才应隐藏入口。
-      snapshot.unavailableReason === "unavailable")
-  );
-}
 
 function SettingsSidebarButton({
   icon: Icon,
@@ -299,12 +151,7 @@ export function SettingsPage({
   captionWorkspacePath,
   onBack,
   onCreateTask,
-  onOpenWorkspace,
   onOpenRemoteWorkspace,
-  allowOpenWorkspace = true,
-  onLogin,
-  onLogout,
-  user,
 }: {
   isDesktop?: boolean;
   isWindowsDesktop?: boolean;
@@ -318,9 +165,6 @@ export function SettingsPage({
   onOpenRemoteWorkspace?: (preference?: RemoteConnectionOpenPreference) => void;
   /** 远程设备卡「新任务」：激活该设备已打开的 tab 并开新草稿（Root 注入）。 */
   allowOpenWorkspace?: boolean;
-  onLogin?: () => void;
-  onLogout?: () => void;
-  user?: UserInfo | null;
 }) {
   const { intl, localePreference, setLocalePreference } = useZCodeIntl();
   const { settingsSectionGroups, settingsSections } = useMemo(
@@ -386,17 +230,6 @@ export function SettingsPage({
           linuxCloseToTrayCapability.gnomeLikeWithoutTray,
       }
     : undefined;
-  const marketingRequest = useStore(marketingNavigation, (state) => state.request);
-  useEffect(() => {
-    if (marketingRequest?.target.page !== "settings") return;
-    const target = marketingRequest.target;
-    const section = target.section ? marketingSettingsSections[target.section] : activeSection;
-    if (!settingsSections.some((item) => item.id === section)) {
-      finishMarketingNavigation(marketingRequest.id, new Error("marketing_navigation_unavailable"));
-    } else if (activeSection === section && !target.provider_id) {
-      finishMarketingNavigation(marketingRequest.id);
-    }
-  }, [activeSection, marketingRequest, settingsSections]);
   const [pluginNavigationOrigin, setPluginNavigationOrigin] = useState(() =>
     consumePendingSettingsPluginOrigin(),
   );
@@ -425,248 +258,10 @@ export function SettingsPage({
   const setNotificationEnabled = useZCodeStore((state) => state.setNotificationEnabled);
   const notificationSoundEnabled = useZCodeStore((state) => state.notificationSoundEnabled);
   const setNotificationSoundEnabled = useZCodeStore((state) => state.setNotificationSoundEnabled);
-  const usageProviderSettingsRead = useProviderSettingsView();
-  const usageProviderSettingsView =
-    usageProviderSettingsRead.state.status === "ready"
-      ? usageProviderSettingsRead.state.view
-      : null;
-  const usageProviderSettingsLoading = usageProviderSettingsRead.state.status !== "ready";
-  const usageZaiProvider = usageProviderSettingsView?.providers.find(
-    (provider) => provider.providerId === BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
-  );
-  const usageBigmodelProvider = usageProviderSettingsView?.providers.find(
-    (provider) => provider.providerId === BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
-  );
-  const usageZaiProviderAccess = resolveEntitledAccountProviderAccess(
-    usageProviderSettingsView,
-    BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
-  );
-  const usageBigmodelProviderAccess = resolveEntitledAccountProviderAccess(
-    usageProviderSettingsView,
-    BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
-  );
-  const usageZaiProviderFingerprint = resolveEntitledAccountProviderAccessFingerprint(
-    usageProviderSettingsView,
-    BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
-  );
-  const usageBigmodelProviderFingerprint = resolveEntitledAccountProviderAccessFingerprint(
-    usageProviderSettingsView,
-    BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
-  );
-  const usageZaiTeamProviderFingerprint = resolveEntitledAccountProviderAccessFingerprint(
-    usageProviderSettingsView,
-    BUILTIN_MODEL_PROVIDER_IDS.zaiTeamCodingPlan,
-  );
-  const usageBigmodelTeamProviderFingerprint = resolveEntitledAccountProviderAccessFingerprint(
-    usageProviderSettingsView,
-    BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan,
-  );
-  const usageZaiEntitlement = useUsageEntitlement({
-    enabled:
-      activeSection === "usage" &&
-      !usageProviderSettingsLoading &&
-      Boolean(usageZaiProviderFingerprint),
-    includeSubscription: true,
-    preferredProviderId: BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
-    accountAccess: usageZaiProviderAccess?.access,
-    allowDisabledPreferredProvider: true,
-    requirePreferredProvider: true,
-    allowEnvApiKey: false,
-    cacheKey: buildUsageEntitlementCacheKey({
-      providerId: BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
-      providerFingerprint: usageZaiProviderFingerprint,
-    }),
-    // 个人 Usage source 依赖 entitlement snapshot；冷启动无缓存时若不先探测，
-    // source 不会渲染，子面板也无法触发 access 刷新。共享 freshness window 继续负责限频。
-    refreshOnMount: true,
-  });
-  const usageBigmodelEntitlement = useUsageEntitlement({
-    enabled:
-      activeSection === "usage" &&
-      !usageProviderSettingsLoading &&
-      Boolean(usageBigmodelProviderFingerprint),
-    includeSubscription: true,
-    preferredProviderId: BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
-    accountAccess: usageBigmodelProviderAccess?.access,
-    allowDisabledPreferredProvider: true,
-    requirePreferredProvider: true,
-    allowEnvApiKey: false,
-    cacheKey: buildUsageEntitlementCacheKey({
-      providerId: BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
-      providerFingerprint: usageBigmodelProviderFingerprint,
-    }),
-    refreshOnMount: true,
-  });
-  // 原只拉 bigmodel family 的企业 pricing，zai team plan 在使用统计页
-  // 永远拿不到 team project 上下文；后续又误用 Individual Provider 的权益作为 Team
-  // 商品门禁，导致仅有 Team Plan 的账号仍然没有 Usage 来源。企业商品只依赖对应的
-  // Team Account Provider，个人额度继续依赖 Individual Provider，避免两个产品身份串线。
-  const usageBigmodelEnterpriseProducts = useEnterpriseCodingPlanProducts({
-    enabled: !usageProviderSettingsLoading && Boolean(usageBigmodelTeamProviderFingerprint),
-    authenticated: true,
-    family: "bigmodel",
-  });
-  const usageZaiEnterpriseProducts = useEnterpriseCodingPlanProducts({
-    enabled: !usageProviderSettingsLoading && Boolean(usageZaiTeamProviderFingerprint),
-    authenticated: true,
-    family: "zai",
-  });
-  const usageSubscribedTeamProducts = useMemo(
-    () => [
-      ...(usageBigmodelEnterpriseProducts.snapshot?.productList.filter(
-        (product) => product.subscribed === true,
-      ) ?? []),
-      ...(usageZaiEnterpriseProducts.snapshot?.productList.filter(
-        (product) => product.subscribed === true,
-      ) ?? []),
-    ],
-    [
-      usageBigmodelEnterpriseProducts.snapshot?.productList,
-      usageZaiEnterpriseProducts.snapshot?.productList,
-    ],
-  );
-  const [usageActiveTab, setUsageActiveTab] = useState<UsageStatsSectionTab>(() => {
-    const pendingTab = consumePendingSettingsUsageTab();
-    return pendingTab === "codingPlan" ? "codingPlan" : (pendingTab ?? "app");
-  });
-  const usagePersonalCodingPlanSources = useMemo(() => {
-    const sources: CodingPlanUsageSource[] = [];
-    if (
-      usageZaiProviderAccess &&
-      hasActiveCodingPlanSnapshot(
-        usageZaiEntitlement.snapshot,
-        BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
-      )
-    ) {
-      sources.push(
-        buildPersonalCodingPlanUsageSource({
-          providerId: BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
-          accountAccess: usageZaiProviderAccess.access,
-          label: usageZaiProvider?.providerName,
-        }),
-      );
-    }
-    if (
-      usageBigmodelProviderAccess &&
-      hasActiveCodingPlanSnapshot(
-        usageBigmodelEntitlement.snapshot,
-        BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
-      )
-    ) {
-      sources.push(
-        buildPersonalCodingPlanUsageSource({
-          providerId: BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
-          accountAccess: usageBigmodelProviderAccess.access,
-          label: usageBigmodelProvider?.providerName,
-        }),
-      );
-    }
-    return sources;
-  }, [
-    usageBigmodelEntitlement.snapshot,
-    usageBigmodelProvider,
-    usageBigmodelProviderAccess,
-    usageZaiEntitlement.snapshot,
-    usageZaiProvider,
-    usageZaiProviderAccess,
-  ]);
-  const usageTeamCodingPlanSources = useMemo(
-    () =>
-      buildCodingPlanUsageSources({
-        accountAccesses: {
-          ...(resolveEntitledAccountProviderAccess(
-            usageProviderSettingsView,
-            BUILTIN_MODEL_PROVIDER_IDS.zaiTeamCodingPlan,
-          )?.access
-            ? {
-                zai: resolveEntitledAccountProviderAccess(
-                  usageProviderSettingsView,
-                  BUILTIN_MODEL_PROVIDER_IDS.zaiTeamCodingPlan,
-                )!.access,
-              }
-            : {}),
-          ...(resolveEntitledAccountProviderAccess(
-            usageProviderSettingsView,
-            BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan,
-          )?.access
-            ? {
-                bigmodel: resolveEntitledAccountProviderAccess(
-                  usageProviderSettingsView,
-                  BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan,
-                )!.access,
-              }
-            : {}),
-        },
-        subscribedTeamProducts: usageSubscribedTeamProducts,
-      }),
-    [usageProviderSettingsView, usageSubscribedTeamProducts],
-  );
-  const usageCodingPlanSources = useMemo(
-    () => [...usagePersonalCodingPlanSources, ...usageTeamCodingPlanSources],
-    [usagePersonalCodingPlanSources, usageTeamCodingPlanSources],
-  );
-  const selectedUsageCodingPlanSourceId =
-    usageActiveTab === "codingPlan"
-      ? (usageCodingPlanSources[0]?.id ?? null)
-      : resolveSettingsUsageCodingPlanSourceId(usageActiveTab);
-  const selectedUsageCodingPlanSource =
-    usageCodingPlanSources.find((source) => source.id === selectedUsageCodingPlanSourceId) ?? null;
-  const showUsageCodingPlanTab = usageCodingPlanSources.length > 0;
-  const checkingUsageZaiCodingPlanTab = Boolean(
-    usageZaiProviderFingerprint &&
-    (usageZaiEntitlement.loading || (!usageZaiEntitlement.snapshot && !usageZaiEntitlement.error)),
-  );
-  const checkingUsageBigmodelCodingPlanTab = Boolean(
-    usageBigmodelProviderFingerprint &&
-    (usageBigmodelEntitlement.loading ||
-      (!usageBigmodelEntitlement.snapshot && !usageBigmodelEntitlement.error)),
-  );
-  const checkingUsageCodingPlanTab =
-    usageProviderSettingsLoading ||
-    checkingUsageZaiCodingPlanTab ||
-    checkingUsageBigmodelCodingPlanTab ||
-    usageBigmodelEnterpriseProducts.loading ||
-    usageZaiEnterpriseProducts.loading;
   const [initialModelProviderTarget] = useState(() => consumePendingSettingsModelProviderTarget());
-  const { openCodingPlanUpgrade } = useCodingPlanUpgradeDialog();
   const [pendingModelProviderTarget, setPendingModelProviderTarget] = useState<
     SettingsModelProviderTarget | undefined
   >(() => initialModelProviderTarget);
-  const handleUsageTabSelect = useCallback((tab: UsageStatsSectionTab) => {
-    setUsageActiveTab(tab);
-  }, []);
-  /*
-   * 使用统计是账号级 sources，不再绑定当前 workspace 连接方式。
-   * 旧入口只会写入 "codingPlan" 意图；等 sources 加载后需要落到真实来源。
-   * 剩余额度「更多」等入口会先写入来源偏好（当前 coding plan 类型/团队项目），
-   * 解析时优先选中该来源，缺失或已不可用时回退第一份真实来源。
-   */
-  useEffect(() => {
-    if (usageActiveTab !== "codingPlan" || !usageCodingPlanSources[0]) {
-      return;
-    }
-    const preferredSourceId = readSidebarUsageCodingPlanSourcePreference();
-    const preferredSource = preferredSourceId
-      ? usageCodingPlanSources.find((source) => source.id === preferredSourceId)
-      : undefined;
-    setUsageActiveTab(
-      createSettingsUsageCodingPlanTabId((preferredSource ?? usageCodingPlanSources[0]).id),
-    );
-  }, [usageActiveTab, usageCodingPlanSources]);
-  useEffect(() => {
-    if (
-      usageActiveTab === "app" ||
-      usageActiveTab === "codingPlan" ||
-      selectedUsageCodingPlanSource
-    ) {
-      return;
-    }
-    setUsageActiveTab(
-      usageCodingPlanSources[0]
-        ? createSettingsUsageCodingPlanTabId(usageCodingPlanSources[0].id)
-        : "app",
-    );
-  }, [selectedUsageCodingPlanSource, usageActiveTab, usageCodingPlanSources]);
   const setNewUserOnboardingOpen = useZCodeStore((state) => state.setNewUserOnboardingOpen);
   const requestOnboardingDialog = () => setNewUserOnboardingOpen(true);
   const setActiveSettingsSection = useCallback(
@@ -682,25 +277,8 @@ export function SettingsPage({
       setActiveSettingsSection("general");
     }
   }, [activeSection, isDesktop, setActiveSettingsSection]);
-  const handleOpenCodingPlanUpgradeSettings = useCallback(
-    (
-      providerId: string,
-      funnelContext?: import("@/lib/codingPlanFunnelTelemetry.js").CodingPlanFunnelContext,
-    ) => {
-      openCodingPlanUpgrade({
-        providerId,
-        funnelContext,
-      });
-    },
-    [openCodingPlanUpgrade],
-  );
   const handleOpenModelProviderSettings = useCallback(() => {
     setActiveSettingsSection("modelProvider");
-  }, [setActiveSettingsSection]);
-  const handleOpenUsageSettings = useCallback(() => {
-    // 设置页 sidebar footer 里的齿轮/返回按钮复用 onBack，
-    // 但头像菜单的“使用统计”应该停留在设置页并切到 Usage，不能跟着返回工作区。
-    setActiveSettingsSection("usage");
   }, [setActiveSettingsSection]);
   const activeWorkspacePath = useTabStore((state) => state.activeWorkspacePath);
   const activateTab = useTabStore((state) => state.activateTab);
@@ -808,8 +386,6 @@ export function SettingsPage({
     desktopChromiumHardwareAccelerationEnabled,
     setDesktopChromiumHardwareAccelerationEnabled,
   ] = useState(true);
-  const [receivePreviewUpdates, setReceivePreviewUpdates] = useState(false);
-  const [autoDownloadAndInstallUpdates, setAutoDownloadAndInstallUpdates] = useState(false);
   const [messageStreamShowReasoning, setMessageStreamShowReasoning] = useState(true);
   const [messageStreamShowTodos, setMessageStreamShowTodos] = useState(false);
   const [toolGroupingExploreEnabled, setToolGroupingExploreEnabled] = useState(true);
@@ -819,30 +395,6 @@ export function SettingsPage({
     useState<ZCodeInteractionBehavior>("queue");
   const [defaultHomeDir, setDefaultHomeDir] = useState("");
   const [hostPlatform, setHostPlatform] = useState("");
-
-  useEffect(() => {
-    if (
-      !shouldFallbackSettingsUsageTabToApp({
-        activeTab: usageActiveTab === "app" ? "app" : "codingPlan",
-        checkingCodingPlanTab: checkingUsageCodingPlanTab,
-        loadingModelProviders: usageProviderSettingsLoading,
-        showCodingPlanTab: showUsageCodingPlanTab,
-      })
-    ) {
-      return;
-    }
-
-    // 剩余额度入口会先写入 Coding Plan tab 意图，再打开设置页。
-    // 如果首帧 provider/entitlement 仍在加载就立刻回退，会让“更多”看起来只打开了 App Usage。
-    // 这里等数据确认没有套餐后再回退，避免空入口误导用户。
-    setUsageActiveTab("app");
-  }, [
-    checkingUsageCodingPlanTab,
-    showUsageCodingPlanTab,
-    usageSubscribedTeamProducts.length,
-    usageActiveTab,
-    usageProviderSettingsLoading,
-  ]);
 
   useEffect(
     () =>
@@ -857,9 +409,6 @@ export function SettingsPage({
         setTargetSourceServerDetails(
           section === "remoteDevices" && detail?.sourceServerDetails === true,
         );
-        if (section === "usage" && detail?.usageTab) {
-          setUsageActiveTab(detail.usageTab);
-        }
         if (resolveSettingsSection(section) === "plugin" && detail?.pluginTab) {
           setPluginTab(detail.pluginTab);
           setPluginNavigationOrigin(detail.pluginOrigin);
@@ -951,21 +500,10 @@ export function SettingsPage({
     setToolGroupingTerminalEnabled(sharedSettings.toolGroupingTerminalEnabled ?? true);
     setToolGroupingChangesEnabled(sharedSettings.toolGroupingChangesEnabled ?? false);
     setZCodeInteractionBehavior(sharedSettings.zcodeInteractionBehavior ?? "queue");
-    setReceivePreviewUpdates(sharedSettings.receivePreviewUpdates ?? false);
-    setAutoDownloadAndInstallUpdates(sharedSettings.autoDownloadAndInstallUpdates ?? false);
   }, [sharedSettings]);
   const handleTerminalInheritSystemProfileChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.terminal",
-        action: "toggle_system_profile",
-        trigger: "switch",
-        operation: () => services.settingService.update({ terminalInheritSystemProfile: enabled }),
-        completed: {
-          resultSource: "setting_service",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await services.settingService.update({ terminalInheritSystemProfile: enabled });
       setTerminalInheritSystemProfile(enabled);
     },
     [services.settingService],
@@ -973,132 +511,62 @@ export function SettingsPage({
   const handleTerminalFontFamilyChange = useCallback(
     async (fontFamily: string) => {
       const normalizedFontFamily = fontFamily.trim();
-      await runSettingsActionAsync({
-        featureId: "settings.terminal",
-        action: "save_font_family",
-        trigger: "button",
-        operation: () =>
-          services.settingService.update({ terminalFontFamily: normalizedFontFamily }),
-        completed: { resultSource: "setting_service", configured: normalizedFontFamily.length > 0 },
-      });
+      await services.settingService.update({ terminalFontFamily: normalizedFontFamily });
       setTerminalFontFamily(normalizedFontFamily);
     },
     [services.settingService],
   );
   const handleIntegratedTerminalShellChange = useCallback(
     async (selection: IntegratedTerminalShellSelection) => {
-      await runSettingsActionAsync({
-        featureId: "settings.terminal",
-        action: "change_shell",
-        trigger: "select",
-        operation: () =>
-          localHostServices.settingService.update({ integratedTerminalShell: selection }),
-        completed: {
-          resultSource: "setting_service",
-          valueAfter: selection.mode === "auto" ? "auto" : "explicit",
-        },
-      });
+      await localHostServices.settingService.update({ integratedTerminalShell: selection });
       setIntegratedTerminalShell(selection);
     },
     [localHostServices.settingService],
   );
   const handleToolSearchModeChange = useCallback(
     async (mode: AppToolSearchMode) => {
-      await runSettingsActionAsync({
-        featureId: "settings.search",
-        action: "change_tool_search_mode",
-        trigger: "select",
-        operation: () => updateSharedSettings({ toolSearchMode: mode }),
-        completed: { resultSource: "shared_settings", valueAfter: mode },
-      });
+      await updateSharedSettings({ toolSearchMode: mode });
     },
     [updateSharedSettings],
   );
   const handleNativeSearchEnhancementsEnabledChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.search",
-        action: "toggle_native_search",
-        trigger: "switch",
-        operation: () => updateSharedSettings({ nativeSearchEnhancementsEnabled: enabled }),
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await updateSharedSettings({ nativeSearchEnhancementsEnabled: enabled });
     },
     [updateSharedSettings],
   );
   const handleAskUserQuestionAutoResolutionEnabledChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.conversation",
-        action: "toggle_ask_user_auto_resolution",
-        trigger: "switch",
-        operation: () => updateSharedSettings({ askUserQuestionAutoResolutionEnabled: enabled }),
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await updateSharedSettings({ askUserQuestionAutoResolutionEnabled: enabled });
     },
     [updateSharedSettings],
   );
   const handleModelIoFullRetentionEnabledChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.conversation",
-        action: "toggle_model_io_retention",
-        trigger: "switch",
-        operation: () => updateSharedSettings({ modelIoFullRetentionEnabled: enabled }),
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await updateSharedSettings({ modelIoFullRetentionEnabled: enabled });
     },
     [updateSharedSettings],
   );
   const handleMemoryEnabledChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.memory",
-        action: "toggle_memory",
-        trigger: "switch",
-        operation: async () => {
-          await updateSharedSettings({ memoryEnabled: enabled });
-          // 手动修改反向回写 record，换号同步不会复活旧值；失败不阻塞开关。
-          await onboardingRecordService
-            ?.updateRecordPreferences({ memoryEnabled: enabled })
-            .catch((cause: unknown) => {
-              console.warn("[settings] 回写引导记录失败", String(cause));
-            });
-        },
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await (async () => {
+        await updateSharedSettings({ memoryEnabled: enabled });
+        // 手动修改反向回写 record，换号同步不会复活旧值；失败不阻塞开关。
+        await onboardingRecordService
+          ?.updateRecordPreferences({ memoryEnabled: enabled })
+          .catch((cause: unknown) => {
+            console.warn("[settings] 回写引导记录失败", String(cause));
+          });
+      })();
     },
     [updateSharedSettings],
   );
   const handleHttpProxyChange = useCallback(
     async (proxy: string) => {
       const normalizedProxy = proxy.trim();
-      await runSettingsActionAsync({
-        featureId: "settings.network",
-        action: "save_http_proxy",
-        trigger: "button",
-        operation: () =>
-          localHostServices.settingService.update({
-            // Bugfix: RPC 会丢弃 undefined；清空代理必须传空串，由服务层删除旧字段。
-            httpProxy: normalizedProxy,
-          }),
-        completed: {
-          resultSource: "setting_service",
-          configured: normalizedProxy.length > 0,
-          requiresRestart: true,
-        },
+      await localHostServices.settingService.update({
+        // Bugfix: RPC 会丢弃 undefined；清空代理必须传空串，由服务层删除旧字段。
+        httpProxy: normalizedProxy,
       });
       setHttpProxy(normalizedProxy);
       toast(intl.formatMessage({ id: "settings.httpProxySavedHint" }));
@@ -1112,16 +580,9 @@ export function SettingsPage({
         .map((token) => token.trim())
         .filter(Boolean)
         .join(",");
-      await runSettingsActionAsync({
-        featureId: "settings.network",
-        action: "save_no_proxy",
-        trigger: "button",
-        operation: () =>
-          localHostServices.settingService.update({
-            // Bugfix: 清空 No Proxy 必须传空串，否则旧绕过规则会继续影响下次启动。
-            httpProxyNoProxy: normalizedNoProxy,
-          }),
-        completed: { resultSource: "setting_service", configured: normalizedNoProxy.length > 0 },
+      await localHostServices.settingService.update({
+        // Bugfix: 清空 No Proxy 必须传空串，否则旧绕过规则会继续影响下次启动。
+        httpProxyNoProxy: normalizedNoProxy,
       });
       setHttpProxyNoProxy(normalizedNoProxy);
       toast(intl.formatMessage({ id: "settings.httpProxySavedHint" }));
@@ -1131,20 +592,9 @@ export function SettingsPage({
   const handleHttpProxyCaCertPathChange = useCallback(
     async (caCertPath: string) => {
       const normalizedCaCertPath = caCertPath.trim();
-      await runSettingsActionAsync({
-        featureId: "settings.network",
-        action: "save_ca_certificate",
-        trigger: "button",
-        operation: () =>
-          localHostServices.settingService.update({
-            // Bugfix: 清空自定义 CA 必须传空串，否则旧 NODE_EXTRA_CA_CERTS 路径会残留。
-            httpProxyCaCertPath: normalizedCaCertPath,
-          }),
-        completed: {
-          resultSource: "setting_service",
-          configured: normalizedCaCertPath.length > 0,
-          requiresRestart: true,
-        },
+      await localHostServices.settingService.update({
+        // Bugfix: 清空自定义 CA 必须传空串，否则旧 NODE_EXTRA_CA_CERTS 路径会残留。
+        httpProxyCaCertPath: normalizedCaCertPath,
       });
       setHttpProxyCaCertPath(normalizedCaCertPath);
       toast(intl.formatMessage({ id: "settings.httpProxySavedHint" }));
@@ -1153,14 +603,7 @@ export function SettingsPage({
   );
   const handleDataBaseDirChange = useCallback(
     async (dir: string) => {
-      await runSettingsActionAsync({
-        featureId: "settings.storage",
-        action: "change_data_directory",
-        trigger: "button",
-        operation: () => localHostServices.settingService.updateDataBaseDir(dir || undefined),
-        completed: { resultSource: "setting_service", requiresRestart: true },
-        failureStage: "data_directory_update",
-      });
+      await localHostServices.settingService.updateDataBaseDir(dir || undefined);
       // Bugfix: 迁移失败时不能先把本地状态改成失败路径，否则设置页会误显示为已切换。
       setDataBaseDir(dir);
     },
@@ -1168,45 +611,21 @@ export function SettingsPage({
   );
   const handleTaskAutoArchiveEnabledChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.task",
-        action: "toggle_auto_archive",
-        trigger: "switch",
-        operation: () => services.settingService.update({ taskAutoArchiveEnabled: enabled }),
-        completed: {
-          resultSource: "setting_service",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await services.settingService.update({ taskAutoArchiveEnabled: enabled });
       setTaskAutoArchiveEnabled(enabled);
     },
     [services.settingService],
   );
   const handleTaskAutoArchiveOlderThanDaysChange = useCallback(
     async (days: number) => {
-      await runSettingsActionAsync({
-        featureId: "settings.task",
-        action: "change_auto_archive_days",
-        trigger: "select",
-        operation: () => services.settingService.update({ taskAutoArchiveOlderThanDays: days }),
-        completed: { resultSource: "setting_service", valueAfter: String(days) },
-      });
+      await services.settingService.update({ taskAutoArchiveOlderThanDays: days });
       setTaskAutoArchiveOlderThanDays(days);
     },
     [services.settingService],
   );
   const handleCloseToTrayOnWindowsChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.desktop",
-        action: "toggle_close_to_tray",
-        trigger: "switch",
-        operation: () => localHostServices.settingService.update({ closeToTrayOnWindows: enabled }),
-        completed: {
-          resultSource: "setting_service",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await localHostServices.settingService.update({ closeToTrayOnWindows: enabled });
       platform.syncAppSettings?.({ closeToTrayOnWindows: enabled });
       setCloseToTrayOnWindows(enabled);
     },
@@ -1215,34 +634,14 @@ export function SettingsPage({
   // keep-awake：走 useSettings 统一写盘 + syncAppSettings，和 Automations/创建页入口共享同一状态源。
   const handleKeepAwakeWhileRunningChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.desktop",
-        action: "toggle_keep_awake",
-        trigger: "switch",
-        operation: () => updateSharedSettings({ keepAwakeWhileRunning: enabled }),
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await updateSharedSettings({ keepAwakeWhileRunning: enabled });
     },
     [updateSharedSettings],
   );
   const handleDesktopChromiumHardwareAccelerationChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.desktop",
-        action: "toggle_hardware_acceleration",
-        trigger: "switch",
-        operation: () =>
-          localHostServices.settingService.update({
-            desktopChromiumHardwareAccelerationEnabled: enabled,
-          }),
-        completed: {
-          resultSource: "setting_service",
-          stateAfter: enabled ? "enabled" : "disabled",
-          requiresRestart: true,
-        },
+      await localHostServices.settingService.update({
+        desktopChromiumHardwareAccelerationEnabled: enabled,
       });
       setDesktopChromiumHardwareAccelerationEnabled(enabled);
       toast(
@@ -1255,19 +654,8 @@ export function SettingsPage({
   );
   const handleEmbeddedBrowserAllowInsecureCertificatesChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.browser",
-        action: "toggle_insecure_certificates",
-        trigger: "switch",
-        operation: () =>
-          localHostServices.settingService.update({
-            embeddedBrowserAllowInsecureCertificates: enabled,
-          }),
-        completed: {
-          resultSource: "setting_service",
-          stateAfter: enabled ? "enabled" : "disabled",
-          requiresRestart: true,
-        },
+      await localHostServices.settingService.update({
+        embeddedBrowserAllowInsecureCertificates: enabled,
       });
       setEmbeddedBrowserAllowInsecureCertificates(enabled);
       // 证书策略在 main 启动时装到 Session 上，改完必须重启才会换掉 verifyProc。
@@ -1279,127 +667,44 @@ export function SettingsPage({
     },
     [localHostServices.settingService, intl],
   );
-  const handleReceivePreviewUpdatesChange = useCallback(
-    async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.update",
-        action: "toggle_preview_updates",
-        trigger: "switch",
-        operation: () => updateSharedSettings({ receivePreviewUpdates: enabled }),
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
-      setReceivePreviewUpdates(enabled);
-    },
-    [updateSharedSettings],
-  );
-  const handleAutoDownloadAndInstallUpdatesChange = useCallback(
-    async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.update",
-        action: "toggle_auto_update",
-        trigger: "switch",
-        operation: () => updateSharedSettings({ autoDownloadAndInstallUpdates: enabled }),
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
-      setAutoDownloadAndInstallUpdates(enabled);
-    },
-    [updateSharedSettings],
-  );
   const handleMessageStreamShowReasoningChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.conversation",
-        action: "toggle_show_reasoning",
-        trigger: "switch",
-        operation: () => updateSharedSettings({ messageStreamShowReasoning: enabled }),
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await updateSharedSettings({ messageStreamShowReasoning: enabled });
       setMessageStreamShowReasoning(enabled);
     },
     [updateSharedSettings],
   );
   const handleMessageStreamShowTodosChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.conversation",
-        action: "toggle_show_todos",
-        trigger: "switch",
-        operation: () => updateSharedSettings({ messageStreamShowTodos: enabled }),
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await updateSharedSettings({ messageStreamShowTodos: enabled });
       setMessageStreamShowTodos(enabled);
     },
     [updateSharedSettings],
   );
   const handleToolGroupingExploreEnabledChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.tool_grouping",
-        action: "toggle_explore_grouping",
-        trigger: "switch",
-        operation: () => updateSharedSettings({ toolGroupingExploreEnabled: enabled }),
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await updateSharedSettings({ toolGroupingExploreEnabled: enabled });
       setToolGroupingExploreEnabled(enabled);
     },
     [updateSharedSettings],
   );
   const handleToolGroupingTerminalEnabledChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.tool_grouping",
-        action: "toggle_terminal_grouping",
-        trigger: "switch",
-        operation: () => updateSharedSettings({ toolGroupingTerminalEnabled: enabled }),
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await updateSharedSettings({ toolGroupingTerminalEnabled: enabled });
       setToolGroupingTerminalEnabled(enabled);
     },
     [updateSharedSettings],
   );
   const handleToolGroupingChangesEnabledChange = useCallback(
     async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.tool_grouping",
-        action: "toggle_changes_grouping",
-        trigger: "switch",
-        operation: () => updateSharedSettings({ toolGroupingChangesEnabled: enabled }),
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
+      await updateSharedSettings({ toolGroupingChangesEnabled: enabled });
       setToolGroupingChangesEnabled(enabled);
     },
     [updateSharedSettings],
   );
   const handleZCodeInteractionBehaviorChange = useCallback(
     async (behavior: ZCodeInteractionBehavior) => {
-      await runSettingsActionAsync({
-        featureId: "settings.conversation",
-        action: "change_interaction_behavior",
-        trigger: "select",
-        operation: () => updateSharedSettings({ zcodeInteractionBehavior: behavior }),
-        completed: { resultSource: "shared_settings", valueAfter: behavior },
-      });
+      await updateSharedSettings({ zcodeInteractionBehavior: behavior });
       setZCodeInteractionBehavior(behavior);
     },
     [updateSharedSettings],
@@ -1407,21 +712,11 @@ export function SettingsPage({
   const handleFooterLocaleChange = useCallback(
     (value: string) => {
       if (value === "system") {
-        runUserAction({
-          input: { featureId: "settings.locale", action: "change_locale", trigger: "select" },
-          operation: () => setLocalePreference("system"),
-          completed: { resultSource: "local_commit", valueAfter: "system" },
-          failureStage: "local_commit",
-        });
+        setLocalePreference("system");
         return;
       }
       if (value === "zh-CN" || value === "en-US") {
-        runUserAction({
-          input: { featureId: "settings.locale", action: "change_locale", trigger: "select" },
-          operation: () => setLocalePreference(value as Locale),
-          completed: { resultSource: "local_commit", valueAfter: value },
-          failureStage: "local_commit",
-        });
+        setLocalePreference(value as Locale);
       }
     },
     [setLocalePreference],
@@ -1435,41 +730,14 @@ export function SettingsPage({
         value === "zai-dark" ||
         value === "system"
       ) {
-        runUserAction({
-          input: { featureId: "settings.appearance", action: "change_theme", trigger: "select" },
-          operation: () => setTheme(value as Theme),
-          completed: { resultSource: "local_commit", valueAfter: value },
-          failureStage: "local_commit",
-        });
+        setTheme(value as Theme);
       }
     },
     [setTheme],
   );
   const handleCodePreviewSettingsChange = useCallback(
     (patch: Parameters<typeof setCodePreviewSettings>[0]) => {
-      const [key] = Object.keys(patch);
-      const action =
-        key === "lightTheme"
-          ? "change_code_light_theme"
-          : key === "darkTheme"
-            ? "change_code_dark_theme"
-            : key === "showLineNumbers"
-              ? "toggle_code_line_numbers"
-              : key === "wrapLongLines"
-                ? "toggle_code_line_wrap"
-                : "change_code_font_size";
-      const value = Object.values(patch)[0];
-      return runUserAction({
-        input: { featureId: "settings.appearance", action, trigger: "select" },
-        operation: () => setCodePreviewSettings(patch),
-        completed: {
-          resultSource: "local_commit",
-          ...(typeof value === "boolean"
-            ? { stateAfter: value ? ("enabled" as const) : ("disabled" as const) }
-            : { valueAfter: String(value) }),
-        },
-        failureStage: "local_commit",
-      });
+      return setCodePreviewSettings(patch);
     },
     [setCodePreviewSettings],
   );
@@ -1553,21 +821,12 @@ export function SettingsPage({
                       })}
                       className="m-1 w-[calc(100%-0.5rem)] justify-start gap-2 rounded-xl bg-surface px-1.5 text-remote-foreground-muted hover:bg-surface-hover hover:text-foreground max-lg:m-1 max-lg:size-10 max-lg:justify-center max-lg:px-0"
                       onClick={() => {
-                        runUserAction({
-                          input: {
-                            featureId: "settings.navigation",
-                            action: "back_to_workspace",
-                            trigger: "button",
-                          },
-                          operation: () => {
-                            if (pluginNavigationOrigin === "plugin-store") {
-                              requestPluginStoreOpen("user");
-                            }
-                            onBack?.();
-                          },
-                          completed: { resultSource: "local_commit" },
-                          failureStage: "navigation_commit",
-                        });
+                        (() => {
+                          if (pluginNavigationOrigin === "plugin-store") {
+                            requestPluginStoreOpen("user");
+                          }
+                          onBack?.();
+                        })();
                       }}
                     >
                       <ArrowLeft className="size-4" />
@@ -1624,21 +883,12 @@ export function SettingsPage({
                                 data-testid={testId(TID_SETTINGS_SECTION_NAV, id)}
                                 data-settings-section-nav={id}
                                 onClick={() => {
-                                  runUserAction({
-                                    input: {
-                                      featureId: "settings.navigation",
-                                      action: "open_section",
-                                      trigger: "button",
-                                    },
-                                    operation: () => {
-                                      setPluginNavigationOrigin(undefined);
-                                      setTargetSourceServerId(undefined);
-                                      setSettingsSectionNavigationVersion((version) => version + 1);
-                                      setActiveSettingsSection(id);
-                                    },
-                                    completed: { resultSource: "local_commit", sectionId: id },
-                                    failureStage: "navigation_commit",
-                                  });
+                                  (() => {
+                                    setPluginNavigationOrigin(undefined);
+                                    setTargetSourceServerId(undefined);
+                                    setSettingsSectionNavigationVersion((version) => version + 1);
+                                    setActiveSettingsSection(id);
+                                  })();
                                 }}
                               >
                                 <span className="flex min-w-0 flex-1 items-center gap-2">
@@ -1664,16 +914,7 @@ export function SettingsPage({
                   label={intl.formatMessage({ id: "settings.onboarding" })}
                   className="mt-4 border border-dashed border-border hover:border-border-hover"
                   onClick={() => {
-                    runUserAction({
-                      input: {
-                        featureId: "settings.navigation",
-                        action: "open_onboarding",
-                        trigger: "button",
-                      },
-                      operation: requestOnboardingDialog,
-                      completed: { resultSource: "local_commit" },
-                      failureStage: "dialog_open",
-                    });
+                    requestOnboardingDialog();
                   }}
                 >
                   <span className="text-ui-base text-foreground">
@@ -1689,12 +930,7 @@ export function SettingsPage({
                   onLocaleChange={handleFooterLocaleChange}
                   onThemeChange={handleFooterThemeChange}
                   onSettingsButtonClick={onBack}
-                  onUsageClick={handleOpenUsageSettings}
-                  onUpgradeClick={handleOpenCodingPlanUpgradeSettings}
-                  onLogin={onLogin}
-                  onLogout={onLogout}
                   settingsButtonMode="back"
-                  user={user}
                   // 头像菜单是 WorkspaceSidebarFooter 的共享菜单，Settings 场景不能丢失桌面平台能力。
                   // 之前这里没透传 isDesktop，导致同一个头像菜单在设置页缺少界面缩放入口。
                   isDesktop={isDesktop}
@@ -1797,13 +1033,6 @@ export function SettingsPage({
                                   })}
                                 </span>
                               ) : null}
-                              {activeSection === "usage" ? (
-                                <SettingsUsageProviderTabs
-                                  activeTab={usageActiveTab}
-                                  codingPlanSources={usageCodingPlanSources}
-                                  onTabChange={handleUsageTabSelect}
-                                />
-                              ) : null}
                             </div>
                           </div>
                           {activeSection === "general" ? (
@@ -1828,8 +1057,6 @@ export function SettingsPage({
                               desktopChromiumHardwareAccelerationEnabled={
                                 desktopChromiumHardwareAccelerationEnabled
                               }
-                              receivePreviewUpdates={receivePreviewUpdates}
-                              autoDownloadAndInstallUpdates={autoDownloadAndInstallUpdates}
                               dataBaseDir={dataBaseDir}
                               terminalInheritSystemProfile={terminalInheritSystemProfile}
                               terminalFontFamily={terminalFontFamily}
@@ -1844,35 +1071,9 @@ export function SettingsPage({
                               defaultHomeDir={defaultHomeDir}
                               showIntegratedTerminalShell={hostPlatform === "win32"}
                               setLocalePreference={handleFooterLocaleChange}
-                              setNotificationEnabled={(enabled) =>
-                                runUserAction({
-                                  input: {
-                                    featureId: "settings.notification",
-                                    action: "toggle_notification",
-                                    trigger: "switch",
-                                  },
-                                  operation: () => setNotificationEnabled(enabled),
-                                  completed: {
-                                    resultSource: "local_commit",
-                                    stateAfter: enabled ? "enabled" : "disabled",
-                                  },
-                                  failureStage: "local_commit",
-                                })
-                              }
+                              setNotificationEnabled={(enabled) => setNotificationEnabled(enabled)}
                               setNotificationSoundEnabled={(enabled) =>
-                                runUserAction({
-                                  input: {
-                                    featureId: "settings.notification",
-                                    action: "toggle_notification_sound",
-                                    trigger: "switch",
-                                  },
-                                  operation: () => setNotificationSoundEnabled(enabled),
-                                  completed: {
-                                    resultSource: "local_commit",
-                                    stateAfter: enabled ? "enabled" : "disabled",
-                                  },
-                                  failureStage: "local_commit",
-                                })
+                                setNotificationSoundEnabled(enabled)
                               }
                               messageStreamShowReasoning={messageStreamShowReasoning}
                               messageStreamShowTodos={messageStreamShowTodos}
@@ -1905,10 +1106,6 @@ export function SettingsPage({
                               onDesktopChromiumHardwareAccelerationChange={
                                 handleDesktopChromiumHardwareAccelerationChange
                               }
-                              onReceivePreviewUpdatesChange={handleReceivePreviewUpdatesChange}
-                              onAutoDownloadAndInstallUpdatesChange={
-                                handleAutoDownloadAndInstallUpdatesChange
-                              }
                               onMessageStreamShowReasoningChange={
                                 handleMessageStreamShowReasoningChange
                               }
@@ -1928,18 +1125,7 @@ export function SettingsPage({
                               onAskUserQuestionAutoResolutionEnabledChange={
                                 handleAskUserQuestionAutoResolutionEnabledChange
                               }
-                              onOpenOnboardingDialog={() =>
-                                runUserAction({
-                                  input: {
-                                    featureId: "settings.navigation",
-                                    action: "open_onboarding",
-                                    trigger: "button",
-                                  },
-                                  operation: requestOnboardingDialog,
-                                  completed: { resultSource: "local_commit" },
-                                  failureStage: "dialog_open",
-                                })
-                              }
+                              onOpenOnboardingDialog={() => requestOnboardingDialog()}
                             />
                           ) : activeSection === "remoteDevices" ? (
                             sharedSettings && isDesktop && sourceManagement ? (
@@ -2063,21 +1249,7 @@ export function SettingsPage({
                               theme={theme}
                               setTheme={(nextTheme) => handleFooterThemeChange(nextTheme)}
                               uiFontSizePx={uiFontSizePx}
-                              setUiFontSizePx={(fontSizePx) =>
-                                runUserAction({
-                                  input: {
-                                    featureId: "settings.appearance",
-                                    action: "change_ui_font_size",
-                                    trigger: "keyboard",
-                                  },
-                                  operation: () => setUiFontSizePx(fontSizePx),
-                                  completed: {
-                                    resultSource: "local_commit",
-                                    valueAfter: String(fontSizePx),
-                                  },
-                                  failureStage: "local_commit",
-                                })
-                              }
+                              setUiFontSizePx={(fontSizePx) => setUiFontSizePx(fontSizePx)}
                             />
                           ) : activeSection === "shortcuts" ? (
                             <ShortcutSettingsSection isDesktop={Boolean(isDesktop)} />
@@ -2173,13 +1345,7 @@ export function SettingsPage({
                               <ArchiveManagement />
                             </div>
                           ) : activeSection === "usage" ? (
-                            <UsageStatsSection
-                              activeTab={usageActiveTab}
-                              providerSourcesLoading={usageProviderSettingsLoading}
-                              selectedCodingPlanSource={selectedUsageCodingPlanSource}
-                              workspaceIdentity={activeWorkspaceIdentity}
-                              workspacePath={activeWorkspacePath ?? undefined}
-                            />
+                            <UsageStatsSection />
                           ) : activeSection === "subagents" ? (
                             <SubagentsSection
                               onManageModels={handleOpenModelProviderSettings}

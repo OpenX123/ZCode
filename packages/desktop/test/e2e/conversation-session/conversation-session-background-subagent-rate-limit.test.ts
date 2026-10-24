@@ -15,11 +15,6 @@ import {
   waitForV4Pane,
   waitForV4TimelineContaining,
 } from "../helpers/v4-conversation.js";
-import {
-  beginConversationTelemetryCapture,
-  readConversationReportRequests,
-  waitForConversationReportInventory,
-} from "../helpers/conversation-telemetry-parity-capture.js";
 
 const BG26_TIMEOUT_MS = 240000;
 const PARENT_MARKER = "E2E_BACKGROUND_SUBAGENT_RATE_LIMIT_PARENT";
@@ -42,8 +37,6 @@ describe("会话区 background subagent 429 错误展示 E2E", () => {
 
   it("BG26: 429 原始错误进入 subagent result、失败 hover 和 restore snapshot", async function () {
     this.timeout(BG26_TIMEOUT_MS);
-
-    const telemetryCapture = await beginConversationTelemetryCapture();
     const prompt = `${PARENT_MARKER}: launch one background Agent and finish after its failed task notification with ${PARENT_DONE}.`;
     // Bug 原因：v4 已删除 chat-input/chat-view，旧 formal case 在 before hook 等待
     // legacy composer，真实场景从未执行。发送、timeline、session 切换统一走 v4 contract。
@@ -72,46 +65,6 @@ describe("会话区 background subagent 429 错误展示 E2E", () => {
       90000,
     );
     await waitForV4TimelineContaining(PARENT_DONE, 90000);
-    await waitForConversationReportInventory(telemetryCapture, {
-      message_completion: 2,
-    });
-    const reports = await readConversationReportRequests(telemetryCapture);
-    // 早期 staging 断言没有后台 step；后续首终态结算已要求失败也报告零用量 Agent 汇总。
-    // 请求返回 429 没有 usage，不能把失败调用计成已确认的计费用量。
-    expect(
-      reports.filter(
-        (report) =>
-          report.element_name === "agent_step" &&
-          (report.event_extra_detail as Record<string, unknown> | undefined)?.agent_role ===
-            "background subagent",
-      ),
-    ).toEqual([
-      expect.objectContaining({
-        event_extra_detail: expect.objectContaining({
-          agent_role: "background subagent",
-          tool_name: "Agent",
-          status: "fail",
-          // 上报按隐私契约移除错误正文；下方 UI/restore 仍验证同一 provider 原文。
-          error_msg: "[redacted]",
-          error_type: "TOOL_EXEC_ERROR",
-          model_request_count: "0",
-          token_usage_scope: "",
-          total_tokens: "0",
-        }),
-      }),
-    ]);
-    expect(
-      reports.filter(
-        (report) =>
-          report.element_name === "message_completion" &&
-          ["child_session_id", "parent_tool_call_id"].some((key) =>
-            Object.hasOwn(
-              (report.event_extra_detail as Record<string, unknown> | undefined) ?? {},
-              key,
-            ),
-          ),
-      ),
-    ).toHaveLength(0);
     const idleSnapshot = await waitForV4Pane(
       (snapshot) =>
         snapshot.sessionId !== null && snapshot.sessionId !== "draft" && !snapshot.canStop,

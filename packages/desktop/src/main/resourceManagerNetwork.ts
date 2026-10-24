@@ -36,11 +36,7 @@ export function startResourceManagerNetwork(
   buffer.start(captureId);
   nodeCapture.setCaptureId(captureId);
   // 只订阅 App 拥有的 session；内置浏览器/录屏的独立 session 不进入采集。
-  const sessions = [
-    session.defaultSession,
-    session.fromPartition("persist:zcode-coding-plan"),
-    session.fromPartition("persist:zcode-rewards"),
-  ];
+  const sessions = [session.defaultSession];
   for (const appSession of sessions) {
     disposers.push(
       subscribeBeforeRequest(

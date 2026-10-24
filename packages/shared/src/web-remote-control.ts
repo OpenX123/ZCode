@@ -1,8 +1,5 @@
-import type { MobilePluginDiscoveryTelemetry } from "./telemetry.js";
 import { z } from "zod";
-import type { MobileSessionCreateTelemetry } from "./sessionCreateTelemetry.js";
 /* eslint-disable max-lines -- Web 远程控制共享 App payload 与 workspace bridge 契约。 */
-import type { WebRemoteControlRelayV2PairStatus } from "#src/web-remote-relay/index.js";
 import type {
   DockerContainerInfo,
   SSHConfigAliasOption,
@@ -19,7 +16,6 @@ import type {
   SaveCliMcpToUserDirectoryRequest,
 } from "./mcp.js";
 import type { ZCodeProvider } from "./zcode-task-types-core.js";
-import type { SessionWorkflowActivity } from "./zcode-protocol-v4/sessions-index-workflow-activity.js";
 import type { WebRemoteControlRpcTransportPayload } from "./web-remote-control-rpc-transport.js";
 import type { WorkspacePurpose } from "./workspacePurpose.js";
 
@@ -588,7 +584,6 @@ export interface WebRemoteControlMobileDiagnosticPayload {
   timestamp: number;
   state?: string;
   previousState?: string;
-  pairStatus?: WebRemoteControlRelayV2PairStatus;
   closeCode?: number;
   closeReason?: string;
   wasClean?: boolean;
@@ -601,10 +596,6 @@ export interface WebRemoteControlMobileDiagnosticPayload {
 }
 
 export type WebRemoteControlAppPayload =
-  | {
-      zcode_type: "telemetry-report";
-      event: MobileSessionCreateTelemetry | MobilePluginDiscoveryTelemetry;
-    }
   | WebRemoteControlBootstrapRequestPayload
   | WebRemoteControlBootstrapResponsePayload
   | WebRemoteControlWorkspaceListRequestPayload

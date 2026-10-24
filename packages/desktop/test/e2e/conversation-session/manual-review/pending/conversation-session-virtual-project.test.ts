@@ -39,7 +39,7 @@ import {
 } from "../../../helpers/desktop-app.js";
 
 import { waitForUpstreamNetworkCapture } from "../../../helpers/upstream-capture.js";
-import { loginWithApiKey, prepareV4ConversationE2E } from "../../../helpers/v4-conversation.js";
+import { prepareV4ConversationE2E } from "../../../helpers/v4-conversation.js";
 
 describe("虚拟项目", () => {
   before(async () => {
@@ -444,15 +444,6 @@ describe("虚拟项目", () => {
       db.close();
     }
     await browser.refresh();
-    // 隔离测试刷新后可能重新进入欢迎页；复用既有登录准备，不放宽离线项目断言。
-    const apiKeyEntry = $('[data-testid="login-use-api-key-button"]');
-    await browser.waitUntil(
-      async () =>
-        (await apiKeyEntry.isDisplayed()) ||
-        (await $('[data-workspace-shell="true"]').isDisplayed()),
-      { timeout: 45_000 },
-    );
-    if (await apiKeyEntry.isDisplayed()) await loginWithApiKey();
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
     const offline = $('[data-project-name="E2E_VP08_Offline"]');
     try {
@@ -1289,12 +1280,5 @@ async function captureProjectDialogLayouts(stage: string) {
 
 async function refreshVirtualProjectWorkspace() {
   await browser.refresh();
-  const login = $('[data-testid="login-use-api-key-button"]');
-  await browser.waitUntil(
-    async () =>
-      (await login.isDisplayed()) || (await $('[data-testid="project-section"]').isDisplayed()),
-    { timeout: 45_000 },
-  );
-  if (await login.isDisplayed()) await loginWithApiKey();
   await $('[data-testid="project-section"]').waitForDisplayed({ timeout: 30_000 });
 }

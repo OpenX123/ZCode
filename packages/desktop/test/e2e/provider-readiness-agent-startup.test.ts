@@ -7,8 +7,6 @@ import {
   TID_MODEL_PROVIDER_ADD_PROVIDER_BUTTON,
   TID_MODEL_PROVIDER_TEMPLATE_ITEM,
   TID_MODEL_PROVIDER_NAV_ITEM,
-  TID_LOGIN_API_KEY_SKIP_BUTTON,
-  TID_LOGIN_USE_API_KEY_BUTTON,
   TID_SETTINGS_SECTION_NAV,
   TID_SETTINGS_BACK_BUTTON,
   TID_TASK_ITEM,
@@ -47,7 +45,7 @@ import {
   waitForResourceManagerReady,
 } from "./helpers/resource-manager.js";
 
-const E2E_PROVIDER_API_KEY = "e2e-login-api-key";
+const E2E_PROVIDER_API_KEY = "e2e-provider-api-key";
 
 describe("Provider/model readiness 只门禁模型执行", () => {
   after(async () => {
@@ -58,15 +56,6 @@ describe("Provider/model readiness 只门禁模型执行", () => {
   it("I23/I24: 空配置只启动唯一只读 Agent，保存 API Key provider 后复用并水合草稿模型", async function () {
     this.timeout(120000);
 
-    await waitForTestIdByDom(TID_LOGIN_USE_API_KEY_BUTTON, {
-      timeout: 30000,
-      timeoutMsg: "空 auth/provider 冷启动后没有展示 API Key 配置入口",
-    });
-    await clickTestIdByDom(TID_LOGIN_USE_API_KEY_BUTTON);
-    await clickTestIdByDom(TID_LOGIN_API_KEY_SKIP_BUTTON, {
-      timeout: 15000,
-      timeoutMsg: "API Key 登录页没有可用的暂时跳过入口",
-    });
     await waitForDefaultWorkspaceReady(30000);
     await waitForModelConfigMissingBanner();
 

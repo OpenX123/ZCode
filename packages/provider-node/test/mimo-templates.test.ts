@@ -117,7 +117,6 @@ describe("MiMo API 与 Token Plan 官方模板", () => {
         const resolution = new ProviderConfigResolver().resolve({
           zcodeBuiltinProviders: ProviderConfigMap.empty(),
           zcodeBuiltinProviderTemplates: snapshot.providerTemplates,
-          accountProviders: ProviderConfigMap.empty(),
           personalProviders: personal,
           zcodeBuiltinModelRules: snapshot.models,
           personalModels: new ModelConfigRules([

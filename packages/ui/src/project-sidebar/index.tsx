@@ -15,10 +15,8 @@ import type {
 } from "@/project-sidebar/contract.js";
 import { useProjectPinIntent } from "@/project-sidebar/useProjectPinIntent.js";
 import { ProjectTaskListContext } from "@/project-sidebar/ProjectTaskListContext.js";
-import { useWebRemoteControlStatus } from "@/hooks/useWebRemoteControlStatus.js";
 import { useProjectRemoteSync } from "@/project-sidebar/useProjectRemoteSync.js";
 import { useProjectConnectionDiagnostics } from "@/project-sidebar/useProjectConnectionDiagnostics.js";
-import { useWebRemoteControlFeatureEnabled } from "@/WebRemoteControlFeatureProvider.js";
 import { useProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
 export {
   ProjectDirectoryProvider,
@@ -47,21 +45,17 @@ import { RemoteProjectPicker } from "@/project-sidebar/RemoteProjectPicker.js";
 import { ProjectSections } from "@/project-sidebar/ProjectSections.js";
 import { ProjectSidebarListHeader } from "@/project-sidebar/ProjectSidebarListHeader.js";
 import { ProjectSidebarNavigation } from "@/project-sidebar/ProjectSidebarNavigation.js";
-import { HomeOnlyWorkspaceRows } from "@/project-sidebar/HomeOnlyWorkspaceRows.js";
 import { WorkspaceSidebarFooter } from "@/WorkspaceSidebarFooter.js";
-import { SidebarBottomActivity } from "@/sidebar-activity/SidebarBottomActivity.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
-import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 export { attachRemoteProjectWorkspace } from "@/project-sidebar/remote-navigation.js";
 export { resolveEntryProject } from "@/project-sidebar/view.js";
 export type {
   SidebarFileTreeOpenRequest,
   ProjectSidebarProps,
 } from "@/project-sidebar/contract.js";
-
 // 右侧面板显隐曾让所有项目的菜单和 Tooltip 重渲染；只隔离无关父更新，保留目录/context 订阅。
 export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebarProps) {
   const {
@@ -84,12 +78,13 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
   const { intl, localePreference, setLocalePreference } = useZCodeIntl();
   const tabStore = useTabStoreApi();
   const setTheme = useZCodeStore((state) => state.setTheme);
-  const { openCodingPlanUpgrade } = useCodingPlanUpgradeDialog();
   const { view, setView } = preferences;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [groupedToolbar, setGroupedToolbar] = useState<HTMLDivElement | null>(null);
   const [groupedSticky, setGroupedSticky] = useState<HTMLDivElement | null>(null);
-  const [editor, setEditor] = useState<{ project: VirtualProject | null } | null>(null);
+  const [editor, setEditor] = useState<{
+    project: VirtualProject | null;
+  } | null>(null);
   const [creating, setCreating] = useState(false);
   // 当前任务只影响远端“创建项目”的默认设备；分组继承在点击时读，
   // 避免本地会话/草稿切换让全部项目的菜单与 Tooltip 重渲染。
@@ -101,31 +96,14 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
   );
   const [remotePicker, setRemotePicker] = useState<RemoteProjectHost | null>(null);
   const { openFiles, openTaskFiles } = useProjectFileTree(props, directory, remoteService);
-  const remoteControlEnabled = useWebRemoteControlFeatureEnabled();
-  const mobileStatus = useWebRemoteControlStatus({
-    enabled: Boolean(props.isDesktop && remoteControlEnabled),
-  });
-  const mobileView = mobileStatus.mobileConnected ? mobileStatus.mobileViewState : null;
-  const mobileActiveTaskKey =
-    mobileView?.activeWorkspaceKey && mobileView.activeTaskId
-      ? `${mobileView.activeWorkspaceKey}:${mobileView.activeTaskId}`
-      : null;
   const taskPresentation = useMemo(
     () => ({
       isWebRemoteControl: props.isWebRemoteControl,
       activeWorkspaceKey: props.workspaceIdentity?.trim() || props.workspacePath,
-      mobileActiveTaskKey,
       onPin: pin,
       onOpenTaskFiles: openTaskFiles,
     }),
-    [
-      props.isWebRemoteControl,
-      props.workspacePath,
-      props.workspaceIdentity,
-      mobileActiveTaskKey,
-      pin,
-      openTaskFiles,
-    ],
+    [props.isWebRemoteControl, props.workspacePath, props.workspaceIdentity, pin, openTaskFiles],
   );
   const msg = (id: string) => intl.formatMessage({ id: `project.${id}` });
   const start = async (projectId?: string, hostId?: string, taskGroupId?: string | null) => {
@@ -205,15 +183,6 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
     [setLocalePreference],
   );
   const changeTheme = useCallback((value: string) => setTheme(value as Theme), [setTheme]);
-  const upgrade = useCallback<
-    NonNullable<Parameters<typeof WorkspaceSidebarFooter>[0]["onUpgradeClick"]>
-  >(
-    (providerId, funnelContext) => openCodingPlanUpgrade({ providerId, funnelContext }),
-    [openCodingPlanUpgrade],
-  );
-  const banner = useMemo(() => <SidebarBottomActivity />, []);
-  // 手机远控 home-only 没有 base attachment，也就没有项目契约；改用 relay 层工作区列表与重连入口。
-  const homeOnlySwitcher = service ? undefined : props.webRemoteControlWorkspaceSwitcher;
   return (
     <ProjectTaskListContext.Provider value={taskPresentation}>
       <SidebarTooltipProvider>
@@ -245,9 +214,7 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
                   <div ref={setGroupedSticky} />
                   <ScrollFadeViewport ref={scrollRef} className="overflow-x-hidden">
                     <div className="flex flex-col gap-3 pb-3">
-                      {homeOnlySwitcher ? (
-                        <HomeOnlyWorkspaceRows switcher={homeOnlySwitcher} />
-                      ) : view === "projects" ? (
+                      {view === "projects" ? (
                         <>
                           <ProjectTaskRows
                             kind="pinned"
@@ -310,12 +277,12 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
                           refresh={refresh}
                         />
                       )}
-                      {loading && !homeOnlySwitcher ? (
+                      {loading ? (
                         <p className="px-4 text-ui-sm text-foreground-subtle">
                           {intl.formatMessage({ id: "common.loading" })}
                         </p>
                       ) : null}
-                      {error && !homeOnlySwitcher ? (
+                      {error ? (
                         <p role="alert" className="px-4 text-ui-sm text-destructive">
                           {error}
                         </p>
@@ -331,17 +298,11 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
                 onLocaleChange={changeLocale}
                 onThemeChange={changeTheme}
                 onSettingsButtonClick={openSettings}
-                onUsageClick={openSettings}
-                onUpgradeClick={upgrade}
-                onLogin={props.onLogin}
-                onLogout={props.onLogout}
-                user={props.user}
                 workspacePath={props.workspacePath}
                 // 项目侧栏不再从 tab 反推身份；远控入口必须沿用当前 attachment 的精确 scope。
                 workspaceIdentity={props.workspaceIdentity}
                 workspaceRemoteSessionId={props.workspaceRemoteSessionId}
                 isDesktop={props.isDesktop}
-                banner={banner}
               />
             </div>
           </div>
@@ -395,5 +356,4 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
     </ProjectTaskListContext.Provider>
   );
 });
-
 export { ComposerSubmissionPendingContext } from "@/project-sidebar/ComposerSubmissionPendingContext.js";

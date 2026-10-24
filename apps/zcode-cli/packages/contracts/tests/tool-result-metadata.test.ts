@@ -14,6 +14,39 @@ import {
 import { describe, expect, it } from "vitest";
 
 describe("tool result display metadata", () => {
+  it.each(["quota_exceeded", "coding_plan_required"])(
+    "只读恢复旧 MCP 标记 %s 并保留工具显示，不接受新写入",
+    (code) => {
+      const display = {
+        kind: "mcp_tool",
+        serverName: "legacy-server",
+        toolName: "search",
+        description: "原有工具描述",
+        ui: { pluginId: "local-plugin", resourceUri: "ui://tool/view" },
+      } as const;
+      const persisted = { ...display, unavailable: { code } };
+      const metadata = { schemaVersion: 1, display: persisted };
+
+      expect(toolResultDisplayPayloadSchema.safeParse(persisted).success).toBe(false);
+      expect(parseToolResultDisplayPayload(persisted)).toEqual(display);
+      expect(parseCompletedToolPartMetadata(metadata)).toEqual({ schemaVersion: 1, display });
+      expect(persisted).toHaveProperty("unavailable", { code });
+      expect(metadata.display).toBe(persisted);
+    },
+  );
+
+  it("旧 MCP 读取兼容不放宽其他 display 字段", () => {
+    expect(
+      parseToolResultDisplayPayload({
+        kind: "mcp_tool",
+        serverName: "legacy-server",
+        toolName: "search",
+        unavailable: { code: "quota_exceeded" },
+        unknownField: true,
+      }),
+    ).toBeUndefined();
+  });
+
   it("accepts the bounded TaskOutput UI projection", () => {
     const display = {
       kind: "task_output",

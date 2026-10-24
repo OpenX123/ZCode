@@ -112,10 +112,25 @@ describe("feature boundary graph helpers", () => {
     const stats = getFeatureBoundaryGraphStats(graph);
 
     expect(stats).toMatchObject({
-      nodeCount: 324,
-      edgeCount: 629,
       unresolvedEndpointCount: 2,
     });
+    // 当前产品图按实际能力增删，固定节点总数会使合法文档维护误报。
+    expect(stats.nodeCount).toBeGreaterThan(0);
+    expect(stats.edgeCount).toBeGreaterThan(0);
+    expect(graph.nodes.some((node) => node.id === "capability.plan-entitlements")).toBe(false);
+    expect(graph.nodes.some((node) => node.id === "surface.web-archived-tasks")).toBe(false);
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.from === "surface.web-archived-tasks" || edge.to === "surface.web-archived-tasks",
+      ),
+    ).toBe(false);
+    expect(graph.edges.some((edge) => edge.condition?.includes("persist:zcode-coding-plan"))).toBe(
+      false,
+    );
+    expect(graph.nodes.some((node) => node.id === "capability.remote-provider-provisioning")).toBe(
+      true,
+    );
     expect(graph.nodes.filter((node) => node.kind === "unresolved").map((node) => node.id)).toEqual(
       ["capability.mcp-oauth-authorization", "persistence.desktop-user-data-root"],
     );

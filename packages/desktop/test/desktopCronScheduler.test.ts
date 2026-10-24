@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { utilityProcess as electronUtilityProcess } from "electron";
-import { hostCronRunMessageSchema, hostOffPeakRunMessageSchema } from "@zcode/shared";
+import { hostCronRunMessageSchema } from "@zcode/shared";
 import { spawnCronScheduler } from "../src/main/desktopCronScheduler.js";
 
 vi.mock("electron", () => ({
@@ -22,46 +22,60 @@ class MockSchedulerProcess extends EventEmitter {
 }
 
 describe("desktopCronScheduler", () => {
-  it.each(["cron", "offpeak"] as const)(
-    "forwards and validates the saved %s project directory snapshot",
-    async (kind) => {
-      const child = new MockSchedulerProcess();
-      const host = { postMessage: vi.fn() };
-      vi.mocked(electronUtilityProcess.fork).mockReturnValue(child as never);
-      const scheduler = spawnCronScheduler({
-        hostProcessLocalEnv: {},
-        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-        resolveDispatchHost: () => host as never,
-      });
-      const execution = {
-        workspacePath: "/frozen",
-        workspaceIdentity: "remote:server:s:/frozen",
-        projectId: "p",
-        hostId: "remote:server:s",
-        additionalDirectories: [],
-      };
-      child.emit("message", {
-        ...execution,
-        type: `${kind}-dispatch-request`,
-        prompt: "run",
-        ...(kind === "cron"
-          ? { automationId: "a", runId: "r" }
-          : {
-              offPeakTaskId: "o",
-              permissionMode: "default",
-              modelSelection: { providerId: "p", modelId: "m" },
-            }),
-      });
-      const frame = host.postMessage.mock.calls[0]?.[0];
-      expect(frame).toMatchObject(execution);
-      expect(
-        (kind === "cron" ? hostCronRunMessageSchema : hostOffPeakRunMessageSchema).parse(frame),
-      ).toMatchObject(execution);
-      const disposing = scheduler.dispose();
-      child.emit("exit", 0);
-      await disposing;
-    },
-  );
+  it("忽略旧闲时任务派发消息，不创建新的执行", async () => {
+    const child = new MockSchedulerProcess();
+    const host = { postMessage: vi.fn() };
+    vi.mocked(electronUtilityProcess.fork).mockReturnValue(child as never);
+    const scheduler = spawnCronScheduler({
+      hostProcessLocalEnv: {},
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      resolveDispatchHost: () => host as never,
+    });
+
+    // 旧数据库记录仍会保留，但历史派发消息不能重新激活官方 ticket 执行链。
+    child.emit("message", {
+      type: "offpeak-dispatch-request",
+      offPeakTaskId: "historical-idle-task",
+      prompt: "run",
+      workspacePath: "/frozen",
+    });
+    expect(host.postMessage).not.toHaveBeenCalled();
+    expect(child.postMessage).not.toHaveBeenCalled();
+    const disposing = scheduler.dispose();
+    child.emit("exit", 0);
+    await disposing;
+  });
+
+  it("保留普通 Cron 的项目目录快照与工作区身份", async () => {
+    const child = new MockSchedulerProcess();
+    const host = { postMessage: vi.fn() };
+    vi.mocked(electronUtilityProcess.fork).mockReturnValue(child as never);
+    const scheduler = spawnCronScheduler({
+      hostProcessLocalEnv: {},
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      resolveDispatchHost: () => host as never,
+    });
+    const execution = {
+      workspacePath: "/frozen",
+      workspaceIdentity: "remote:server:s:/frozen",
+      projectId: "p",
+      hostId: "remote:server:s",
+      additionalDirectories: [],
+    };
+    child.emit("message", {
+      ...execution,
+      type: "cron-dispatch-request",
+      prompt: "run",
+      automationId: "a",
+      runId: "r",
+    });
+    const frame = host.postMessage.mock.calls[0]?.[0];
+    expect(frame).toMatchObject(execution);
+    expect(hostCronRunMessageSchema.parse(frame)).toMatchObject(execution);
+    const disposing = scheduler.dispose();
+    child.emit("exit", 0);
+    await disposing;
+  });
 
   it("立即执行时直接向 scheduler 发送 wake 消息", () => {
     const child = new MockSchedulerProcess();

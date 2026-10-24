@@ -72,7 +72,7 @@ describe("turn abort outcome", () => {
     expect(protocolEvents[0]).toMatchObject({
       type: SessionEventType.TurnError,
       payload: {
-        error: { type: "proto.payloadTooLarge", attribution: { highspeedCardId: null } },
+        error: { type: "proto.payloadTooLarge", attribution: { retryable: false } },
       },
     });
 
@@ -106,67 +106,6 @@ describe("turn abort outcome", () => {
       type: SessionEventType.TurnComplete,
       payload: { resultType: "cancelled" },
     });
-  });
-
-  it("只在显式传入时把 Highspeed 无处可退事实写进 TurnError 归因", async () => {
-    // Renderer 退卡只看该事实；普通失败不得带上它，否则不相关的错误会误作废卡。
-    const abort = new AbortController();
-    const coreError = createTurnFailureError(
-      Object.assign(new Error("highspeed card is invalid"), {
-        code: "invalid_model_request",
-        context: { providerCode: "3402", source: "provider", statusCode: 400 },
-      }),
-      abort.signal,
-      "Turn execution failed",
-    );
-    const events: Array<{ type: string; payload: unknown }> = [];
-    const runtime = {
-      createEvent: (type: string, payload: unknown) => ({ type, payload }),
-      appendEvent: vi.fn(async (event: { type: string; payload: unknown }) => {
-        events.push(event);
-      }),
-      logger: undefined,
-    };
-    const baseParams = {
-      coreError,
-      durationMs: 1,
-      turnPhase: "model",
-      traceContext: { traceId: "trace-highspeed-unavailable" } as never,
-      fallbackMessage: "Turn execution failed",
-      logEvent: "turn.failed",
-      logLabel: "Turn",
-    };
-
-    await appendTurnOutcomeEvent(runtime as never, {
-      ...baseParams,
-      events: [],
-      highspeedCardId: "card-1",
-      highspeedFallbackUnavailable: true,
-    });
-    await appendTurnOutcomeEvent(runtime as never, {
-      ...baseParams,
-      events: [],
-      highspeedCardId: "card-1",
-    });
-
-    expect(events[0]).toMatchObject({
-      type: SessionEventType.TurnError,
-      payload: {
-        error: {
-          code: "3402",
-          attribution: {
-            providerErrorCode: "3402",
-            highspeedCardId: "card-1",
-            highspeedFallbackUnavailable: true,
-          },
-        },
-      },
-    });
-    const plainAttribution = (
-      events[1] as { payload: { error: { attribution: Record<string, unknown> } } }
-    ).payload.error.attribution;
-    expect(plainAttribution).toMatchObject({ highspeedCardId: "card-1" });
-    expect(plainAttribution).not.toHaveProperty("highspeedFallbackUnavailable");
   });
 });
 

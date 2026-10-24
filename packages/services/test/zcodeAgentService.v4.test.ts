@@ -45,6 +45,10 @@ process.stdin.on("data", (chunk) => {
     let msg;
     try { msg = JSON.parse(line); } catch { continue; }
     if (logPath && msg.method) fs.appendFileSync(logPath, line + "\\n");
+    if (msg.method === "provider/refreshRegistry" && msg.id !== undefined) {
+      send({ id: msg.id, result: { refreshed: true } });
+      continue;
+    }
     if (msg.method === "session/list" && msg.id !== undefined) {
       const sessions = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
       send({ id: msg.id, result: { sessions: sessions.filter((session) => msg.params.sessionIds.includes(session.sessionId)) } });
@@ -59,11 +63,7 @@ process.stdin.on("data", (chunk) => {
       else send({ id: msg.id, result: { kind: "unavailable", workId: msg.params.workId } });
       continue;
     }
-    if (msg.method === "v4/conversation/offPeakControl" && msg.id !== undefined) {
-      send({ id: msg.id, result: { accepted: true } });
-      send({ method: "v4/offPeak/lifecycle", params: { sessionId: msg.params.sessionId, executionId: msg.params.executionId, offPeakTaskId: "idle-task", type: "ticket_released", ticketId: "old" } });
-      continue;
-    }
+
     if (msg.method === "v4/conversation/subscribe" && msg.params.topic.endsWith("/channel-reply-source")) {
       send({ id: "reverse-reply", method: "bot/channel/reply", trace: { traceId: "trace-native" }, params: { taskId: "channel-reply-source", inputId: "input-a", toolCallId: "call-a", parts: [{type:"mention",refId:"m1"}] } });
     }
@@ -341,48 +341,13 @@ function readRequests(logPath: string): Array<{ method: string; params: Record<s
 }
 
 describe("zcodeAgentService v4 conversation channel", () => {
-  it("闲时换票只更新已有 runtime，生命周期通知按工作区投递", async () => {
-    const { service, workspacePath, commandResolver, logPath } = setupService();
-    const events: unknown[] = [];
-    const foreign: unknown[] = [];
-    const listener = service.onDynamicOffPeakLifecycle({ workspacePath })((event) =>
-      events.push(event),
-    );
-    const other = service.onDynamicOffPeakLifecycle({ workspacePath: "/other-workspace" })(
-      (event) => foreign.push(event),
-    );
-    const control = {
-      sessionId: "session",
-      executionId: "execution",
-      action: "replace_ticket" as const,
-      renewalId: 1,
-      ticketId: "new",
-      requestAuth: { headers: { ticket: "new" } },
-    };
+  it("独立 Harness 不装配官方闲时换票与生命周期接口", async () => {
+    const { service, commandResolver } = setupService();
     try {
-      await expect(
-        service.controlOffPeakExecutionV4({ workspacePath, control }),
-      ).rejects.toMatchObject({ code: "ZCODE_AGENT_RUNTIME_UNAVAILABLE" });
+      expect(service).not.toHaveProperty("controlOffPeakExecutionV4");
+      expect(service).not.toHaveProperty("onDynamicOffPeakLifecycle");
       expect(commandResolver).not.toHaveBeenCalled();
-      await service.subscribeConversationV4({ workspacePath, sessionId: "session" });
-      expect(await service.controlOffPeakExecutionV4({ workspacePath, control })).toEqual({
-        accepted: true,
-      });
-      await expect.poll(() => events.length).toBe(1);
-      expect(events[0]).toMatchObject({
-        executionId: "execution",
-        type: "ticket_released",
-        ticketId: "old",
-      });
-      expect(foreign).toEqual([]);
-      expect(
-        readRequests(logPath)
-          .filter((entry) => entry.method === "v4/conversation/offPeakControl")
-          .map((entry) => entry.params),
-      ).toEqual([control]);
     } finally {
-      listener.dispose();
-      other.dispose();
       await service.disposeAllAndWait();
     }
   });
@@ -915,9 +880,9 @@ describe("zcodeAgentService v4 conversation channel", () => {
         sessionId: "cold-registry-session",
       });
 
-      // Worker 已经持有进程级 Registry；Host 读取 Registry View 只用于启动门禁，
-      // 不能把完整 Registry 下发成另一份执行事实源。
+      // Worker 刷新自己的本地 Registry；Host 不下发另一份模型执行事实源。
       expect(readRequests(logPath).map((entry) => entry.method)).toEqual([
+        "provider/refreshRegistry",
         "v4/conversation/subscribe",
       ]);
       expect(

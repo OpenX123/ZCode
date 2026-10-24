@@ -7,7 +7,6 @@ import {
   AppErrorBoundary,
   Root,
   GlobalDatabaseStartupLoading,
-  UpdateStatusWindowRoot,
   ZCodeIntlProvider,
   registerBaseWorkspaceServices,
   registerRemoteWorkspaceSession,
@@ -15,7 +14,6 @@ import {
   installDocumentHiddenMotionPause,
   playTaskNotificationSound,
   setStreamClientId,
-  setReactErrorArmsReporter,
 } from "@zcode/ui";
 import "@zcode/ui/styles.css";
 import { connectViaMessagePort, createMessagePortServiceConnection } from "@zcode/client";
@@ -23,7 +21,6 @@ import {
   InternalChannels,
   databaseStartupStateSchema,
   type DatabaseStartupControl,
-  collectTelemetryRendererContext,
   parseLaunchMarks,
   LAUNCH_MARKS_QUERY_KEY,
   type LaunchMarks,
@@ -31,10 +28,8 @@ import {
 } from "@zcode/shared";
 import type { Locale } from "@zcode/shared";
 import type { IServiceAccessor } from "@zcode/services";
-import { syncAppTelemetryContext } from "../appTelemetryBridge.js";
 import { createDesktopPlatform } from "./desktopPlatform.js";
 import { startPerformanceTimelineCleanup } from "./performanceTimelineCleanup.js";
-import { initializeDesktopUserActionTrace } from "./userActionTraceBootstrap.js";
 import { buildRemoteWorkspaceSessionServicesForRegistration } from "./remoteWorkspaceSessionServices.js";
 import { handleSourceSettingsServicePortMessage } from "./sourceSettingsServicePortBridge.js";
 import {
@@ -137,7 +132,6 @@ const supportsSettings = readBooleanFlag("supportsSettings", true);
 const initialWorkspaceAbsPath = readStringFlag("initialWorkspacePath");
 const initialWorkspacePurpose = readStringFlag("initialWorkspacePurpose");
 const unavailableWorkspacePath = readStringFlag("unavailableWorkspacePath");
-const windowKind = readStringFlag("windowKind");
 const initialLocaleFlag = readStringFlag("locale");
 const initialLocale: Locale =
   initialLocaleFlag === "zh-CN" || initialLocaleFlag === "en-US"
@@ -147,11 +141,7 @@ let baseServicesForRemoteSessions: IServiceAccessor | null = null;
 const pendingRemoteWorkspaceServicePorts: RemoteWorkspaceServicePortRegistration[] = [];
 
 const desktopPlatform = createDesktopPlatform({ isLocalDevelopmentRuntime });
-initializeDesktopLocalTtft(desktopPlatform);
-initializeDesktopUserActionTrace({
-  platform: desktopPlatform,
-  isLocalDevelopmentRuntime,
-});
+initializeDesktopLocalTtft();
 
 /**
  * 等待 preload 通过 window.postMessage 转发 MessagePort。
@@ -166,8 +156,7 @@ initializeDesktopUserActionTrace({
 installDocumentHiddenMotionPause();
 let appInitialized = false;
 const databaseStartupAdmission = new DatabaseStartupAdmission();
-const appRoot =
-  windowKind === "update-status" ? null : createRoot(document.getElementById("root")!);
+const appRoot = createRoot(document.getElementById("root")!);
 const sendStartupControl = (control: DatabaseStartupControl) =>
   window.postMessage({ type: InternalChannels.DatabaseStartupControl, control }, "*");
 function renderDatabaseStartup(): void {
@@ -199,25 +188,22 @@ function enterAppIfPrepared(): void {
   const port = databaseStartupAdmission.takeReadyPort();
   if (port) initializeBusinessRoot(port);
 }
-const firstStartupStateTimer =
-  windowKind === "update-status"
-    ? undefined
-    : setTimeout(() => {
-        if (databaseStartupAdmission.state) return;
-        const now = Date.now();
-        databaseStartupAdmission.state = {
-          schemaVersion: 1,
-          startupId: "unavailable",
-          attemptId: "startup-channel-unavailable",
-          sequence: 0,
-          startedAt: rendererStartedAt,
-          updatedAt: now,
-          phase: "failed",
-          errorCode: "startup_status_timeout",
-          disk: [],
-        };
-        renderDatabaseStartup();
-      }, 30_000);
+const firstStartupStateTimer = setTimeout(() => {
+  if (databaseStartupAdmission.state) return;
+  const now = Date.now();
+  databaseStartupAdmission.state = {
+    schemaVersion: 1,
+    startupId: "unavailable",
+    attemptId: "startup-channel-unavailable",
+    sequence: 0,
+    startedAt: rendererStartedAt,
+    updatedAt: now,
+    phase: "failed",
+    errorCode: "startup_status_timeout",
+    disk: [],
+  };
+  renderDatabaseStartup();
+}, 30_000);
 
 function registerRemoteWorkspaceServicePort(params: RemoteWorkspaceServicePortRegistration) {
   if (!baseServicesForRemoteSessions) {
@@ -326,20 +312,12 @@ function initializeBusinessRoot(port: MessagePort): void {
   flushPendingRemoteWorkspaceServicePorts();
   const settingService = supportsSettings ? services.settingService : undefined;
 
-  syncAppTelemetryContext({
-    bridge: {
-      syncTelemetryContext: (context) => window.zcode.syncTelemetryContext(context),
-    },
-    createRendererContext: collectTelemetryRendererContext,
-  });
-
   // 初始化稳定的设备 ID，确保所有 hook 在首次渲染前就使用正确的值
   setStreamClientId(desktopPlatform.getDeviceId());
 
   // React 错误边界捕获的异常不会冒泡到 window.onerror，RUM Browser SDK 默认收不到。
   // 必须在 createRoot 之前注入 reporter：根级 AppErrorBoundary 的职责正是兜住 Root 自身
   // 渲染崩溃，若依赖 Root 的 effect 注入，则 Root 首帧就崩时上报会丢失。
-  setReactErrorArmsReporter(desktopPlatform);
 
   appRoot?.render(
     <AppErrorBoundary isDesktop isMacDesktop={isMacDesktop} isWindowsDesktop={isWindowsDesktop}>
@@ -370,20 +348,5 @@ function initializeBusinessRoot(port: MessagePort): void {
 }
 
 window.addEventListener("message", handleServicePortMessage);
-if (windowKind !== "update-status") {
-  renderDatabaseStartup();
-  sendStartupControl({ action: "snapshot" });
-}
-
-if (windowKind === "update-status") {
-  createRoot(document.getElementById("root")!).render(
-    <AppErrorBoundary isDesktop isMacDesktop={isMacDesktop} isWindowsDesktop={isWindowsDesktop}>
-      <StartupReadyNotifier />
-      <UpdateStatusWindowRoot
-        platform={desktopPlatform}
-        initialLocale={initialLocale}
-        onRequestClose={() => window.close()}
-      />
-    </AppErrorBoundary>,
-  );
-}
+renderDatabaseStartup();
+sendStartupControl({ action: "snapshot" });

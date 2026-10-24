@@ -65,7 +65,7 @@ describe("marketplace store listing", () => {
             source: { source: "github", repo: "acme/bare-plugin" },
           },
           {
-            // requiresPaidPlan 只认布尔 true：歧义写法按无需套餐处理。
+            // 旧商业字段不影响普通 listing，也不改写原始目录。
             name: "ambiguous-plan-plugin",
             requiresPaidPlan: "true",
             source: { source: "github", repo: "acme/ambiguous" },
@@ -94,7 +94,6 @@ describe("marketplace store listing", () => {
       heroImage: "https://cdn-zcode.z.ai/hero/example.png",
       examplePrompts: ["Try the example"],
       examplePromptsI18n: { "zh-CN": ["试试这个示例"] },
-      requiresPaidPlan: true,
     });
 
     const bare = manifest?.plugins.find((entry) => entry.name === "bare-plugin");
@@ -102,6 +101,13 @@ describe("marketplace store listing", () => {
 
     const ambiguous = manifest?.plugins.find((entry) => entry.name === "ambiguous-plan-plugin");
     expect(ambiguous?.listing).toBeUndefined();
+  });
+
+  it.each([true, false, "true"])("旧套餐标记仅作为未知目录字段忽略（%s）", (requiresPaidPlan) => {
+    const raw = { name: "local-plugin", displayName: "Local Plugin", requiresPaidPlan };
+    expect(parseEntryStoreListing(raw)).toEqual({ displayName: "Local Plugin" });
+    expect(parseEntryStoreListing({ requiresPaidPlan })).toBeUndefined();
+    expect(raw.requiresPaidPlan).toBe(requiresPaidPlan);
   });
 
   it("normalizes author from string and object forms", () => {
@@ -116,10 +122,12 @@ describe("marketplace store listing", () => {
   });
 
   it("preserves publisher classification independently of usage category", () => {
-    expect(parseEntryStoreListing({ publisherType: "community", category: "productivity" }))
-      .toEqual({ publisherType: "community", category: "productivity" });
-    expect(parseEntryStoreListing({ publisherType: "official" }))
-      .toEqual({ publisherType: "official" });
+    expect(
+      parseEntryStoreListing({ publisherType: "community", category: "productivity" }),
+    ).toEqual({ publisherType: "community", category: "productivity" });
+    expect(parseEntryStoreListing({ publisherType: "official" })).toEqual({
+      publisherType: "official",
+    });
     expect(parseEntryStoreListing({ publisherType: "personal" })).toBeUndefined();
     expect(parseEntryStoreListing({ publisherType: true })).toBeUndefined();
   });

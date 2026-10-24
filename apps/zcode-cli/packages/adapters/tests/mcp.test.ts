@@ -175,6 +175,23 @@ async function observePromiseWithin<T>(
 }
 
 describe("createMcpAdapter", () => {
+  it("拒绝旧官方 MCP 鉴权配置，不创建网络连接或 OAuth 交互", async () => {
+    const adapter = createMcpAdapter();
+    try {
+      const status = await adapter.connectServer("legacy-official", {
+        type: "http",
+        url: "https://official.invalid/mcp",
+        auth: { type: "zcode_official", provider: "jwt_token" },
+      } as never);
+      expect(status.status).toBe("failed");
+      expect(status.error).toContain("Unsupported MCP auth");
+      expect(clientConnectMock).not.toHaveBeenCalled();
+      expect(authMock).not.toHaveBeenCalled();
+    } finally {
+      await adapter.close();
+    }
+  });
+
   beforeEach(() => {
     capturedClientInfo.length = 0;
     capturedHttpOptions.length = 0;

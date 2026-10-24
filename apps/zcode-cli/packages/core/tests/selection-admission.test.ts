@@ -21,7 +21,7 @@ function intent(sequence: number, model: string): TurnInputIntentMetadata {
 }
 
 describe("Session selection admission", () => {
-  it("加速卡接纳保存本次普通选择，既不保存加速端点也不保留临时闲时选择", async () => {
+  it("执行期模型不改写会话的普通模型选择", async () => {
     const runtime = createTestAgentRuntime(
       createSessionId("highspeed-takeover"),
       {
@@ -29,21 +29,15 @@ describe("Session selection admission", () => {
       },
       { eventStore: createTestSessionEventStore() },
     );
-    const fallback = createTestModelSelection("user/normal");
     await acceptSubmissionModelSelection(
       runtime,
       intent(1, "accelerated"),
       runtime.rootTraceContext,
       {
         selectionScope: "execution",
-        selectionFallback: {
-          providerId: "provider",
-          target: fallback,
-          rules: [{ reason: "highspeed_card_expired", providerErrorCode: "3102" }],
-        },
       },
     );
-    expect(runtime.getSessionModelSelection()).toEqual(fallback);
+    expect(runtime.getSessionModelSelection()).toEqual(createTestModelSelection("idle/idle"));
   });
   it("接受排队输入立即更新续跑选择，旧输入执行仍用自己的选择且不覆盖新选择", async () => {
     const requests: string[] = [];

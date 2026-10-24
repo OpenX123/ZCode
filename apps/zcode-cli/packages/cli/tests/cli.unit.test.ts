@@ -543,45 +543,6 @@ test("disables automatic Memory Extraction for headless prompts", async () => {
   assert.equal(ctx.stdout.output(), "hello Memory\n");
 });
 
-test("injects process provider endpoint routing into headless prompts", async () => {
-  const ctx = createContext(["--prompt", "route me"]);
-  const providerEndpointRoutingPort = {
-    async resolve(url: string) {
-      return { routed: false, url };
-    },
-  };
-  let routingFactoryCalls = 0;
-  const exitCode = await run(ctx, {
-    ...createPromptDeps(),
-    createProviderEndpointRoutingPort: (options) => {
-      routingFactoryCalls += 1;
-      assert.equal(options.workingDirectory, "/tmp/zcode-routing-headless");
-      return providerEndpointRoutingPort;
-    },
-    createZCodeApp: (options) => {
-      assert.equal(options?.providerEndpointRoutingPort, providerEndpointRoutingPort);
-      return {
-        close: async () => {},
-        runtime: {} as never,
-        sessionId: "session-routing-headless",
-        submitPrompt: async (prompt: string) => ({
-          events: [],
-          projection: fakeProjection as never,
-          response: prompt,
-          traceId: "trace-routing-headless" as never,
-          turnId: "turn-routing-headless" as never,
-        }),
-        traceId: "trace-routing-headless",
-      } as never;
-    },
-    cwd: () => "/tmp/zcode-routing-headless",
-  });
-
-  assert.equal(exitCode, 0);
-  assert.equal(routingFactoryCalls, 1);
-  assert.equal(ctx.stdout.output(), "route me\n");
-});
-
 test("borrows one process provider registry for a headless prompt and disposes it", async () => {
   const ctx = createContext(["--prompt", "registry me"]);
   const providerRegistry = {} as never;
@@ -595,9 +556,6 @@ test("borrows one process provider registry for a headless prompt and disposes i
     userConfigPath: "/tmp/zcode-legacy-cli.json",
     startProcessProviderRegistryRuntime: async (_env, options) => {
       runtimeStarts += 1;
-      // 刷新回调是当前 CLI 装配的一部分，仍验证唯一 Runtime 和旧配置迁移路径。
-      assert.equal(typeof options?.standalone?.onBuiltinRefreshError, "function");
-      assert.equal(typeof options?.standalone?.onBuiltinRefreshResult, "function");
       assert.deepEqual(
         {
           standalone: {
@@ -635,7 +593,7 @@ test("borrows one process provider registry for a headless prompt and disposes i
     },
     createZCodeApp: (options) => {
       assert.equal(options?.providerRegistry, providerRegistry);
-      assert.equal(options?.providerRuntimeHeadersPort, providerRuntimeHeadersPort);
+      assert.equal(options?.providerRuntimeHeadersPort, undefined);
       assert.deepEqual(options?.configuredDefaultModelSelection, {
         providerId: "provider-a",
         modelId: "model-a",
@@ -743,13 +701,10 @@ test("honors configured locale before app creation when login is required", asyn
         assert.equal(startup.loginRequired, true);
         assert.equal(startup.locale, "zh-CN");
 
-        const pickerResult = await options.submitPrompt("/login", {
+        const help = await options.submitPrompt("/help", {
           abortSignal: new AbortController().signal,
         });
-
-        assert.equal(pickerResult.response, "选择 Coding Plan 提供商的配置方式。");
-        assert.equal(pickerResult.selection?.title, "配置 Coding Plan");
-        assert.equal(pickerResult.selection?.prompt, "选择登录或 API key 配置方式。");
+        assert.doesNotMatch(help.response, /\/login|\/logout|Coding Plan/);
         return 0;
       },
       userConfigPath: configPath,
@@ -975,206 +930,6 @@ test("zcode commands list prints custom commands", async () => {
   assert.equal(exitCode, 0);
   assert.match(ctx.stdout.output(), /Custom commands \(1\)/);
   assert.match(ctx.stdout.output(), /\/review \[scope\]/);
-});
-
-test("zcode login runs OAuth flow and prints the authorization URL", async () => {
-  const ctx = createContext(["login", "--no-browser"]);
-  let sawNoBrowser = false;
-  const exitCode = await run(ctx, {
-    ...createPromptDeps(),
-    loginZCodeCli: async (options) => {
-      sawNoBrowser = options?.noBrowser === true;
-      await options?.onAuthorizeUrl?.({
-        authorize_url: "https://chat.z.ai/oauth/authorize?state=state",
-        expires_at: 1735000000,
-        flow_id: "flow-1",
-        poll_interval_sec: 2,
-        poll_token: "poll-token",
-      });
-      return {
-        configPath: "/home/test/.zcode/v2/model-selection.json",
-        credentialsPath: "/home/test/.zcode/v2/credentials.json",
-        model: "zai/glm-5.1",
-        providerId: "zai",
-        user: {
-          user_id: "u_1",
-          email: "alice@example.com",
-          name: "Alice",
-        },
-      };
-    },
-  });
-
-  assert.equal(exitCode, 0);
-  assert.equal(sawNoBrowser, true);
-  assert.match(ctx.stdout.output(), /Open this URL to sign in/);
-  assert.match(ctx.stdout.output(), /https:\/\/chat\.z\.ai\/oauth\/authorize/);
-  assert.match(ctx.stdout.output(), /Login successful as Alice/);
-  assert.match(
-    ctx.stdout.output(),
-    /Model selection: \/home\/test\/\.zcode\/v2\/model-selection\.json/,
-  );
-});
-
-test("zcode logout clears shared OAuth credentials", async () => {
-  const ctx = createContext(["logout"]);
-  let logoutCalled = false;
-  const exitCode = await run(ctx, {
-    ...createPromptDeps(),
-    logoutZCodeCli: async () => {
-      logoutCalled = true;
-      return {
-        credentialsPath: "/home/test/.zcode/v2/credentials.json",
-      };
-    },
-  });
-
-  assert.equal(exitCode, 0);
-  assert.equal(logoutCalled, true);
-  assert.match(ctx.stdout.output(), /Logged out from Coding Plan accounts/);
-});
-
-test("parses login and logout slash commands", () => {
-  assert.deepEqual(parseSlashCommand("/login"), {
-    args: "",
-    name: "login",
-    rawName: "login",
-    type: "known",
-  });
-  assert.deepEqual(parseSlashCommand("/login zai-coding-plan"), {
-    args: "zai-coding-plan",
-    name: "login",
-    rawName: "login",
-    type: "known",
-  });
-  assert.deepEqual(parseSlashCommand("/logout"), {
-    args: "",
-    name: "logout",
-    rawName: "logout",
-    type: "known",
-  });
-});
-
-test("command center handles login and logout locally", async () => {
-  let loginCalled = false;
-  let loginAbortSignal: AbortSignal | undefined;
-  let apiKeyCalled = false;
-  let logoutCalled = false;
-  const emittedEvents: Array<{
-    payload?: unknown;
-    sessionId?: unknown;
-    traceId?: unknown;
-    type?: string;
-  }> = [];
-  const commandCenter = createCommandCenter({
-    // 授权链接消息归属当前活动会话（TUI 首帧后已创建 App），但登录流程本身不向模型提交 prompt。
-    getApp: async () =>
-      ({
-        sessionId: "session-login",
-        traceId: "trace-login",
-        submitPrompt: async () => {
-          throw new Error("login must not submit a model prompt");
-        },
-      }) as never,
-    login: async (options) => {
-      loginCalled = true;
-      loginAbortSignal = options?.abortSignal;
-      await options?.onAuthorizeUrl?.({
-        authorize_url: "https://chat.z.ai/oauth/authorize?state=state",
-        expires_at: 1735000000,
-        flow_id: "flow-1",
-        poll_interval_sec: 2,
-      });
-      return {
-        configPath: "/home/test/.zcode/v2/model-selection.json",
-        credentialsPath: "/home/test/.zcode/v2/credentials.json",
-        model: "zai/glm-5.1",
-        providerId: "zai",
-        user: {
-          user_id: "u_1",
-          email: "alice@example.com",
-          name: "Alice",
-        },
-      };
-    },
-    configureApiKey: async (options) => {
-      apiKeyCalled = options.providerId === "bigmodel" && options.apiKey === "manual-key";
-      return {
-        configPath: "/home/test/.zcode/v2/model-selection.json",
-        model: "bigmodel/glm-5.1",
-        providerId: "bigmodel",
-      };
-    },
-    logout: async () => {
-      logoutCalled = true;
-      return {
-        credentialsPath: "/home/test/.zcode/v2/credentials.json",
-      };
-    },
-    resumeApp: async () => {
-      throw new Error("resume should not be called");
-    },
-  });
-
-  const pickerResult = await commandCenter("/login", {});
-  const loginAbort = new AbortController();
-  const loginResult = await commandCenter("/login zai-coding-plan", {
-    abortSignal: loginAbort.signal,
-    onEvent: async (event) => {
-      emittedEvents.push(event);
-    },
-  } as never);
-  const apiKeyResult = await commandCenter("/login bigmodel-coding-plan-api-key manual-key", {});
-  const logoutResult = await commandCenter("/logout", {});
-
-  assert.equal(pickerResult.selection?.items.length, 4);
-  assert.equal(pickerResult.selection?.filterable, false);
-  assert.equal(
-    pickerResult.selection?.items[0]?.pending?.primary,
-    "Waiting for Z.AI authorization",
-  );
-  assert.equal(pickerResult.selection?.items[2]?.input?.primary, "Enter Z.AI Coding Plan API Key");
-  assert.equal(pickerResult.selection?.items[2]?.input?.mask, true);
-  assert.equal(loginAbortSignal, loginAbort.signal);
-  assert.equal(loginCalled, true);
-  assert.equal(apiKeyCalled, true);
-  assert.equal(logoutCalled, true);
-  assert.equal(emittedEvents[0]?.type, "assistant_message");
-  assert.equal(emittedEvents[0]?.sessionId, "session-login");
-  assert.equal(emittedEvents[0]?.traceId, "trace-login");
-  assert.match(
-    String((emittedEvents[0]?.payload as { content?: string } | undefined)?.content),
-    /https:\/\/chat\.z\.ai\/oauth\/authorize/,
-  );
-  assert.match(loginResult.response, /Configured Z\.AI Coding Plan as Alice/);
-  assert.match(
-    loginResult.response,
-    /Model selection: \/home\/test\/\.zcode\/v2\/model-selection\.json/,
-  );
-  assert.match(apiKeyResult.response, /Configured BigModel Coding Plan/);
-  assert.match(logoutResult.response, /Logged out from Coding Plan accounts/);
-});
-
-test("command center localizes the Coding Plan setup picker", async () => {
-  const commandCenter = createCommandCenter({
-    getApp: async () => {
-      throw new Error("app should not be created");
-    },
-    getLocale: () => "zh-CN",
-    resumeApp: async () => {
-      throw new Error("resume should not be called");
-    },
-  });
-
-  const result = await commandCenter("/login", {});
-
-  assert.equal(result.response, "选择 Coding Plan 提供商的配置方式。");
-  assert.equal(result.selection?.title, "配置 Coding Plan");
-  assert.equal(result.selection?.prompt, "选择登录或 API key 配置方式。");
-  assert.equal(result.selection?.filterable, false);
-  assert.match(result.selection?.items[0]?.secondary ?? "", /打开浏览器登录/);
-  assert.equal(result.selection?.items[2]?.input?.primary, "输入 Z.AI Coding Plan API Key");
-  assert.equal(result.selection?.items[2]?.input?.placeholder, "粘贴 API key");
 });
 
 test("command center keeps local commands usable before login", async () => {
@@ -2374,84 +2129,6 @@ test("wires TUI new command into a fresh active app", async () => {
   assert.deepEqual(closedSessionIds, ["sess_new_0", "sess_new_1"]);
 });
 
-test("keeps shared telemetry alive across TUI session replacement and shuts it down once", async () => {
-  const ctx = createContext(["tui"]);
-  let telemetryPrepareCount = 0;
-  let telemetryShutdownCount = 0;
-  const exitCode = await run(ctx, {
-    ...createPromptDeps(),
-    prepareZCodeTelemetryEnv: async (env) => {
-      telemetryPrepareCount += 1;
-      return env;
-    },
-    shutdownZCodeTelemetry: async () => {
-      telemetryShutdownCount += 1;
-    },
-    runTui: async (options) => {
-      await options.submitPrompt("hello first", {
-        abortSignal: new AbortController().signal,
-      });
-      await options.submitPrompt("/new", {
-        abortSignal: new AbortController().signal,
-      });
-      assert.equal(telemetryShutdownCount, 0);
-      return 0;
-    },
-  });
-
-  assert.equal(exitCode, 0);
-  assert.equal(telemetryPrepareCount, 2);
-  assert.equal(telemetryShutdownCount, 1);
-});
-
-test("reuses provider endpoint routing when TUI replaces its active session", async () => {
-  const ctx = createContext(["tui"]);
-  const providerEndpointRoutingPort = {
-    async resolve(url: string) {
-      return { routed: false, url };
-    },
-  };
-  let routingFactoryCalls = 0;
-  let createdApps = 0;
-  const exitCode = await run(ctx, {
-    ...createPromptDeps(),
-    createProviderEndpointRoutingPort: () => {
-      routingFactoryCalls += 1;
-      return providerEndpointRoutingPort;
-    },
-    createZCodeApp: (options) => {
-      assert.equal(options?.providerEndpointRoutingPort, providerEndpointRoutingPort);
-      createdApps += 1;
-      return {
-        close: async () => {},
-        runtime: {} as never,
-        sessionId: `session-routing-tui-${createdApps}`,
-        submitPrompt: async (prompt: string) => ({
-          events: [],
-          projection: fakeProjection as never,
-          response: prompt,
-          traceId: `trace-routing-tui-${createdApps}` as never,
-          turnId: "turn-routing-tui" as never,
-        }),
-        traceId: `trace-routing-tui-${createdApps}`,
-      } as never;
-    },
-    runTui: async (options) => {
-      await options.submitPrompt("first", {
-        abortSignal: new AbortController().signal,
-      });
-      await options.submitPrompt("/new", {
-        abortSignal: new AbortController().signal,
-      });
-      return 0;
-    },
-  });
-
-  assert.equal(exitCode, 0);
-  assert.equal(createdApps, 2);
-  assert.equal(routingFactoryCalls, 1);
-});
-
 test("closes the active TUI app on process shutdown signals", async () => {
   const ctx = createContext(["tui"]);
   const shutdownProcess = createTestShutdownProcess("darwin");
@@ -2499,7 +2176,7 @@ test("closes the active TUI app on process shutdown signals", async () => {
 
   assert.equal(exitCode, 0);
   assert.equal(closeCount, 1);
-  assert.equal(telemetryShutdownCount, 1);
+  assert.equal(telemetryShutdownCount, 0);
 });
 
 test("parses built-in slash commands outside the TUI", () => {
@@ -5035,7 +4712,7 @@ test("closes the app after a headless prompt", async () => {
   assert.equal(ctx.stdout.output(), "hello\n");
 });
 
-test("shuts down prepared telemetry after a headless prompt", async () => {
+test("headless prompt does not activate retired telemetry", async () => {
   const ctx = createContext(["--prompt", "hello telemetry"]);
   let telemetryShutdownCount = 0;
   const exitCode = await run(ctx, {
@@ -5047,10 +4724,10 @@ test("shuts down prepared telemetry after a headless prompt", async () => {
   });
 
   assert.equal(exitCode, 0);
-  assert.equal(telemetryShutdownCount, 1);
+  assert.equal(telemetryShutdownCount, 0);
 });
 
-test("shuts down prepared telemetry when headless app creation fails", async () => {
+test("headless app failure does not activate retired telemetry", async () => {
   const ctx = createContext(["--prompt", "failing telemetry"]);
   let telemetryShutdownCount = 0;
   const exitCode = await run(ctx, {
@@ -5065,7 +4742,7 @@ test("shuts down prepared telemetry when headless app creation fails", async () 
   });
 
   assert.equal(exitCode, 1);
-  assert.equal(telemetryShutdownCount, 1);
+  assert.equal(telemetryShutdownCount, 0);
 });
 
 test("aborts and closes the headless app on process shutdown signals", async () => {
@@ -6269,9 +5946,6 @@ test("reuses one process provider registry across TUI app replacements", async (
     userConfigPath: "/tmp/zcode-legacy-tui.json",
     startProcessProviderRegistryRuntime: async (_env, options) => {
       runtimeStarts += 1;
-      // 刷新回调是当前 CLI 装配的一部分，仍验证唯一 Runtime 和旧配置迁移路径。
-      assert.equal(typeof options?.standalone?.onBuiltinRefreshError, "function");
-      assert.equal(typeof options?.standalone?.onBuiltinRefreshResult, "function");
       assert.deepEqual(
         {
           standalone: {
@@ -6310,7 +5984,7 @@ test("reuses one process provider registry across TUI app replacements", async (
     createZCodeApp: (options) => {
       appCreations += 1;
       assert.equal(options?.providerRegistry, providerRegistry);
-      assert.equal(options?.providerRuntimeHeadersPort, providerRuntimeHeadersPort);
+      assert.equal(options?.providerRuntimeHeadersPort, undefined);
       assert.deepEqual(options?.configuredDefaultModelSelection, {
         providerId: "provider-a",
         modelId: "model-a",

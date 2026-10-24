@@ -3,6 +3,7 @@
  *
  * 在应用根部挂载，连接 broadcastService 实现跨窗口状态同步。
  */
+import type { IBroadcastService } from "@zcode/services";
 import {
   createContext,
   useCallback,
@@ -12,27 +13,22 @@ import {
   type ReactNode,
 } from "react";
 import { useStore } from "zustand";
-import type { IBroadcastService } from "@zcode/services";
-import { createZCodeStore, type ZCodeStore, type ZCodeState } from "./index.js";
+import { createZCodeStore, type ZCodeState, type ZCodeStore } from "./index.js";
 
 // 导出 Context 供测试直接注入已构造的 store 实例（如跨窗口广播抑制用例）。
 export const StoreContext = createContext<ZCodeStore | null>(null);
 
 export function StoreProvider({
   broadcastService,
-  initialIsRestoringOAuthSession = false,
   children,
 }: {
   broadcastService: IBroadcastService;
-  initialIsRestoringOAuthSession?: boolean;
   children: ReactNode;
 }) {
   // 只在首次渲染时创建 store，避免 HMR 重复订阅
   const storeRef = useRef<ZCodeStore | null>(null);
   if (!storeRef.current) {
-    storeRef.current = createZCodeStore(broadcastService, {
-      initialIsRestoringOAuthSession,
-    });
+    storeRef.current = createZCodeStore(broadcastService);
   }
 
   return <StoreContext.Provider value={storeRef.current}>{children}</StoreContext.Provider>;

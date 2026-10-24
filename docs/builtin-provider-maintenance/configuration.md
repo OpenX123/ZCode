@@ -6,10 +6,9 @@
 
 | 概念            | 含义与维护边界                                                               |
 | --------------- | ---------------------------------------------------------------------------- |
-| Builtin Release | 随包或动态下载的完整配置，Provider 模板/固定 Provider 与模型规则共同版本化   |
+| Builtin Release | 随包发布的完整配置，Provider 模板与模型规则共同版本化                        |
 | Template        | 普通供应商的连接与成员基线；`templateId` 是稳定模板身份，不是用户实例身份    |
 | Provider 实例   | 由 `providerId` 标识的一组具体连接配置；模型身份是 `providerId + modelId`    |
-| Account         | 只对已知固定账号 Provider 投影动态配置与资格，不向普通模板写入用户凭据       |
 | Personal        | 用户的显式覆盖与个人模型成员；未声明字段继续继承，不保存整份解析结果         |
 | Effective       | 按顺序叠加得到的生效配置，可以仍不完整；不是应写回用户文件的配置             |
 | Registry        | 完整且可执行的 Provider/Model 集合；设置页还保留不完整候选及问题以供修复     |
@@ -18,7 +17,6 @@
 ```mermaid
 flowchart TD
     T[普通模板 + Personal实例] --> P[有效Provider：身份/成员/API/Access]
-    A[固定Provider + Account + Personal] --> P
     B[Builtin模型规则 + Personal精确规则] --> R[Resolver]
     P --> R
     R --> S[设置候选与完整性问题]
@@ -27,7 +25,7 @@ flowchart TD
     M --> H[Adapter编码并应用参数Map]
 ```
 
-普通模板实例继承模板后再叠加 Personal；固定 Provider 先叠加 Account，再叠加 Personal。Account 只能作用于内置固定身份。配置更新不能覆盖用户显式地址、名称或选项，不能把本地 Host 的凭据或解析结果用于替代远程 Host 的事实。手机界面使用目标 Host 的投影。账号动态凭据在请求期取得，供应商仍对每次请求作最终授权。
+普通模板实例继承模板后再叠加 Personal，不加载账号 Overlay。配置更新不能覆盖用户显式地址、名称或选项，不能把本地 Host 的凭据或解析结果用于替代远程 Host 的事实。用户自己的 API Key 用于模型请求，旧官方凭据不参与执行。
 
 ## 文件和类型的唯一来源
 
@@ -47,7 +45,7 @@ flowchart TD
 
 `providerConfigRules.templateRules` 定义普通 API 模板。维护 `templateId`、本地化名称、Logo、`access`、`api.type/baseUrl`、Key 管理链接与 `builtinModelIds`。模板不携带用户 Key，不是直接可执行的 Provider；实例从模板继承，再叠加 Personal。
 
-当前 API 类型只有 `anthropic-messages`、`openai-chat-completions`、`openai-responses`。Access 仍包含普通 `api-key`、手工套餐 `zhipu-coding-plan-api-key` 和固定账号 `zhipu-account`。手工套餐统一为普通 Key 的后续方案不能提前写成当前实现。
+当前 API 类型只有 `anthropic-messages`、`openai-chat-completions`、`openai-responses`。可执行 Access 仅为普通 `api-key`；旧 `zhipu-coding-plan-api-key` 和 `zhipu-account` 仅保留历史解码，不能进入执行 Registry。
 
 新增 Logo key 时核对[资源映射](../../packages/ui/src/settings/model-provider-section/ProviderLogo.tsx)、主题资源和来源记录；新名称核对本地化。纯配置动态更新不能凭空增加安装包内的图片资源。
 
@@ -147,10 +145,10 @@ pnpm provider:config:check-test
 
 ### 当前账号端点映射
 
-| 正式 Base URL                                    | 测试 Base URL                                            |
-| ------------------------------------------------ | -------------------------------------------------------- |
+| 正式 Base URL                                    | 测试 Base URL                                    |
+| ------------------------------------------------ | ------------------------------------------------ |
 | `https://api.z.ai/api/anthropic`                 | `https://api.z.ai/api/anthropic`                 |
-| `https://open.bigmodel.cn/api/anthropic`         | `https://open.bigmodel.cn/api/anthropic`                  |
+| `https://open.bigmodel.cn/api/anthropic`         | `https://open.bigmodel.cn/api/anthropic`         |
 | `https://zcode.z.ai/api/v1/zcode-plan/anthropic` | `https://zcode.z.ai/api/v1/zcode-plan/anthropic` |
 | `https://zcode.z.ai/api/v1/off-peak/anthropic`   | `https://zcode.z.ai/api/v1/off-peak/anthropic`   |
 | `https://zcode.z.ai/api/v1/highspeed/anthropic`  | `https://zcode.z.ai/api/v1/highspeed/anthropic`  |
@@ -181,4 +179,4 @@ ZCODE_ENV与环境文件 → 选择完整JSON → 复用Release Decoder校验
 
 构建缓存必须覆盖 `ZCODE_ENV`、环境文件、两份配置和公共构建工具。当前 CLI 的 Turbo 输入及 Desktop E2E 指纹包含这些相关输入，Server 嵌入内容参与产物 hash；bootstrap 重新构建 Agent JS 并刷新相邻配置资源。不同环境并行构建使用独立 worktree/输出目录，不能并发写同一个 dist。
 
-构建只决定包内初始配置；客户端是否采用它还受有效缓存与 revision 影响，见[交付与恢复](./delivery.md)。环境变更的回归必须用内容不同的 Release 检查实际选源、坏文件失败、缓存失效和最终嵌入内容，不能因两份文件偶然相同就宣称通过。
+构建决定唯一随包配置；运行时不选择旧 Active/LKG 或 Endpoint 下载缓存，见[交付与恢复](./delivery.md)。环境变更的回归必须用内容不同的 Release 检查实际选源、坏文件失败、缓存失效和最终嵌入内容，不能因两份文件偶然相同就宣称通过。

@@ -30,7 +30,6 @@ import { mcpToolPartMetadata } from "./tool-part-metadata.js";
 import { persistPendingToolPart } from "./tool-part-persistence.js";
 import {
   isAutomationMutationRestrictedTurn,
-  isOffPeakCreateRestrictedTurn,
   recordModelHistoryRound,
   type RegularTurnLoopState,
 } from "./turn-loop-state.js";
@@ -233,21 +232,6 @@ export function createStreamingToolCoordinator(
       });
       return true;
     },
-
-    async settleForModelFallback(assistantCreatedAt: number) {
-      if (acceptedToolCalls.size === 0) {
-        abortController.abort();
-        state.turnAbortSignal.removeEventListener("abort", abortOnTurnCancel);
-        return false;
-      }
-      const settlement = await prepareAcceptedToolSettlement();
-      await commitAcceptedToolSettlement(
-        assistantCreatedAt,
-        { recoveredFromExecutionModelFallback: true },
-        settlement,
-      );
-      return true;
-    },
   };
 }
 
@@ -318,7 +302,6 @@ async function executeDuringStream(
     model: state.model,
     toolSearch: options.toolSearch,
     automationTurn: isAutomationMutationRestrictedTurn(state),
-    offPeakTurn: isOffPeakCreateRestrictedTurn(state),
     signal: options.abortSignal,
     traceContext: options.traceContext,
     onBatchStart: async () => {

@@ -328,18 +328,10 @@ existing catalog after upgrade
 | `termsOfService`                         | 条目 | `string`（https URL）                  | 信息区·服务条款                         |
 | `heroImage`                              | 条目 | `string`（https URL 或包内相对路径）   | 详情 hero 横幅                          |
 | `examplePrompts` / `examplePrompts_i18n` | 条目 | `string[]` / `Record<locale,string[]>` | hero 区提示词胶囊                       |
-| `requiresPaidPlan`                       | 条目 | `boolean`（仅 `true` 生效）            | 卡片/详情标题右侧编程套餐杏色徽标       |
 
 已有可用字段继续透传：`category`、`author{name,url?}`、`description_i18n`、`keywords`。
 
-- 付费套餐提示：`requiresPaidPlan` 只在显式布尔 `true` 时生效，`"true"` / `1` 等歧义写法
-  一律按无需套餐处理，避免目录写错就给免费插件挂上付费提示。字段描述的是「使用条件」
-  （需要付费套餐才好用），不代表插件本身是收费商品——它是纯展示标记，不参与安装门禁
-  与计费。命名刻意不绑定具体套餐商品名，套餐改名或文案换口径时字段不用跟着改。
-- 卡片与详情标题使用杏色胶囊视觉，文案前展示 `size-3` 的小皇冠图标；浅色主题参考 `#FFE3C8` 背景与 `#4B280F` 文字，
-  深色主题使用同色相的深底浅字；颜色必须通过插件套餐徽标专用 token 提供。徽标文字使用
-  `text-ui-sm`，中文显示「编程套餐」，英文显示「Coding Plan」；完整条件说明保留在
-  hover/focus Tooltip 中，不读取 150% 活动配置。
+- 插件不再展示官方套餐徽标或套餐使用建议；旧目录的套餐字段被忽略，不影响普通插件安装、配置和启停。
 
 - 图片字段：CDN 条目用绝对 https URL；**内置插件**在仓内 `official-plugin-definitions.ts`
   补齐同构 listing 元数据。需要覆盖旧缓存或尚未发布 CDN 素材的官方内置插件，可由共享
@@ -406,7 +398,6 @@ sequenceDiagram
 | `category`                                      | 归入「其他」区块                                         | 信息区·类别行省略                                         |
 | `homepage` / `privacyPolicy` / `termsOfService` | —                                                        | 对应信息行省略（试 manifest 回退后仍无才省略）            |
 | `author`                                        | —                                                        | 开发者行：listing → manifest → 省略                       |
-| `requiresPaidPlan`（缺失或非 `true`）           | 卡片标题右侧无编程套餐徽标                               | 详情标题右侧无编程套餐徽标                                |
 | `featured` 空/缺失                              | 公开分段无 Featured 大区，直接分类区块                   | —                                                         |
 | 图片加载失败                                    | 与缺失同（头像兜底），不出现裂图                         | 同左；hero 加载失败整区按无图处理                         |
 | describe 失败/超时                              | —                                                        | 组件区回退 componentTypes 标签 + 诚实提示（沿用 V1 规则） |

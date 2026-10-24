@@ -1,11 +1,8 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { TID_V4_COMPOSER_INPUT, TID_V4_COMPOSER_SEND } from "@zcode/shared/test-ids";
 import {
   clearAppData,
   setInputValueByTestIdDom,
   getE2EAppDataPaths,
-  readSettings,
 } from "../helpers/desktop-app.js";
 import { restartIntoWorkspacePreservingProfile } from "../helpers/model-provider-restart-runtime.js";
 import {
@@ -13,19 +10,11 @@ import {
   waitForUpstreamNetworkCapture,
   waitForUpstreamNetworkRequestStarted,
 } from "../helpers/upstream-capture.js";
+import { UPSTREAM_MODEL, UPSTREAM_PROVIDER_ID } from "../helpers/upstream-provider.js";
 import {
-  UPSTREAM_MODEL,
-  UPSTREAM_PROVIDER_ID,
-  selectRegistryProviderModelById,
-  selectUpstreamThoughtLevelValue,
-} from "../helpers/upstream-provider.js";
-import {
-  E2E_BIGMODEL_PLAN_PROVIDER_ID,
-  E2E_BIGMODEL_START_PROVIDER_ID,
-  E2E_PLAN_NON_DEFAULT_MODEL,
+  E2E_GLM_PROVIDER_ID,
+  E2E_GLM_NON_DEFAULT_MODEL,
   restartIntoWorkspace,
-  seedBigModelOAuthCredential,
-  seedBigModelConnectionSelection,
   seedPersistedModelSelection,
   seedReplayProvider,
   waitForSelectedModel,
@@ -69,84 +58,39 @@ describe("模型 Provider 重启恢复 E2E", () => {
     await assertRequestUsesModel("E2E_MODEL_PROVIDER_RESTART_R01", UPSTREAM_MODEL);
   });
 
-  it("I26/MP-R02: 重启保留当前 Plan 内非首个模型", async function () {
+  it("I26/MP-R02: 重启保留普通 API Provider 内非首个模型", async function () {
     this.timeout(180000);
-    // Bug 根因：运行中的 Host 会在退出时落盘内存里的连接选择；若 fixture 预先
-    // 直写 setting.json，退出阶段会把 Individual 选择覆盖回上一条 Team 状态。
-    // 与真实冷启动一致，账号选择和凭据都必须在进程退出屏障后写入。
     await restartIntoWorkspace({
       afterElectronProcessExit: async () => {
-        await seedBigModelConnectionSelection({
-          kind: "team-coding-plan",
-          productId: "product-team-a",
-          organizationId: "org-team-a",
-          projectId: "proj-team-a",
+        await seedReplayProvider({
+          id: E2E_GLM_PROVIDER_ID,
+          name: "GLM API E2E",
+          models: [
+            "GLM-5.2",
+            {
+              id: E2E_GLM_NON_DEFAULT_MODEL,
+              reasoningLevel: { values: ["disabled", "high", "max"], map: "{}" },
+            },
+          ],
         });
-        await seedBigModelOAuthCredential();
       },
     });
-    // 未提交改选只随非空文字草稿保存，空白 Composer 重启会读取原 Recent。
     await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "E2E_MODEL_PROVIDER_RESTART_R02 draft");
-    await waitForV4ComposerSelectionReady();
-    // 合并菜单只展示当前 Provider 的模型；通过 Provider 子菜单切换后再选择目标模型。
-    await selectRegistryProviderModelById(E2E_PLAN_NON_DEFAULT_MODEL, {
-      providerId: E2E_BIGMODEL_PLAN_PROVIDER_ID,
-      providerGroupKey: JSON.stringify([
-        "bigmodel",
-        "team-coding-plan",
-        "product-team-a",
-        "org-team-a",
-        "proj-team-a",
-      ]),
-      includePlainModelFallback: false,
-    });
-    await selectUpstreamThoughtLevelValue("max");
-    await waitForSelectedModel(E2E_BIGMODEL_PLAN_PROVIDER_ID, E2E_PLAN_NON_DEFAULT_MODEL);
+    await switchV4Model(E2E_GLM_PROVIDER_ID, E2E_GLM_NON_DEFAULT_MODEL, "max");
     await restartIntoWorkspacePreservingProfile(getE2EAppDataPaths().workspace);
-    await waitForSelectedModel(E2E_BIGMODEL_PLAN_PROVIDER_ID, E2E_PLAN_NON_DEFAULT_MODEL);
-    // Todo88：仅在退出后注入同一 Team 的旧连接字段；不能用新字段 seed 冒充升级迁移。
-    const settingsPath = join(getE2EAppDataPaths().appDataDir, "setting.json");
-    for (const key of [
-      "team-plan:builtin:bigmodel-coding-plan:product-team-a:org-team-a:proj-team-a",
-      "team-plan:builtin:bigmodel-coding-plan:product-team-a:proj-team-a",
-    ]) {
-      const legacyKeys = { bigmodel: key };
-      await restartIntoWorkspacePreservingProfile(getE2EAppDataPaths().workspace, {
-        afterElectronProcessExit: async () => {
-          const settings = JSON.parse(await readFile(settingsPath, "utf8"));
-          delete settings.providerFamilyConnectionSelections;
-          await writeFile(
-            settingsPath,
-            JSON.stringify({
-              ...settings,
-              modelProviderFamilyModes: { bigmodel: "oauth" },
-              modelProviderFamilySelectedKeys: legacyKeys,
-            }),
-          );
-        },
-      });
-      await waitForSelectedModel(E2E_BIGMODEL_PLAN_PROVIDER_ID, E2E_PLAN_NON_DEFAULT_MODEL);
-      expect((await readSettings()).providerFamilyConnectionSelections?.bigmodel).toEqual({
-        kind: "team-coding-plan",
-        productId: "product-team-a",
-        organizationId: "org-team-a",
-        projectId: "proj-team-a",
-      });
-      expect(
-        JSON.parse(await readFile(settingsPath, "utf8")).modelProviderFamilySelectedKeys,
-      ).toEqual(legacyKeys);
-    }
-    await assertPlanRequest("E2E_MODEL_PROVIDER_RESTART_R02");
+    await waitForSelectedModel(E2E_GLM_PROVIDER_ID, E2E_GLM_NON_DEFAULT_MODEL);
+    await waitForRestartedDraftModelReady(E2E_GLM_PROVIDER_ID, E2E_GLM_NON_DEFAULT_MODEL);
+    await assertRequestUsesModel("E2E_MODEL_PROVIDER_RESTART_R02", E2E_GLM_NON_DEFAULT_MODEL);
   });
 
-  it("I27/MP-R03: 同 Family 的失效旧选择留空，手动选择后可发送", async function () {
+  it("I27/MP-R03: 旧官方套餐选择失效时留空，手动选择后可发送", async function () {
     this.timeout(180000);
     await seedPersistedModelSelection({
-      modelId: E2E_PLAN_NON_DEFAULT_MODEL,
-      providerId: E2E_BIGMODEL_START_PROVIDER_ID,
+      modelId: E2E_GLM_NON_DEFAULT_MODEL,
+      providerId: "account:bigmodel-start-plan",
       reasoningLevel: "max",
     });
-    await restartWithTeamPlanSelection();
+    await restartIntoWorkspace();
     await assertUnavailableSelectionRequiresUserChoice();
     await assertRequestUsesModel("E2E_MODEL_PROVIDER_RESTART_R03", UPSTREAM_MODEL);
   });
@@ -158,25 +102,11 @@ describe("模型 Provider 重启恢复 E2E", () => {
       providerId: UPSTREAM_PROVIDER_ID,
       reasoningLevel: "max",
     });
-    await restartWithTeamPlanSelection();
+    await restartIntoWorkspace();
     await assertUnavailableSelectionRequiresUserChoice();
     await assertRequestUsesModel("E2E_MODEL_PROVIDER_RESTART_R04", UPSTREAM_MODEL);
   });
 });
-
-async function restartWithTeamPlanSelection() {
-  await restartIntoWorkspace({
-    afterElectronProcessExit: async () => {
-      await seedBigModelConnectionSelection({
-        kind: "team-coding-plan",
-        productId: "product-team-a",
-        organizationId: "org-team-a",
-        projectId: "proj-team-a",
-      });
-      await seedBigModelOAuthCredential();
-    },
-  });
-}
 
 async function assertRequestUsesModel(marker: string, model: string) {
   const prompt = `${marker}: Reply with exactly "${E2E_REPLY_TOKEN}" and no other text.`;
@@ -215,13 +145,6 @@ async function waitForRestartedDraftModelReady(provider: string, model: string) 
       })}`,
     },
   );
-}
-
-async function assertPlanRequest(marker: string) {
-  const prompt = `${marker}: Reply with exactly "${E2E_REPLY_TOKEN}" and no other text.`;
-  await sendV4Prompt(prompt);
-  await waitForV4TimelineContaining(E2E_REPLY_TOKEN);
-  await waitForV4Pane((snapshot) => !snapshot.canStop, `${marker} 没有完成`, 90000);
 }
 
 async function assertUnavailableSelectionRequiresUserChoice() {

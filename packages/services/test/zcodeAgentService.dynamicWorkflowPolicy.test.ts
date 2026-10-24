@@ -7,13 +7,53 @@ import {
   type DynamicWorkflowMode,
 } from "@zcode/shared";
 import { V4_METHODS } from "@zcode/shared/zcode-protocol-v4";
-import { offPeakSelectionView } from "./fixtures/offPeakSelection.js";
 
-// DWG-02（docs/dynamic-workflow/launch.md「Gray release」）：Host 是灰度的唯一裁决者。
+// Host 将本地解析的动态工作流模式同步给 CLI。
 // 判定在 workspace client 就绪时做一次：开启才下发 workspace/updateDynamicWorkflowPolicy，
 // 并在 session create / resume / v4 createSession 上打 dynamicWorkflowEnabled:true；
 // 关闭时三处都不写字段（CLI 缺省 fail-closed）。旧 CLI 的 -32601 降级忽略。
-// 与 Off-Peak 不同：远程 workspace 同样可用，判据里不看 workspaceIdentity / remoteSessionId。
+// SSH workspace 复用相同策略，身份字段只负责正确路由。
+
+import type { ModelSelectionView } from "@zcode/provider";
+
+function ordinarySelectionView(): ModelSelectionView {
+  return {
+    revision: 1,
+    providers: [
+      {
+        providerId: "personal:isolated-test",
+        config: { visibility: "visible" },
+        models: ["test-model"].map((modelId) => ({
+          modelId,
+          config: {
+            enabled: true,
+
+            properties: {
+              requiresMfjsToolSchema: false,
+              contextWindow: 200000,
+              inputFormat: {
+                supportsText: true,
+                supportsImage: false,
+                supportsVideo: false,
+                supportsAudio: false,
+                supportsPdf: false,
+              },
+              outputFormat: { supportsText: true },
+              supportsToolCall: true,
+              supportsJsonSchemaOutput: false,
+              supportsNativeWebSearch: false,
+              supportsMidConversationSystem: false,
+            },
+            optionSpecs: {
+              reasoningLevel: { values: ["disabled", "high"], map: "{}" },
+              maxOutputTokens: { max: 32000, map: "{}" },
+            },
+          },
+        })),
+      },
+    ],
+  };
+}
 
 const WORKSPACE_PATH = "/workspace/app";
 
@@ -47,12 +87,10 @@ async function setup(params: {
   const resolveConfig = vi.fn(
     params.configResolver ??
       (async (): Promise<DynamicWorkflowClientConfig> =>
-        createDynamicWorkflowClientConfig(
-          params.enabled ? "alwaysOn" : "disabled",
-          params.enabled ? "remote" : "default",
-        )),
+        createDynamicWorkflowClientConfig(params.enabled ? "alwaysOn" : "disabled", "default")),
   );
   const request = vi.fn(async (method: string, requestParams?: unknown) => {
+    if (method === zcodeProtocolMethods.providerRefreshRegistry) return {};
     if (method === zcodeProtocolMethods.workspaceUpdateDynamicWorkflowPolicy) {
       if (params.policyResponse) return params.policyResponse(requestParams);
       return requestParams;
@@ -88,7 +126,8 @@ async function setup(params: {
   }));
   const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
   const service = createZCodeAgentService({
-    modelSelectionReadinessSource: { getView: async () => offPeakSelectionView() },
+    modelSelectionReadinessSource: { getView: async () => ordinarySelectionView() },
+
     ...(params.enabled === undefined && !params.configResolver
       ? {}
       : { resolveDynamicWorkflowClientConfig: resolveConfig }),
@@ -120,7 +159,7 @@ function v4CreateSessionEnvelope(commandId: string) {
 }
 
 describe("workspace/updateDynamicWorkflowPolicy 同步（DWG-02）", () => {
-  it("未装配灰度 resolver 时不发策略请求", async () => {
+  it("未装配本地策略 resolver 时不发策略请求", async () => {
     const { service, request, getClient } = await setup({});
     try {
       await expect(service.initialize({ workspacePath: WORKSPACE_PATH })).resolves.toEqual(
@@ -133,7 +172,7 @@ describe("workspace/updateDynamicWorkflowPolicy 同步（DWG-02）", () => {
     }
   });
 
-  it("灰度关闭时读取快照但不发策略请求", async () => {
+  it("本地策略关闭时读取快照但不发策略请求", async () => {
     const { service, request, resolveConfig } = await setup({ enabled: false });
     try {
       await service.initialize({ workspacePath: WORKSPACE_PATH });
@@ -144,7 +183,7 @@ describe("workspace/updateDynamicWorkflowPolicy 同步（DWG-02）", () => {
     }
   });
 
-  it("灰度开启时在客户端就绪阶段下发 enabled:true", async () => {
+  it("本地策略开启时在客户端就绪阶段下发 enabled:true", async () => {
     const { service, request } = await setup({ enabled: true });
     try {
       await service.initialize({ workspacePath: WORKSPACE_PATH });
@@ -162,7 +201,7 @@ describe("workspace/updateDynamicWorkflowPolicy 同步（DWG-02）", () => {
 
   it("onDemand 与 alwaysOn 同为开启，且 mode 原样随策略下发", async () => {
     const { service, request } = await setup({
-      configResolver: async () => createDynamicWorkflowClientConfig("onDemand", "remote"),
+      configResolver: async () => createDynamicWorkflowClientConfig("onDemand", "default"),
     });
     try {
       await service.initialize({ workspacePath: WORKSPACE_PATH });
@@ -173,27 +212,27 @@ describe("workspace/updateDynamicWorkflowPolicy 同步（DWG-02）", () => {
     }
   });
 
-  it("resolver 抛错时按关闭处理，不发策略也不阻断就绪", async () => {
+  it("resolver 抛错时使用本地 onDemand 默认且不阻断就绪", async () => {
     const { service, request } = await setup({
       configResolver: async () => {
-        throw new Error("client configs unavailable");
+        throw new Error("local config unavailable");
       },
     });
     try {
       await expect(service.initialize({ workspacePath: WORKSPACE_PATH })).resolves.toEqual(
         expect.objectContaining({ available: true }),
       );
-      expect(policyCalls(request)).toHaveLength(0);
+      expect(policyCalls(request)[0]?.[1]).toMatchObject({ enabled: true, mode: "onDemand" });
     } finally {
       service.disposeAll();
     }
   });
 
-  it("resolver 返回 undefined 时按关闭处理", async () => {
+  it("resolver 返回 undefined 时使用本地 onDemand 默认", async () => {
     const { service, request } = await setup({ configResolver: async () => undefined });
     try {
       await service.initialize({ workspacePath: WORKSPACE_PATH });
-      expect(policyCalls(request)).toHaveLength(0);
+      expect(policyCalls(request)[0]?.[1]).toMatchObject({ enabled: true, mode: "onDemand" });
     } finally {
       service.disposeAll();
     }
@@ -254,7 +293,7 @@ describe("workspace/updateDynamicWorkflowPolicy 同步（DWG-02）", () => {
 });
 
 describe("session create / resume / v4 createSession 的 flag（DWG-02）", () => {
-  it("灰度开启时三条创建路径都带 dynamicWorkflowEnabled:true", async () => {
+  it("本地策略开启时三条创建路径都带 dynamicWorkflowEnabled:true", async () => {
     const { service, request, resolveConfig } = await setup({ enabled: true });
     try {
       await service.createSession({ workspacePath: WORKSPACE_PATH, sessionId: "s-create" });
@@ -285,7 +324,7 @@ describe("session create / resume / v4 createSession 的 flag（DWG-02）", () =
   // launch.md「On demand: activation」「How the mode travels」：onDemand 原样到达三条创建路径。
   it("onDemand 时三条创建路径都带 dynamicWorkflowMode:onDemand", async () => {
     const { service, request } = await setup({
-      configResolver: async () => createDynamicWorkflowClientConfig("onDemand", "remote"),
+      configResolver: async () => createDynamicWorkflowClientConfig("onDemand", "default"),
     });
     try {
       await service.createSession({ workspacePath: WORKSPACE_PATH, sessionId: "s-create" });
@@ -310,7 +349,7 @@ describe("session create / resume / v4 createSession 的 flag（DWG-02）", () =
     }
   });
 
-  it("灰度关闭时三条创建路径都不写该字段", async () => {
+  it("本地策略关闭时三条创建路径都不写该字段", async () => {
     const { service, request } = await setup({ enabled: false });
     try {
       await service.createSession({ workspacePath: WORKSPACE_PATH, sessionId: "s-create" });
@@ -378,6 +417,7 @@ describe("session create / resume / v4 createSession 的 flag（DWG-02）", () =
     try {
       let firstCreateSeen = false;
       request.mockImplementation(async (method: string, requestParams?: unknown) => {
+        if (method === zcodeProtocolMethods.providerRefreshRegistry) return {};
         if (method === zcodeProtocolMethods.workspaceUpdateDynamicWorkflowPolicy) {
           return requestParams;
         }
@@ -416,11 +456,12 @@ describe("session create / resume / v4 createSession 的 flag（DWG-02）", () =
   // 重试，布尔照带，会话按 alwaysOn 行事。
   it("旧 CLI 只拒绝 dynamicWorkflowMode 时省略它重试，布尔保留", async () => {
     const { service, request } = await setup({
-      configResolver: async () => createDynamicWorkflowClientConfig("onDemand", "remote"),
+      configResolver: async () => createDynamicWorkflowClientConfig("onDemand", "default"),
     });
     try {
       let firstCreateSeen = false;
       request.mockImplementation(async (method: string, requestParams?: unknown) => {
+        if (method === zcodeProtocolMethods.providerRefreshRegistry) return {};
         if (method === zcodeProtocolMethods.workspaceUpdateDynamicWorkflowPolicy) {
           return requestParams;
         }
@@ -458,7 +499,7 @@ describe("session create / resume / v4 createSession 的 flag（DWG-02）", () =
   });
 });
 
-// DWG-20（launch.md「The user's choice」）：Host 只闩服务端的「提供」（默认值），用户选择每次使用时重新应用且永远生效；
+// DWG-20（launch.md「The user's choice」）：Host 只闩本地的「提供」（默认值），用户选择每次使用时重新应用且永远生效；
 // 选择变化后按 workspace 串行重发策略，只在生效模式真的变了时才发。
 describe("用户选择（DWG-20）", () => {
   it("闩住的提供 + 每次读取的用户选择：两次建会话之间改选择，第二次就带新模式", async () => {
@@ -505,7 +546,7 @@ describe("用户选择（DWG-20）", () => {
     }
   });
 
-  it("服务端默认 disabled 时用户选择照样生效：策略开启，建会话带所选模式", async () => {
+  it("本地默认 disabled 时用户选择照样生效：策略开启，建会话带所选模式", async () => {
     const { service, request } = await setup({
       enabled: false,
       userModeResolver: async () => "alwaysOn",
@@ -528,7 +569,7 @@ describe("用户选择（DWG-20）", () => {
     [
       "抛错",
       async (): Promise<DynamicWorkflowClientConfig | undefined> => {
-        throw new Error("client configs unavailable");
+        throw new Error("local config unavailable");
       },
     ],
     ["返回 undefined", async (): Promise<DynamicWorkflowClientConfig | undefined> => undefined],

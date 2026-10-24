@@ -53,7 +53,6 @@ describe("settingsNavigation", () => {
 
     expect(listener).toHaveBeenCalledWith("general", {
       section: "general",
-      usageTab: undefined,
       modelProviderId: undefined,
     });
     expect(storage.has("zcode-settings-section-intent")).toBe(false);
@@ -163,75 +162,6 @@ describe("settingsNavigation", () => {
     expect(storage.has("zcode-settings-plugin-scope-key-intent")).toBe(false);
     expect(navigation.consumePendingSettingsPluginScopeKey()).toBeUndefined();
     dispose();
-  });
-
-  it("剩余额度详情入口写入 usage coding plan 跳转意图", async () => {
-    const eventTarget = new EventTarget();
-    const storage = new Map<string, string>();
-    vi.stubGlobal("window", {
-      addEventListener: eventTarget.addEventListener.bind(eventTarget),
-      removeEventListener: eventTarget.removeEventListener.bind(eventTarget),
-      dispatchEvent: eventTarget.dispatchEvent.bind(eventTarget),
-      sessionStorage: {
-        getItem: (key: string) => storage.get(key) ?? null,
-        removeItem: (key: string) => storage.delete(key),
-        setItem: (key: string, value: string) => {
-          storage.set(key, value);
-        },
-      },
-      localStorage: {
-        getItem: () => null,
-        removeItem: () => undefined,
-        setItem: () => undefined,
-      },
-    });
-    const navigation = await loadSettingsNavigation("test");
-    const listener = vi.fn();
-    const dispose = navigation.addPendingSettingsSectionListener(listener);
-
-    navigation.setPendingSettingsUsageCodingPlanIntent();
-
-    expect(listener).toHaveBeenCalledWith("usage", {
-      section: "usage",
-      usageTab: "codingPlan",
-      modelProviderId: undefined,
-    });
-    expect(navigation.consumePendingSettingsUsageTab()).toBeUndefined();
-
-    dispose();
-    navigation.setPendingSettingsUsageCodingPlanIntent();
-
-    expect(navigation.consumeInitialSettingsSection("general")).toBe("usage");
-    expect(navigation.consumePendingSettingsUsageTab()).toBe("codingPlan");
-  });
-
-  it("provider loading 期间保留 coding plan 使用统计 tab 意图", async () => {
-    const navigation = await loadSettingsNavigation("test");
-
-    expect(
-      navigation.shouldFallbackSettingsUsageTabToApp({
-        activeTab: "codingPlan",
-        checkingCodingPlanTab: false,
-        loadingModelProviders: true,
-        showCodingPlanTab: false,
-      }),
-    ).toBe(false);
-    expect(
-      navigation.shouldFallbackSettingsUsageTabToApp({
-        activeTab: "codingPlan",
-        checkingCodingPlanTab: true,
-        loadingModelProviders: false,
-        showCodingPlanTab: false,
-      }),
-    ).toBe(false);
-    expect(
-      navigation.shouldFallbackSettingsUsageTabToApp({
-        activeTab: "codingPlan",
-        checkingCodingPlanTab: false,
-        loadingModelProviders: false,
-        showCodingPlanTab: false,
-      }),
-    ).toBe(true);
   });
 
   it("旧版已删除分区意图会回落到安全分区", async () => {

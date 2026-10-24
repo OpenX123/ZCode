@@ -1,5 +1,4 @@
 import { getTurnTools } from "./turn-tool-visibility.js";
-import { refreshOffPeakTurnAfterTakeover } from "../off-peak/turn.js";
 import { appendRuntimeAgentListing } from "../helpers/agent-listing.js";
 import { beginLocalTurnPreparation } from "@zcode/contracts";
 import { buildToolSearchAnnouncement } from "../../tool/search/exposure.js";
@@ -52,7 +51,6 @@ export async function runRegularTurnLoop(
 ): Promise<void> {
   while (true) {
     throwIfTurnAborted(state.turnAbortSignal);
-    refreshOffPeakTurnAfterTakeover(this, state);
     const outputTokenRecoveryActive = state.turnRequestState.outputTokenContinuationCount > 0;
     // guide 只允许由完整 tool result batch 设置这个一次性诊断；普通 queue 不在
     // model roundtrip 起点消费，避免把未来 turn 错并入当前 product turn。

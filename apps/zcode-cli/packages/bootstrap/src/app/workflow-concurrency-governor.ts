@@ -85,7 +85,6 @@ interface WorkflowConcurrencyGovernorOptions {
 const THROTTLE_REASONS: ReadonlySet<string> = new Set<ConcurrencyThrottleReason>([
   "rate_limited",
   "provider_overloaded",
-  "offpeak_queued",
 ]);
 /** 不是 provider 失败的 retry 原因：既不减 cap 也不清 streak——只当尝试终结。 */
 const NON_FAILURE_RETRY_REASONS: ReadonlySet<string> = new Set([
@@ -228,7 +227,11 @@ export function createWorkflowConcurrencyGovernor(
    * 未见终结事件即按 `ended` 处理。结算后的 publish / release 一律惰性——runner 在极少数路径上
    * （尝试已结束后的兜底事件）可能仍会投递。
    */
-  const mintTicket = (bucket: Bucket, runId: string, epoch: number): ModelRequestAdmissionTicket => {
+  const mintTicket = (
+    bucket: Bucket,
+    runId: string,
+    epoch: number,
+  ): ModelRequestAdmissionTicket => {
     let settled = false;
     const settle = (signal: (at: number) => ConcurrencyChange[]): void => {
       if (settled) return;
@@ -314,7 +317,9 @@ export function createWorkflowConcurrencyGovernor(
 
   /** 按轮转挑下一个有等待者的 run。 */
   const nextRunWithWaiters = (bucket: Bucket): string | undefined => {
-    const runs = [...bucket.queues.keys()].filter((runId) => (bucket.queues.get(runId)?.length ?? 0) > 0);
+    const runs = [...bucket.queues.keys()].filter(
+      (runId) => (bucket.queues.get(runId)?.length ?? 0) > 0,
+    );
     if (runs.length === 0) return undefined;
     const last = bucket.lastGrantedRun;
     const lastIndex = last === undefined ? -1 : runs.indexOf(last);

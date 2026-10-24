@@ -1,7 +1,5 @@
 import type { ToolSearchExecutionContext } from "@zcode/contracts";
 import type {
-  AgentExecutionTelemetryPort,
-  AgentTelemetryActorKind,
   AutomationPort,
   BackgroundResultOriginMeta,
   BrowserControlPort,
@@ -18,7 +16,6 @@ import type {
   Logger,
   Model,
   ModelCatalogPort,
-  OffPeakPort,
   TopicResourcePort,
   PdfDocumentPort,
   PermissionBrokerPort,
@@ -75,8 +72,6 @@ export type ShouldEnqueueBackgroundTaskNotification = (
 ) => boolean;
 
 export interface ToolExecutorOptions {
-  agentTelemetry?: AgentExecutionTelemetryPort;
-  agentTelemetryActorKind?: AgentTelemetryActorKind;
   registry: ToolRegistry;
   permissionService: PermissionService;
   permissionBroker?: PermissionBrokerPort;
@@ -107,7 +102,6 @@ export interface ToolExecutorOptions {
   workflowEscalatePort?: WorkflowEscalatePort;
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
-  offPeakPort?: OffPeakPort;
   topicResourcePort?: TopicResourcePort;
   sessionStore?: SessionStorePort;
   sessionModePort?: SessionModePort;
@@ -178,7 +172,6 @@ export interface ToolExecutor {
 export interface ToolExecuteOptions {
   toolSearch?: ToolSearchExecutionContext;
   automationTurn?: boolean;
-  offPeakTurn?: boolean;
   signal?: AbortSignal;
   traceContext?: TraceContext;
   subagentModelOverride?: SubagentRunOptions["modelOverride"];
@@ -190,8 +183,6 @@ export interface ToolBatchExecuteOptions extends ToolExecuteOptions {
 }
 
 export interface ToolExecutorDeps {
-  agentTelemetry?: AgentExecutionTelemetryPort;
-  agentTelemetryActorKind?: AgentTelemetryActorKind;
   registry: ToolRegistry;
   permissionService: PermissionService;
   permissionBroker: PermissionBrokerPort;
@@ -222,7 +213,6 @@ export interface ToolExecutorDeps {
   workflowEscalatePort?: WorkflowEscalatePort;
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
-  offPeakPort?: OffPeakPort;
   topicResourcePort?: TopicResourcePort;
   sessionStore?: SessionStorePort;
   sessionModePort?: SessionModePort;

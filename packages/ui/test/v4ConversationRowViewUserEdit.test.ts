@@ -4,10 +4,9 @@ import { FileClockIcon } from "lucide-react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   TID_V4_EDIT,
+  TID_V4_FORK,
   TID_V4_EDIT_ATTACHMENT_REMOVE,
   TID_V4_EDIT_REWIND_WORKSPACE,
-  TID_V4_FEEDBACK_DISLIKE,
-  TID_V4_FEEDBACK_LIKE,
   testId,
 } from "@zcode/shared/test-ids";
 import type { AssistantTextRow, ReasoningRow, UserInputRow } from "@zcode/shared/zcode-protocol-v4";
@@ -1439,13 +1438,14 @@ describe("ConversationRowView user query editing", () => {
     });
   });
 
-  it("keeps assistant feedback local to the mounted action toolbar", async () => {
+  it("历史反馈字段不恢复反馈操作，复制与派生继续可用", async () => {
     const row = assistantTextRow({
       entityId: "message-assistant-43",
       state: "complete",
+      feedback: "like",
     });
+    const onFork = vi.fn();
     const root: Root = createRoot(installMinimalDom());
-
     await act(async () => {
       root.render(
         createElement(
@@ -1454,42 +1454,22 @@ describe("ConversationRowView user query editing", () => {
           createElement(ConversationRowView, {
             context: { ...rowContext, compactForRemoteControl: true },
             row,
-            onFeedbackChange: vi.fn(async () => true),
+            onFork,
           }),
         ),
       );
     });
-
-    const likeTestId = testId(TID_V4_FEEDBACK_LIKE, String(row.rowId));
-    const dislikeTestId = testId(TID_V4_FEEDBACK_DISLIKE, String(row.rowId));
-    expect(messageActionPropsByTestId.get(likeTestId)?.["aria-pressed"]).toBe(false);
-    expect(messageActionPropsByTestId.get(dislikeTestId)?.["aria-pressed"]).toBe(false);
-    expect(messageActionPropsByTestId.get(likeTestId)?.tooltip).toBeUndefined();
-
-    const handleLike = messageActionPropsByTestId.get(likeTestId)?.onClick;
-    expect(handleLike).toBeTypeOf("function");
+    expect([...messageActionPropsByTestId.keys()].some((id) => id.startsWith("v4-feedback-"))).toBe(
+      false,
+    );
+    expect(messageActionPropsByTestId.has(`v4-copy-${row.rowId}`)).toBe(true);
+    const fork = messageActionPropsByTestId.get(testId(TID_V4_FORK, String(row.rowId)))?.onClick;
+    expect(fork).toBeTypeOf("function");
     await act(async () => {
-      (handleLike as () => void)();
+      (fork as () => void)();
     });
-    expect(messageActionPropsByTestId.get(likeTestId)?.["aria-pressed"]).toBe(true);
-    expect(messageActionPropsByTestId.get(dislikeTestId)?.["aria-pressed"]).toBe(false);
-
-    const handleLikeAgain = messageActionPropsByTestId.get(likeTestId)?.onClick;
-    expect(handleLikeAgain).toBeTypeOf("function");
-    await act(async () => {
-      (handleLikeAgain as () => void)();
-    });
-    expect(messageActionPropsByTestId.get(likeTestId)?.["aria-pressed"]).toBe(false);
-    expect(messageActionPropsByTestId.get(dislikeTestId)?.["aria-pressed"]).toBe(false);
-
-    const handleDislike = messageActionPropsByTestId.get(dislikeTestId)?.onClick;
-    expect(handleDislike).toBeTypeOf("function");
-    await act(async () => {
-      (handleDislike as () => void)();
-    });
-    expect(messageActionPropsByTestId.get(likeTestId)?.["aria-pressed"]).toBe(false);
-    expect(messageActionPropsByTestId.get(dislikeTestId)?.["aria-pressed"]).toBe(true);
-
+    expect(onFork).toHaveBeenCalledWith({ rowId: row.rowId, entityId: row.entityId });
+    expect(row.feedback).toBe("like");
     await act(async () => {
       root.unmount();
     });

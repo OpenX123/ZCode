@@ -19,7 +19,6 @@ export function TaskListItemContextMenu({
   onStartRenameTask,
   onArchiveTask,
   onMarkTaskAsUnread,
-  onOpenTaskFeedback,
   onOpenTaskPathInFileManager,
   onCopyWorkspacePath,
   onCopyTaskPath,
@@ -49,7 +48,6 @@ export function TaskListItemContextMenu({
   onStartRenameTask: () => void;
   onArchiveTask: () => void;
   onMarkTaskAsUnread: () => void;
-  onOpenTaskFeedback: () => void;
   onOpenTaskPathInFileManager: () => void;
   onCopyWorkspacePath: () => void;
   onCopyTaskPath: () => void;
@@ -78,7 +76,6 @@ export function TaskListItemContextMenu({
         onStartRenameTask={onStartRenameTask}
         onArchiveTask={onArchiveTask}
         onMarkTaskAsUnread={onMarkTaskAsUnread}
-        onOpenTaskFeedback={onOpenTaskFeedback}
         onOpenTaskPathInFileManager={onOpenTaskPathInFileManager}
         onCopyWorkspacePath={onCopyWorkspacePath}
         onCopyTaskPath={onCopyTaskPath}

@@ -2,6 +2,7 @@
   "name": "zcode",
   "version": "3.16.2",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev:web": "concurrently -k -n server,web -c blue,green \"pnpm --filter @zcode/server dev\" \"pnpm --filter @zcode/web dev\"",
@@ -12,11 +13,7 @@
     "dev:desktop:bytecode": "node scripts/dev-desktop-env.mjs production --agent-bytecode",
     "dev:e2e-report": "pnpm --filter @zcode/e2e-report dev",
     "dev:desktop:remote-prod": "node scripts/dev-desktop-remote-prod.mjs",
-    "dev:web-remote-control": "node scripts/build-desktop-agent-cli.mjs && concurrently -k -n web,desktop -c green,magenta \"pnpm --filter @zcode/web exec vite dev --strictPort\" \"node scripts/dev-web-remote-control-desktop.mjs\"",
-    "dev:web-share:test": "node scripts/dev-web-share-env.mjs test",
-    "dev:web-share:mock": "node scripts/dev-web-share-env.mjs mock",
     "dev:server": "pnpm --filter @zcode/server dev",
-    "dev:official-mcp": "node scripts/dev-official-mcp-server.mjs",
     "prepare": "husky && pnpm build:cua",
     "prepare:desktop-runtime": "pnpm --filter @zcode/desktop prepare:runtime-assets",
     "dep:graph": "node scripts/dependency-graph.mjs",
@@ -39,8 +36,6 @@
     "build": "pnpm -r build",
     "build:desktop-agent:bytecode": "node scripts/build-desktop-agent-bytecode.mjs",
     "build:docs": "pnpm --filter @zcode/dev-docs build",
-    "build:web-remote-control:test": "pnpm --filter @zcode/web exec vite build --base=/remote/__test__/",
-    "build:web-share": "pnpm --filter @zcode/web-share build",
     "build:zcode": "node scripts/build-zcode.mjs",
     "build:bootstrap": "pnpm -r --filter \"./packages/*\" --filter \"!@zcode/desktop\" build && pnpm --filter @zcode/desktop build:no-runtime-assets",
     "build:sea": "pnpm --dir apps/zcode-cli build:sea",
@@ -124,10 +119,8 @@
       "@radix-ui/react-collapsible@1.1.12": "patches/@radix-ui__react-collapsible@1.1.12.patch",
       "vitest@4.1.7": "patches/vitest@4.1.7.patch",
       "wdio-electron-service@9.2.1": "patches/wdio-electron-service@9.2.1.patch",
-      "@arms/rum-electron@0.0.3": "patches/@arms__rum-electron@0.0.3.patch",
       "@ai-sdk/openai-compatible@2.0.60": "patches/@ai-sdk__openai-compatible@2.0.60.patch",
       "@ai-sdk/anthropic@3.0.81": "patches/@ai-sdk__anthropic@3.0.81.patch"
     }
-  },
-  "license": "Apache-2.0"
+  }
 }

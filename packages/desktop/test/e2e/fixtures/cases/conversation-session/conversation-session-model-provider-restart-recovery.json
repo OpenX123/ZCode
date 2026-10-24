@@ -48,14 +48,14 @@
       "kind": "main",
       "source": "synthetic",
       "timingPolicy": "fast-text",
-      "syntheticReason": "核心断言是失效 Recent 回退后的真实请求模型，响应仅用于稳定收口。"
+      "syntheticReason": "验证失效 Recent 不自动回退，手动修复后的真实请求模型。"
     },
     {
       "id": "model-provider-restart-r04",
       "kind": "main",
       "source": "synthetic",
       "timingPolicy": "fast-text",
-      "syntheticReason": "核心断言是失效 Recent 回退后的真实请求模型，响应仅用于稳定收口。"
+      "syntheticReason": "验证失效 Recent 不自动回退，手动修复后的真实请求模型。"
     }
   ]
 }

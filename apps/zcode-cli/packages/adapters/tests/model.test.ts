@@ -349,12 +349,12 @@ describe("Model", () => {
     expect(model).not.toHaveProperty("headers");
   });
 
-  it("forwards the Model-bound static account access to each account-auth attempt", async () => {
+  it("显式绑定动态凭据源时，每次请求取得最新凭据", async () => {
     const requestAuth = {
       apiKey: "attempt-key",
       headers: { "X-Attempt": "attempt-header" },
     };
-    const refresh = vi.fn(async () => ({ headersApplied: true, requestAuth }));
+    const refresh = vi.fn(async () => requestAuth);
     const receivedHeaders: unknown[] = [];
     const runtime: AiSdkModelRuntime = {
       async generateText(options) {
@@ -384,26 +384,19 @@ describe("Model", () => {
       runtime,
     });
     const model = adapter.createModel({
-      accountMode: "individual-coding-plan",
       providerId: "account" as never,
       modelId: "model-a" as never,
       optionSpecs: {
         maxOutputTokens: { max: 8_000 },
       },
       properties,
+      requestDependencies: { requestAuth: { source: { resolve: refresh } } },
     });
 
-    await runWithModelInvocationContext({ refreshRuntimeHeadersBeforeAttempt: refresh }, () =>
-      model.generateText({ messages: [{ role: "user", content: "hello" }] }),
-    );
+    await model.generateText({ messages: [{ role: "user", content: "hello" }] });
 
     expect(refresh).toHaveBeenCalledWith(
       expect.objectContaining({
-        accountAccess: {
-          type: "zhipu-account",
-          accountType: "zai",
-          mode: "individual-coding-plan",
-        },
         attempt: 1,
         providerId: "account",
         modelId: "model-a",
@@ -414,7 +407,7 @@ describe("Model", () => {
     });
   });
 
-  it("does not refresh account runtime headers for a model without account access", async () => {
+  it("普通 API 不自动调用旧运行时凭据刷新回调", async () => {
     const refresh = vi.fn(async () => ({
       headersApplied: false,
       requestAuth: { headers: { "X-Account": "unexpected" } },
@@ -634,17 +627,14 @@ describe("Model", () => {
     expect(streamText).not.toHaveBeenCalled();
   });
 
-  it("applies execution-scoped request auth for highspeed models so the card id reaches the wire", async () => {
-    // 回归（highspeed 401）：加速卡与 off-peak 同为 Coding Plan 派生模式，本轮鉴权
-    // （zcode JWT + Coding Plan 双 JWT + X-Highspeed-Card-ID）经 execution 作用域 requestAuth 下发。
-    // 门禁一旦只认 off-peak，highspeed 的 requestAuth 会被整包丢弃，加速请求缺卡 ID 被网关判 401。
+  it("通用动态凭据覆盖 API Key 并合并用户 Header", async () => {
     const resolve = vi.fn().mockResolvedValue({
-      apiKey: "zcode-jwt",
+      apiKey: "user-key",
       headers: {
-        Authorization: "Bearer zcode-jwt",
-        "X-Bigmodel-Authorization": "Bearer coding-plan-jwt",
-        "Bigmodel-Target-Type": "PERSONAL",
-        "X-Highspeed-Card-ID": "hsc-1",
+        Authorization: "Bearer user-key",
+        "X-User-Authorization": "Bearer proxy-key",
+        "X-User-Type": "PERSONAL",
+        "X-User-Project": "project-1",
       },
     });
     const receivedHeaders: unknown[] = [];
@@ -678,7 +668,6 @@ describe("Model", () => {
     const model = adapter.createModel({
       providerId: "request" as never,
       modelId: "model-a" as never,
-      accountMode: "highspeed",
       optionSpecs: {
         maxOutputTokens: { max: 8_000 },
       },
@@ -690,15 +679,15 @@ describe("Model", () => {
 
     expect(resolve).toHaveBeenCalledTimes(1);
     expect(receivedHeaders[0]).toMatchObject({
-      Authorization: "Bearer zcode-jwt",
-      "X-Bigmodel-Authorization": "Bearer coding-plan-jwt",
-      "Bigmodel-Target-Type": "PERSONAL",
-      "X-Highspeed-Card-ID": "hsc-1",
+      Authorization: "Bearer user-key",
+      "X-User-Authorization": "Bearer proxy-key",
+      "X-User-Type": "PERSONAL",
+      "X-User-Project": "project-1",
       "X-Static": "yes",
     });
   });
 
-  it("fails closed before network when highspeed request auth is unavailable", async () => {
+  it("显式要求动态凭据时，源缺失阻止生成与流请求", async () => {
     const generateText = vi.fn();
     const streamText = vi.fn();
     const adapter = new AiSdkModelAdapter({
@@ -719,7 +708,6 @@ describe("Model", () => {
     const model = adapter.createModel({
       providerId: "request" as never,
       modelId: "model-a" as never,
-      accountMode: "highspeed",
       optionSpecs: {
         maxOutputTokens: { max: 8_000 },
       },
@@ -779,14 +767,18 @@ describe("Model", () => {
       },
     });
     const adapter = new AiSdkModelAdapter({ registry, runtime });
+    const resolve = vi
+      .fn()
+      .mockResolvedValueOnce({ headers: { "X-Request-Auth": "current" } })
+      .mockResolvedValueOnce({ apiKey: "next-attempt-key" });
     const model = adapter.createModel({
-      accountMode: "individual-coding-plan",
       providerId: "account" as never,
       modelId: "model-a" as never,
       optionSpecs: {
         maxOutputTokens: { max: 8_000 },
       },
       properties,
+      requestDependencies: { requestAuth: { source: { resolve } } },
     });
 
     registry.replaceConfig({
@@ -799,25 +791,8 @@ describe("Model", () => {
       },
     });
 
-    await runWithModelInvocationContext(
-      {
-        refreshRuntimeHeadersBeforeAttempt: async () => ({
-          headersApplied: true,
-          requestAuth: { headers: { "X-Request-Auth": "current" } },
-        }),
-      },
-      () => model.generateText({ messages: [{ role: "user", content: "hello" }] }),
-    );
-
-    await runWithModelInvocationContext(
-      {
-        refreshRuntimeHeadersBeforeAttempt: async () => ({
-          headersApplied: true,
-          requestAuth: { apiKey: "next-attempt-key" },
-        }),
-      },
-      () => model.generateText({ messages: [{ role: "user", content: "again" }] }),
-    );
+    await model.generateText({ messages: [{ role: "user", content: "hello" }] });
+    await model.generateText({ messages: [{ role: "user", content: "again" }] });
     const modelCreatedAfterReplacement = adapter.createModel({
       providerId: "account" as never,
       modelId: "model-a" as never,

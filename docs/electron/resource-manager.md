@@ -14,7 +14,7 @@ CPU / 内存 tab 的内容：
 - 左侧两块指标卡：**CPU**、**内存**。每块都有一根双层进度条——**灰色**表示整机总占用，**彩色（brand）**表示 ZCode 自身占用；数字显示 ZCode 占用与整机占用。
 - 右侧按三类分组列出进程，每组显示小计，可展开看到每个进程的名称、PID、CPU、内存：
   - **基础服务**：Electron main、GPU、所有 renderer（含 DevTools / WebContentsView）、window-scoped Host（utility）、Host 派生的非 Agent 子进程（终端 shell 等）、Agent CLI 进程及其非插件子进程（工具/命令子进程）、其它 Electron utility（network service 等）。
-  - **内置插件**：官方市场（`zcode-plugins-official`）插件的 MCP 子进程树——当前即 `browser-use`（`node_repl` + plugin host）与 `computer-use`。
+  - **内置插件**：随包插件的 MCP 子进程树——当前即 `browser-use`（`node_repl` + plugin host）与 `computer-use`。
   - **社区插件**：其余全部 MCP 子进程树——第三方市场插件与用户自定义 MCP（`custom`）。
 
 **网络 tab**：只在资源管理器窗口存活期间观测本机 Main、Host、App Renderer、CLI 的 HTTP(S) 请求与 WebSocket 建连，不采集正文。窗口关闭即取消监听并释放记录；具体边界、代理兼容和验收见 [网络请求观测](resource-manager-network.md)。磁盘占用即「存储」tab。

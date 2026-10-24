@@ -1,45 +1,37 @@
 /* eslint-disable max-lines -- desktop runtime/env 解析需要集中维护 main/host/remote assets 的启动边界，拆分会扩大远程连接回归面。 */
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve, win32 } from "node:path";
 import type { ConnectOptions } from "@zcode/server/remote";
-import { listSSHConfigAliasesFromLocalConfig } from "@zcode/services/node";
-import { DEV_HELPER_APP_NAME, HELPER_APP_NAME } from "@zcode/zcode-cua/broker/helperConstants";
 import {
+  getAppConfigDir,
+  getDataBaseDir,
+  listSSHConfigAliasesFromLocalConfig,
+  ZCODE_CUA_BUNDLED_HELPER_APP_PATH_ENV,
+  ZCODE_WINDOWS_APP_INSTALL_DIR_ENV,
+} from "@zcode/services/node";
+import {
+  buildZCodeToolEnvPassthroughEnv,
+  sanitizeZCodeRuntimeEnv,
+  ZCODE_AGENT_RUNTIME,
   ZCODE_APP_VERSION_ENV,
   ZCODE_BUILD_COMMIT_ID_ENV,
-  ZCODE_AGENT_RUNTIME,
   ZCODE_COMMIT,
   ZCODE_DYNAMIC_WORKFLOW_MODE_ENV,
   ZCODE_ENV,
   ZCODE_PRODUCT_FLAVOR,
   ZCODE_RUNTIME_ENV_KEY,
   ZCODE_VERSION,
-  buildZCodeToolEnvPassthroughEnv,
-  resolveRuntimeZCodeEndpointOrigin,
-  resolveZaiBusinessBaseUrl,
-  resolveZaiOAuthClientId,
-  resolveZaiOAuthOrigin,
-  normalizeDynamicWorkflowMode,
-  readZCodeAgentTelemetryEnv,
-  sanitizeZCodeRuntimeEnv,
   type SourceServerArtifactPolicy,
   type ZCodeRuntimeEnv,
 } from "@zcode/shared";
+import { DEV_HELPER_APP_NAME, HELPER_APP_NAME } from "@zcode/zcode-cua/broker/helperConstants";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve, win32 } from "node:path";
 import { resolvePlatformKeyForPackagedApp } from "../../scripts/target-platform.mjs";
-import {
-  getAppConfigDir,
-  getDataBaseDir,
-  ZCODE_CUA_BUNDLED_HELPER_APP_PATH_ENV,
-  ZCODE_WINDOWS_APP_INSTALL_DIR_ENV,
-} from "@zcode/services/node";
+import { getElectronAppPath, isElectronAppPackaged } from "./desktopElectronApp.js";
 import {
   resolveRemoteCdnBaseUrls as resolveOrderedRemoteCdnBaseUrls,
   type ResolveRemoteCdnOptions,
 } from "./remoteCdn.js";
-import { getElectronAppPath, isElectronAppPackaged } from "./desktopElectronApp.js";
-
-declare const __ZCODE_PACKAGED_AGENT_TELEMETRY_ENV__: Readonly<Record<string, string>> | undefined;
 
 const isLocalDevelopmentRuntime = !isElectronAppPackaged();
 export const desktopRuntimeEnv: ZCodeRuntimeEnv = isLocalDevelopmentRuntime
@@ -168,7 +160,7 @@ function resolveWorkspaceRootForEnvFiles(): string | null {
 
 export function loadHostProcessEnvFromLocalFiles(): Record<string, string> {
   if (isElectronAppPackaged()) {
-    return resolvePackagedAgentTelemetryEnv();
+    return {};
   }
 
   const desktopRoot = resolve(import.meta.dirname, "../..");
@@ -213,63 +205,13 @@ export function loadHostProcessEnvFromLocalFiles(): Record<string, string> {
   return applySelectedZCodeEnvLinks(merged);
 }
 
-export function resolvePackagedAgentTelemetryEnv(
-  compiledEnv:
-    | Readonly<Record<string, string>>
-    | undefined = typeof __ZCODE_PACKAGED_AGENT_TELEMETRY_ENV__ === "undefined"
-    ? undefined
-    : __ZCODE_PACKAGED_AGENT_TELEMETRY_ENV__,
-): Record<string, string> {
-  if (!compiledEnv) {
-    return {};
-  }
-
-  // 修复原因：开发版通过启动进程继承 OTLP 配置，正式安装包从 Finder/开始菜单启动时没有
-  // 这组运行时环境，Agent 因而静默落入 Noop。构建默认值只允许连接字段进入 Main；
-  // UID、Device MID 和 runtime surface 仍由 Host 的可信运行时上下文生成。
-  return readZCodeAgentTelemetryEnv({
-    OTEL_EXPORTER_OTLP_ENDPOINT: compiledEnv.OTEL_EXPORTER_OTLP_ENDPOINT,
-    OTEL_EXPORTER_OTLP_HEADERS: compiledEnv.OTEL_EXPORTER_OTLP_HEADERS,
-    OTEL_SERVICE_NAME: compiledEnv.OTEL_SERVICE_NAME,
-    ZCODE_TELEMETRY_RUNTIME_DISTRIBUTION: compiledEnv.ZCODE_TELEMETRY_RUNTIME_DISTRIBUTION,
-  });
-}
-
-function resolveDevelopmentMockCdnDir(): string {
-  return join(import.meta.dirname, "../../mock-cdn");
-}
-
-function resolveAvailableDevelopmentMockCdnDir(): string | undefined {
-  const mockCdnDir = resolveDevelopmentMockCdnDir();
-  const releaseDir = join(mockCdnDir, "releases", ZCODE_VERSION);
-  // 开发态 mock-cdn 是可选离线缓存。当前版本目录不存在时继续传 mockCdnDir，
-  // 会让 WSL/SSH 重连先命中一个必然缺失的本地路径，遮蔽已有的 CDN/cache fallback。
-  return existsSync(releaseDir) ? mockCdnDir : undefined;
-}
-
-function isTruthyEnvFlag(value: string | undefined): boolean {
-  if (!value) {
-    return false;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
-}
-
-function shouldUseRemoteCdnInDevelopment(localEnv: LocalRuntimeEnv = {}): boolean {
-  return isTruthyEnvFlag(resolveEnvValue("ZCODE_DEV_REMOTE_ASSET_USE_CDN", localEnv));
-}
-
 function resolveRemoteCdnBaseUrls(
   options: ResolveRemoteCdnOptions = {},
   localEnv: LocalRuntimeEnv = {},
 ): string[] {
-  const raw = resolveEnvValue("ZCODE_REMOTE_ASSET_CDN_BASE_URL", localEnv);
   return resolveOrderedRemoteCdnBaseUrls({
-    ...options,
-    env: ZCODE_ENV,
-    overrideBaseUrl: raw,
-    version: ZCODE_VERSION,
+    overrideBaseUrl:
+      options.overrideBaseUrl ?? resolveEnvValue("ZCODE_REMOTE_ASSET_CDN_BASE_URL", localEnv),
   });
 }
 
@@ -305,18 +247,7 @@ function readDefinedProcessEnv(): Record<string, string> {
 }
 
 function applySelectedZCodeEnvLinks(env: Record<string, string>): Record<string, string> {
-  const endpointEnv = {
-    ...env,
-    ZCODE_ENV,
-  };
-
-  return {
-    ...env,
-    ZCODE_BASE_URL: env.ZCODE_BASE_URL ?? resolveRuntimeZCodeEndpointOrigin(endpointEnv),
-    ZAI_OAUTH_ORIGIN: env.ZAI_OAUTH_ORIGIN ?? resolveZaiOAuthOrigin(endpointEnv),
-    ZAI_BUSINESS_BASE_URL: env.ZAI_BUSINESS_BASE_URL ?? resolveZaiBusinessBaseUrl(endpointEnv),
-    ZAI_OAUTH_CLIENT_ID: env.ZAI_OAUTH_CLIENT_ID ?? resolveZaiOAuthClientId(endpointEnv),
-  };
+  return { ...env };
 }
 
 function resolveHostProcessNodeEnv(): ZCodeRuntimeEnv {
@@ -341,26 +272,14 @@ export function resolveRemoteAssetDirs(
   const remoteCdnBaseUrls = resolveRemoteCdnBaseUrls(options, localEnv);
   const remoteCdnBaseUrl = remoteCdnBaseUrls[0];
 
-  // remote 资源之前和 desktop 本地 provider 资源共用安装包内路径，
-  // 结果打包后会把整套 Linux 远程运行时一起塞进 .app，和“remote 资源走 CDN / mock-cdn”的职责边界冲突。
-  // 这里改成显式分流：开发态只读仓库里的 mock-cdn；生产态统一走 CDN + 本地缓存目录，
-  // 不再暴露任何安装包内 remote-assets 路径，避免 remote 资源再次被塞回安装包。
-  // 功能开关：开发态默认继续走 mock-cdn，只有显式打开开关才切到公网 CDN。
-  // 这样能兼容离线开发场景，同时允许在开发环境提前验证真实 CDN 下载链路。
-  if (isElectronAppPackaged() || shouldUseRemoteCdnInDevelopment(localEnv)) {
-    return {
-      remoteCdnBaseUrl,
-      remoteCdnBaseUrls,
-      remoteCacheDir: resolveRemoteAssetCacheDir(localEnv),
-    };
-  }
-
-  const developmentMockCdnDir = resolveAvailableDevelopmentMockCdnDir();
+  // 源码产物在开发目录和安装包中使用相同 releases 布局，缺失时由部署器明确报错。
   return {
-    ...(developmentMockCdnDir ? { mockCdnDir: developmentMockCdnDir } : {}),
-    // Bug 原因：ZCODE_ENV 表示测试/生产产品环境，dev:desktop 也可能取 production；
-    // 同版本开发制品刷新必须由未打包 Electron 这一运行形态显式授权。
-    sourceServerArtifactPolicy: "development-content-addressed",
+    mockCdnDir: isElectronAppPackaged()
+      ? join(process.resourcesPath, "remote-assets")
+      : join(import.meta.dirname, "../../mock-cdn"),
+    ...(!isElectronAppPackaged()
+      ? { sourceServerArtifactPolicy: "development-content-addressed" as const }
+      : {}),
     remoteCdnBaseUrl,
     remoteCdnBaseUrls,
     remoteCacheDir: resolveRemoteAssetCacheDir(localEnv),
@@ -475,31 +394,6 @@ export function resolveWindowsAppInstallDirForDataBaseDirGuard(
   return win32.dirname(trimmedResourcesPath);
 }
 
-/**
- * Dynamic Workflow 灰度的本地覆盖按构建档位分三层
- *
- *   - 未打包 dev：透传 shell 里的合法取值，方便手工切档；非法值直接丢弃而不是转发给 Host，
- *     Host 因此不必再判一次来源；
- *   - 打包 preview：固定写入 `alwaysOn`，忽略 shell，preview 用户始终拥有该功能；
- *   - 打包 production：不写入，且继承值必须被删除，否则本机环境变量就能自行打开灰度。
- * Main 是唯一决策者：对这个键只有「写」和「删」两种动作，绝不原样透传，
- * Host 端的 resolveDynamicWorkflowClientConfig 才能无条件相信读到的值。
- */
-export function resolveDynamicWorkflowModeHostEnv(options: {
-  inheritedValue: string | undefined;
-  isPackaged: boolean;
-  isPreview: boolean;
-}): Record<string, string> {
-  if (!options.isPackaged) {
-    const mode = normalizeDynamicWorkflowMode(options.inheritedValue);
-    return mode ? { [ZCODE_DYNAMIC_WORKFLOW_MODE_ENV]: mode } : {};
-  }
-  if (options.isPreview) {
-    return { [ZCODE_DYNAMIC_WORKFLOW_MODE_ENV]: "alwaysOn" };
-  }
-  return {};
-}
-
 export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>) {
   const glmBinaryPath = resolveBundledGlmBinaryPath();
   const larkCliBinaryPath = resolveBundledLarkCliBinaryPath();
@@ -539,19 +433,6 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
             )
           : undefined;
   const windowsAppInstallDir = resolveWindowsAppInstallDirForDataBaseDirGuard();
-  const agentTelemetryEnv = readZCodeAgentTelemetryEnv(rawInheritedEnv);
-  // Desktop 身份由 host 从凭据仓库和本机状态读取后可信注入；外部环境只能配置 OTLP 连接，
-  // 不能伪造 uid/device/runtime surface 或绕过本地 identity state 的隔离边界。
-  for (const key of [
-    "ZCODE_TELEMETRY_USER_ID",
-    "ZCODE_TELEMETRY_USER_ID_HASH",
-    "ZCODE_TELEMETRY_USER_SUBJECT_ID",
-    "ZCODE_TELEMETRY_IDENTITY_STATE",
-    "ZCODE_TELEMETRY_DEVICE_MID",
-    "ZCODE_TELEMETRY_RUNTIME_SURFACE",
-  ]) {
-    delete agentTelemetryEnv[key];
-  }
   const inheritedEnv = applySelectedZCodeEnvLinks({
     ...sanitizeZCodeRuntimeEnv(rawInheritedEnv),
     ...buildZCodeToolEnvPassthroughEnv(rawInheritedEnv),
@@ -562,20 +443,14 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
   if (packagedDesktop) {
     delete inheritedEnv.ZCODE_CUA_HELPER_ALLOW_UNSIGNED_LOCAL;
   }
-  const dynamicWorkflowModeHostEnv = resolveDynamicWorkflowModeHostEnv({
-    inheritedValue: rawInheritedEnv[ZCODE_DYNAMIC_WORKFLOW_MODE_ENV],
-    isPackaged: packagedDesktop,
-    isPreview: isPreviewPackagedRuntime,
-  });
-  // 三层里有两层不写这个键，空对象无法覆盖 inheritedEnv，所以先无条件删掉继承值再按决策 spread 回去。
-  // 少了这一行，production 包和 dev 的非法取值都会原样穿透到 Host。
+  // 工作流模式只由本地设置与 Host 负责，旧灰度环境变量不再进入桌面运行时。
   delete inheritedEnv[ZCODE_DYNAMIC_WORKFLOW_MODE_ENV];
 
   return {
     ...inheritedEnv,
     // OTLP 凭据只定向传到 host；host 初始化 services 时会立即捕获并从 process.env 清除，
     // 后续只在启动 Agent 时短暂注入，不会进入 Bash/MCP/tool env。
-    ...agentTelemetryEnv,
+
     // ZCode 运行时不再使用 NODE_ENV；它会被用户 shell、包管理器和测试框架复用。
     // 这里显式下发 ZCODE_RUNTIME_ENV，并在继承环境里清掉 NODE_ENV，避免 host/agent/Bash 被污染。
     [ZCODE_RUNTIME_ENV_KEY]: resolveHostProcessNodeEnv(),
@@ -586,7 +461,7 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
     // 只隔离 computer-use 下的运行组件，不改写 ZCODE_HOME / ZCODE_DATA_BASE_DIR 业务数据根。
     ...(isPreviewPackagedRuntime ? { ZCODE_CUA_HELPER_INSTALL_VARIANT: "preview" } : {}),
     // Dynamic Workflow 灰度的本地覆盖：Main 决策后写入，production 包为空对象（继承值已在上面删除）。
-    ...dynamicWorkflowModeHostEnv,
+
     // 模型请求默认 header 由 agent 进程构造，过去只继承 shell env 导致桌面启动时拿不到 app 版本。
     // 这里从 main 进程显式下发，agent 子进程继承 host env 后即可稳定写入请求 header。
     [ZCODE_APP_VERSION_ENV]: ZCODE_VERSION,

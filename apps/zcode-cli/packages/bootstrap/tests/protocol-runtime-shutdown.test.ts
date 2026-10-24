@@ -7,12 +7,6 @@ import type { Logger } from "@zcode/contracts";
 import { createInMemorySessionEventStore } from "@zcode/adapters/storage";
 import { ZCodeProtocolAgentServer } from "../src/zcode-protocol/server.js";
 
-const telemetry = vi.hoisted(() => ({ shutdown: vi.fn(async () => {}) }));
-vi.mock("@zcode/telemetry", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@zcode/telemetry")>()),
-  shutdownPreparedModelTelemetry: telemetry.shutdown,
-}));
-
 afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
@@ -182,7 +176,25 @@ describe("protocol runtime resource ownership", () => {
     await vi.advanceTimersByTimeAsync(451);
     expect(completed).toBe(true);
     expect(order).toEqual(["apps", "projections", "mcp", "pool", "registry"]);
-    expect(telemetry.shutdown).toHaveBeenCalledOnce();
     await cleanup;
   });
+});
+
+it.each([
+  "offPeak/create",
+  "offPeak/list",
+  "workspace/updateOffPeakToolPolicy",
+  "v4/conversation/offPeakControl",
+])("独立 Harness 协议拒绝已退役方法 %s", async (method) => {
+  const create = vi.fn(() => createFakeApp());
+  const server = new ZCodeProtocolAgentServer({ createZCodeApp: create, cwd: "/workspace/app" });
+  try {
+    expect(await server.handleMessage({ id: "retired", method, params: {} })).toMatchObject({
+      id: "retired",
+      error: { code: -32601 },
+    });
+    expect(create).not.toHaveBeenCalled();
+  } finally {
+    await server.shutdown();
+  }
 });

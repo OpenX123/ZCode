@@ -9,17 +9,14 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   addMarketplace,
-  applyClaudePluginIcons,
   createNodePluginAdapter,
   describeMarketplacePlugin,
   discoverNodePluginsSync,
-  enrichCachedClaudeMarketplaceIcons,
   ensureDefaultPluginMarketplaces,
   installMarketplacePlugin,
   listInstalledPluginRecords,
   loadKnownMarketplacesSync,
   loadMarketplaceManifestSync,
-  parsePluginIconSources,
   uninstallMarketplacePlugin,
   updateMarketplace,
   validateMarketplacePlugin,
@@ -57,41 +54,6 @@ describe("NodePluginAdapter", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
-  });
-
-  it("validates icon source records and only fills missing Claude marketplace icons", () => {
-    const icons = parsePluginIconSources([
-      { name: "figma", icon: "figma/icon.png", mimeType: "image/png", sha256: "a".repeat(64) },
-      { name: "unsafe", icon: "../unsafe.png", mimeType: "image/png" },
-      { name: "svg", icon: "svg/icon.svg", mimeType: "image/svg+xml" },
-    ]);
-    expect(icons.get("figma")).toBe(
-      "https://cdn-zcode.z.ai/zcode/official-plugin/assets/figma/icon.png",
-    );
-    expect(icons.has("unsafe")).toBe(false);
-    expect(icons.has("svg")).toBe(false);
-
-    const enriched = applyClaudePluginIcons(
-      {
-        name: "claude-plugins-official",
-        plugins: [
-          { name: "figma", source: "./figma" },
-          { name: "existing", icon: "https://example.com/existing.png", source: "./existing" },
-        ],
-      },
-      new Map([
-        ["figma", icons.get("figma")!],
-        ["existing", "https://cdn.example.com/replacement.png"],
-      ]),
-    );
-    expect(enriched.plugins).toEqual([
-      {
-        name: "figma",
-        icon: "https://cdn-zcode.z.ai/zcode/official-plugin/assets/figma/icon.png",
-        source: "./figma",
-      },
-      { name: "existing", icon: "https://example.com/existing.png", source: "./existing" },
-    ]);
   });
 
   it("only classifies canonical public GitHub HTTPS repository URLs for Archive download", () => {
@@ -187,198 +149,6 @@ describe("NodePluginAdapter", () => {
       await new Promise<void>((resolve, reject) =>
         proxy.close((error) => (error ? reject(error) : resolve())),
       );
-      await rm(dir, { force: true, recursive: true });
-    }
-  });
-
-  it("fetches and persists optional icons while refreshing the Claude official marketplace", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "zcode-plugin-claude-icons-"));
-    const storageRoot = join(dir, "storage");
-    const sourceDir = join(dir, "claude-marketplace");
-    try {
-      await writeMarketplaceManifest(sourceDir, {
-        name: "claude-plugins-official",
-        plugins: [{ name: "figma", source: "./figma" }],
-      });
-      await writeKnownMarketplaces(storageRoot, [
-        {
-          id: "zcode-plugins-official",
-          source: {
-            source: "settings",
-            marketplace: {
-              name: "zcode-plugins-official",
-              plugins: [],
-              raw: { name: "zcode-plugins-official", plugins: [] },
-            },
-          },
-          name: "zcode-plugins-official",
-          addedAt: "2026-01-01T00:00:00.000Z",
-          pluginCount: 0,
-        },
-        {
-          id: "claude-plugins-official",
-          source: {
-            source: "settings",
-            marketplace: {
-              name: "claude-plugins-official",
-              plugins: [],
-              raw: { name: "claude-plugins-official", plugins: [] },
-            },
-          },
-          name: "claude-plugins-official",
-          addedAt: "2026-01-01T00:00:00.000Z",
-          pluginCount: 0,
-        },
-        {
-          id: "claude-plugins-official",
-          source: { source: "directory", path: sourceDir },
-          name: "claude-plugins-official",
-          addedAt: "2026-01-01T00:00:00.000Z",
-          pluginCount: 1,
-        },
-      ]);
-      vi.stubGlobal(
-        "fetch",
-        vi
-          .fn()
-          .mockResolvedValue(
-            new Response(
-              JSON.stringify([{ name: "figma", icon: "figma/icon.png", mimeType: "image/png" }]),
-              { status: 200 },
-            ),
-          ),
-      );
-
-      await updateMarketplace({ marketplace: "claude-plugins-official", storageRoot });
-
-      expect(
-        loadMarketplaceManifestSync(storageRoot, "claude-plugins-official")?.raw,
-      ).toMatchObject({
-        plugins: [
-          {
-            name: "figma",
-            icon: "https://cdn-zcode.z.ai/zcode/official-plugin/assets/figma/icon.png",
-          },
-        ],
-      });
-      const cached = JSON.parse(
-        await readFile(join(storageRoot, "icon-sources.json"), "utf8"),
-      ) as unknown;
-      expect(cached).toEqual([{ name: "figma", icon: "figma/icon.png", mimeType: "image/png" }]);
-    } finally {
-      await rm(dir, { force: true, recursive: true });
-    }
-  });
-
-  it("enriches an existing Claude catalog without refreshing its marketplace", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "zcode-plugin-existing-claude-icons-"));
-    const storageRoot = join(dir, "storage");
-    const marketplaceRoot = join(storageRoot, "marketplaces", "claude-plugins-official");
-    try {
-      await mkdir(marketplaceRoot, { recursive: true });
-      await writeFile(
-        join(marketplaceRoot, "marketplace.json"),
-        JSON.stringify({
-          name: "claude-plugins-official",
-          plugins: [{ name: "figma", source: "./figma" }],
-        }),
-      );
-      await writeKnownMarketplaces(storageRoot, [
-        {
-          id: "claude-plugins-official",
-          source: { source: "github", repo: "anthropics/claude-plugins-official" },
-          name: "claude-plugins-official",
-          addedAt: "2026-01-01T00:00:00.000Z",
-          lastUpdated: "2026-01-02T00:00:00.000Z",
-          pluginCount: 1,
-        },
-      ]);
-      let resolveFetch!: (response: Response) => void;
-      const fetchMock = vi.fn(
-        () =>
-          new Promise<Response>((resolve) => {
-            resolveFetch = resolve;
-          }),
-      );
-      vi.stubGlobal("fetch", fetchMock);
-      let writeLockCalls = 0;
-      const migration = enrichCachedClaudeMarketplaceIcons(storageRoot, async (write) => {
-        writeLockCalls += 1;
-        await write();
-      });
-
-      await Promise.resolve();
-      expect(writeLockCalls).toBe(0);
-      resolveFetch(
-        new Response(
-          JSON.stringify([{ name: "figma", icon: "figma/icon.png", mimeType: "image/png" }]),
-          { status: 200 },
-        ),
-      );
-      await migration;
-
-      await enrichCachedClaudeMarketplaceIcons(storageRoot);
-
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect(writeLockCalls).toBe(1);
-      expect(
-        loadMarketplaceManifestSync(storageRoot, "claude-plugins-official")?.raw,
-      ).toMatchObject({
-        plugins: [
-          {
-            name: "figma",
-            icon: "https://cdn-zcode.z.ai/zcode/official-plugin/assets/figma/icon.png",
-          },
-        ],
-      });
-      expect(
-        JSON.parse(await readFile(join(storageRoot, "known_marketplaces.json"), "utf8")),
-      ).toMatchObject({
-        marketplaces: [{ lastUpdated: "2026-01-02T00:00:00.000Z" }],
-      });
-    } finally {
-      await rm(dir, { force: true, recursive: true });
-    }
-  });
-
-  it("uses the cached icon mapping when the optional CDN request fails", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "zcode-plugin-cached-claude-icons-"));
-    const storageRoot = join(dir, "storage");
-    const sourceDir = join(dir, "claude-marketplace");
-    try {
-      await writeMarketplaceManifest(sourceDir, {
-        name: "claude-plugins-official",
-        plugins: [{ name: "figma", source: "./figma" }],
-      });
-      await mkdir(storageRoot, { recursive: true });
-      await writeFile(
-        join(storageRoot, "icon-sources.json"),
-        JSON.stringify([{ name: "figma", icon: "figma/icon.png", mimeType: "image/png" }]),
-      );
-      await writeKnownMarketplaces(storageRoot, [
-        {
-          id: "claude-plugins-official",
-          source: { source: "directory", path: sourceDir },
-          name: "claude-plugins-official",
-          addedAt: "2026-01-01T00:00:00.000Z",
-          pluginCount: 1,
-        },
-      ]);
-      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-
-      await updateMarketplace({ marketplace: "claude-plugins-official", storageRoot });
-
-      expect(
-        loadMarketplaceManifestSync(storageRoot, "claude-plugins-official")?.raw,
-      ).toMatchObject({
-        plugins: [
-          {
-            name: "figma",
-            icon: "https://cdn-zcode.z.ai/zcode/official-plugin/assets/figma/icon.png",
-          },
-        ],
-      });
-    } finally {
       await rm(dir, { force: true, recursive: true });
     }
   });
@@ -660,9 +430,8 @@ describe("NodePluginAdapter", () => {
 
       const known = ensureDefaultPluginMarketplaces(storageRoot);
 
-      // 默认市场现在有两个：claude-plugins-official（已有记录不被覆盖）+ 唯一 ZCode
-      // 官方市场 zcode-plugins-official（缺失时补种）。
-      expect(known).toHaveLength(2);
+      // 用户已登记的镜像保留；独立工具不再补种原厂默认市场。
+      expect(known).toHaveLength(1);
       const claude = known.find((record) => record.id === "claude-plugins-official");
       expect(claude).toMatchObject({
         description: "Custom Claude mirror",
@@ -677,9 +446,6 @@ describe("NodePluginAdapter", () => {
           {
             description: "Custom Claude mirror",
             pluginCount: 123,
-          },
-          {
-            id: "zcode-plugins-official",
           },
         ],
       });

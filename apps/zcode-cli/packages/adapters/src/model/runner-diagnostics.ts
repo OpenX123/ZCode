@@ -1,4 +1,3 @@
-import { summarizeRequestVerificationHeaders } from "@zcode/shared";
 import type { LanguageModelUsage } from "ai";
 import type { Logger, ModelUsage } from "@zcode/contracts";
 import { ModelErrorCode, ModelFailureReason as ModelFailureReasonValue } from "@zcode/contracts";
@@ -171,7 +170,6 @@ function summarizeOutboundModelHeaders(
 
   return {
     outboundHeaderKeys: Object.keys(headers),
-    ...summarizeRequestVerificationHeaders(headers),
   };
 }
 

@@ -7,6 +7,8 @@ description: Use when the agent needs to discover the blast radius of a ZCode fe
 
 Use this skill from the ZCode repository root before implementation when a request needs feature-impact discovery, product-boundary clarification, coverage planning, or an E2E handoff.
 
+当前产品边界先读 `docs/desktop/standalone-coding-harness-spec.md`。官方账号、商业套餐、遥测、云分享和手机官方远控已退役；历史文档和兼容字段不代表当前功能。普通 API、SSH、MCP OAuth 与本地自动化保留。
+
 Treat impact discovery and boundary planning as two connected jobs:
 
 1. Determine where the capability appears and what a change can affect.
@@ -171,7 +173,7 @@ For planning modes, append the sections in `references/case-planning-template.md
 - Do not write E2E code until accepted semantics exist in docs.
 - Do not claim coverage from a path that lacks setup, action, and assertion.
 - Mark implementation/spec conflicts as `bug-candidate`; do not rewrite the contract to match current code without confirmation.
-- Keep desktop `desktop-continuous` and mobile `web-remote-replayable` semantics separate.
+- 保留桌面 `desktop-continuous` 的运行边界；历史 `web-remote-replayable` 兼容数据不恢复手机官方远控入口。
 - Preserve workspace isolation with `workspaceIdentity?.trim() || workspacePath`; use `workspacePath` for execution and display.
 - Treat task sqlite index, session snapshots, runtime snapshots, localStorage, settings files, provider registry, and backend APIs as distinct sources until synchronization is proven.
-- Split environment faults, remote/replayable semantics, performance, telemetry, persistence migrations, and tool cross-products into specialized docs when they would obscure the main feature path.
+- Split environment faults, remote/replayable semantics, performance, local diagnostics, persistence migrations, and tool cross-products into specialized docs when they would obscure the main feature path.

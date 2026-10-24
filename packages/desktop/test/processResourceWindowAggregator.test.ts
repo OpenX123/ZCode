@@ -17,9 +17,7 @@ function sample(overrides: Partial<ProcessRoleSample> = {}): ProcessRoleSample {
 }
 
 describe("ProcessResourceWindowAggregator", () => {
-  it("PRT-034 同硬件不同环境独立开窗，身份不进入出口属性", async () => {
-    const { buildProcessWindowEventProperties } =
-      await import("@desktop/main/processResourceWindowEvent");
+  it("PRT-034 同硬件不同环境独立开窗", async () => {
     const aggregator = new ProcessResourceWindowAggregator();
     const hardware = {
       platform: "linux" as const,
@@ -42,15 +40,6 @@ describe("ProcessResourceWindowAggregator", () => {
     expect(reports).toHaveLength(2);
     for (const report of reports) {
       expect(report.cpuPercentPeak).toBe(80);
-      const properties = buildProcessWindowEventProperties(report, {
-        deviceMid: "test",
-        appVersion: "test",
-        armsEnv: "test",
-        desktopHardware: hardware,
-      });
-      expect(properties).not.toHaveProperty("environmentKey");
-      expect(Object.values(properties)).not.toContain("a".repeat(64));
-      expect(Object.values(properties)).not.toContain("b".repeat(64));
     }
   });
 

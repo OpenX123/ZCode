@@ -56,7 +56,6 @@ function GroupedTaskItemComponent({
   activeWorkspacePath,
   activeWorkspaceIdentity,
   activeTaskId,
-  mobileActiveTaskKey,
   workspaceLabel,
   onSelectTask,
   onCloseTask,
@@ -78,7 +77,6 @@ function GroupedTaskItemComponent({
   activeWorkspacePath: string;
   activeWorkspaceIdentity?: string;
   activeTaskId: string | null;
-  mobileActiveTaskKey?: string | null;
   workspaceLabel: string;
   onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
@@ -103,7 +101,6 @@ function GroupedTaskItemComponent({
         activeWorkspacePath={activeWorkspacePath}
         activeWorkspaceIdentity={activeWorkspaceIdentity}
         activeTaskId={activeTaskId}
-        mobileActiveTaskKey={mobileActiveTaskKey}
         workspaceLabel={workspaceLabel}
         onSelectTask={onSelectTask}
         onCloseTask={onCloseTask}

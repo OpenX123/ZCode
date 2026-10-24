@@ -18,34 +18,6 @@ import { AiSdkModelAdapter } from "../src/model/runner.js";
 
 describe("Published MCS and search final Anthropic wire", () => {
   it.each([
-    [
-      "account:zai-start-plan",
-      "https://zcode.z.ai/api/v1/zcode-plan/anthropic",
-      "GLM-5.3-Flash",
-      true,
-      true,
-    ],
-    [
-      "account:bigmodel-start-plan",
-      "https://zcode.z.ai/api/v1/zcode-plan/anthropic",
-      "GLM-5.3-Flash",
-      true,
-      true,
-    ],
-    [
-      "account:zai-offpeak-idle-plan",
-      "https://zcode.z.ai/api/v1/off-peak/anthropic",
-      "GLM-5.3-Flash",
-      true,
-      false,
-    ],
-    [
-      "account:bigmodel-offpeak-idle-plan",
-      "https://zcode.z.ai/api/v1/off-peak/anthropic",
-      "GLM-5.3-Flash",
-      true,
-      false,
-    ],
     ["fixture", "https://api.anthropic.com/v1", "claude-sonnet-5", false, true],
     ["fixture", "https://proxy.invalid/v1", "vendor/claude-opus-4-8", true, false],
     ["personal-off", "https://proxy.invalid/v1", "vendor/claude-opus-4-8", false, false],
@@ -94,13 +66,6 @@ describe("Published MCS and search final Anthropic wire", () => {
       const adapter = new AiSdkModelAdapter({
         env: {},
         retry: { maxAttempts: 1 },
-        // 本用例验证模型配置与 wire；安全端口注入离线透传，独立安全契约用例覆盖官方版本校验。
-        requestSecurityState: {
-          createExecution: () => ({
-            protectTransport: ({ transport }) => transport,
-            take: () => [],
-          }),
-        },
       });
       const model = adapter.createModel({
         providerId: createModelProviderId(providerId),

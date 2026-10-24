@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { createSharedZCodeCredentialStore } from "@zcode/adapters/auth";
 import { AiSdkModelAdapter } from "@zcode/adapters/model";
 import { createSqliteSessionStore } from "@zcode/adapters/storage";
 import { createZCodeApp } from "../src/app/create-app.js";
@@ -52,10 +51,6 @@ describe("CLI 旧输出上限从首次导入到请求", () => {
       const options = {
         standalone: {
           legacyCliUserConfigFilePath: legacyPath,
-          credentialStore: createSharedZCodeCredentialStore({
-            baseDir: join(directory, "credentials"),
-            env,
-          }),
         },
       };
       const input = {

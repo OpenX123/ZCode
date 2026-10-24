@@ -93,7 +93,7 @@ function setDynamicWorkflowEnabled(enabled: boolean): void {
   useDynamicWorkflowAvailabilityStore.setState({
     status: "ready",
     enabled,
-    config: { mode: enabled ? "alwaysOn" : "disabled", enabled, source: "remote" },
+    config: { mode: enabled ? "alwaysOn" : "disabled", enabled, source: "default" },
   });
 }
 

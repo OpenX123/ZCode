@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { ModelConfigRules, ProviderConfigMap, ProviderTemplateMap } from "@zcode/provider";
+import { ModelConfigRules, ProviderConfigMap } from "@zcode/provider";
 import type { ModelProviderConfig } from "../src/model-provider/legacyModelProviderSerialized.js";
 import { readLegacyZCodeConfigProviders } from "../src/model-provider/legacyZCodeConfigProviderReader.js";
 import { createProviderConfigRuntime } from "../src/model-provider/providerConfigRuntime.js";
@@ -306,38 +306,25 @@ describe("ProviderConfigRuntime", () => {
     runtime.dispose();
   });
 
-  it("本地候选 ready 后后台同步远端 Release，并把 Active 路径暴露给 Worker", async () => {
-    const root = await mkdtemp(join(tmpdir(), "zcode-provider-runtime-"));
+  it("仅使用随包配置，启动与本地重读不访问远端 Release", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-provider-runtime-local-"));
     const bundledFilePath = join(root, "bundled.json");
-    const activeFilePath = join(root, "cache", "active.json");
     await writeFile(bundledFilePath, JSON.stringify(emptyBuiltinRelease()), "utf8");
-    const fetchRelease = vi.fn(async () => ({
-      schemaVersion: 1 as const,
-      revision: 2,
-      config: {
-        providerTemplates: ProviderTemplateMap.empty(),
-        providers: ProviderConfigMap.empty(),
-        modelConfigRules: ModelConfigRules.empty(),
-      },
-    }));
+    const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("禁止原厂请求"));
     const runtime = createProviderConfigRuntime({
       zcodeBuiltinFilePath: bundledFilePath,
-      zcodeBuiltinActiveFilePath: activeFilePath,
       personalFilePath: join(root, "personal.json"),
-      zcodeBuiltinRemote: {
-        controlFilePath: join(root, "cache", "refresh-control.json"),
-        resolveEndpointKey: () => "https://example.com",
-        fetchRelease,
-      },
       watch: false,
     });
-
-    await runtime.start();
-    const initial = await runtime.configService.read();
-    expect(initial.revision).toContain("zcode-builtin:1");
-    await expect(runtime.resolveZCodeBuiltinActiveFilePath()).resolves.toBe(activeFilePath);
-    await expect(runtime.refreshZCodeBuiltin({ force: true })).resolves.toBe("updated");
-    expect((await runtime.configService.read()).revision).toContain("zcode-builtin:2");
-    runtime.dispose();
+    try {
+      await runtime.start();
+      expect(runtime.zcodeBuiltinFilePath).toBe(bundledFilePath);
+      await runtime.configService.read();
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      runtime.dispose();
+      fetch.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

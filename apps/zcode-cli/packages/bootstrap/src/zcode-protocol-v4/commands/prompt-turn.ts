@@ -1,4 +1,3 @@
-import { OFF_PEAK_EXECUTION_TOOL_DENYLIST } from "@zcode/shared";
 // 原生 prompt turn 运行器。
 //
 // Core admission 只负责接受输入并建立 session-scoped reservation；本文件不再拥有
@@ -95,12 +94,6 @@ export async function preflightPromptTurn(
     await host.ensureModelReady?.(record);
   }
   const requestedSelection = params.intent?.modelSelection;
-  const selectionFallback = params.modelExecution?.selectionFallback;
-  const defersSelectionValidationToCore =
-    usesExecutionSelection &&
-    requestedSelection !== undefined &&
-    selectionFallback !== undefined &&
-    selectionFallback.providerId === requestedSelection.providerId;
   const availableModels =
     typeof record.app.listModels === "function" ? record.app.listModels() : undefined;
   const isSelectionAvailable = (selection: typeof requestedSelection): boolean =>
@@ -109,33 +102,8 @@ export async function preflightPromptTurn(
       (model) =>
         model.ref.providerId === selection.providerId && model.ref.modelId === selection.modelId,
     ) === true;
-  if (defersSelectionValidationToCore && availableModels) {
-    const fallbackTarget = params.modelExecution?.selectionFallback?.target;
-    if (!isSelectionAvailable(requestedSelection) && !isSelectionAvailable(fallbackTarget)) {
-      // Bug 根因：准入曾强制要求退回目标存在，即使 Highspeed 执行模型仍可用也拒绝编辑；
-      // 正确门禁是至少保留一条可创建路径，只有执行模型和退回目标都缺失时才拒绝。
-      const requestedLabel = requestedSelection
-        ? `${requestedSelection.providerId}/${requestedSelection.modelId}`
-        : "未声明";
-      const fallbackLabel = fallbackTarget
-        ? `${fallbackTarget.providerId}/${fallbackTarget.modelId}`
-        : "未声明";
-      throw new V4PromptRejectedError(
-        "modelUnavailable",
-        `Provider Registry 中不存在执行 Model (${requestedLabel}) 或退回目标 Model (${fallbackLabel})`,
-      );
-    }
-  }
-  if (
-    !defersSelectionValidationToCore &&
-    requestedSelection &&
-    availableModels &&
-    !isSelectionAvailable(requestedSelection)
-  ) {
-    // 普通 Selection 必须在 ACK 前拒绝，避免后台创建 Model 失败后静默丢输入。
-    // Bug 原因：这里曾把带声明式退回的 execution Selection 也按普通 Selection 拒绝，
-    // 导致 Highspeed 的 Provider/Model 缺失在 Core 执行 fallback 前直接失败。只有非排队、
-    // 且退回声明与执行 Provider 一致时，才把解析延迟到 Core；其他输入仍保留原预检。
+  if (requestedSelection && availableModels && !isSelectionAvailable(requestedSelection)) {
+    // 执行前严格检查原选择，旧官方模型缺失时不能静默换为其他 Provider。
     throw new V4PromptRejectedError(
       "modelUnavailable",
       `Provider Registry 中不存在 Model: ${requestedSelection.providerId}/${requestedSelection.modelId}`,
@@ -176,20 +144,10 @@ async function startPromptTurnAfterPreflight(
   if (record.persistence === "deferred") record.persistence = "immediate";
 
   const previousAutomationId = record.activeAutomationId;
-  const previousOffPeakTaskId = record.activeOffPeakTaskId;
   const previousBotDeliveryTarget = record.activeBotDeliveryTarget;
   const activeAutomationId = resolveTurnAutomationId(params);
-  const activeOffPeakTaskId = resolveTurnOffPeakTaskId(params);
-  const turnToolDisallowlist = buildTurnToolDisallowlist(
-    params,
-    activeAutomationId,
-    activeOffPeakTaskId,
-  );
+  const turnToolDisallowlist = buildTurnToolDisallowlist(params, activeAutomationId);
   if (activeAutomationId) record.activeAutomationId = activeAutomationId;
-  if (activeOffPeakTaskId) {
-    // 闲时派发轮同型标记，供 offpeak-port 在工具执行前拒绝递归 OffPeakCreate。
-    record.activeOffPeakTaskId = activeOffPeakTaskId;
-  }
   record.activeBotDeliveryTarget = params.botDeliveryTarget;
 
   let admission: SendInputResult;
@@ -213,8 +171,7 @@ async function startPromptTurnAfterPreflight(
         ...(params.inputPresentation ? { inputPresentation: params.inputPresentation } : {}),
         ...turnBackgroundAttributionOf({
           automationId: activeAutomationId,
-          // 归因用解析后的 id：resume 段仅靠 inputId 前缀兜底时也要进 core loop state。
-          offPeakTaskId: activeOffPeakTaskId,
+          offPeakTaskId: params.offPeakTaskId,
           offPeakRunType: params.offPeakRunType,
         }),
         intent: params.intent,
@@ -227,23 +184,13 @@ async function startPromptTurnAfterPreflight(
       },
     );
   } catch (error) {
-    clearPromptRecordState(
-      record,
-      previousAutomationId,
-      previousOffPeakTaskId,
-      previousBotDeliveryTarget,
-    );
+    clearPromptRecordState(record, previousAutomationId, previousBotDeliveryTarget);
     await host.afterLegacyStateMutation?.(record, "prompt_failed");
     throw error;
   }
 
   if (admission.kind === "rejected") {
-    clearPromptRecordState(
-      record,
-      previousAutomationId,
-      previousOffPeakTaskId,
-      previousBotDeliveryTarget,
-    );
+    clearPromptRecordState(record, previousAutomationId, previousBotDeliveryTarget);
     throw new V4PromptRejectedError(
       "activePrompt",
       `Core prompt admission rejected: ${admission.reason}`,
@@ -251,12 +198,7 @@ async function startPromptTurnAfterPreflight(
   }
 
   if (admission.kind === "queued") {
-    clearPromptRecordState(
-      record,
-      previousAutomationId,
-      previousOffPeakTaskId,
-      previousBotDeliveryTarget,
-    );
+    clearPromptRecordState(record, previousAutomationId, previousBotDeliveryTarget);
     return { admission, turnStarted: Promise.resolve() };
   }
 
@@ -272,12 +214,7 @@ async function startPromptTurnAfterPreflight(
         sessionId: record.app.sessionId,
       });
     } finally {
-      clearPromptRecordState(
-        record,
-        previousAutomationId,
-        previousOffPeakTaskId,
-        previousBotDeliveryTarget,
-      );
+      clearPromptRecordState(record, previousAutomationId, previousBotDeliveryTarget);
       await host.afterLegacyStateMutation?.(record, mutationReason);
     }
   });
@@ -294,29 +231,20 @@ async function startPromptTurnAfterPreflight(
 function clearPromptRecordState(
   record: V4SessionRecordView,
   previousAutomationId: string | undefined,
-  previousOffPeakTaskId: string | undefined,
   previousBotDeliveryTarget: V4SessionRecordView["activeBotDeliveryTarget"],
 ): void {
   record.activeAutomationId = previousAutomationId;
-  // 闲时轮身份与 automation 同规则随 turn 还原，防止跨轮残留误拒 OffPeakCreate。
-  record.activeOffPeakTaskId = previousOffPeakTaskId;
   record.activeBotDeliveryTarget = previousBotDeliveryTarget;
 }
 
 export function buildTurnToolDisallowlist(
-  params: Pick<StartPromptTurnParams, "automationId" | "offPeakTaskId" | "toolDisallowlist">,
+  params: Pick<StartPromptTurnParams, "automationId" | "toolDisallowlist">,
   activeAutomationId = params.automationId,
-  activeOffPeakTaskId = params.offPeakTaskId,
 ): readonly string[] | undefined {
   const tools = new Set(params.toolDisallowlist ?? []);
   if (activeAutomationId) {
     // automation 派发漏传身份时，后续 model step 会重新暴露 Cron 写工具。
     for (const toolName of AUTOMATION_MUTATION_TOOL_NAMES) tools.add(toolName);
-  }
-  if (activeOffPeakTaskId) {
-    // 闲时派发轮隐藏 OffPeakCreate（防递归自我派生）；OffPeakList 只读保留。
-    // automation 轮不加此项——cron 轮放行 OffPeakCreate（定时派生闲时任务）。
-    for (const toolName of OFF_PEAK_MUTATION_TOOL_NAMES) tools.add(toolName);
   }
   return tools.size > 0 ? [...tools] : undefined;
 }
@@ -331,20 +259,6 @@ export function resolveTurnAutomationId(
   const separatorIndex = inputId.indexOf(":");
   const automationId = separatorIndex >= 0 ? inputId.slice(0, separatorIndex) : inputId;
   return automationId.length > AUTOMATION_INPUT_ID_PREFIX.length ? automationId : undefined;
-}
-
-export function resolveTurnOffPeakTaskId(
-  params: Pick<StartPromptTurnParams, "offPeakTaskId" | "inputId">,
-): string | undefined {
-  const explicit = params.offPeakTaskId?.trim();
-  if (explicit) return explicit;
-  // 兜底：续跑派发的 inputId 形如 `offpeak-<uuid>:resume:<uuid>`；首段派发无固定前缀，
-  // 主信号必须是显式 offPeakTaskId（host 派发一律显式传）。
-  const inputId = params.inputId.trim();
-  if (!inputId.startsWith(OFF_PEAK_INPUT_ID_PREFIX)) return undefined;
-  const separatorIndex = inputId.indexOf(":");
-  const offPeakTaskId = separatorIndex >= 0 ? inputId.slice(0, separatorIndex) : inputId;
-  return offPeakTaskId.length > OFF_PEAK_INPUT_ID_PREFIX.length ? offPeakTaskId : undefined;
 }
 
 export function turnBackgroundAttributionOf(params: {
@@ -364,8 +278,3 @@ export function turnBackgroundAttributionOf(params: {
 
 const AUTOMATION_INPUT_ID_PREFIX = "automation-";
 const AUTOMATION_MUTATION_TOOL_NAMES = ["CronCreate", "CronUpdate", "CronDelete"] as const;
-// 独立常量，绝不并入 AUTOMATION_MUTATION_TOOL_NAMES（cron 轮放行 OffPeakCreate）。
-// 与 core turn-loop-state 同值——闲时轮同时隐藏 SendMessage / Workflow（两者会在本轮
-// modelExecution 之外重启子 Agent）。
-const OFF_PEAK_INPUT_ID_PREFIX = "offpeak-";
-const OFF_PEAK_MUTATION_TOOL_NAMES = OFF_PEAK_EXECUTION_TOOL_DENYLIST;

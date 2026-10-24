@@ -173,7 +173,6 @@ function rowTargetActionForCommand(
     case "retryTurn":
     case "applyFileRewind":
     case "setAssistantFeedback":
-    case "setHighspeedMetrics":
       return type;
     default:
       return null;
@@ -342,12 +341,6 @@ export interface V4GatewayHost {
   invalidatePersistentCommandFacts?(sessionId: string): void;
   /** canonical goal complete 已进入 projection；宿主副作用必须 detached，禁止阻塞 ingest。 */
   onTargetCompleted?(sessionId: string, event: SessionEvent): void;
-  /** Highspeed 真实耗时在 CLI 终态落 transcript；宿主副作用必须 detached。 */
-  onHighspeedTurnTerminal?(
-    sessionId: string,
-    event: SessionEvent,
-    snapshot: ConversationSnapshot,
-  ): void;
   /** 完整 chunk transaction commit 后一次性写 session artifact。 */
   putSessionAttachment?(
     sessionId: string,
@@ -1053,16 +1046,6 @@ export class ConversationV4Gateway {
             : {}),
         });
         if (result.success) this.host.emitPluginUiToolResult(result.data);
-      }
-    }
-    if (
-      !this.hydrationBuffers.has(sessionId) &&
-      (event.type === SessionEventType.TurnComplete || event.type === SessionEventType.TurnError)
-    ) {
-      try {
-        this.host.onHighspeedTurnTerminal?.(sessionId, event, publisher.getSnapshot());
-      } catch (error) {
-        this.host.onError?.("v4.projection.highspeedMetrics", error);
       }
     }
     if (

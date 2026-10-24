@@ -1,11 +1,6 @@
-import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
 import { TID_V4_COMPOSER_INPUT } from "@zcode/shared/test-ids";
 import { getE2EAppDataPaths, setInputValueByTestIdDom } from "./desktop-app.js";
-import {
-  restartIntoWorkspace,
-  seedBigModelConnectionSelection,
-  seedBigModelOAuthCredential,
-} from "./model-provider-restart.js";
+import { restartIntoWorkspace } from "./model-provider-restart.js";
 import { seedPersonalProviderConfig } from "./model-provider-restart-config.js";
 import { skipOccupationOnboardingIfPresent } from "./occupation-onboarding.js";
 import {
@@ -23,26 +18,26 @@ import {
   type ToolSearchRecord,
 } from "./toolsearch-provider.js";
 
-export const TOOLSEARCH_PLAN_PROVIDER = BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan;
+export const TOOLSEARCH_API_PROVIDER = "toolsearch-api-e2e";
 export const TOOLSEARCH_PLAIN_PROVIDER = "toolsearch-anthropic-e2e";
 export const TOOLSEARCH_MODEL = "GLM-5.3";
 
 export async function setupToolSearchDesktop() {
-  // 批量运行可能沿用测试账号；新 profile 的职业引导仍需通过 UI 完成。
+  // 匿名隔离 profile 的职业引导仍通过真实 UI 完成。
   await skipOccupationOnboardingIfPresent();
   await prepareV4ConversationE2E({ skipProvider: true });
   await restartIntoWorkspace({
     afterElectronProcessExit: async () => {
-      await seedBigModelConnectionSelection({ kind: "individual-coding-plan" });
-      await seedBigModelOAuthCredential();
-      await seedPersonalProviderConfig(getE2EAppDataPaths().configFile, {
-        id: TOOLSEARCH_PLAIN_PROVIDER,
-        label: "ToolSearch Plain Anthropic",
-        apiFormat: "anthropic-messages",
-        apiKey: "e2e-toolsearch.test-secret",
-        baseURL: "https://open.bigmodel.cn/api/anthropic",
-        models: [{ id: TOOLSEARCH_MODEL }],
-      });
+      for (const id of [TOOLSEARCH_API_PROVIDER, TOOLSEARCH_PLAIN_PROVIDER]) {
+        await seedPersonalProviderConfig(getE2EAppDataPaths().configFile, {
+          id,
+          label: id === TOOLSEARCH_API_PROVIDER ? "ToolSearch API" : "ToolSearch Alternate API",
+          apiFormat: "anthropic-messages",
+          apiKey: "e2e-toolsearch.test-secret",
+          baseURL: "https://open.bigmodel.cn/api/anthropic",
+          models: [{ id: TOOLSEARCH_MODEL }],
+        });
+      }
     },
   });
 }
@@ -50,7 +45,7 @@ export async function setupToolSearchDesktop() {
 export async function newToolSearchTask() {
   // 冷恢复按项目目录读取夹具；全局新建的独立 cwd 不属于该 fixture。
   await prepareV4ConversationE2E({ skipProvider: true });
-  await switchV4Model(TOOLSEARCH_PLAN_PROVIDER, TOOLSEARCH_MODEL, "");
+  await switchV4Model(TOOLSEARCH_API_PROVIDER, TOOLSEARCH_MODEL, "");
 }
 
 export async function toolSearchTurn(prompt: string): Promise<ToolSearchRecord[]> {

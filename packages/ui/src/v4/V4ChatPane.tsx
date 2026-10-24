@@ -27,7 +27,7 @@ import type {
 } from "@/lib/workspaceSidePane.js";
 import { V4ConversationProvider } from "@/v4/V4ConversationContext.js";
 import { SessionPane } from "@/v4/SessionPane.js";
-import type { SessionOpenTrigger } from "@/lib/sessionOpenArmsTelemetry.js";
+import type { SessionOpenTrigger } from "@/v4/sessionDataLayer.js";
 import type {
   ChatSearchResultHighlightRequest,
   ChatViewSummaryPanelVariant,

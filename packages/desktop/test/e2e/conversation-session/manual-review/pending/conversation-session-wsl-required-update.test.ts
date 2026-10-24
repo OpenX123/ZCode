@@ -21,7 +21,6 @@ import {
   DEFAULT_WORKSPACE,
 } from "#e2e/helpers/desktop-app";
 
-import { loginWithApiKey } from "#e2e/helpers/v4-conversation";
 import { resolveE2ERuntimePath } from "#e2e/helpers/e2e-runtime-paths";
 
 const marker = "E2E_WSL_REQUIRED_UPDATE";
@@ -291,17 +290,7 @@ describe(`${marker}: WSL 默认参数与连接目标`, () => {
     await browser.refresh();
   });
   beforeEach(async () => {
-    // 刷新后缓存账号可能失效并回到登录页；只在实际出现登录页时完成现有登录动作。
-    try {
-      await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
-    } catch (error) {
-      const login = await browser.execute(() =>
-        Boolean(document.querySelector('[data-testid="login-use-api-key-button"]')),
-      );
-      if (!login) throw error;
-      await loginWithApiKey();
-      await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
-    }
+    await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
   });
   afterEach(async () => {
     await browser.execute(() => window.__wslUpdateRpcFixture?.restore());

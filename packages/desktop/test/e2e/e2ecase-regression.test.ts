@@ -4,11 +4,9 @@ import {
   TID_CHAT_REASONING_CONTENT,
   TID_CHAT_REASONING_TRIGGER,
   TID_CHAT_SEND_BUTTON,
-  TID_LOGIN_TRIGGER,
   TID_SETTINGS_BACK_BUTTON,
   TID_SETTINGS_PAGE,
   TID_SETTINGS_SECTION_NAV,
-  TID_SIDEBAR_CODING_PLAN_USAGE_BUTTON,
   TID_TASK_SETTINGS_BUTTON,
   testId,
 } from "@zcode/shared/test-ids";
@@ -62,10 +60,10 @@ describe("e2ecase.md 回归", () => {
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 30000);
   });
 
-  it("工作区头像菜单点击使用统计应打开设置页用量分区", async () => {
+  it("工作区设置入口可以打开本地用量分区", async () => {
     await waitForDefaultWorkspaceReady(30000);
 
-    await openUsageStatsFromProfileMenu();
+    await openLocalUsageStats();
     await $(sel(TID_SETTINGS_PAGE)).waitForDisplayed({ timeout: 15000 });
     await expectSettingsSectionActive("usage");
 
@@ -76,13 +74,13 @@ describe("e2ecase.md 回归", () => {
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 30000);
   });
 
-  it("设置页头像菜单点击使用统计应停留设置页用量分区", async () => {
+  it("设置页切换本地用量分区保持页面可见", async () => {
     await waitForDefaultWorkspaceReady(30000);
     await openSettingsPage();
     await selectSettingsSection("general");
     await expectSettingsSectionActive("general");
 
-    await openUsageStatsFromProfileMenu();
+    await openLocalUsageStats();
     await $(sel(TID_SETTINGS_PAGE)).waitForDisplayed({ timeout: 15000 });
     await expect($(sel(TID_SETTINGS_PAGE))).toBeDisplayed();
     await expectSettingsSectionActive("usage");
@@ -115,23 +113,14 @@ describe("e2ecase.md 回归", () => {
     await assertWorkingStatusPositionStable(workingStatus.top);
 
     await typeChatPrompt(draftPrompt);
-    await waitForComposerText(
-      draftPrompt,
-      "运行中输入的草稿没有进入输入框",
-    );
+    await waitForComposerText(draftPrompt, "运行中输入的草稿没有进入输入框");
     await browser.pause(800);
-    await waitForComposerText(
-      draftPrompt,
-      "运行中输入框草稿被意外清空",
-    );
+    await waitForComposerText(draftPrompt, "运行中输入框草稿被意外清空");
 
     await waitForQueueSendButtonReady();
     await clickChatSend();
     await waitForComposerText("", "队列消息发送后输入框没有清空");
-    await waitForBodyTextContaining(
-      draftPrompt,
-      "第二条消息没有进入待发送队列或消息列表",
-    );
+    await waitForBodyTextContaining(draftPrompt, "第二条消息没有进入待发送队列或消息列表");
     await assertBodyTextNotContaining(PROMPT_RUNNING_ERROR);
     await assertBodyTextNotContaining(MODEL_REQUEST_FAILED_ERROR);
 
@@ -174,15 +163,11 @@ describe("e2ecase.md 回归", () => {
 
     const samples = await monitorReasoningCollapseDuringClick();
     const firstExisting = samples.find((sample) => sample.exists && sample.height !== null);
-    const closedSamples = samples.filter(
-      (sample) => sample.exists && sample.state === "closed",
-    );
+    const closedSamples = samples.filter((sample) => sample.exists && sample.state === "closed");
     const firstClosed = closedSamples.find((sample) => sample.height !== null);
 
     if (!firstExisting || !firstClosed) {
-      throw new Error(
-        `思考块收起时没有捕获到 closed 动画帧\n${JSON.stringify(samples, null, 2)}`,
-      );
+      throw new Error(`思考块收起时没有捕获到 closed 动画帧\n${JSON.stringify(samples, null, 2)}`);
     }
 
     expect(firstExisting.text.trim().length).toBeGreaterThan(0);
@@ -233,15 +218,11 @@ async function openSettingsPage() {
   await $(sel(TID_SETTINGS_PAGE)).waitForDisplayed({ timeout: 15000 });
 }
 
-async function openUsageStatsFromProfileMenu() {
-  await clickVisibleTestIdByDom(TID_LOGIN_TRIGGER, {
-    timeout: 15000,
-    timeoutMsg: "没有找到可见的头像菜单入口",
-  });
-  await clickVisibleTestIdByDom(TID_SIDEBAR_CODING_PLAN_USAGE_BUTTON, {
-    timeout: 15000,
-    timeoutMsg: "头像菜单没有出现可见的使用统计入口",
-  });
+async function openLocalUsageStats() {
+  if (!(await $(sel(TID_SETTINGS_PAGE)).isDisplayed())) {
+    await openSettingsPage();
+  }
+  await selectSettingsSection("usage");
 }
 
 async function selectSettingsSection(section: string) {
@@ -249,86 +230,6 @@ async function selectSettingsSection(section: string) {
     timeout: 15000,
     timeoutMsg: `设置页没有出现 ${section} 分区入口`,
   });
-}
-
-async function clickVisibleTestIdByDom(
-  targetTestId: string,
-  {
-    timeout = 10000,
-    timeoutMsg = `页面没有可见可点击的 test id: ${targetTestId}`,
-  }: { timeout?: number; timeoutMsg?: string } = {},
-) {
-  // 修复原因：设置页打开时 workspace DOM 仍保留但不可见，头像菜单和设置页 footer 共享同一 test id。
-  // E2E 必须点击当前可见入口，否则会误点隐藏 workspace footer，掩盖“设置页菜单返回工作区”的回归。
-  let latestReason = "not-started";
-  await browser.waitUntil(
-    async () => {
-      const result = (await browser.execute((testIdValue) => {
-        function isVisible(element: HTMLElement) {
-          const style = window.getComputedStyle(element);
-          if (
-            style.display === "none" ||
-            style.visibility === "hidden" ||
-            Number(style.opacity) === 0
-          ) {
-            return false;
-          }
-          if (element.getClientRects().length === 0) {
-            return false;
-          }
-          return !element.closest('[aria-hidden="true"], [hidden]');
-        }
-
-        const element = Array.from(
-          document.querySelectorAll<HTMLElement>("[data-testid]"),
-        ).find((item) => item.dataset.testid === testIdValue && isVisible(item));
-        if (!element) {
-          return { clicked: false, reason: "missing-visible" };
-        }
-        const disabled =
-          (element instanceof HTMLButtonElement ||
-            element instanceof HTMLInputElement ||
-            element instanceof HTMLSelectElement ||
-            element instanceof HTMLTextAreaElement) &&
-          element.disabled;
-        if (disabled) {
-          return { clicked: false, reason: "disabled" };
-        }
-
-        // 修复原因：Radix 菜单触发器依赖 pointerdown 激活，单发 element.click() 会让菜单不展开。
-        function dispatchE2EActivation(target: HTMLElement) {
-          target.focus();
-          const pointerEventCtor = window.PointerEvent ?? MouseEvent;
-          for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
-            const event =
-              type.startsWith("pointer") && pointerEventCtor === window.PointerEvent
-                ? new PointerEvent(type, {
-                    bubbles: true,
-                    cancelable: true,
-                    pointerId: 1,
-                    pointerType: "mouse",
-                    isPrimary: true,
-                  })
-                : new MouseEvent(type, {
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                  });
-            target.dispatchEvent(event);
-          }
-        }
-
-        dispatchE2EActivation(element);
-        return { clicked: true };
-      }, targetTestId)) as { clicked: boolean; reason?: string };
-      latestReason = result.reason ?? "clicked";
-      return result.clicked;
-    },
-    {
-      timeout,
-      timeoutMsg: `${timeoutMsg}: ${latestReason}`,
-    },
-  );
 }
 
 async function expectSettingsSectionActive(section: string) {
@@ -344,9 +245,7 @@ async function typeChatPrompt(prompt: string) {
   await AppPage.chatInput.click();
   const result = (await browser.executeAsync(
     (inputTestId, text, done) => {
-      const input = document.querySelector<HTMLElement>(
-        `[data-testid="${inputTestId}"]`,
-      );
+      const input = document.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
       if (!input) {
         done({ actual: "", inserted: false, ok: false, reason: "input-missing" });
         return;
@@ -372,9 +271,7 @@ async function typeChatPrompt(prompt: string) {
         }
       }
       requestAnimationFrame(() => {
-        const actual = (input.innerText || input.textContent || "")
-          .replace(/\u00a0/g, " ")
-          .trim();
+        const actual = (input.innerText || input.textContent || "").replace(/\u00a0/g, " ").trim();
         done({
           actual,
           inserted,
@@ -387,9 +284,7 @@ async function typeChatPrompt(prompt: string) {
   )) as { actual: string; inserted: boolean; ok: boolean; reason?: string };
 
   if (!result.ok) {
-    throw new Error(
-      `聊天输入框没有写入完整 prompt: ${JSON.stringify(result)}`,
-    );
+    throw new Error(`聊天输入框没有写入完整 prompt: ${JSON.stringify(result)}`);
   }
 }
 
@@ -429,12 +324,8 @@ async function waitForComposerText(expected: string, timeoutMsg: string) {
 
 async function getComposerText() {
   return browser.execute((inputTestId) => {
-    const input = document.querySelector<HTMLElement>(
-      `[data-testid="${inputTestId}"]`,
-    );
-    return (input?.innerText || input?.textContent || "")
-      .replace(/\u00a0/g, " ")
-      .trim();
+    const input = document.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
+    return (input?.innerText || input?.textContent || "").replace(/\u00a0/g, " ").trim();
   }, TID_CHAT_INPUT);
 }
 
@@ -442,9 +333,7 @@ async function waitForUserMessageContaining(text: string) {
   await browser.waitUntil(
     async () => {
       const messages = await browser.execute((messagesTestId) => {
-        const root = document.querySelector<HTMLElement>(
-          `[data-testid="${messagesTestId}"]`,
-        );
+        const root = document.querySelector<HTMLElement>(`[data-testid="${messagesTestId}"]`);
         return Array.from(root?.querySelectorAll<HTMLElement>(".is-user") ?? [])
           .map((element) => element.innerText)
           .join("\n");
@@ -496,12 +385,8 @@ async function waitForWorkingZeroStatus() {
 async function getWorkingStatusSnapshot() {
   return browser.execute(() => {
     const workingZeroPattern = /工作中\s*0\s*秒|Working for\s*0\s*(s|sec|second)/i;
-    const candidates = Array.from(
-      document.querySelectorAll<HTMLElement>(".history-message"),
-    );
-    const target = candidates.find((element) =>
-      workingZeroPattern.test(element.innerText),
-    );
+    const candidates = Array.from(document.querySelectorAll<HTMLElement>(".history-message"));
+    const target = candidates.find((element) => workingZeroPattern.test(element.innerText));
     if (!target) {
       return null;
     }
@@ -517,9 +402,9 @@ async function assertWorkingStatusPositionStable(initialTop: number) {
   await browser.pause(350);
   const snapshot = await browser.execute(() => {
     const workingPattern = /工作中\s*\d+\s*秒|Working for\s*\d+\s*(s|sec|second)/i;
-    const target = Array.from(
-      document.querySelectorAll<HTMLElement>(".history-message"),
-    ).find((element) => workingPattern.test(element.innerText));
+    const target = Array.from(document.querySelectorAll<HTMLElement>(".history-message")).find(
+      (element) => workingPattern.test(element.innerText),
+    );
     if (!target) {
       return null;
     }
@@ -555,12 +440,9 @@ async function waitForReasoningContentOpen() {
   await browser.waitUntil(
     async () =>
       browser.execute((contentTestId) => {
-        const content = document.querySelector<HTMLElement>(
-          `[data-testid="${contentTestId}"]`,
-        );
+        const content = document.querySelector<HTMLElement>(`[data-testid="${contentTestId}"]`);
         return (
-          content?.getAttribute("data-state") === "open" &&
-          content.innerText.trim().length > 0
+          content?.getAttribute("data-state") === "open" && content.innerText.trim().length > 0
         );
       }, TID_CHAT_REASONING_CONTENT),
     {
@@ -581,9 +463,7 @@ type CollapseSample = {
 async function monitorReasoningCollapseDuringClick(): Promise<CollapseSample[]> {
   return browser.executeAsync(
     (triggerTestId, contentTestId, done) => {
-      const trigger = document.querySelector<HTMLElement>(
-        `[data-testid="${triggerTestId}"]`,
-      );
+      const trigger = document.querySelector<HTMLElement>(`[data-testid="${triggerTestId}"]`);
       if (!trigger) {
         done([]);
         return;
@@ -592,9 +472,7 @@ async function monitorReasoningCollapseDuringClick(): Promise<CollapseSample[]> 
       const samples: CollapseSample[] = [];
       const startedAt = performance.now();
       const sample = () => {
-        const content = document.querySelector<HTMLElement>(
-          `[data-testid="${contentTestId}"]`,
-        );
+        const content = document.querySelector<HTMLElement>(`[data-testid="${contentTestId}"]`);
         const rect = content?.getBoundingClientRect();
         samples.push({
           elapsedMs: Math.round(performance.now() - startedAt),
@@ -634,13 +512,10 @@ async function waitForReasoningContentUnmounted() {
 }
 
 async function waitForWorkspaceTitleContaining(text: string) {
-  await browser.waitUntil(
-    async () => (await AppPage.workspaceTitle.getText()).includes(text),
-    {
-      timeout: 30000,
-      timeoutMsg: `任务标题没有包含预期文本: ${text}`,
-    },
-  );
+  await browser.waitUntil(async () => (await AppPage.workspaceTitle.getText()).includes(text), {
+    timeout: 30000,
+    timeoutMsg: `任务标题没有包含预期文本: ${text}`,
+  });
 }
 
 async function assertWorkspaceTitleNotContaining(text: string) {
@@ -657,9 +532,7 @@ async function assertVisibleUserMessagesContaining(text: string) {
 
 async function getVisibleUserMessagesText() {
   return browser.execute((messagesTestId) => {
-    const root = document.querySelector<HTMLElement>(
-      `[data-testid="${messagesTestId}"]`,
-    );
+    const root = document.querySelector<HTMLElement>(`[data-testid="${messagesTestId}"]`);
     return Array.from(root?.querySelectorAll<HTMLElement>(".is-user") ?? [])
       .map((element) => element.innerText)
       .join("\n");

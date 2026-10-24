@@ -3,19 +3,12 @@ export { AppErrorBoundary, ScopedErrorBoundary } from "./ErrorBoundary.js";
 export type { ScopedErrorBoundaryVariant } from "./ErrorBoundary.js";
 export { Button, buttonVariants } from "./components/ui/button.js";
 export { DesktopWindowFrame } from "./DesktopWindowFrame.js";
-export { WebRemoteControlDialog } from "@/web-remote-control/index.js";
-export {
-  WebRemoteControlFeatureProvider,
-  useWebRemoteControlFeatureEnabled,
-} from "./WebRemoteControlFeatureProvider.js";
+
 export {
   AssistantCodeCommentFeatureProvider,
   useAssistantCodeCommentFeatureEnabled,
 } from "./AssistantCodeCommentFeatureProvider.js";
 export { Root } from "./Root.js";
-export { UpdateStatusWindowRoot } from "./UpdateStatusWindowRoot.js";
-export type { WebRemoteControlTerminalTransportState } from "./root/types.js";
-export { setWebRemoteControlTerminalTransportState } from "./webRemoteControlTerminalTransportState.js";
 export { ConfirmDialogHost } from "./ConfirmDialog.js";
 export { Terminal } from "./Terminal.js";
 export { GitGraphPane } from "./git-graph/GitGraphPane.js";
@@ -72,7 +65,6 @@ export {
   useRecentProjects,
   useConfirmDialog,
   useCredentials,
-  useAuthToken,
   useGitRepository,
   useGitActions,
 } from "./hooks/index.js";
@@ -99,21 +91,7 @@ export {
   loadUiFontSizePx,
   subscribeToUiFontSizeStorageChanges,
 } from "./lib/uiFontSize.js";
-export { reportUiLaunchToInput } from "./lib/uiPerfArmsTelemetry.js";
-export {
-  RendererUserActionTelemetry,
-  runUserAction,
-  runUserActionAsync,
-  setUserActionTelemetry,
-  startUserAction,
-} from "./lib/userActionTelemetry.js";
-export {
-  CORE_USER_ACTION_FEATURES,
-  SETTINGS_USER_ACTION_FEATURES,
-  USER_ACTION_CATALOG,
-} from "./lib/userActionTraceCatalog.js";
-export { setReactErrorArmsReporter } from "./lib/reactErrorArmsTelemetry.js";
-export { recordArmsCustomEventForE2E } from "./lib/armsCustomEventObservability.js";
+
 export { generateMobileDeviceFingerprint, setStreamClientId } from "./lib/streamClientId.js";
 export { GlobalDatabaseStartupLoading } from "./root/GlobalDatabaseStartupLoading.js";
 

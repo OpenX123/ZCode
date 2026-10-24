@@ -17,7 +17,7 @@ const projectionState = vi.hoisted(() => ({
 }));
 
 const captured = vi.hoisted(() => ({
-  onOpenModelUpgrade: null as (() => void) | null | undefined,
+  onOpenModelSettings: null as (() => void) | null | undefined,
   modelConfigTarget: null as "local" | "remote" | null,
 }));
 
@@ -83,7 +83,7 @@ vi.mock("@/v4/ConversationComposer.js", async () => {
   return {
     ConversationComposer: ({
       error,
-      onOpenModelUpgrade,
+      onOpenModelSettings,
       modelConfigTarget,
     }: {
       error?: {
@@ -92,10 +92,10 @@ vi.mock("@/v4/ConversationComposer.js", async () => {
         underlyingErrorMessage?: string;
         underlyingErrorDetail?: string;
       } | null;
-      onOpenModelUpgrade?: () => void;
+      onOpenModelSettings?: () => void;
       modelConfigTarget?: "local" | "remote";
     }) => {
-      captured.onOpenModelUpgrade = onOpenModelUpgrade;
+      captured.onOpenModelSettings = onOpenModelSettings;
       captured.modelConfigTarget = modelConfigTarget ?? null;
       return React.createElement(
         "div",
@@ -144,14 +144,6 @@ vi.mock("@/v4/V4InteractionDialogs.js", async () => {
   const React = await import("react");
   return {
     V4InteractionDialogs: () => React.createElement("div", { "data-testid": "mock-interactions" }),
-  };
-});
-
-vi.mock("@/request-security-edition/V4ProviderRuntimeHeadersController.js", async () => {
-  const React = await import("react");
-  return {
-    V4ProviderRuntimeHeadersController: () =>
-      React.createElement("div", { "data-testid": "mock-runtime-headers" }),
   };
 });
 
@@ -265,7 +257,7 @@ describe("SessionPane error banner wiring", () => {
     );
   });
 
-  it("renders the feedback shortcut in the subscription error state", () => {
+  it("订阅失败显示原始错误并保留重新连接", () => {
     projectionState.current = {
       status: "error",
       snapshot: null,
@@ -278,7 +270,6 @@ describe("SessionPane error banner wiring", () => {
     const html = renderPane();
 
     expect(html).toContain("EPERM: operation not permitted");
-    expect(html).toContain("反馈问题");
     expect(html).toContain("重新连接");
   });
 
@@ -287,7 +278,7 @@ describe("SessionPane error banner wiring", () => {
     "remote:ssh:example.com:22:dev:/workspace",
     "remote:wsl:ubuntu:/workspace",
     "remote:docker:dev-box:/workspace",
-  ])("远程 workspace %s 缺模型时使用远端措辞并保留本机升级动作", (workspaceIdentity) => {
+  ])("远程 workspace %s 缺模型时使用远端措辞并提供通用模型配置入口", (workspaceIdentity) => {
     projectionState.current = {
       status: "live",
       snapshot: makeSnapshot(),
@@ -299,7 +290,7 @@ describe("SessionPane error banner wiring", () => {
 
     renderPane(workspaceIdentity);
 
-    expect(typeof captured.onOpenModelUpgrade).toBe("function");
+    expect(typeof captured.onOpenModelSettings).toBe("function");
     expect(captured.modelConfigTarget).toBe("remote");
   });
 
@@ -315,7 +306,7 @@ describe("SessionPane error banner wiring", () => {
 
     renderPane();
 
-    expect(typeof captured.onOpenModelUpgrade).toBe("function");
+    expect(typeof captured.onOpenModelSettings).toBe("function");
     expect(captured.modelConfigTarget).toBe("local");
   });
 });

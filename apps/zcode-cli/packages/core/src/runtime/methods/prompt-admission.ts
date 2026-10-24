@@ -4,7 +4,7 @@ import type { PromptRuntimeCommand } from "../command-queue.js";
 import { createRuntimeCommandId } from "../command-queue.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { enqueueCancellableRuntimeCommand } from "./runtime-command-submit.js";
-import { acceptSubmissionModelSelection, captureHighspeedFallbackSelection } from "./turn-model.js";
+import { acceptSubmissionModelSelection } from "./turn-model.js";
 import type {
   ActiveTurnStartReservation,
   ExecuteTurnOptions,
@@ -25,8 +25,7 @@ export async function admitPrompt(
   options?: PromptAdmissionOptions,
 ): Promise<PromptAdmissionReceipt> {
   if (options?.requireQueue === true) {
-    // Bug 根因：Highspeed 临时 provider 只能在独立 turn 的提升边界安装。如果仅依据
-    // Bootstrap 的 busy 快照决定是否排队，状态在跨层 await 期间转为空闲会误用普通模型启动。
+    // 显式队列要求由 runtime 接纳，防止跨层 await 期间状态转空闲后越过提交边界。
     return await this.enqueueDeferredInput({
       attachments,
       commandKind: options.commandKind,
@@ -35,7 +34,6 @@ export async function admitPrompt(
       inputId: options.inputId,
       intent: admissionIntent(options.intent, "queue"),
       modelSelectionScope: options.modelExecution?.selectionScope,
-      highspeedFallbackSelection: options.modelExecution?.selectionFallback?.target,
       queryId: options.queryId,
       toolDisallowlist: options.toolDisallowlist,
       traceContext: options.traceContext,
@@ -117,12 +115,6 @@ export async function admitPrompt(
   this.reserveTurnStart(turnId, turnTraceContext, "regular");
   let selectionAccepted = Promise.resolve();
 
-  if (options?.modelExecution) {
-    options = {
-      ...options,
-      modelExecution: captureHighspeedFallbackSelection(this, options.modelExecution),
-    };
-  }
   const executeOptions = options as ExecuteTurnOptions | undefined;
   const completion = enqueueCancellableRuntimeCommand<TurnResult, PromptRuntimeCommand>(this, {
     abortSignal: options?.abortSignal,

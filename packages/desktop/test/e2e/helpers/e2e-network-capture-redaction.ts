@@ -1,8 +1,6 @@
-import { requestSecuritySensitiveHeaders } from "@zcode/shared";
 export const E2E_NETWORK_CAPTURE_REDACTION_VALUE = "[redacted]";
 
 const REDACTED_HEADER_NAMES = new Set([
-  ...requestSecuritySensitiveHeaders,
   "authorization",
   "proxy-authorization",
   "cookie",

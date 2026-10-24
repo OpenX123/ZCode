@@ -366,7 +366,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
       status: "ready",
       enabled: true,
       config: applyDynamicWorkflowUserMode(
-        createDynamicWorkflowClientConfig("alwaysOn", "remote"),
+        createDynamicWorkflowClientConfig("alwaysOn", "default"),
         "onDemand",
       ),
     });
@@ -399,7 +399,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     useDynamicWorkflowAvailabilityStore.setState({
       status: "ready",
       enabled: true,
-      config: { mode: "alwaysOn", enabled: true, source: "remote" } as unknown as ReturnType<
+      config: { mode: "alwaysOn", enabled: true, source: "default" } as unknown as ReturnType<
         typeof createDynamicWorkflowClientConfig
       >,
     });

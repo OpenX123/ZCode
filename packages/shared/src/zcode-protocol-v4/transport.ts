@@ -349,7 +349,6 @@ export const V4_METHODS = {
   conversationPlans: "v4/conversation/plans",
   conversationFileChanges: "v4/conversation/fileChanges",
   backgroundBashOutput: "v4/conversation/backgroundBashOutput",
-  offPeakControl: "v4/conversation/offPeakControl",
   conversationFileRewindPreview: "v4/conversation/fileRewindPreview",
   // workflow run 的事件日志分页（详情页审计面）：只读、无状态、超时重发安全。
   // 新方法天然偏斜安全——旧桌面根本不会调用它。
@@ -412,7 +411,6 @@ export type V4ConnectionFlowParams = z.infer<typeof v4ConnectionFlowParamsSchema
 export const v4ConnectionFlowResultSchema = z.object({}).strict();
 
 export const V4_NOTIFICATIONS = {
-  offPeakLifecycle: "v4/offPeak/lifecycle",
   // 下行帧（snapshot / deltas），params = ConversationTopicFrame。
   conversationFrame: "v4/conversation/frame",
   // 仅 live ingest 的无正文事实；不进入 topic snapshot/recovery。

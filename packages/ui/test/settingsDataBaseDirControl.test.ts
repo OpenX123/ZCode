@@ -164,8 +164,6 @@ async function renderGeneralSection(
       closeToTrayOnWindows: true,
       keepAwakeWhileRunning: false,
       isDesktop: true,
-      receivePreviewUpdates: false,
-      autoDownloadAndInstallUpdates: false,
       desktopChromiumHardwareAccelerationEnabled: true,
       dataBaseDir: "/Users/test",
       terminalInheritSystemProfile: true,
@@ -193,8 +191,6 @@ async function renderGeneralSection(
       onDesktopChromiumHardwareAccelerationChange: vi.fn(async () => {}),
       onCloseToTrayOnWindowsChange: vi.fn(async () => {}),
       onKeepAwakeWhileRunningChange: vi.fn(async () => {}),
-      onReceivePreviewUpdatesChange: vi.fn(async () => {}),
-      onAutoDownloadAndInstallUpdatesChange: vi.fn(async () => {}),
       onMessageStreamShowReasoningChange: vi.fn(async () => {}),
       onMessageStreamShowTodosChange: vi.fn(async () => {}),
       onToolGroupingExploreEnabledChange: vi.fn(async () => {}),
@@ -225,6 +221,35 @@ describe("GeneralSectionContent data directory control", () => {
     await renderGeneralSection();
 
     expect(capturedInputs.some((input) => input.readOnly === true)).toBe(true);
+  });
+
+  it("桌面常规设置移除官方更新开关，保留硬件加速与任务通知", async () => {
+    const onDesktopChromiumHardwareAccelerationChange = vi.fn(async () => {});
+    const setNotificationEnabled = vi.fn();
+    const setNotificationSoundEnabled = vi.fn();
+
+    const markup = await renderGeneralSection({
+      onDesktopChromiumHardwareAccelerationChange,
+      setNotificationEnabled,
+      setNotificationSoundEnabled,
+    });
+
+    expect(markup).not.toContain("settings.receivePreviewUpdates");
+    expect(markup).not.toContain("settings.autoDownloadAndInstallUpdates");
+
+    const hardwareSwitch = capturedSwitches.find(
+      (entry) => entry["aria-label"] === "Chrome 硬件加速",
+    );
+    expect(hardwareSwitch?.checked).toBe(true);
+    (hardwareSwitch?.onCheckedChange as ((checked: boolean) => void) | undefined)?.(false);
+    expect(onDesktopChromiumHardwareAccelerationChange).toHaveBeenCalledWith(false);
+
+    for (const callback of [setNotificationEnabled, setNotificationSoundEnabled]) {
+      const control = capturedSwitches.find((entry) => entry.onCheckedChange === callback);
+      expect(control?.checked).toBe(true);
+      (control?.onCheckedChange as ((checked: boolean) => void) | undefined)?.(false);
+      expect(callback).toHaveBeenCalledWith(false);
+    }
   });
 
   it("ModelIO 读取关闭值并通过标准设置开关提交", async () => {

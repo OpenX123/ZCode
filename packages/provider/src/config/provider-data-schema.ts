@@ -16,7 +16,7 @@ export const zhipuAccountModeDataSchema = z.enum([
   "individual-coding-plan",
   "team-coding-plan",
   "off-peak",
-  // 加速卡访问类别；与 zcodeProviderAccountAccessSchema.mode 同值，改动需同步两处。
+  // 旧磁盘配置的访问类别，仅保留解析，不授予执行准入。
   "highspeed",
 ]);
 export const providerVisibilityDataSchema = z.enum(["visible", "hidden"]);
@@ -37,6 +37,7 @@ export const apiKeyAccessDataSchema = z
   })
   .strict();
 export const completeApiKeyAccessDataSchema = apiKeyAccessDataSchema.extend({
+  type: z.literal("api-key"),
   apiKey: nonBlankRequiredString,
 });
 
@@ -58,10 +59,7 @@ export const providerAccessDataSchema = z.discriminatedUnion("type", [
   apiKeyAccessDataSchema,
   zhipuAccountAccessDataSchema,
 ]);
-export const completeProviderAccessDataSchema = z.discriminatedUnion("type", [
-  completeApiKeyAccessDataSchema,
-  completeZhipuAccountAccessDataSchema,
-]);
+export const completeProviderAccessDataSchema = completeApiKeyAccessDataSchema;
 
 export const completeProviderApiDataSchema = z
   .object({

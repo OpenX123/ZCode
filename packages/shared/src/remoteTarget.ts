@@ -63,3 +63,6 @@ export function stripRemoteTargetSecrets(target: RemoteTarget): RemoteTarget {
 
   return target;
 }
+
+/** 远端连接请求的入口意图，用于正常连接、重连和恢复路径。 */
+export type RemoteWorkspaceConnectTrigger = "new" | "reconnect" | "restore";

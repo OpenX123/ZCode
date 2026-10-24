@@ -1,11 +1,9 @@
-import { OFF_PEAK_EXECUTION_TOOL_DENYLIST } from "@zcode/shared";
 import type {
   CompactPhase,
   CompactReason,
   MessageId,
   ModelStreamRecoveryStatus,
   Model,
-  ModelSelection,
   OutputStylePromptConfig,
   SessionEvent,
   TraceContext,
@@ -14,7 +12,7 @@ import type {
 } from "../deps.js";
 import type { ActiveTurnSteeringState } from "../types.js";
 import type { ModelToolContract, SubagentRunOptions } from "@zcode/contracts";
-import type { DrainedPendingInputDiagnostics, ModelExecutionContext } from "../types.js";
+import type { DrainedPendingInputDiagnostics } from "../types.js";
 import type { TurnMachineImpl } from "../deps.js";
 import type { RuntimeMessageEntry } from "../../agent/message-history.js";
 
@@ -24,19 +22,6 @@ export const RAPID_REFILL_TOOL_TURN_THRESHOLD = 3;
 export const MAX_CONSECUTIVE_RAPID_REFILLS = 3;
 export const AUTOMATION_MUTATION_TOOL_NAMES = ["CronCreate", "CronUpdate", "CronDelete"] as const;
 const AUTOMATION_QUERY_ID_PREFIX = "automation-";
-/**
- * 闲时派发轮隐藏的工具；OffPeakList 只读保留。
- * - OffPeakCreate：防止闲时任务递归自我派生、无限调度。
- * - Workflow 与动态执行入口：独立工作流运行器尚未加入闲时票据生命周期。
- *
- * 独立常量，绝不并入 AUTOMATION_MUTATION_TOOL_NAMES——cron automation turn 明确放行
- * OffPeakCreate（定时派生闲时任务），混入会让 automation turn 误 deny。
- */
-export const OFF_PEAK_MUTATION_TOOL_NAMES = OFF_PEAK_EXECUTION_TOOL_DENYLIST;
-// 闲时派发 init 段 traceId 无固定前缀，只有 resume 段是 `${offPeakTaskId}:resume:*`
-// （offpeak- 开头）；前缀只是 resume 兜底信号，主信号必须是显式 offPeakTaskId。
-const OFF_PEAK_QUERY_ID_PREFIX = "offpeak-";
-
 export interface CompactLoopTracking {
   consecutiveRapidRefills: number;
   toolTurnsSinceCompact: number;
@@ -79,12 +64,10 @@ export interface TurnRequestState {
 }
 
 export interface RegularTurnLoopState {
-  offPeakExecutionId?: string;
   activeTurn?: ActiveTurnSteeringState;
   /** Host admission 显式传入的本轮 automation 身份；不能从持久 task metadata 推断。 */
   automationId?: string;
   /** Host admission 显式传入的本轮闲时任务身份；与 automationId 互斥，不从持久 meta 推断。 */
-  offPeakTaskId?: string;
   /** CronCreate 命中全局上限后，本用户 turn 永久切为纯文本回复，禁止模型自行恢复。 */
   automationCreateLimitReached?: boolean;
   anomalyWarningsInjected: number;
@@ -103,12 +86,6 @@ export interface RegularTurnLoopState {
   model: Model;
   /** execution 表示当前 Active Model 不能被同 loop 的 guide 改写。 */
   modelSelectionScope?: "execution";
-  /** 本轮执行 Selection 的降级声明；命中一次后清空，退回后的模型不再二次降级。 */
-  selectionFallback?: ModelExecutionContext["selectionFallback"];
-  /** 请求期失败已命中退回声明但无可用退回目标；TurnError 归因据此发布，Renderer 作废匹配卡。 */
-  highspeedFallbackUnavailable?: boolean;
-  /** 仅加速卡过期回退使用的启动快照；不用于闲时换票。 */
-  highspeedFallbackSelection?: ModelSelection;
   /** Core Server 的前台 child Selection override；优先于 profile 与父模型继承。 */
   subagentModelOverride?: SubagentRunOptions["modelOverride"];
   modelStepCount: number;
@@ -149,20 +126,6 @@ export function isAutomationMutationRestrictedTurn(state: RegularTurnLoopState):
   // active/busy automation 输入会把 turn-scoped denylist 合并进当前 loop；即使原始
   // automationId 不再是 loop 首输入，也必须把同一事实继续传到 handler 执行边界。
   return AUTOMATION_MUTATION_TOOL_NAMES.every((toolName) => disallowedTools.has(toolName));
-}
-
-/**
- * 本轮是否为闲时自动派发 turn（需 deny OffPeakCreate）。三重信号与
- * isAutomationMutationRestrictedTurn 同构：显式 offPeakTaskId 为主信号；
- * resume 段 traceId 前缀与 turn denylist 是纵深兜底。
- */
-export function isOffPeakCreateRestrictedTurn(state: RegularTurnLoopState): boolean {
-  if (state.offPeakTaskId?.trim()) return true;
-  if (state.turnTraceContext.queryId?.trim().startsWith(OFF_PEAK_QUERY_ID_PREFIX)) return true;
-
-  // 兜底只认 OffPeakCreate 这一哨兵：旧 host 派发的 denylist 可能尚未带上 新增的工具。
-  const disallowedTools = new Set(state.toolDisallowlist ?? []);
-  return disallowedTools.has(OFF_PEAK_MUTATION_TOOL_NAMES[0]);
 }
 
 export function evaluateRapidRefill(

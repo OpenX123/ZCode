@@ -28,8 +28,6 @@ export class ToolExecutorImpl implements ToolExecutor {
 
   constructor(options: ToolExecutorOptions) {
     this.deps = {
-      agentTelemetry: options.agentTelemetry,
-      agentTelemetryActorKind: options.agentTelemetryActorKind,
       registry: options.registry,
       permissionService: options.permissionService,
       permissionBroker: options.permissionBroker ?? createDenyPermissionBroker(),
@@ -59,7 +57,6 @@ export class ToolExecutorImpl implements ToolExecutor {
       workflowEscalatePort: options.workflowEscalatePort,
       artifactStore: options.artifactStore,
       automationPort: options.automationPort,
-      offPeakPort: options.offPeakPort,
       topicResourcePort: options.topicResourcePort,
       sessionStore: options.sessionStore,
       sessionModePort: options.sessionModePort,

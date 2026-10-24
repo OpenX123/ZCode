@@ -1,63 +1,53 @@
-import { IGenUiService } from "@zcode/services";
 import { ProxyChannel, type IChannelClient } from "@zcode/rpc";
 import {
-  IFileService,
-  IMediaPreviewService,
-  IGitService,
-  IGitCheckpointService,
-  ISystemService,
-  ITerminalService,
-  ISettingService,
-  IOnboardingRecordService,
-  ICredentialService,
-  IBroadcastService,
-  IZCodeTaskService,
-  IZCodeAgentService,
-  IZCodeSessionService,
-  IProjectService,
-  ITaskGroupService,
-  IRemoteProjectService,
-  ICuaPermissionService,
-  IConversationShareService,
   IBotsService,
+  IBroadcastService,
+  ICommandsService,
+  ICredentialService,
+  ICuaPermissionService,
+  IFileService,
   IFileWatcherService,
-  IOAuthService,
+  IGenUiService,
+  IGitCheckpointService,
+  IGitService,
+  IHooksService,
+  IMcpSyncService,
+  IMediaPreviewService,
+  IMemoryService,
   IModelSelectionService,
-  IProviderSettingsService,
+  IOnboardingRecordService,
+  IOutputStyleService,
+  IPluginManagementService,
+  IPluginsService,
+  IPluginSyncService,
+  IPluginUiAppToolsService,
+  IPluginUiBridgeService,
+  IPluginUiSamplingService,
+  IProjectService,
+  IPromptAttachmentTransferService,
   IProviderProvisioningTargetService,
-  ISourceServerWorkspaceService,
-  ISourceServerManagementService,
-  IUsageStatsService,
-  ICodingPlanSubscriptionService,
-  IClientConfigService,
-  IClientScenesService,
-  ICloudContentService,
-  IMarketingTouchService,
-  IOffPeakTaskService,
-  IHighspeedCardService,
+  IProviderSettingsService,
+  IRemoteProjectService,
+  ISettingService,
+  ISettingsSyncService,
   ISkillsService,
   ISkillSyncService,
-  IMcpSyncService,
-  IPluginUiAppToolsService,
-  IPluginUiSamplingService,
-  IPluginUiBridgeService,
-  IPluginSyncService,
-  IPluginsService,
-  IPluginManagementService,
+  ISourceServerManagementService,
+  ISourceServerWorkspaceService,
   ISubagentsService,
-  ICommandsService,
-  IHooksService,
-  IMemoryService,
-  IOutputStyleService,
-  ISettingsSyncService,
-  IFeedbackService,
-  IPromptAttachmentTransferService,
+  ISystemService,
+  ITaskGroupService,
+  ITerminalService,
+  IUsageStatsService,
   IWindowControllerService,
+  IWindowProjectChangesService,
   IWindowProjectService,
   IWindowRemoteProjectService,
-  IWindowProjectChangesService,
-  type WindowProjectDirectoryServices,
+  IZCodeAgentService,
+  IZCodeSessionService,
+  IZCodeTaskService,
   type IServiceAccessor,
+  type WindowProjectDirectoryServices,
 } from "@zcode/services";
 
 /**
@@ -87,10 +77,8 @@ export class RemoteServiceAccess implements IServiceAccessor {
   // cuaPermissionService 在 IServiceAccessor 上是可选（远端/bots host 不提供），但桌面 renderer
   // 经 RPC 一定能拿到（main host 始终注册此 descriptor；非 macOS / 未启用时方法返回 available:false）。
   readonly cuaPermissionService: ICuaPermissionService;
-  readonly conversationShareService: IConversationShareService;
   readonly botsService: IBotsService;
   readonly fileWatcherService: IFileWatcherService;
-  readonly oauthService: IOAuthService;
   readonly providerSettingsService: IProviderSettingsService;
   readonly modelSelectionService: IModelSelectionService;
   /** Host-only target proxy；不属于 IServiceAccessor，避免向 Renderer 暴露 Secret 写入接口。 */
@@ -99,13 +87,6 @@ export class RemoteServiceAccess implements IServiceAccessor {
   /** 仅 desktop base attachment 注册；其他 scope 必须按可选能力消费。 */
   readonly sourceServerManagementService?: ISourceServerManagementService;
   readonly usageStatsService: IUsageStatsService;
-  readonly codingPlanSubscriptionService: ICodingPlanSubscriptionService;
-  readonly clientConfigService: IClientConfigService;
-  readonly clientScenesService: IClientScenesService;
-  readonly cloudContentService: ICloudContentService;
-  readonly marketingTouchService: IMarketingTouchService;
-  readonly offPeakTaskService: IOffPeakTaskService;
-  readonly highspeedCardService: IHighspeedCardService;
   readonly skillsService: ISkillsService;
   readonly skillSyncService: ISkillSyncService;
   readonly mcpSyncService: IMcpSyncService;
@@ -122,7 +103,6 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly memoryService: IMemoryService;
   readonly outputStyleService: IOutputStyleService;
   readonly settingsSyncService: ISettingsSyncService;
-  readonly feedbackService: IFeedbackService;
   readonly promptAttachmentTransferService: IPromptAttachmentTransferService;
 
   constructor(
@@ -199,17 +179,11 @@ export class RemoteServiceAccess implements IServiceAccessor {
     this.cuaPermissionService = ProxyChannel.toService<ICuaPermissionService>(
       channelClient.getChannel(ICuaPermissionService.channelName),
     );
-    this.conversationShareService = ProxyChannel.toService<IConversationShareService>(
-      channelClient.getChannel(IConversationShareService.channelName),
-    );
     this.botsService = ProxyChannel.toService<IBotsService>(
       channelClient.getChannel(IBotsService.channelName),
     );
     this.fileWatcherService = ProxyChannel.toService<IFileWatcherService>(
       channelClient.getChannel(IFileWatcherService.channelName),
-    );
-    this.oauthService = ProxyChannel.toService<IOAuthService>(
-      channelClient.getChannel(IOAuthService.channelName),
     );
     this.providerSettingsService = ProxyChannel.toService<IProviderSettingsService>(
       channelClient.getChannel(IProviderSettingsService.channelName),
@@ -235,27 +209,6 @@ export class RemoteServiceAccess implements IServiceAccessor {
       : undefined;
     this.usageStatsService = ProxyChannel.toService<IUsageStatsService>(
       channelClient.getChannel(IUsageStatsService.channelName),
-    );
-    this.codingPlanSubscriptionService = ProxyChannel.toService<ICodingPlanSubscriptionService>(
-      channelClient.getChannel(ICodingPlanSubscriptionService.channelName),
-    );
-    this.clientConfigService = ProxyChannel.toService<IClientConfigService>(
-      channelClient.getChannel(IClientConfigService.channelName),
-    );
-    this.clientScenesService = ProxyChannel.toService<IClientScenesService>(
-      channelClient.getChannel(IClientScenesService.channelName),
-    );
-    this.cloudContentService = ProxyChannel.toService<ICloudContentService>(
-      channelClient.getChannel(ICloudContentService.channelName),
-    );
-    this.marketingTouchService = ProxyChannel.toService<IMarketingTouchService>(
-      channelClient.getChannel(IMarketingTouchService.channelName),
-    );
-    this.offPeakTaskService = ProxyChannel.toService<IOffPeakTaskService>(
-      channelClient.getChannel(IOffPeakTaskService.channelName),
-    );
-    this.highspeedCardService = ProxyChannel.toService<IHighspeedCardService>(
-      channelClient.getChannel(IHighspeedCardService.channelName),
     );
     this.skillsService = ProxyChannel.toService<ISkillsService>(
       channelClient.getChannel(ISkillsService.channelName),
@@ -304,9 +257,6 @@ export class RemoteServiceAccess implements IServiceAccessor {
     );
     this.settingsSyncService = ProxyChannel.toService<ISettingsSyncService>(
       channelClient.getChannel(ISettingsSyncService.channelName),
-    );
-    this.feedbackService = ProxyChannel.toService<IFeedbackService>(
-      channelClient.getChannel(IFeedbackService.channelName),
     );
     this.promptAttachmentTransferService = ProxyChannel.toService<IPromptAttachmentTransferService>(
       channelClient.getChannel(IPromptAttachmentTransferService.channelName),

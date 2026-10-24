@@ -1,13 +1,11 @@
 import type { ToolSearchExecutionContext, ToolSearchMode } from "@zcode/contracts";
-import type { RequestVerificationReason } from "@zcode/shared";
+import type { ZCodeProviderRuntimeHeadersRequestParams } from "@zcode/shared";
 import type { GetAgentDefinitions, LoadAgentDefinitions } from "../subagent/definitions.js";
-import type { RuntimeInputPresentation, TurnExecutionModelFallbackReason } from "@zcode/contracts";
+import type { RuntimeInputPresentation } from "@zcode/contracts";
 /* eslint-disable max-lines -- Runtime 类型集中承载 core/runtime 对外结构，拆分需要单独迁移。 */
 import { PermissionService, ToolScheduler } from "./deps.js";
 import type {
   JsonSchema,
-  AgentExecutionTelemetryPort,
-  AgentTelemetryCausation,
   BackgroundResultOriginMeta,
   ContextUsageBreakdownItem,
   CoordinatorResponsePort,
@@ -23,7 +21,6 @@ import type {
   WorkspaceHookBundleSnapshot,
   WorkspaceId,
 } from "@zcode/contracts";
-import type { ZCodeProviderAccountAccess } from "@zcode/shared";
 import type { EffectiveModelSelectionResult } from "@zcode/shared/model-selection";
 import type { RuntimeMessageEntry } from "../agent/message-history.js";
 import type {
@@ -74,7 +71,6 @@ import type {
   BrowserControlPort,
   ExecutionShellSelection,
   AutomationPort,
-  OffPeakPort,
   TopicResourcePort,
   FileSystemPort,
   HttpClientPort,
@@ -328,9 +324,6 @@ export interface AgentRuntimeDeps {
   getAgentDefinitions?: GetAgentDefinitions;
   /** 新父上下文读取一次；子执行不得继承此加载器。 */
   loadAgentDefinitions?: LoadAgentDefinitions;
-  agentTelemetry?: AgentExecutionTelemetryPort;
-  agentTelemetryCausation?: AgentTelemetryCausation;
-  agentTelemetryCausationMode?: "child" | "linked_root";
   appVersion?: string;
   eventStore: SessionEventStorePort;
   sessionStore?: SessionStorePort;
@@ -378,9 +371,6 @@ export interface AgentRuntimeDeps {
    * 包装（受闸门约束），主 runtime 拿治理器的 observer（只喂信号）；缺席即不设闸门。
    */
   modelRequestAdmission?: ModelRequestAdmission;
-  onOffPeakLifecycleEvent?: (
-    event: import("./off-peak/lifecycle.js").OffPeakLifecycleEvent,
-  ) => void;
   workflowPort?: WorkflowPort;
   /** workflow run 的提交/观察/取消端口；存在即 CreateWorkflow 真启动，缺席则回占位诊断。 */
   dynamicWorkflowRunPort?: DynamicWorkflowRunPort;
@@ -390,7 +380,6 @@ export interface AgentRuntimeDeps {
   runtimeTaskRegistry?: RuntimeTaskRegistry;
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
-  offPeakPort?: OffPeakPort;
   topicResourcePort?: TopicResourcePort;
   contextSourcePort?: ContextSourcePort;
   eventSink?: SessionEventSink;
@@ -420,13 +409,10 @@ export type RuntimeModelFactory = (input: RuntimeModelFactoryInput) => Model;
 export interface ProviderRuntimeHeadersPort {
   shouldRefreshBeforeModelRequest?(input: { providerId: string; modelId: string }): boolean;
   refreshBeforeModelRequest(input: {
-    accountAccess?: ZCodeProviderAccountAccess;
-    expectedAccountScope?: string;
-    rejectedProjectTokenFingerprint?: string;
     abortSignal?: AbortSignal;
     modelId: string;
     providerId: string;
-    reason: RequestVerificationReason;
+    reason: ZCodeProviderRuntimeHeadersRequestParams["reason"];
     sessionId: SessionId;
     traceContext: TraceContext;
     turnId?: TurnId;
@@ -450,38 +436,17 @@ export interface TurnResult {
  * 也不会成为 Session Selection 的第二份来源。
  */
 export interface ModelExecutionContext {
-  offPeak?: { executionId: string; ticketId: string; providerErrorCode: string };
   /** 仅当前 Turn 跳过自动 Project Memory Extraction；不修改 Session Memory 配置。 */
   memoryExtraction?: "skip";
   selectionScope: "execution";
-  /** 接纳加速输入前固定的 Session 候选；仅在内存中随本条命令传递。 */
-  highspeedFallbackSelection?: ModelSelection;
   requestDependencies?: ModelRequestDependencies;
   subagents?: {
     foregroundModel: "submission";
     background: "deny" | "allow";
   };
-  /**
-   * 本次执行的 Selection 失败时，同一 Turn 内退回原模型继续跑完（保留已提交历史，只替换后续请求的
-   * 模型），而不是让整轮直接失败。触发条件必须由发起方声明：`providerId` 限定只匹配本轮 execution
-   * Selection 指向的 provider，`rules` 按声明顺序匹配、首个命中决定退回原因，`providerErrorCode` 缺省
-   * 表示该 provider 的任何失败。core 不按 provider id、模型名或错误文案硬编码。
-   * 退回目标先取 `target`（发起方抽卡时的提交选择，即会话原模型），再取本轮接纳前复制的会话常驻 Session Selection；
-   * 两者都解析不出时无处可退，按真实错误失败。
-   */
-  selectionFallback?: {
-    providerId: string;
-    rules: Array<{
-      reason: TurnExecutionModelFallbackReason;
-      providerErrorCode?: string;
-    }>;
-    target?: ModelSelection;
-  };
 }
 
 export interface ExecuteTurnOptionsBase {
-  /** 内存后台命令归属；不进入 canonical intent 或持久化模型默认。 */
-  offPeakExecutionId?: string;
   executionSelection?: ModelSelection;
   abortSignal?: AbortSignal;
   browserAmbientContext?: {
@@ -779,7 +744,6 @@ export interface PermissionDecisionResult {
 export interface ExecuteToolsOptions {
   toolSearch?: ToolSearchExecutionContext;
   automationTurn?: boolean;
-  offPeakTurn?: boolean;
   signal?: AbortSignal;
   traceContext?: TraceContext;
   /** 仅透传给当前 turn 同步等待的 Agent child。 */

@@ -1,6 +1,5 @@
-import type { RequestVerificationReason } from "@zcode/shared";
+import type { ZCodeProviderRuntimeHeadersRequestParams } from "@zcode/shared";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { ZCodeProviderAccountAccess } from "@zcode/shared";
 import type { ModelApiCallObservation } from "../telemetry/index.js";
 import type { TraceContext } from "../tracing/tracer.js";
 import type {
@@ -31,11 +30,8 @@ export interface ModelInvocationContext {
   streamRecovery?: ModelStreamRecoveryStatus;
   preserveProviderStreamBoundaries?: boolean;
   refreshRuntimeHeadersBeforeAttempt?: (input: {
-    accountAccess?: ZCodeProviderAccountAccess;
-    expectedAccountScope?: string;
-    rejectedProjectTokenFingerprint?: string;
     attempt: number;
-    reason?: RequestVerificationReason;
+    reason?: ZCodeProviderRuntimeHeadersRequestParams["reason"];
     abortSignal?: AbortSignal;
     providerId: string;
     modelId: string;
@@ -48,7 +44,6 @@ export interface ModelInvocationContext {
 
 /** Adapter 为单个物理请求 attempt 使用的动态鉴权材料。 */
 export interface ModelRequestAuth {
-  accountScope?: string;
   apiKey?: string;
   apiKeyId?: string;
   headers?: Record<string, string>;

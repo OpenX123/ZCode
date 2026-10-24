@@ -93,7 +93,13 @@ describe("ZCode official marketplace partitions", () => {
         "utf8",
       ),
     ) as { plugins: Array<{ name: string }> };
-    expect(merged.plugins.map((plugin) => plugin.name)).toEqual(["remote", "bundled-v2"]);
+    expect(merged.plugins.map((plugin) => plugin.name)).toEqual(["bundled-v2"]);
+    expect(
+      await readFile(
+        join(storageRoot, "marketplaces", "zcode-plugins-official", "cdn-marketplace.json"),
+        "utf8",
+      ),
+    ).toContain("remote");
   });
 
   it("does not rewrite unchanged official marketplace files", async () => {
@@ -102,23 +108,14 @@ describe("ZCode official marketplace partitions", () => {
       name: "zcode-plugins-official",
       plugins: [{ name: "bundled", source: "filesystem", version: "1.0.0" }],
     };
-    const cdnManifest = {
-      name: "zcode-plugins-official",
-      plugins: [{ name: "remote", source: { source: "url", type: "zip" } }],
-    };
     const marketplaceRoot = join(storageRoot, "marketplaces", "zcode-plugins-official");
 
     writeBundledOfficialMarketplacePartitionSync({
       manifest: bundledManifest,
       storageRoot,
     });
-    writeCdnOfficialMarketplacePartitionSync({
-      manifest: cdnManifest,
-      storageRoot,
-    });
     const paths = [
       join(marketplaceRoot, "bundled-marketplace.json"),
-      join(marketplaceRoot, "cdn-marketplace.json"),
       join(marketplaceRoot, "marketplace.json"),
     ];
     const firstMtimes = await Promise.all(paths.map(async (path) => (await stat(path)).mtimeMs));
@@ -126,10 +123,6 @@ describe("ZCode official marketplace partitions", () => {
 
     writeBundledOfficialMarketplacePartitionSync({
       manifest: bundledManifest,
-      storageRoot,
-    });
-    writeCdnOfficialMarketplacePartitionSync({
-      manifest: cdnManifest,
       storageRoot,
     });
 

@@ -1,5 +1,4 @@
 import { pluginUiStateKey } from "@/plugin-ui/adapters/pluginUiStateKey.js";
-import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
 import { getPluginUiSessionActions } from "./pluginUiSessionActions.js";
 import { logger } from "@/logger.js";
 import { createPluginUiMessagePortTransport } from "@/plugin-ui/adapters/messagePortTransport.js";
@@ -47,25 +46,6 @@ export function createPage(
   platform: Platform,
   services: Services,
 ): Page {
-  const reportUsage = (action: string, failed = false) => {
-    void reportAppTelemetryEvent(
-      platform,
-      {
-        elementName: failed ? "plugin_runtime_error" : "plugin_usage",
-        eventRegion: "app",
-        eventType: "result",
-        eventExtraDetail: {
-          schema_version: "1",
-          action,
-          plugin_id: input.presentation.pluginId,
-          plugin_component: "ui",
-          client_kind: "desktop",
-          ...(failed ? { error_category: "unknown", result: "failure" } : {}),
-        },
-      },
-      "plugin-ui",
-    );
-  };
   const bridge = services.pluginUiBridgeService!;
   const sandboxPlatform = platform.pluginSandbox!;
   const surfaceKey = key;
@@ -275,8 +255,6 @@ export function createPage(
       },
       onPhase: (next, detail) => {
         if (controller !== nextController) return;
-        if (next === "running" && snapshot.phase !== "running") reportUsage("ui_ready");
-        if (next === "error" && snapshot.phase !== "error") reportUsage("ui_open_request", true);
         // 生命周期事件每个沙箱只有几条，走 lifecycle 才能进主日志（排查用户现场用）。
         logger.lifecycle.info("[plugin-ui] lifecycle", {
           phase: next,
@@ -322,7 +300,6 @@ export function createPage(
     });
 
     controller = nextController;
-    reportUsage("ui_open_request");
     controller.start();
   }
   const task = buildPluginUiSessionKey(input.scope);
@@ -433,7 +410,6 @@ export function createPage(
       // 先前释放未完成时不能重新预备；反复重试也只等待同一个释放链。
       // Main 主动导航到 about:blank 会触发 navigation；先解除旧代际观察，避免回收被误报为崩溃。
       if (previousHandle) plane.prepareUnmount(previousHandle.sandboxId);
-      if (previous) reportUsage("ui_close");
       const closing = previous?.dispose();
       releasing = Promise.all([releasing, closing]).then(() => {
         if (previousHandle) plane.unmount(previousHandle.sandboxId);

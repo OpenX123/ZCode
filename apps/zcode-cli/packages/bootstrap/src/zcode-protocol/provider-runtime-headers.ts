@@ -1,4 +1,3 @@
-import { requestVerificationTimeoutMessage } from "@zcode/shared";
 import { randomUUID } from "node:crypto";
 import {
   zcodeProtocolMethods,
@@ -16,6 +15,8 @@ import {
 // 无应答方时 UI 的 SDK 超时不会启动；端口总时限同时覆盖排队与凭据解析。
 const PROVIDER_RUNTIME_HEADERS_TIMEOUT_MS = 180_000;
 const CLIENT_REQUEST_TIMEOUT_CODE = -32022;
+const PROVIDER_RUNTIME_HEADERS_TIMEOUT_MESSAGE =
+  "Provider runtime headers request timed out. Please send your message again.";
 
 export function createProviderRuntimeHeadersPort(
   context: ZCodeProtocolAgentServerContext,
@@ -23,8 +24,6 @@ export function createProviderRuntimeHeadersPort(
 ): NonNullable<ZCodeAppOptions["providerRuntimeHeadersPort"]> {
   return {
     shouldRefreshBeforeModelRequest() {
-      // Account 请求由绑定 Model 决定是否进入鉴权，不能把所有账号收窄到旧 Start ID。
-      // 普通 API 不进入此端口；Team/Individual 继续复用请求级鉴权合同。
       return true;
     },
     async refreshBeforeModelRequest(input) {
@@ -41,13 +40,6 @@ export function createProviderRuntimeHeadersPort(
             workspace,
             modelSelection: { providerId: input.providerId, modelId: input.modelId },
             providerId: input.providerId,
-            ...(input.accountAccess ? { accountAccess: input.accountAccess } : {}),
-            ...(input.expectedAccountScope
-              ? { expectedAccountScope: input.expectedAccountScope }
-              : {}),
-            ...(input.rejectedProjectTokenFingerprint
-              ? { rejectedProjectTokenFingerprint: input.rejectedProjectTokenFingerprint }
-              : {}),
             reason: input.reason,
           },
           zcodeProviderRuntimeHeadersResponseSchema,
@@ -73,7 +65,7 @@ export function createProviderRuntimeHeadersPort(
         if (timedOut) {
           const timeoutError = new ProtocolRequestError(
             CLIENT_REQUEST_TIMEOUT_CODE,
-            requestVerificationTimeoutMessage,
+            PROVIDER_RUNTIME_HEADERS_TIMEOUT_MESSAGE,
             error.data,
           );
           timeoutError.cause = error;
@@ -90,17 +82,12 @@ export function createProviderRuntimeHeadersPort(
             "Provider runtime headers were not applied before model request attempt.",
           {
             providerId: input.providerId,
-            ...(input.rejectedProjectTokenFingerprint
-              ? { rejectedProjectTokenFingerprint: input.rejectedProjectTokenFingerprint }
-              : {}),
             reason: input.reason,
             workspaceKey: workspace.workspaceKey,
           },
         );
       }
-      // zcode-plan 的账号鉴权材料是每次请求刷新的运行时配置，
-      // 但 provider registry revision 是 workspace 级全局状态；并发刷新时后一个请求会推进全局 revision，
-      // 不能再用全局 revision 不相等误判当前请求的 headers 未应用。
+      // 请求凭据独立于 workspace 级 Registry revision，并发刷新不能互相使响应失效。
       return result;
     },
   };

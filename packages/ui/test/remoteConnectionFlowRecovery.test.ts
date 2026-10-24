@@ -21,7 +21,6 @@ import enUS from "@/i18n/locales/en-US.js";
 import { createCanonicalWslTargetResolver } from "@desktop/main/desktopWslTargetResolver.js";
 
 const ports = vi.hoisted(() => ({
-  trace: { complete: vi.fn(), fail: vi.fn(), cancel: vi.fn() },
   locale: "zh-CN",
   snapshot: {} as SourceServerManagementSnapshot,
   credentialService: { load: vi.fn(async (): Promise<string | null> => null), save: vi.fn() },
@@ -119,7 +118,6 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-vi.mock("@/lib/userActionTelemetry.js", () => ({ startUserAction: () => ports.trace }));
 import {
   useRemoteConnectionFlow,
   type RemoteConnectionFlowOptions,
@@ -747,9 +745,10 @@ it("WSL 成功收尾后重复入口仍应用同一发行版", async () => {
   expect(result.current.currentStep).toBe("settings");
   expect(result.current.settingsStep.wslDistro).toBe("Ubuntu");
 });
-it("主动取消立即结算 trace，迟到拒绝不重复结算", async () => {
+it("主动取消撤销请求归属，迟到拒绝不复活连接流程", async () => {
   let reject!: (error: Error) => void;
   const props = defaults({
+    onConnectionReady: vi.fn(),
     onConnect: vi.fn(
       () =>
         new Promise<string>((_, r) => {
@@ -760,13 +759,13 @@ it("主动取消立即结算 trace，迟到拒绝不重复结算", async () => {
   const { result } = renderHook(() => useRemoteConnectionFlow(props));
   act(() => result.current.selectionStep.onSelectTarget(targetA));
   act(() => result.current.connectingStep.onCancelConnection());
-  expect(ports.trace.cancel).toHaveBeenCalledTimes(1);
+  expect(result.current.connectingStep.cancelled).toBe(true);
   await act(async () => {
     reject(Object.assign(new Error("cancelled"), { code: "remote-connection-canceled" }));
   });
-  expect(ports.trace.cancel).toHaveBeenCalledTimes(1);
-  expect(ports.trace.complete).not.toHaveBeenCalled();
-  expect(ports.trace.fail).not.toHaveBeenCalled();
+  expect(result.current.connectingStep.cancelled).toBe(true);
+  expect(result.current.error).toBe("");
+  expect(props.onConnectionReady).not.toHaveBeenCalled();
 });
 it("失败页脚提供关闭与返回列表，不改写失败为取消", async () => {
   const onOpenChange = vi.fn();
@@ -2169,4 +2168,22 @@ it("后台显式继续在 Source 与成员校验前恢复原草稿提交门禁",
   expect(onOpenChange).toHaveBeenCalledWith(true);
   expect(submissionPending).toBe(true);
   await act(async () => eligibility.resolve());
+});
+
+it("桌面版本不兼容时展示手动安装说明，不提供官方更新入口", () => {
+  render(
+    createElement(RemoteConnectionConnectingStep, {
+      kind: "ssh",
+      logs: [],
+      errorMessage: "版本不兼容",
+      loading: false,
+      upgradeRequired: true,
+      upgradeTarget: "controller",
+      onBack: vi.fn(),
+      onRetry: vi.fn(),
+    }),
+  );
+  expect(screen.getByText(zhCN["remote.desktop.manualInstall"])).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "更新桌面端" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "更新远端" })).toBeNull();
 });

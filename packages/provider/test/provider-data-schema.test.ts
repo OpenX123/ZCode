@@ -17,18 +17,7 @@ const api = new ProviderApiConfig({
   baseUrl: "https://api.example/v1",
 });
 const access = new ApiKeyAccessConfig({ apiKey: "test-key" });
-const cases = [
-  { name: "key", access: access.toJSON(), paths: [["access", "apiKey"]] },
-  {
-    name: "account",
-    access: { type: "zhipu-account", accountType: "zai", mode: "off-peak", entitled: false },
-    paths: [
-      ["access", "accountType"],
-      ["access", "mode"],
-      ["access", "entitled"],
-    ],
-  },
-];
+const cases = [{ name: "key", access: access.toJSON(), paths: [["access", "apiKey"]] }];
 
 describe("Provider 数据校验与完整性使用同一合同", () => {
   it("Todo104：新成员/endpoint字段唯一，null清除保留，旧未发布拼写拒绝", () => {
@@ -137,7 +126,7 @@ describe("Provider 数据校验与完整性使用同一合同", () => {
     expect(parseProviderConfig(config.toJSON()).toJSON()).toEqual(config.toJSON());
   });
 
-  it("Account 的 false 权益完整，清空必填值不完整，切换 Access 不保留旧 Key", () => {
+  it("历史账号稀疏配置可读但不进入 Registry，不改写原普通 Key", () => {
     const original = new ProviderConfig({ group: "zai-family", access, api });
     const replaced = original.overlay(
       new ProviderConfig({
@@ -148,7 +137,7 @@ describe("Provider 数据校验与完整性使用同一合同", () => {
         }),
       }),
     );
-    expect(createRegistryProviderConfig(replaced).ok).toBe(true);
+    expect(createRegistryProviderConfig(replaced).ok).toBe(false);
     expect(replaced.access?.toJSON()).toEqual({
       type: "zhipu-account",
       accountType: "zai",

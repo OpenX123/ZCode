@@ -1,6 +1,5 @@
 import type { AiSdkModelAdapter } from "@zcode/adapters/model";
 import type {
-  AgentTelemetryRuntimeOwner,
   AutomationPort,
   BackgroundTaskCancelResult,
   BrowserControlPort,
@@ -36,7 +35,6 @@ import type {
   ModelSelection,
   ModelToolCall,
   ModelUsage,
-  OffPeakPort,
   TopicResourcePort,
   PdfDocumentPort,
   PermissionBrokerPort,
@@ -103,7 +101,6 @@ import type {
   WorkspaceHookReviewDecision,
   WorkspaceHookTrustRevokeTarget,
 } from "@zcode/shared/zcode-protocol-v4";
-import type { ModelProviderSourceTitle } from "../model-config.js";
 import type { ZCodeInstalledPluginData } from "../plugins.js";
 import type { SessionTranscriptMessage } from "../session-transcript.js";
 import type { NodeReplBrowserBroker } from "./node-repl-browser-broker.js";
@@ -148,7 +145,6 @@ export interface ZCodeAppOptions {
    * stdio 协议模式的 agent 进程由 Electron host 拉起，模型服务需要看到 electron 来源。
    * 普通 CLI 不传，继续使用 cli 默认值。
    */
-  sourceTitle?: ModelProviderSourceTitle;
   /** 本地 Host 源文档读取；无此能力时保持启动期配置。 */
   readSubagentRuntimeConfig?: (input: {
     signal: AbortSignal;
@@ -166,7 +162,6 @@ export interface ZCodeAppOptions {
   configuredDefaultModelSelection?: ModelSelection;
   modelIoFullRetentionEnabled?: boolean;
   /** 同进程嵌入宿主可注入完整的 borrowed 进程级 Owner；Endpoint 配置不得覆盖它。 */
-  telemetryOwner?: AgentTelemetryRuntimeOwner;
   providerEndpointRoutingPort?: ProviderEndpointRoutingPort;
   /**
    * provider runtime headers 端口：主 runtime 每次调用报自己的会话；child runtime 一律向父
@@ -197,7 +192,6 @@ export interface ZCodeAppOptions {
   mcpPortFactory?: (input: { workingDirectory?: string }) => McpPort;
   permissionBroker?: PermissionBrokerPort;
   eventSink?: SessionEventSink;
-  onOffPeakLifecycleEvent?: (event: import("@zcode/shared").OffPeakLifecycleNotification) => void;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform | string;
   projectConfigPath?: string;
@@ -207,7 +201,6 @@ export interface ZCodeAppOptions {
   uiLocale?: UiLocale;
   onWorkflowEvent?: (event: WorkflowEvent) => void | Promise<void>;
   automationPort?: AutomationPort;
-  offPeakPort?: OffPeakPort;
   topicResourcePort?: TopicResourcePort;
   /** 首次真实用户执行或 cold-resume fallback 时解析一次，之后由 app 生命周期缓存。 */
   resolveInitialBashShellSelection?: () => Promise<ExecutionShellSelection | undefined>;

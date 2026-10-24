@@ -40,3 +40,11 @@ describe("协议无关的会话执行材料与收尾租约", () => {
     expect(context.selectionScope).toBe("execution");
   });
 });
+
+it("旧调用方夹带的官方 ticket 不会投影到执行材料", () => {
+  const context = createModelExecutionContext({
+    selectionScope: "execution",
+    offPeak: { executionId: "retired", ticketId: "retired", providerErrorCode: "retired" },
+  } as never);
+  expect(context).not.toHaveProperty("offPeak");
+});

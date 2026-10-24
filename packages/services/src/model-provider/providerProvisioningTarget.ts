@@ -1,6 +1,4 @@
 /* eslint-disable max-lines -- Provisioning target keeps transaction and rollback invariants together. */
-import { readFile } from "node:fs/promises";
-import { atomicWritePrivateTextFile, withFileLock } from "@zcode/shared/node";
 import {
   type PersonalProviderConfigRepository,
   type ProviderConfigLayerUpdate,
@@ -9,34 +7,23 @@ import { decodeProviderConfigFile, encodeProviderConfigFile } from "@zcode/provi
 import {
   providerProvisioningEnvelopeSchema,
   providerProvisioningResultSchema,
-  isProviderProvisioningAccountCredentialKey,
   type ProviderProvisioningEnvelope,
-  type ProviderProvisioningResult,
   type ProviderProvisioningErrorCode,
+  type ProviderProvisioningResult,
 } from "@zcode/shared";
-import type { ICredentialService } from "../credential/credential.js";
-import type { ISettingService } from "../setting/setting.js";
-import type { ProviderRuntime } from "./providerRuntime.js";
-import type { AccountProviderService } from "@zcode/provider";
+import { atomicWritePrivateTextFile, withFileLock } from "@zcode/shared/node";
+import { readFile } from "node:fs/promises";
 import type { IProviderProvisioningTargetService } from "./providerProvisioning.js";
-import {
-  PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS,
-  readProvisionablePersonalConfig,
-} from "./providerProvisioningSource.js";
+import { readProvisionablePersonalConfig } from "./providerProvisioningSource.js";
+import type { ProviderRuntime } from "./providerRuntime.js";
 
 const PROVISIONING_SCHEMA_VERSION = 1 as const;
-
-const OAUTH_CREDENTIAL_KEYS = new Set<string>(PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS);
 
 export interface ProviderProvisioningTargetOptions {
   readonly providerRuntime: ProviderRuntime;
   readonly personalRepository: PersonalProviderConfigRepository;
-  readonly accountProviderSource: AccountProviderService;
-  readonly credentialService: ICredentialService;
-  readonly settingService: ISettingService;
   readonly personalConfigFilePath: string;
   readonly stateFilePath: string;
-  readonly listProvisioningCredentialKeys?: () => Promise<readonly string[]>;
 }
 
 interface ProvisioningStateRecord {
@@ -71,54 +58,17 @@ export function createProviderProvisioningTarget(
         validateCredentialEntries(envelope);
         // schema v1 接受旧 Source 的账号 Key 字段，但新 Host 不再读取或应用它。
         // 旧/手工 Key 留在原 Store，避免升级同步误删其它客户端共享的凭据。
-        const oauthCredentials = envelope.credentials.filter(
-          (entry) => entry.scope === "oauth-session",
-        );
+
         await options.providerRuntime.start();
-        const before = await captureBeforeState(envelope, options);
+        const before = await captureBeforeState(options);
         const personalUpdate = parsePersonalConfig(envelope);
         const applied: AppliedProvisioningState = {
-          settings: false,
-          settingsExpected: envelope.accountSettings,
-          settingsVersion: Math.max(
-            Date.now(),
-            (before.settings.providerFamilyDomainUpdatedAt ?? 0) + 1,
-          ),
-          credentials: [],
           personalConfig: false,
           personalConfigExpected: personalUpdate,
         };
 
         let errorCode: ProviderProvisioningErrorCode = "target-write-failed";
         try {
-          // 先登记再写入：底层原子写即使在替换完成后才抛错，也必须进入回滚集合。
-          applied.settings = true;
-          await options.settingService.update(
-            {
-              providerFamilyDomainUpdatedAt: applied.settingsVersion,
-              providerFamilyDomain: envelope.accountSettings.providerFamilyDomain ?? undefined,
-              providerFamilyConnectionSelections:
-                envelope.accountSettings.providerFamilyConnectionSelections,
-            },
-            {
-              // 原因：Host 同步也与本地连接选择竞争，提交必须比较捕获的完整快照和版本。
-              providerFamilyDomain: before.settings.providerFamilyDomain,
-              providerFamilyConnectionSelections:
-                before.settings.providerFamilyConnectionSelections,
-              providerFamilyDomainUpdatedAt: before.settings.providerFamilyDomainUpdatedAt ?? 0,
-            },
-          );
-
-          const incomingCredentials = new Map(
-            oauthCredentials.map((credential) => [credential.key, credential.value]),
-          );
-          for (const key of before.credentials.keys()) {
-            const value = incomingCredentials.get(key);
-            applied.credentials.push({ key, value: value ?? null });
-            if (value === undefined) await options.credentialService.delete(key);
-            else await options.credentialService.save(key, value);
-          }
-
           applied.personalConfig = true;
           await options.personalRepository.update((current) => {
             // 其他域写入期间 Personal 可能已被编辑；检查与替换必须在同一个文件锁内。
@@ -129,7 +79,6 @@ export function createProviderProvisioningTarget(
           });
 
           errorCode = "target-refresh-failed";
-          await options.accountProviderSource.refresh("provider-provisioning");
           const snapshot =
             await options.providerRuntime.registryService.refresh("provider-provisioning");
           // 失效默认只是新会话偏好；把它当同步硬条件会让正常 SSH 被旧模型/档位阻断。
@@ -139,7 +88,7 @@ export function createProviderProvisioningTarget(
             syncId: envelope.syncId,
             status: "applied" as const,
             personalProviderCount: personalUpdate.providers.keys().length,
-            credentialCount: oauthCredentials.length,
+            credentialCount: 0,
             configRevision: snapshot.sourceRevisions.config,
             rolledBack: false,
           } satisfies ProviderProvisioningResult;
@@ -155,7 +104,7 @@ export function createProviderProvisioningTarget(
               syncId: envelope.syncId,
               status: "rollback_failed",
               personalProviderCount: before.personal.providers.keys().length,
-              credentialCount: oauthCredentials.length,
+              credentialCount: 0,
               errorMessage: `${formatError(error)}；回滚失败：${formatError(rollbackError)}`,
               errorCode,
               rolledBack: false,
@@ -165,7 +114,7 @@ export function createProviderProvisioningTarget(
             syncId: envelope.syncId,
             status: "failed",
             personalProviderCount: before.personal.providers.keys().length,
-            credentialCount: oauthCredentials.length,
+            credentialCount: 0,
             errorMessage: formatError(error),
             errorCode,
             rolledBack: true,
@@ -178,15 +127,9 @@ export function createProviderProvisioningTarget(
 
 interface BeforeState {
   readonly personal: ProviderConfigLayerUpdate;
-  readonly settings: Awaited<ReturnType<ISettingService["get"]>>;
-  readonly credentials: ReadonlyMap<string, string | null>;
 }
 
 interface AppliedProvisioningState {
-  settings: boolean;
-  settingsExpected: ProviderProvisioningEnvelope["accountSettings"];
-  settingsVersion: number;
-  credentials: Array<{ key: string; value: string | null }>;
   personalConfig: boolean;
   personalConfigExpected: ProviderConfigLayerUpdate;
 }
@@ -197,29 +140,13 @@ function parsePersonalConfig(envelope: ProviderProvisioningEnvelope): ProviderCo
 }
 
 async function captureBeforeState(
-  envelope: ProviderProvisioningEnvelope,
   options: ProviderProvisioningTargetOptions,
 ): Promise<BeforeState> {
-  const [personal, settings] = await Promise.all([
-    readProvisionablePersonalConfig(options.personalRepository, options.personalConfigFilePath),
-    options.settingService.get(),
-  ]);
-  const credentials = new Map<string, string | null>();
-  const credentialKeys = new Set<string>([
-    ...OAUTH_CREDENTIAL_KEYS,
-    ...((await options.listProvisioningCredentialKeys?.()) ?? []),
-    ...envelope.credentials.map((entry) => entry.key),
-  ]);
-  for (const key of credentialKeys) {
-    if (!OAUTH_CREDENTIAL_KEYS.has(key)) {
-      continue;
-    }
-    credentials.set(key, await options.credentialService.load(key));
-  }
   return {
-    personal,
-    settings,
-    credentials,
+    personal: await readProvisionablePersonalConfig(
+      options.personalRepository,
+      options.personalConfigFilePath,
+    ),
   };
 }
 
@@ -243,60 +170,10 @@ async function rollback(
       errors.push(error);
     }
   }
-  for (const { key, value } of applied.credentials) {
-    try {
-      const previous = before.credentials.get(key) ?? null;
-      const current = await options.credentialService.load(key);
-      if (current === previous) {
-        continue;
-      }
-      if (current !== value) {
-        errors.push(new Error(`Credential ${key} 在同步期间被其它操作修改，跳过回滚`));
-        continue;
-      }
-      if (previous === null) {
-        await options.credentialService.delete(key);
-      } else {
-        await options.credentialService.save(key, previous);
-      }
-    } catch (error) {
-      errors.push(error);
-    }
-  }
-  if (applied.settings) {
-    try {
-      const current = await options.settingService.get();
-      const previousSettings = toProvisioningAccountSettings(before.settings);
-      if (sameAccountSettings(current, previousSettings)) {
-        // 写入失败发生在落盘前，目标已经处于回滚前的状态。
-      } else if (
-        !sameAccountSettings(current, applied.settingsExpected) ||
-        (current.providerFamilyDomainUpdatedAt ?? 0) !== applied.settingsVersion
-      ) {
-        errors.push(new Error("Account Settings 在同步期间被其它操作修改，跳过回滚"));
-      } else {
-        await options.settingService.update(
-          {
-            providerFamilyDomain: before.settings.providerFamilyDomain,
-            providerFamilyConnectionSelections: before.settings.providerFamilyConnectionSelections,
-          },
-          {
-            // 原因：归属检查与写入间仍有竞态，回滚也必须在锁内比较本次提交版本。
-            providerFamilyDomain: current.providerFamilyDomain,
-            providerFamilyConnectionSelections: current.providerFamilyConnectionSelections,
-            providerFamilyDomainUpdatedAt: applied.settingsVersion,
-          },
-        );
-      }
-    } catch (error) {
-      errors.push(error);
-    }
-  }
   if (errors.length > 0) {
     return new Error(errors.map(formatError).join("；"));
   }
   try {
-    await options.accountProviderSource.refresh("provider-provisioning-rollback");
     await options.providerRuntime.registryService.refresh("provider-provisioning-rollback");
   } catch (error) {
     return error instanceof Error ? error : new Error(String(error));
@@ -314,31 +191,12 @@ function samePersonalConfig(
   );
 }
 
-function toProvisioningAccountSettings(
-  settings: Awaited<ReturnType<ISettingService["get"]>>,
-): ProviderProvisioningEnvelope["accountSettings"] {
-  return {
-    providerFamilyDomain: settings.providerFamilyDomain ?? null,
-    providerFamilyConnectionSelections: settings.providerFamilyConnectionSelections ?? {},
-  };
-}
-
-function sameAccountSettings(
-  current: Awaited<ReturnType<ISettingService["get"]>>,
-  expected: ProviderProvisioningEnvelope["accountSettings"],
-): boolean {
-  return JSON.stringify(toProvisioningAccountSettings(current)) === JSON.stringify(expected);
-}
-
 function validateCredentialEntries(envelope: ProviderProvisioningEnvelope): void {
+  // 兼容旧信封字段，但既不读取也不写入其中的官方凭据和账号设置。
   const seen = new Set<string>();
   for (const entry of envelope.credentials) {
     if (seen.has(entry.key)) throw new Error(`重复 Provisioning Credential key: ${entry.key}`);
     seen.add(entry.key);
-    const allowed =
-      (entry.scope === "oauth-session" && OAUTH_CREDENTIAL_KEYS.has(entry.key)) ||
-      (entry.scope === "account-provider" && isProviderProvisioningAccountCredentialKey(entry.key));
-    if (!allowed) throw new Error(`不允许同步的 Credential key: ${entry.key}`);
   }
 }
 

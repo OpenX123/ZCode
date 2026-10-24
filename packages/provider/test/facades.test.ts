@@ -8,14 +8,10 @@ import {
   ProviderConfigMap,
   ProviderRegistryService,
   ProviderSettingsFacade,
-  type AccountProviderConfigSnapshot,
   type ProviderConfigSnapshot,
   type ProviderSource,
 } from "../src/index.js";
-import {
-  createAccountProviderConfig,
-  createApiKeyProviderConfig,
-} from "./provider-config-fixtures.js";
+import { createApiKeyProviderConfig } from "./provider-config-fixtures.js";
 
 class StaticSource<TSnapshot> implements ProviderSource<TSnapshot> {
   constructor(readonly snapshot: TSnapshot) {}
@@ -66,10 +62,11 @@ async function createService(): Promise<ProviderRegistryService> {
     zcodeBuiltinProviders: new ProviderConfigMap([
       [
         "account",
-        createAccountProviderConfig({
+        createApiKeyProviderConfig({
+          apiKey: "builtin-key",
           apiFormat: "anthropic-messages",
           baseURL: "https://account.example.com",
-          models: ["m1", "m2"],
+          models: ["m1"],
         }),
       ],
       ["broken", createApiKeyProviderConfig({ models: ["m1"] })],
@@ -120,17 +117,8 @@ async function createService(): Promise<ProviderRegistryService> {
       },
     ]),
   };
-  const account: AccountProviderConfigSnapshot = {
-    revision: "account-1",
-    states: { account: { availability: "available", entitled: true, current: true } },
-    basedOnZCodeBuiltinRevision: "builtin-1",
-    providers: new ProviderConfigMap([
-      ["account", createAccountProviderConfig({ models: ["m1"], entitled: true })],
-    ]),
-  };
   const service = new ProviderRegistryService({
     configSource: new StaticSource(config),
-    accountSource: new StaticSource(account),
   });
   await service.start();
   return service;
@@ -150,7 +138,7 @@ describe("Provider Facades", () => {
       providerId: "account",
       executable: true,
       effectiveBuiltinConfig: {
-        access: { type: "zhipu-account" },
+        access: { type: "api-key" },
         api: {
           type: "anthropic-messages",
           baseUrl: "https://account.example.com",
@@ -158,7 +146,7 @@ describe("Provider Facades", () => {
         builtinModelIds: ["m1"],
       },
       effectiveConfig: {
-        access: { type: "zhipu-account" },
+        access: { type: "api-key" },
         api: {
           type: "anthropic-messages",
           baseUrl: "https://account.example.com",
@@ -310,19 +298,17 @@ describe("Provider Facades", () => {
     expect(view.providers[1]?.config).not.toHaveProperty("label");
   });
 
-  it("消费者有效选择不进入共享 View，旧账号身份即使不在 Registry 也能对应", async () => {
+  it("消费者有效选择不进入共享 View，旧套餐身份失效且不跨 Provider 映射", async () => {
     const service = await createService();
-    const facade = new ModelSelectionFacade(service, (id) =>
-      ["old-account", "account"].includes(id) ? "account-plan" : "ordinary",
-    );
+    const facade = new ModelSelectionFacade(service);
     const original = {
       providerId: "old-account",
       modelId: "m1",
       options: { reasoningLevel: "disabled" },
     };
     const view = facade.getView(undefined, undefined, { selection: original });
-    expect(view.effectiveSelection).toEqual({ ...original, providerId: "account" });
-    expect(view.selectionIssue).toBeUndefined();
+    expect(view.effectiveSelection).toBeNull();
+    expect(view.selectionIssue).toBe("provider-not-found");
     expect(facade.getView()).not.toHaveProperty("effectiveSelection");
     expect(facade.getView(undefined, undefined, { selection: null }).effectiveSelection).toBeNull();
     expect(

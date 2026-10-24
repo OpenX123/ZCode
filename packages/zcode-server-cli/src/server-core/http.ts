@@ -1,45 +1,42 @@
-import { scopeConversationShareServiceForAttachment } from "@zcode/services/node";
-import { randomUUID, timingSafeEqual } from "node:crypto";
-import { hostname, userInfo } from "node:os";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
-import { Hono } from "hono";
-import type { WebSocket } from "ws";
-import type { WebSocketServer } from "ws";
 import {
+  ChannelClient,
+  ChannelServer,
   Emitter,
   Event,
-  VSBuffer,
-  SocketProtocol,
-  ChannelServer,
-  ChannelClient,
   LoggingChannelServer,
-  type ISocket,
-  type IChannel,
+  SocketProtocol,
+  VSBuffer,
   type CancellationToken,
+  type IChannel,
+  type ISocket,
 } from "@zcode/rpc";
 import {
   createZCodeAgentConnectionScope,
   IProviderProvisioningTargetService,
   IZCodeAgentService,
-  IConversationShareService,
   ServiceCollection,
 } from "@zcode/services";
 import {
   createServiceLogger,
-  type TopicResourcePeers,
   SourceServerWorkspaceIdentityChannelServer,
   type SourceServerWorkspaceIdentityMapper,
+  type TopicResourcePeers,
 } from "@zcode/services/node";
 import {
   SERVER_REMOTE_PROTOCOL_VERSION,
-  TOPIC_RESOURCE_RELAY_CHANNEL,
   serverRemoteInfoOutputSchema,
+  TOPIC_RESOURCE_RELAY_CHANNEL,
   ZCODE_COMPATIBILITY_MANIFEST,
   ZCODE_RPC_HOST_CAPABILITY_HEADER,
   ZCODE_VERSION,
   type ServerRemoteInfo,
 } from "@zcode/shared";
+import { Hono } from "hono";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { hostname, userInfo } from "node:os";
+import type { WebSocket, WebSocketServer } from "ws";
 import { createHostCapabilityStore, type HostCapabilityStore } from "./hostCapability.js";
 
 export interface CoreHttpServer {
@@ -159,18 +156,6 @@ function exposeWebSocket(
   const overrides = new Map<string, unknown>();
   if (scope) {
     overrides.set(IZCodeAgentService.channelName, scope.service);
-  }
-  const shareService = services.getOptional(IConversationShareService);
-  if (shareService) {
-    overrides.set(
-      IConversationShareService.channelName,
-      scopeConversationShareServiceForAttachment(
-        shareService,
-        clientMode,
-        scope?.service,
-        connectionContext,
-      ),
-    );
   }
   // Provisioning envelope 携带跨 Environment 的 Personal 配置与凭据，只允许受信 Desktop Host
   // 通过 /ws/host 下发；/ws 上的 Web / 手机 replayable 客户端即使知道频道名，也只能拿到抛错 stub，

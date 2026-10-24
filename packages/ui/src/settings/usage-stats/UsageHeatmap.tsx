@@ -328,7 +328,7 @@ export function UsageHeatmap({
   locale: string;
   intl: ReturnType<typeof useZCodeIntl>["intl"];
   weeks: AppUsageHeatmapWeek[];
-  /** Coding Plan 远端只提供 mcpCalls；App Usage 才提供真实消息轮数。 */
+  /** 本地活动计数的展示指标。 */
   countMetric?: HeatmapCountMetric;
 }) {
   const [mode, setMode] = useState<TokenActivityMode>("daily");

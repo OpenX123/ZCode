@@ -8,12 +8,10 @@ import {
 // docs/dynamic-workflow/concurrency.md「Unbounded retries for workflow traffic」：重试预算档位是 runtime-only 字段；
 // 状态事件用 maxAttempts = 0 表示无上限，协议 schema 的下界因此是 0。
 describe("ModelRetryBudget", () => {
-  it("exposes default, unbounded and single-attempt budget tiers", () => {
-    // 合入加速失败回退后新增单次预算；保留工作流无界预算，不能让旧枚举断言排斥新档位。
+  it("保留默认与工作流无界重试预算", () => {
     expect(ModelRetryBudget).toEqual({
       Default: "default",
       Unbounded: "unbounded",
-      SingleAttempt: "single-attempt",
     });
   });
 

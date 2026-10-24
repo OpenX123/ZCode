@@ -7,7 +7,6 @@ import {
   type PermissionBrokerResult,
   type PermissionRuleset,
   type TraceContext,
-  type ToolExecutionSpanWriter,
 } from "@zcode/contracts";
 import type { HookRunResult } from "../../hooks/index.js";
 import type {
@@ -50,7 +49,6 @@ export async function resolveToolPermission(
   mode: CollaborationMode,
   traceContext: TraceContext,
   signal?: AbortSignal,
-  telemetry?: ToolExecutionSpanWriter,
   preparedContext?: ToolRuntimePermissionCapabilityContext,
 ): Promise<PermissionFlowResult> {
   const context = {
@@ -140,11 +138,9 @@ export async function resolveToolPermission(
       toolName: toolCall.name,
     });
     if (decision.allowed) {
-      telemetry?.setPermissionDecision(permissionWaitMs ? "granted" : "not_required");
       return { allowed: true, executionInput, permissionWaitMs };
     }
     if (decision.decision === "deny") {
-      telemetry?.setPermissionDecision("denied");
       await emitPermissionDenied(deps, toolCall, decision.reason, traceContext);
       deps.logger?.warn("Tool permission denied", {
         ...traceContextToLogContext(traceContext),
@@ -173,7 +169,6 @@ export async function resolveToolPermission(
         ? { gate: "ask" as const }
         : resolveToolApproval(deps, toolCall, entry, executionInput, traceContext);
     if (approval.gate === "proceed") {
-      telemetry?.setPermissionDecision("not_required");
       return { allowed: true, executionInput, permissionWaitMs };
     }
 
@@ -188,7 +183,7 @@ export async function resolveToolPermission(
             executionInput,
             entry.permissionCapabilityGroup,
           ));
-    telemetry?.markPermissionRequested();
+
     let transition: PermissionResponseTransition;
     let resolved: PermissionBrokerResult;
     try {
@@ -293,7 +288,7 @@ export async function resolveToolPermission(
       continue;
     }
     const result = transition.result;
-    telemetry?.setPermissionDecision(result.allowed ? "granted" : "denied");
+
     if (!result.allowed) return result;
     if (signal?.aborted)
       return {

@@ -115,11 +115,11 @@ export type ProviderAccessConfig = ApiKeyAccessConfig | ZhipuAccountAccessConfig
 
 export type ProviderAccessConfigObject = Readonly<z.infer<typeof providerAccessDataSchema>>;
 
-/** 手动 Key 的编辑/保存共用能力判断，不把套餐 Key 误写成普通 API Key。 */
+/** 仅普通 API Key 可编辑；历史套餐 Key 保持原样，不自动转换。 */
 export function isApiKeyAccess<T extends { readonly type: string }>(
   access: T | null | undefined,
 ): access is Extract<T, { readonly type: ApiKeyAccessConfigObject["type"] }> {
-  return access?.type === "api-key" || access?.type === "zhipu-coding-plan-api-key";
+  return access?.type === "api-key";
 }
 
 export type ProviderVisibility = z.infer<typeof providerVisibilityDataSchema>;

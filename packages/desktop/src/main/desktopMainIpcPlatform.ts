@@ -1,9 +1,7 @@
-import { decorateRequestSecurityLogArgs } from "./request-security-edition/index.js";
 /* eslint-disable max-lines -- 桌面平台 IPC 集中装配，拆散会让权限边界更难审计；行数随平台能力增长。 */
 import { BrowserWindow, dialog, ipcMain, nativeTheme } from "electron";
 import { readZCodeStdioTapDevState } from "@zcode/services/node";
 import {
-  DesktopCommandIds,
   appSettingsPatchSchema,
   formatZodError,
   localeSchema,
@@ -11,7 +9,6 @@ import {
   PlatformChannels,
   rendererLogPayloadSchema,
   stringArraySchema,
-  webRemoteControlWorkspaceTargetsSchema,
   type DesktopCommandId,
   type ApplicationIconRequest,
   type Locale,
@@ -21,14 +18,11 @@ import {
   type SaveCliMcpToUserDirectoryRequest,
   type CreateTempTextAttachmentRequest,
   type MaterializeWorkflowArtifactFileRequest,
-  type UpdateStatePayload,
-  type WebRemoteControlWorkspaceTarget,
   type WindowControlsOverlayReadyPayload,
 } from "@zcode/shared";
 import { getInstalledEditors } from "./editors.js";
 import { getApplicationIcon } from "./applicationIcons.js";
 import { exportLogs } from "./exportLogs.js";
-import { resolveCommunityUrl } from "./desktopCommandHandlers.js";
 import { openInEditor } from "./openInEditor.js";
 import {
   openResourceManager,
@@ -64,7 +58,6 @@ import { registerDesktopCommandIpcHandler } from "./desktopCommandIpc.js";
 import { registerCuaPipActiveSessionIpc } from "./desktopCuaPipIpc.js";
 
 export function registerPlatformIpcHandlers(options: {
-  fetchHelpConfig?: () => Promise<unknown>;
   logger: {
     info: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
@@ -82,22 +75,11 @@ export function registerPlatformIpcHandlers(options: {
     command: DesktopCommandId,
     senderWindow?: BrowserWindow | null,
   ) => Promise<unknown>;
-  acknowledgePostUpdateReleaseNotes: (version: string) => Promise<void>;
   syncActiveTaskSession: (windowId: number, sessionId: string | null) => void;
   syncTaskRealtimeWorkspaceKeys: (windowId: number, workspaceKeys: Iterable<string>) => void;
-  getUpdateState: () => UpdateStatePayload;
-  openUpdateStatusWindow: () => void;
-  syncWebRemoteControlWorkspaces: (
-    windowId: number,
-    workspaces: WebRemoteControlWorkspaceTarget[],
-  ) => void;
   getDesktopSessionActivity: () => {
     runningAgentSessionCount: number;
   };
-  getAutoUpdatePreferences: () => Promise<{
-    autoDownloadAndInstallUpdates: boolean;
-  }>;
-  setAutoDownloadAndInstallUpdates: (enabled: boolean) => Promise<void>;
   syncAppSettings: (patch: ReturnType<typeof appSettingsPatchSchema.parse>) => void;
   /** 关闭驻留托盘能力查询（spec：docs/desktop/linux-close-to-tray.md）；传入 monitor 的 refresh */
   refreshCloseToTrayCapability: () => Promise<import("@zcode/shared").DesktopCloseToTrayCapability>;
@@ -285,24 +267,6 @@ export function registerPlatformIpcHandlers(options: {
     }
   });
 
-  ipcMain.on(PlatformChannels.SyncWebRemoteControlWorkspaces, (event, payload: unknown) => {
-    const result = webRemoteControlWorkspaceTargetsSchema.safeParse(payload);
-    if (!result.success) {
-      options.logger.warn(
-        "[sync-web-remote-control-workspaces] invalid payload:",
-        formatZodError(result.error),
-      );
-      return;
-    }
-
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win) {
-      return;
-    }
-
-    options.syncWebRemoteControlWorkspaces(win.id, result.data);
-  });
-
   ipcMain.on(PlatformChannels.SyncWindowUnreadCount, (event, payload: unknown) => {
     handleWindowUnreadCountSync(
       BrowserWindow.fromWebContents(event.sender),
@@ -361,10 +325,7 @@ export function registerPlatformIpcHandlers(options: {
     }
     (
       options.logger as unknown as { fromRenderer(level: string, args: unknown[]): void }
-    ).fromRenderer?.(
-      result.data.level,
-      decorateRequestSecurityLogArgs(result.data.args, event.sender.id),
-    );
+    ).fromRenderer?.(result.data.level, result.data.args);
   });
 
   ipcMain.handle(PlatformChannels.OpenInFileManager, async (_event, rawPath: string) =>
@@ -375,47 +336,6 @@ export function registerPlatformIpcHandlers(options: {
     logger: options.logger,
     currentApplicationLocale: options.currentApplicationLocale,
   });
-
-  ipcMain.handle(PlatformChannels.CanOpenCommunity, async (_event, locale: unknown) => {
-    const result = localeSchema.safeParse(locale);
-    if (!result.success) {
-      options.logger.warn("[community] invalid locale:", formatZodError(result.error));
-      return false;
-    }
-
-    const communityUrl = await resolveCommunityUrl({
-      locale: result.data,
-      fetchRemoteConfig: options.fetchHelpConfig,
-      logger: options.logger,
-    });
-
-    return typeof communityUrl === "string" && communityUrl.length > 0;
-  });
-
-  ipcMain.handle(
-    PlatformChannels.AcknowledgePostUpdateReleaseNotes,
-    async (_event, version: string) => {
-      const validatedVersion = nonEmptyStringSchema.parse(version);
-      await options.acknowledgePostUpdateReleaseNotes(validatedVersion);
-    },
-  );
-
-  ipcMain.handle(PlatformChannels.GetUpdateState, () => options.getUpdateState());
-  ipcMain.handle(PlatformChannels.OpenUpdateStatusWindow, () => {
-    options.openUpdateStatusWindow();
-  });
-  ipcMain.handle(PlatformChannels.GetAutoUpdatePreferences, () =>
-    options.getAutoUpdatePreferences(),
-  );
-  ipcMain.handle(
-    PlatformChannels.SetAutoDownloadAndInstallUpdates,
-    async (_event, enabled: unknown) => {
-      if (typeof enabled !== "boolean") {
-        return;
-      }
-      await options.setAutoDownloadAndInstallUpdates(enabled);
-    },
-  );
   ipcMain.handle(PlatformChannels.GetDesktopSessionActivity, () =>
     options.getDesktopSessionActivity(),
   );

@@ -1,10 +1,5 @@
-import { mobilePluginDiscoveryTelemetrySchema } from "./telemetry.js";
 import { databaseStartupControlSchema, databaseStartupStateSchema } from "./database-startup.js";
 import { mcpAppInstanceSchema } from "./mcp-apps/instance.js";
-import {
-  automationSessionCreateTelemetrySchema,
-  sessionCreateTelemetrySchema,
-} from "./sessionCreateTelemetry.js";
 /* eslint-disable max-lines -- 运行时 schema 当前集中在共享包入口，外部 relay payload 校验加入后先保持单一导出面。 */
 import { z } from "zod";
 import { networkCaptureControlSchema, networkCaptureBatchSchema } from "./networkCapture.js";
@@ -24,7 +19,6 @@ import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import type { WebRemoteControlAppPayload } from "./web-remote-control.js";
 import { PROTOCOL_V4_LIMITS } from "./zcode-protocol-v4/core.js";
 import { sourceServerArtifactPolicySchema } from "./source-server/release.js";
-import { sessionWorkflowActivitySchema } from "./zcode-protocol-v4/sessions-index-workflow-activity.js";
 import {
   webRemoteControlRpcTransportAckSchema,
   webRemoteControlRpcTransportFrameSchema,
@@ -219,12 +213,6 @@ export const webRemoteControlPlatformMethodSchema = z.enum([
 ]);
 
 const webRemoteControlAppPayloadSchemas = [
-  z
-    .object({
-      zcode_type: z.literal("telemetry-report"),
-      event: z.union([sessionCreateTelemetrySchema, mobilePluginDiscoveryTelemetrySchema]),
-    })
-    .strict(),
   z.object({
     zcode_type: z.literal("bootstrap-request"),
     requestId: nonEmptyStringSchema,
@@ -508,33 +496,6 @@ export const taskNotificationPayloadSchema = z.object({
   body: z.string(),
 });
 
-export const telemetryRendererContextSchema = z.object({
-  clientTimezone: nonEmptyStringSchema,
-  clientLanguage: nonEmptyStringSchema,
-  screenResolution: nonEmptyStringSchema,
-});
-
-export const rendererTelemetryEventPayloadSchema = z.object({
-  context: telemetryRendererContextSchema,
-  elementName: nonEmptyStringSchema,
-  eventRegion: nonEmptyStringSchema,
-  eventType: nonEmptyStringSchema,
-  eventText: z.string().optional(),
-  eventExtraDetail: z.record(z.string(), z.string()),
-  userId: z.string().optional(),
-  talkId: z.string().optional(),
-  messageId: z.string().optional(),
-});
-
-export const armsCustomEventPayloadSchema = z.object({
-  name: nonEmptyStringSchema,
-  group: nonEmptyStringSchema,
-  value: z.number().finite().optional(),
-  properties: z
-    .record(z.string(), z.union([z.string(), z.number().finite(), z.boolean(), z.undefined()]))
-    .optional(),
-});
-
 export const broadcastMessageSchema = z.object({
   channel: nonEmptyStringSchema,
   payload: z.unknown(),
@@ -772,15 +733,6 @@ export const hostSessionMessageDeliveryResultMessageSchema = z.object({
   result: sessionMessageDeliveryResultSchema,
 });
 
-export const hostFeedbackLogArchiveResultMessageSchema = z.object({
-  type: z.literal("feedback-log-archive-result"),
-  requestId: nonEmptyStringSchema,
-  ok: z.boolean(),
-  path: z.string().optional(),
-  size: z.number().int().nonnegative().optional(),
-  error: z.string().optional(),
-});
-
 // main → host：定时任务到点派发。会话内 cron 带 targetTaskId 时直接 sendPrompt 到当前会话；
 // 历史未绑定任务才 fallback createTask + sendPrompt 建 session。
 export const hostCronRunMessageSchema = z.object({
@@ -796,26 +748,6 @@ export const hostCronRunMessageSchema = z.object({
   targetTaskId: nonEmptyStringSchema.optional(),
   modelSelection: modelSelectionSchema.optional(),
   mode: z.string().optional(),
-});
-
-// main → host：闲时任务派发（仿 cron-run，字段独立不复用）。首跑不带 conversationId/sessionId，
-// host createTask 新建 session；3h 续跑 / 中断恢复带上两者 resume 同一会话。
-// serverTicketId 供 idle plan 适配层注入 X-Off-Peak-Ticket-ID 请求头（run 作用域）。
-export const hostOffPeakRunMessageSchema = z.object({
-  type: z.literal("off-peak-run"),
-  offPeakTaskId: nonEmptyStringSchema,
-  workspacePath: nonEmptyStringSchema,
-  workspaceIdentity: z.string().optional(),
-  projectId: nonEmptyStringSchema.nullable().optional(),
-  hostId: nonEmptyStringSchema.optional(),
-  additionalDirectories: z.array(nonEmptyStringSchema).max(256).optional(),
-  prompt: nonEmptyStringSchema,
-  // 权限四档映射现有 ZCodeTaskMode；与 cron-run 的 mode 同样按宽松 string 传输
-  permissionMode: nonEmptyStringSchema,
-  modelSelection: modelSelectionSchema,
-  conversationId: z.string().optional(),
-  sessionId: z.string().optional(),
-  serverTicketId: z.string().optional(),
 });
 
 // main → host：browser-use 命令执行结果（按 requestId 关联到 host 的 pending）。
@@ -986,9 +918,7 @@ export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostTaskOwnerCommandResultMessageSchema,
   hostSessionMessageDeliverMessageSchema,
   hostSessionMessageDeliveryResultMessageSchema,
-  hostFeedbackLogArchiveResultMessageSchema,
   hostCronRunMessageSchema,
-  hostOffPeakRunMessageSchema,
   hostBrowserExecuteResultMessageSchema,
   hostLocalMediaPreviewPathAuthorizeResultMessageSchema,
   hostPluginSandboxRegisterResultMessageSchema,
@@ -1270,26 +1200,6 @@ export const hostMcpTelemetryResponseSchema = z
   .strict();
 export type HostMcpTelemetryResponse = z.infer<typeof hostMcpTelemetryResponseSchema>;
 
-export const hostPluginTelemetryResponseSchema = z
-  .object({
-    type: z.literal("plugin-telemetry"),
-    event: rendererTelemetryEventPayloadSchema.refine((event) =>
-      ["plugin_lifecycle", "plugin_usage", "plugin_runtime_error"].includes(event.elementName),
-    ),
-  })
-  .strict();
-export type HostPluginTelemetryResponse = z.infer<typeof hostPluginTelemetryResponseSchema>;
-
-export const hostSessionCreateTelemetryResponseSchema = z
-  .object({
-    type: z.literal("session-create-telemetry"),
-    event: automationSessionCreateTelemetrySchema,
-  })
-  .strict();
-export type HostSessionCreateTelemetryResponse = z.infer<
-  typeof hostSessionCreateTelemetryResponseSchema
->;
-
 export const hostAgentRunningTaskCountChangedResponseSchema = z.object({
   type: z.literal("agent-running-task-count-changed"),
   runningTaskCount: z.number().int().nonnegative(),
@@ -1379,12 +1289,6 @@ export const hostSessionMessageDeliverResultResponseSchema = z.object({
   result: sessionMessageDeliveryResultSchema,
 });
 
-export const hostFeedbackLogArchiveRequestResponseSchema = z.object({
-  type: z.literal("feedback-log-archive-request"),
-  requestId: nonEmptyStringSchema,
-  sourceDir: nonEmptyStringSchema,
-});
-
 // host → main：定时任务派发结果。ok=已成功创建 session 且 prompt 已发出。
 export const hostCronRunResultResponseSchema = z.object({
   type: z.literal("cron-run-result"),
@@ -1396,29 +1300,10 @@ export const hostCronRunResultResponseSchema = z.object({
   failureKind: z.enum(["transient", "permanent"]).optional(),
 });
 
-// host → main：闲时任务派发结果。ok=session 已确保存在且 prompt 已发出；迟到结果用 offPeakTaskId 兜底结算。
-export const hostOffPeakRunResultResponseSchema = z.object({
-  type: z.literal("off-peak-run-result"),
-  offPeakTaskId: nonEmptyStringSchema,
-  ok: z.boolean(),
-  /** Host 已在开放 CLI 生命周期事件前完成接纳落库；调度器只清理退避。 */
-  lifecycleManaged: z.literal(true).optional(),
-  conversationId: z.string().optional(),
-  sessionId: z.string().optional(),
-  error: z.string().optional(),
-  failureKind: z.enum(["transient", "permanent"]).optional(),
-});
-
 // host → main：manual run 落库后的 scheduler 唤醒请求；业务数据仍由 scheduler 从 sqlite 读取。
 export const hostCronSchedulerWakeRequestResponseSchema = z.object({
   type: z.literal("cron-scheduler-wake-request"),
   automationId: nonEmptyStringSchema,
-});
-
-// host → main：闲时任务 schedulable 翻转后的 scheduler 唤醒；业务数据仍由 scheduler 从 sqlite 读取。
-export const hostOffPeakSchedulerWakeRequestResponseSchema = z.object({
-  type: z.literal("off-peak-scheduler-wake-request"),
-  offPeakTaskId: z.string().optional(),
 });
 
 // host → main：执行一条 browser-use 命令（main 用 WebContentsView+CDP 执行）。
@@ -1585,8 +1470,6 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostMcpTelemetryResponseSchema,
   hostMcpResourceSamplesResponseSchema,
   hostToolExecResourceResponseSchema,
-  hostSessionCreateTelemetryResponseSchema,
-  hostPluginTelemetryResponseSchema,
   hostAgentRunningTaskCountChangedResponseSchema,
   hostWorkspaceRunningTaskCountChangedResponseSchema,
   hostCuaOperationStateResponseSchema,
@@ -1603,7 +1486,6 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostSessionMessageSendRequestedResponseSchema,
   hostSessionRouteAnnounceResponseSchema,
   hostSessionMessageDeliverResultResponseSchema,
-  hostFeedbackLogArchiveRequestResponseSchema,
   hostBrowserExecuteRequestResponseSchema,
   hostLocalMediaPreviewPathAuthorizeRequestResponseSchema,
   hostPluginSandboxRegisterRequestResponseSchema,
@@ -1611,9 +1493,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostProviderProvisioningSourceChangedResponseSchema,
   hostProviderProvisioningExecutionResultResponseSchema,
   hostCronRunResultResponseSchema,
-  hostOffPeakRunResultResponseSchema,
   hostCronSchedulerWakeRequestResponseSchema,
-  hostOffPeakSchedulerWakeRequestResponseSchema,
 ]);
 
 export const zcodeTaskPersistStatusSchema = z.enum(["running", "completed", "error"]);

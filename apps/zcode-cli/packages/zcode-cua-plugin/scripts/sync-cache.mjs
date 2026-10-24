@@ -19,7 +19,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { homedir } from "node:os";
 import { stageSharpIntoBundledAgents } from "../../../../../packages/desktop/scripts/sharp-package-assets.mjs";
-import { stageKoffiIntoBundledAgents } from "../../../../../packages/desktop/scripts/koffi-package-assets.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -101,12 +100,6 @@ stageSharpIntoBundledAgents({
   targetPlatform: { os: process.platform, arch: process.arch },
 });
 copied.push("node_modules/sharp runtime");
-stageKoffiIntoBundledAgents({
-  koffiPackageRoot: resolve(packageRoot, "../adapters"),
-  glmDir: cacheDir,
-  targetPlatform: { os: process.platform, arch: process.arch },
-});
-copied.push("node_modules/koffi runtime");
 
 console.log(`sync:cache → ${cacheDir}`);
 console.log(`  copied: ${copied.join(", ") || "(nothing)"}`);

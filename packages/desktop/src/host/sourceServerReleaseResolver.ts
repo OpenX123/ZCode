@@ -1,10 +1,10 @@
 import { normalizeRemoteConnectionError } from "@zcode/shared";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
   SOURCE_SERVER_RELEASE_DESCRIPTOR_FILE_NAME,
   ZCODE_VERSION,
@@ -76,17 +76,6 @@ function resolveArchiveUrls(releaseBases: string[], archive: SourceServerRelease
   );
 }
 
-async function writeTextAtomic(path: string, text: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, text, { encoding: "utf8", mode: 0o600 });
-    await rename(temporary, path);
-  } finally {
-    await rm(temporary, { force: true }).catch(() => undefined);
-  }
-}
-
 async function resolveLocalDescriptor(
   releaseDir: string,
   target: string,
@@ -104,7 +93,6 @@ async function resolveLocalDescriptor(
 
 async function resolveRemoteDescriptor(
   remoteAssets: WindowRemoteAssetDirs,
-  cacheRoot: string | null,
   remoteAssetNetwork?: RemoteAssetNetworkPort,
 ): Promise<ResolvedDescriptor> {
   const releaseBases = buildReleaseBaseCandidates(
@@ -115,9 +103,6 @@ async function resolveRemoteDescriptor(
   const descriptorUrls = buildReleaseAssetUrlCandidates(releaseBases, [
     SOURCE_SERVER_RELEASE_DESCRIPTOR_FILE_NAME,
   ]);
-  const cachedDescriptorPath = cacheRoot
-    ? join(cacheRoot, SOURCE_SERVER_RELEASE_DESCRIPTOR_FILE_NAME)
-    : null;
   let lastError: unknown;
   const fetchImpl = resolveRemoteAssetFetch(remoteAssetNetwork);
   for (const url of descriptorUrls) {
@@ -126,17 +111,10 @@ async function resolveRemoteDescriptor(
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const text = await response.text();
       const descriptor = readDescriptor(text);
-      if (cachedDescriptorPath) await writeTextAtomic(cachedDescriptorPath, text);
       return { descriptor, releaseBases };
     } catch (error) {
       lastError = error;
     }
-  }
-  if (cachedDescriptorPath && (await pathExists(cachedDescriptorPath))) {
-    return {
-      descriptor: readDescriptor(await readFile(cachedDescriptorPath, "utf8")),
-      releaseBases,
-    };
   }
   throw new Error("Unable to resolve Source Server release descriptor", { cause: lastError });
 }
@@ -209,6 +187,10 @@ async function resolveReleaseAsset(
   const cacheRoot = remoteAssets.remoteCacheDir
     ? join(remoteAssets.remoteCacheDir, "source-server", ZCODE_VERSION)
     : null;
+  const hasExplicitMirror = (
+    remoteAssets.remoteCdnBaseUrls ??
+    (remoteAssets.remoteCdnBaseUrl ? [remoteAssets.remoteCdnBaseUrl] : [])
+  ).some((baseUrl) => baseUrl.trim().length > 0);
 
   if (
     remoteTarget.kind === "ssh" &&
@@ -238,7 +220,7 @@ async function resolveReleaseAsset(
     };
   }
 
-  if (installMode === "local-download-upload") {
+  if (installMode === "local-download-upload" || !hasExplicitMirror) {
     // Bug 原因：开发态曾直接信任 gitignore 的 dist-release；同版本源码变化后仍会部署旧包。
     // 现在只接受本轮 staging 写入 mock-cdn 且通过 descriptor SHA/size 校验的本地产物。
     const localReleaseDirs = remoteAssets.mockCdnDir
@@ -258,11 +240,11 @@ async function resolveReleaseAsset(
     }
   }
 
-  const resolvedDescriptor = await resolveRemoteDescriptor(
-    remoteAssets,
-    cacheRoot,
-    remoteAssetNetwork,
-  );
+  // 旧安装偏好或下载缓存不能重新启用原厂二进制地址；默认只部署随包源码产物。
+  if (!hasExplicitMirror) {
+    throw new Error("Source Server 本地产物缺失；请先从本仓库源码构建 SSH 资源");
+  }
+  const resolvedDescriptor = await resolveRemoteDescriptor(remoteAssets, remoteAssetNetwork);
   const archive = findArchive(resolvedDescriptor.descriptor, target);
   const urls = resolveArchiveUrls(resolvedDescriptor.releaseBases, archive);
   if (installMode === "remote-download" || options.metadataOnly) {

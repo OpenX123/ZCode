@@ -317,7 +317,7 @@ export function ComputerUseSection({
     [onRestart],
   );
 
-  // 兜底:重启 Helper 后仍持续 stale 时,用户可一键重启 ZCode(复用 OAuth 登出同款 RelaunchApp)。
+  // 重启 Helper 后仍持续 stale 时，用户可通过平台接口一键重启 ZCode。
   // 新 ZCode 进程会干净地重新拉起 Helper,绕过当前进程里可能卡住的重启机制(孤儿/socket/状态污染)。
   const onRelaunchApp = useCallback(async () => {
     if (typeof platform.executeDesktopCommand !== "function") return;

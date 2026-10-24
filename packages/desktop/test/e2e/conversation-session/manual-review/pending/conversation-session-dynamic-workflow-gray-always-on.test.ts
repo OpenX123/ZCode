@@ -17,19 +17,17 @@ import {
   openAutomationsPage,
   openPlusMenu,
   openSlashPanelWithCatalogReady,
-  readDynamicWorkflowGrayMockStatus,
+  configureLocalDynamicWorkflowMode,
   readPlusMenuAddOptionIds,
   setComposerDraft,
 } from "../../../helpers/dynamic-workflow-gray.js";
 
-// DWG-08（alwaysOn 档）：服务端 /client/configs 下发 dynamicWorkflow.mode = "alwaysOn"，
-// 三个入口同时在场——`+` 菜单的「工作流」、`/` 面板的 workflow、自动化页的「工作流」标签。
-// 与 disabled 档共用同一组动作，只是断言相反；服务端形状按本文件名选档。
-// 契约见 docs/dynamic-workflow/launch.md「Gray release: the `dynamicWorkflow` feature key」。
-// E2E_DWF_GRAY：只读入口，不发送 prompt；空 provider fixture 是有意的合同。
-describe("动态工作流灰度命中（alwaysOn）", () => {
+// DWG-08：本地用户选择决定三个工作流入口；不访问官方配置服务。
+// E2E_DWF_GRAY：只验证入口，不发送模型请求，沿用原有case标识。
+describe("动态工作流本地始终开启（alwaysOn）", () => {
   before(async () => {
-    await prepareV4ConversationE2E();
+    await prepareV4ConversationE2E({ skipProvider: true });
+    await configureLocalDynamicWorkflowMode("alwaysOn");
   });
   afterEach(async () => {
     const capturePath = process.env.E2E_PROVIDER_CAPTURE_PATH?.trim();
@@ -43,15 +41,6 @@ describe("动态工作流灰度命中（alwaysOn）", () => {
 
   it("DWG-08 命中时 + 菜单、/ 面板与自动化页都提供工作流入口", async function () {
     this.timeout(180000);
-
-    // 0) 确认本轮用的是同一台 case-local 网关，且它下发的是 alwaysOn。
-    const status = await readDynamicWorkflowGrayMockStatus();
-    expect(status.scenario).toBe("alwaysOn");
-    expect(status.mode).toBe("alwaysOn");
-    await browser.waitUntil(
-      async () => (await readDynamicWorkflowGrayMockStatus()).configRequests > 0,
-      { timeout: 60000, timeoutMsg: "Host 没有向 case-local 配置网关请求 /client/configs" },
-    );
 
     // 1) `/` 面板：workflow 在场，并按产品要求紧随 goal（APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES 的顺序）。
     //    先用 goal 当 catalog 屏障，再在同一个面板里等 workflow 到齐，不重复改写草稿。

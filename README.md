@@ -4,14 +4,12 @@
   <img src="public/logo/icons/1024x1024.png" alt="ZCode" width="128" height="128" />
 </div>
 <p align="center">
-  <a href="https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=47ag983c-8fcb-4d6d-814b-5395193a712c&amp;qr_code=true">飞书社群</a> ·
-  <a href="https://discord.gg/z9aBcQXZQ3">Discord</a>
-</p>
-<p align="center">
   简体中文 | <a href="README.en.md">English</a>
 </p>
 
-ZCode 是 AI 编程工作台，提供桌面应用、浏览器界面和终端 Agent。本仓库包含客户端、后端服务、共享 UI，以及 Agent CLI 与运行时源码。
+ZCode 是独立的 coding harness，提供桌面应用、本地 Web 界面和终端 Agent。配置自己的 API Provider 即可使用，无需官方账号。支持会话、工具、Skills、插件、MCP、Subagents、SSH 工作区、自动化和动态工作流；用量在本地统计。普通 GLM / Z.ai API 与其他 Provider 使用同一配置机制。
+
+本版本已移除官方登录、套餐购买与额度、邀请营销、云配置、遥测上报、反馈上传、云分享、手机官方远控和官方自动更新。当前边界见 [独立 coding harness 规格](docs/desktop/standalone-coding-harness-spec.md)。
 
 ## 更新
 
@@ -55,7 +53,7 @@ pnpm dev:desktop
 pnpm dev:desktop:test
 ```
 
-`pnpm dev:desktop` 默认等同于 `pnpm dev:desktop:prod`，使用生产服务配置。启动脚本会准备本地运行资源、构建桌面 Agent，再启动 Electron 和源码监听。
+`pnpm dev:desktop` 默认等同于 `pnpm dev:desktop:prod`，两者均使用本地配置。启动脚本会准备本地运行资源、构建桌面 Agent，再启动 Electron 和源码监听。
 
 需要独立开发数据目录时，可设置 `ZCODE_DATA_BASE_DIR`。例如在 macOS / Linux 中：
 
@@ -78,7 +76,7 @@ pnpm dev:web
 ZCODE_SERVER_WORKSPACE=/path/to/project pnpm dev:web
 ```
 
-该命令同时启动 Web 开发服务器（默认 `http://localhost:5173`）和后端（默认 `http://localhost:3030`）；浏览器访问前者。`/ws` 和一般 `/api` 请求代理到本地后端，`/api/v1/oauth/token` 单独代理到当前配置的产品服务。
+该命令同时启动 Web 开发服务器（默认 `http://localhost:5173`）和后端（默认 `http://localhost:3030`）；浏览器访问前者。`/ws` 和 `/api` 请求代理到本地后端。
 
 Agent 源码修改后，执行 `pnpm --filter @zcode/cli... build` 并重启服务。需要验证完整发行包时，按下方“ZCode 命令行版”打包章节解压运行。
 
@@ -132,7 +130,7 @@ node apps/zcode-cli/packages/cli/dist/zcode.cjs --help
 
 ## 配置
 
-根目录 [.env.example](.env.example) 提供服务地址与构建配置示例，可按需复制到 `.env`，本地覆盖放入 `.env.local`。Desktop 的开发环境通过 `dev:desktop:test` / `dev:desktop:prod` 选择。
+根目录 [.env.example](.env.example) 提供本地运行与构建配置示例，可按需复制到 `.env`，本地覆盖放入 `.env.local`。Desktop 的开发环境通过 `dev:desktop:test` / `dev:desktop:prod` 选择。
 
 | 配置                                 | 用途                                             |
 | ------------------------------------ | ------------------------------------------------ |
@@ -229,4 +227,4 @@ node dist/zcode/debug/zcode/bin/zcode.mjs --web \
 
 ## 项目声明
 
-功能与优惠范围、维护规则、执行与数据风险，以及许可和第三方版权说明，详见 [NOTICE.md](NOTICE.md)。
+功能范围、执行与数据风险，以及许可和第三方版权说明，详见 [NOTICE.md](NOTICE.md)。

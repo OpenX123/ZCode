@@ -29,7 +29,6 @@ import {
   type AmendWorkflowRunSettingsInput,
   type ResumeSessionResult,
 } from "@zcode/core";
-import { createModelTelemetry } from "@zcode/telemetry";
 import {
   createRootTraceContext,
   traceContextToLogContext,
@@ -207,10 +206,6 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
   const modelLogger = loggerFactory.createLogger("zcode").child({
     ...traceContextToLogContext(traceContext),
     module: "adapters.model",
-  });
-  const modelTelemetry = createModelTelemetry({
-    owner: options.telemetryOwner,
-    sessionId,
   });
   let nodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
   let ownedNodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
@@ -575,10 +570,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     };
 
     const modelExecutionConfig = createRuntimeAiSdkModelExecutionConfig(options.env, {
-      appVersion,
       endpointRoutingPort: providerEndpointRoutingPort,
       network: configResult.config.network,
-      sourceTitle: options.sourceTitle,
     });
     const modelAdapter =
       options.modelAdapter ??
@@ -588,12 +581,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         modelIoDir,
         modelIoFullRetentionEnabled: options.modelIoFullRetentionEnabled,
         executionConfig: modelExecutionConfig,
-        statusSink: modelTelemetry.statusSink,
         streamIdleTimeoutMs: configResult.config.modelStream.idleTimeoutMs,
       });
-    if (options.modelAdapter && modelTelemetry.statusSink) {
-      modelAdapter.addStatusSink(modelTelemetry.statusSink);
-    }
     // 进程级并发治理器：run service 拿它的窄端口给
     // driver（每个 actor runtime 一个请求级准入端口）；主 runtime 挂它的 observer（下面 deps）——
     // 不排队、不看冷却，但计入在飞并喂信号。进程级单例——配额本就在账号上，不按会话分。
@@ -610,7 +599,6 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     // 新建的 Model 才看得到，child 不各自冻结一份。
     const modelFactory = providerModelRuntime.modelFactory;
     const scriptWorkflowFacade = createScriptWorkflowBridge({
-      agentTelemetry: modelTelemetry.agentExecution,
       appOptions: options,
       appVersion,
       artifactStore,
@@ -689,7 +677,6 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
                   ).configOverrides,
                 },
                 deps: {
-                  agentTelemetry: modelTelemetry.agentExecution,
                   appOptions: options,
                   appVersion,
                   artifactStore,
@@ -837,7 +824,6 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             },
           }
         : {}),
-      agentTelemetry: modelTelemetry.agentExecution,
       // 主代理的模型请求过治理器的 observer：立即放行，但让治理器看见它的 429 / 成功。
       modelRequestAdmission: workflowConcurrencyGovernor.observer(),
       eventStore: options.eventStore ?? createInMemorySessionEventStore(),
@@ -874,9 +860,6 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           : undefined,
       mcpPort,
       eventSink: options.eventSink,
-      onOffPeakLifecycleEvent: options.onOffPeakLifecycleEvent
-        ? (event) => options.onOffPeakLifecycleEvent!({ ...event, sessionId })
-        : undefined,
       modelFactory,
       modelIoDir,
       providerRuntimeHeadersPort: options.providerRuntimeHeadersPort,
@@ -890,7 +873,6 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       dynamicWorkflowSnippetPort,
       modelCatalogPort,
       automationPort: options.automationPort,
-      offPeakPort: options.offPeakPort,
       topicResourcePort: options.topicResourcePort,
       appVersion,
       traceContext,
@@ -951,7 +933,6 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       traceContext,
     });
     const workflowFacade = createWorkflowFacade({
-      agentTelemetry: modelTelemetry.agentExecution,
       appOptions: options,
       appVersion,
       artifactStore,
@@ -1240,11 +1221,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         try {
           await closeSession?.();
         } finally {
-          try {
-            providerModelRuntime?.dispose();
-          } finally {
-            await modelTelemetry.shutdown();
-          }
+          providerModelRuntime?.dispose();
         }
       },
       ...workflowFacade,
@@ -1415,7 +1392,6 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     };
   } catch (error) {
     providerModelRuntime?.dispose();
-    void modelTelemetry.shutdown().catch(() => undefined);
     void ownedNodeReplBrowserBroker?.close();
     startupTimer.fail("ZCode app startup failed", error, {
       context: { sessionId, workingDirectory },

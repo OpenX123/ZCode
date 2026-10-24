@@ -1,23 +1,21 @@
 import {
-  ServiceCollection,
-  ICredentialService,
-  IOAuthService,
-  ICodingPlanSubscriptionService,
-  ISettingService,
-  ISystemService,
-  ISourceServerWorkspaceService,
-  ISkillsService,
-  ISkillSyncService,
-  IMcpSyncService,
-  IPluginSyncService,
-  IPluginsService,
-  IPluginManagementService,
   ICommandsService,
+  ICredentialService,
   IHooksService,
-  ISubagentsService,
+  IMcpSyncService,
   IMemoryService,
   IOutputStyleService,
+  IPluginManagementService,
+  IPluginsService,
+  IPluginSyncService,
+  ISettingService,
   ISettingsSyncService,
+  ISkillsService,
+  ISkillSyncService,
+  ISourceServerWorkspaceService,
+  ISubagentsService,
+  ISystemService,
+  ServiceCollection,
   type IServiceAccessor,
   type ServiceDescriptor,
 } from "@zcode/services";
@@ -42,14 +40,6 @@ export function createSourceSettingsServiceCollection(
     .register(
       ICredentialService,
       read(ICredentialService, (accessor) => accessor.credentialService),
-    )
-    .register(
-      IOAuthService,
-      read(IOAuthService, (accessor) => accessor.oauthService),
-    )
-    .register(
-      ICodingPlanSubscriptionService,
-      read(ICodingPlanSubscriptionService, (accessor) => accessor.codingPlanSubscriptionService),
     )
     .register(
       ISettingService,

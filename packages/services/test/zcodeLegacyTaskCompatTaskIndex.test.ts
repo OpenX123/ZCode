@@ -1166,9 +1166,8 @@ describe("ZCode legacy task compat task index", () => {
             heldQueueDisposition: "keepQueueAndSend",
             offPeakTaskId: "offpeak-stable-1",
             offPeakRunType: "init",
-            // D49-2：闲时派发轮在调用方 CronCreate 之外，纵深补 OffPeakCreate
-            // （免费池自我放大）；OffPeakList 只读保留。
-            toolDisallowlist: ["CronCreate", "OffPeakCreate"],
+            // 历史闲时归因字段只透传，不再注入已退役的工具策略。
+            toolDisallowlist: ["CronCreate"],
           },
         }),
       }),
@@ -1206,8 +1205,7 @@ describe("ZCode legacy task compat task index", () => {
             heldQueueDisposition: "keepQueueAndSend",
             offPeakTaskId: "offpeak-stable-1",
             offPeakRunType: "resume",
-            // D49-2：续跑段与首跑同语义。
-            toolDisallowlist: ["CronCreate", "OffPeakCreate"],
+            toolDisallowlist: ["CronCreate"],
           },
         }),
       }),

@@ -13,8 +13,6 @@ import {
   DEFAULT_LOCALE,
   desktopMenuMessageIds,
   getDesktopMenuMessage,
-  isTrustedCodingPlanWebviewOrigin,
-  isTrustedRewardsUrl,
   PlatformChannels,
 } from "@zcode/shared";
 import { loadWindow, type WindowBootstrapOptions } from "./desktopHostProcess.js";
@@ -51,86 +49,10 @@ const ALLOWED_EMBEDDED_BROWSER_PROTOCOLS = new Set([
 ]);
 const ALLOWED_EMBEDDED_BROWSER_NEW_WINDOW_PROTOCOLS = new Set(["http:", "https:"]);
 const EXTERNAL_BROWSER_DISPOSITIONS = new Set(["background-tab"]);
-const CODING_PLAN_ZAI_PAYPAL_RELAY_HOSTS = new Set(["api.z.ai", "api.z.ai"]);
 const embeddedBrowserJavaScriptDialogPreloadPath = join(
   import.meta.dirname,
   "../preload/embeddedBrowserJavaScriptDialog.cjs",
 );
-// Coding Plan 官网页专用 preload：挂 window.zcodeBridge 供官网回传购买完成信号。
-const codingPlanWebviewPreloadPath = join(import.meta.dirname, "../preload/codingPlanWebview.cjs");
-
-/**
- * 判断 webview 是否加载 Coding Plan 官网购买页（/coding-plan?...&embedded=app）。
- * 用于在 will-attach-webview 里把这种 webview 的 preload 切到 codingPlanWebviewPreloadPath，
- * 其余 webview（如内置浏览器）仍用 embeddedBrowserJavaScriptDialogPreloadPath。
- */
-function isCodingPlanEmbeddedWebviewSrc(src: string | undefined): boolean {
-  if (!src) return false;
-  try {
-    const url = new URL(src);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-    if (
-      !isTrustedCodingPlanWebviewOrigin(url.origin, {
-        e2eStoreBridgeEnabled: process.env.VITE_ZCODE_E2E_STORE_BRIDGE === "1",
-      })
-    ) {
-      return false;
-    }
-    if (url.pathname !== "/coding-plan") return false;
-    const embedded = url.searchParams.get("embedded");
-    return embedded === "app";
-  } catch {
-    return false;
-  }
-}
-
-/**
- * 宽松判断 webview 当前 URL 是否属于 coding-plan 购买页。
- *
- * setWindowOpenHandler 回调触发时 webview 可能已发生 locale 重定向
- * （/coding-plan → /cn/coding-plan），故 pathname 用 includes 匹配。
- * embedded=app 仍是硬条件，避免误判内置浏览器的外链。
- */
-function isCodingPlanWebviewUrl(src: string | undefined): boolean {
-  if (!src) return false;
-  try {
-    const url = new URL(src);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-    if (
-      !isTrustedCodingPlanWebviewOrigin(url.origin, {
-        e2eStoreBridgeEnabled: process.env.VITE_ZCODE_E2E_STORE_BRIDGE === "1",
-      })
-    ) {
-      return false;
-    }
-    if (!url.pathname.includes("coding-plan")) return false;
-    return url.searchParams.get("embedded") === "app";
-  } catch {
-    return false;
-  }
-}
-
-function isCodingPlanPaymentCallbackUrl(src: string | undefined): boolean {
-  if (!src) return false;
-  try {
-    const url = new URL(src);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-    if (
-      !isTrustedCodingPlanWebviewOrigin(url.origin, {
-        e2eStoreBridgeEnabled: process.env.VITE_ZCODE_E2E_STORE_BRIDGE === "1",
-      })
-    ) {
-      return false;
-    }
-    if (!url.pathname.endsWith("/coding-plan/payment/callback")) return false;
-    const returnTo = url.searchParams.get("returnTo");
-    if (!returnTo) return false;
-    const target = new URL(returnTo, url.origin);
-    return target.origin === url.origin && isCodingPlanWebviewUrl(target.toString());
-  } catch {
-    return false;
-  }
-}
 
 function isLinuxDesktopWindow() {
   return process.platform === "linux";
@@ -281,34 +203,6 @@ function isAllowedEmbeddedBrowserNewWindowUrl(url: string): boolean {
   }
 }
 
-function isPaypalHostname(hostname: string): boolean {
-  return hostname === "paypal.com" || hostname.endsWith(".paypal.com");
-}
-
-function isCodingPlanPaypalNavigationUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:") return false;
-    if (isPaypalHostname(parsed.hostname)) return true;
-    // 后端下发的 PayPal approveUrl 可能先指向 Z.AI 支付 API 中转地址，
-    // 由该地址再 302 到 PayPal。中转 URL 也必须留在当前 webview，否则会被系统浏览器接管。
-    return (
-      CODING_PLAN_ZAI_PAYPAL_RELAY_HOSTS.has(parsed.hostname) &&
-      parsed.pathname.startsWith("/api/pay/paypal/")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isAllowedCodingPlanEmbeddedNavigationUrl(url: string): boolean {
-  return (
-    isCodingPlanWebviewUrl(url) ||
-    isCodingPlanPaypalNavigationUrl(url) ||
-    isCodingPlanPaymentCallbackUrl(url)
-  );
-}
-
 function hasExternalBrowserModifier(input: Input): boolean {
   const modifiers = new Set(input.modifiers ?? []);
   return (
@@ -347,8 +241,6 @@ function shouldOpenEmbeddedBrowserRequestExternally(input: {
 function attachEmbeddedBrowserWindowOpenHandler(options: {
   hostWebContents: WebContents;
   guestWebContents: WebContents;
-  isCodingPlanGuest: boolean;
-  isRewardsGuest: boolean;
   resolveBrowserViewOwner?: (webContentsId: number) =>
     | {
         workspaceKey: string;
@@ -378,42 +270,6 @@ function attachEmbeddedBrowserWindowOpenHandler(options: {
     const { url, disposition } = details;
     if (!isAllowedEmbeddedBrowserNewWindowUrl(url)) {
       options.logger.warn(`[browser-pane] blocked unsupported webview popup url: ${url}`);
-      return { action: "deny" };
-    }
-
-    // Coding Plan webview 的外链（条款/管理等 target=_blank）直接拉起系统默认浏览器，
-    // 不路由到内部 Browser tab（对齐原生购买面板行为）。回调触发时 webview URL 已
-    // 加载完成，可能因 locale 重定向变成 /cn/coding-plan，用宽松判断。
-    // 支付链接走 location.href（不触发 setWindowOpenHandler），不受影响。
-    const guestUrl =
-      typeof options.guestWebContents.getURL === "function"
-        ? options.guestWebContents.getURL()
-        : "";
-    const shouldRouteCodingPlanPopup =
-      options.isCodingPlanGuest ||
-      isCodingPlanWebviewUrl(guestUrl) ||
-      isCodingPlanPaypalNavigationUrl(guestUrl);
-    if (shouldRouteCodingPlanPopup) {
-      if (isAllowedCodingPlanEmbeddedNavigationUrl(url)) {
-        // PayPal 授权/回调是 Coding Plan 购买流程的一部分，不能走系统浏览器，
-        // 否则授权回跳会脱离当前 webview 并丢失购买上下文。popup 形态改为当前 guest 导航。
-        void options.guestWebContents.loadURL(url).catch((error: unknown) => {
-          options.logger.warn(
-            "[browser-pane] failed to load coding-plan embedded popup in webview",
-            {
-              error: error instanceof Error ? error.message : String(error),
-              url,
-            },
-          );
-        });
-        return { action: "deny" };
-      }
-      void shell.openExternal(url).catch((error: unknown) => {
-        options.logger.warn("[browser-pane] failed to open coding-plan popup externally", {
-          error: error instanceof Error ? error.message : String(error),
-          url,
-        });
-      });
       return { action: "deny" };
     }
 
@@ -448,56 +304,6 @@ function attachEmbeddedBrowserWindowOpenHandler(options: {
         : {}),
     });
     return { action: "deny" };
-  });
-
-  options.guestWebContents.on("will-navigate", (event, url) => {
-    if (options.isRewardsGuest) {
-      if (
-        isTrustedRewardsUrl(url, {
-          dev: !app.isPackaged,
-          e2e: process.env.VITE_ZCODE_E2E_STORE_BRIDGE === "1",
-        })
-      )
-        return;
-      // 邀请页离开受信任路径必须外开，不能让第三方页面使用已注入凭据的容器。
-      event.preventDefault();
-      if (isAllowedEmbeddedBrowserNewWindowUrl(url))
-        void shell
-          .openExternal(url)
-          .catch(() => options.logger.warn("[rewards] external navigation failed"));
-      return;
-    }
-    const guestUrl =
-      typeof options.guestWebContents.getURL === "function"
-        ? options.guestWebContents.getURL()
-        : "";
-    const shouldGuardCodingPlanNavigation =
-      options.isCodingPlanGuest ||
-      isCodingPlanWebviewUrl(guestUrl) ||
-      isCodingPlanPaypalNavigationUrl(guestUrl);
-    if (!shouldGuardCodingPlanNavigation || isCodingPlanWebviewUrl(url)) {
-      return;
-    }
-    if (!isAllowedEmbeddedBrowserNewWindowUrl(url)) {
-      options.logger.warn(`[browser-pane] blocked unsupported coding-plan navigation url: ${url}`);
-      event.preventDefault();
-      return;
-    }
-    if (isAllowedCodingPlanEmbeddedNavigationUrl(url)) {
-      // 官网用 location.href 发起 PayPal 授权时会触发主 frame 导航。
-      // PayPal/中转/可信官网回跳需要留在当前 webview，后续 callback 才能继续订阅。
-      return;
-    }
-
-    // Coding Plan 专用 preload 会在后续主 frame 导航中继续存在。
-    // 离开可信购买页时必须阻断 guest 导航并交给系统浏览器，避免第三方页面继承 zcodeBridge。
-    event.preventDefault();
-    void shell.openExternal(url).catch((error: unknown) => {
-      options.logger.warn("[browser-pane] failed to open coding-plan navigation externally", {
-        error: error instanceof Error ? error.message : String(error),
-        url,
-      });
-    });
   });
 }
 
@@ -634,8 +440,7 @@ export function createBrowserWindow(options: {
   attachWindowsWindowRepaint(win);
   // will-attach 与 did-attach 按顺序配对；队列元素记录 guest 种类，did-attach 据此分派策略。
   const pendingWebviewGuestKinds: Array<
-    | { kind: "browser" | "codingPlan"; isRewards: boolean }
-    | { kind: "pluginSandbox"; sandboxId: string }
+    { kind: "browser" } | { kind: "pluginSandbox"; sandboxId: string }
   > = [];
 
   win.webContents.once("did-finish-load", () => {
@@ -665,9 +470,7 @@ export function createBrowserWindow(options: {
     // CDP 在原生 Dialog 已创建后再替换 UI，macOS 仍可能显示已经排队的
     // Chromium NSAlert。固定 preload 在每个 frame 调用原生 API 前拦截，且隔离世界只
     // 暴露 alert/confirm 同步桥；网页主世界仍没有 Node 或任意 IPC 能力。
-    //
-    // Coding Plan 官网页例外：它需要 window.zcodeBridge 回传购买完成信号，
-    // 改用专用 preload（codingPlanWebview.ts），其余 webview 保持原生 Dialog 桥。
+
     const targetUrl = params.src ?? "about:blank";
     // 插件 UI 沙箱 guest：独立分支，不走内置浏览器的 preload / allowpopups / 协议白名单。
     if (isPluginSandboxSrc(targetUrl)) {
@@ -687,22 +490,7 @@ export function createBrowserWindow(options: {
       pendingWebviewGuestKinds.push({ kind: "pluginSandbox", sandboxId: decision.sandboxId });
       return;
     }
-    const isCodingPlanWebview = isCodingPlanEmbeddedWebviewSrc(targetUrl);
-    webPreferences.preload = isCodingPlanWebview
-      ? codingPlanWebviewPreloadPath
-      : embeddedBrowserJavaScriptDialogPreloadPath;
-    const isRewardsWebview = isTrustedRewardsUrl(targetUrl, {
-      dev: !app.isPackaged,
-      e2e: process.env.VITE_ZCODE_E2E_STORE_BRIDGE === "1",
-    });
-    if (isRewardsWebview) {
-      webPreferences.preload = join(import.meta.dirname, "../preload/rewardsWebview.cjs");
-      if (!app.isPackaged)
-        webPreferences.additionalArguments = [
-          ...(webPreferences.additionalArguments ?? []),
-          "--zcode-rewards-dev",
-        ];
-    }
+    webPreferences.preload = embeddedBrowserJavaScriptDialogPreloadPath;
     webPreferences.contextIsolation = true;
     webPreferences.nodeIntegration = false;
     webPreferences.nodeIntegrationInSubFrames = true;
@@ -730,15 +518,13 @@ export function createBrowserWindow(options: {
     }
 
     pendingWebviewGuestKinds.push({
-      kind: isCodingPlanWebview ? "codingPlan" : "browser",
-      isRewards: isRewardsWebview,
+      kind: "browser",
     });
   });
 
   win.webContents.on("did-attach-webview", (_event, guestWebContents) => {
     const guestKind = pendingWebviewGuestKinds.shift() ?? {
       kind: "browser" as const,
-      isRewards: false,
     };
     if (guestKind.kind === "pluginSandbox") {
       getPluginSandboxHost()?.attachGuest({
@@ -752,10 +538,6 @@ export function createBrowserWindow(options: {
       guestWebContents,
       hostWebContents: win.webContents,
       resolveBrowserViewOwner: options.resolveBrowserViewOwner,
-      // PayPal/relay 的 30x 重定向不保证逐跳触发 will-navigate。
-      // Coding Plan guest 身份必须按初始 src 粘住，不能由当前 URL 解防护。
-      isCodingPlanGuest: guestKind.kind === "codingPlan",
-      isRewardsGuest: guestKind.isRewards,
       logger: options.logger,
     });
     // 蓝牙设备选择事件挂在 guest WebContents 上（Session 只覆盖 hid/usb/serial）；
@@ -797,7 +579,7 @@ export function createBrowserWindow(options: {
     Menu.buildFromTemplate(template).popup({ window: win });
   });
 
-  void Promise.resolve(loadWindow(win, "index", options.bootstrap)).catch((error: unknown) => {
+  void Promise.resolve(loadWindow(win, options.bootstrap)).catch((error: unknown) => {
     // loadFile/loadURL 返回的导航 Promise 过去被丢弃，长跑中的导航失败
     // 只会表现为 chrome-error 页面，主进程日志没有原始异常可供追踪。
     options.logger.warn("[desktop-window] renderer navigation rejected", error);

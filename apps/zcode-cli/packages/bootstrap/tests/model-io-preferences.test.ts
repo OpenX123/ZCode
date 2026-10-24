@@ -16,7 +16,6 @@ describe("ModelIO runtime preferences", () => {
       appRuntimePreferences: {
         askUserQuestionAutoResolutionEnabled: true,
         modelIoFullRetentionEnabled: false,
-        offPeakToolEnabled: false,
       },
       sessions: new Map([
         [

@@ -48,20 +48,7 @@ describe("MCS published capability boundaries", () => {
         ).toBe(false);
       }
     }
-    for (const provider of release.config.providerConfigRules.providerRules) {
-      const { api } = provider.config;
-      const config = rules.resolve({
-        providerId: provider.providerId,
-        modelId: "GLM-5.3-Flash",
-        apiType: api.type,
-        baseUrl: api.baseUrl,
-      });
-      expect(config.properties?.supportsMidConversationSystem, provider.providerId).toBe(true);
-      // 闲时保留 MCS，但按 Todo140 关闭内置搜索；普通套餐不能随之回退。
-      expect(config.properties?.supportsNativeWebSearch, provider.providerId).toBe(
-        provider.config.access.mode !== "off-peak",
-      );
-    }
+    // 产品专属网关已退役，不再从端点匹配得到额外模型能力。
     for (const baseUrl of [
       "https://zcode.z.ai/api/v1/off-peak/anthropic/",
       "https://zcode.z.ai/api/v1/zcode-plan/anthropic/",
@@ -73,20 +60,7 @@ describe("MCS published capability boundaries", () => {
           apiType: "anthropic-messages",
           baseUrl,
         }).properties?.supportsMidConversationSystem,
-      ).toBe(true);
-      for (const negative of [
-        `${baseUrl}extra`,
-        baseUrl.replace("zcode.z.ai", "zcode.z.ai.evil.example"),
-      ]) {
-        expect(
-          rules.resolve({
-            providerId: "fixture",
-            modelId: "unknown",
-            apiType: "anthropic-messages",
-            baseUrl: negative,
-          }).properties?.supportsMidConversationSystem,
-        ).toBe(false);
-      }
+      ).toBe(false);
     }
   });
 });

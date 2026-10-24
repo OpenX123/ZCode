@@ -13,21 +13,6 @@ export interface ZCodeAgentWorkspaceTarget {
   remoteSessionId?: string;
 }
 
-export interface ZCodeAgentPluginMutationTarget extends ZCodeAgentWorkspaceTarget {
-  /** 仅 Host 观测使用；不会传给 CLI。 */
-  telemetry?: {
-    entry?:
-      | "store_list"
-      | "store_detail"
-      | "side_pane_market"
-      | "recommended_prompt"
-      | "recommended_ui"
-      | "component_settings";
-    client_kind?: "desktop" | "mobile";
-    trigger?: "user" | "automatic" | "dependency" | "restore" | "sync";
-  };
-}
-
 export interface ZCodeAgentPluginViewParams extends ZCodeAgentWorkspaceTarget {
   configScope?: "user" | "workspace";
 }
@@ -37,22 +22,22 @@ export interface ZCodeAgentListMcpServerStatusesParams extends ZCodeAgentWorkspa
   mode?: ZCodeMcpListMode;
 }
 
-export interface ZCodeAgentAddPluginMarketplaceParams extends ZCodeAgentPluginMutationTarget {
+export interface ZCodeAgentAddPluginMarketplaceParams extends ZCodeAgentWorkspaceTarget {
   dryRun?: boolean;
   operationId?: string;
   source: string;
 }
 
-export interface ZCodeAgentRemovePluginMarketplaceParams extends ZCodeAgentPluginMutationTarget {
+export interface ZCodeAgentRemovePluginMarketplaceParams extends ZCodeAgentWorkspaceTarget {
   marketplace: string;
 }
 
-export interface ZCodeAgentUpdatePluginMarketplaceParams extends ZCodeAgentPluginMutationTarget {
+export interface ZCodeAgentUpdatePluginMarketplaceParams extends ZCodeAgentWorkspaceTarget {
   marketplace?: string;
   operationId?: string;
 }
 
-export interface ZCodeAgentInstallPluginParams extends ZCodeAgentPluginMutationTarget {
+export interface ZCodeAgentInstallPluginParams extends ZCodeAgentWorkspaceTarget {
   dryRun?: boolean;
   marketplace: string;
   operationId?: string;
@@ -64,23 +49,23 @@ export interface ZCodeAgentCancelPluginOperationParams {
   operationId: string;
 }
 
-export interface ZCodeAgentUninstallPluginParams extends ZCodeAgentPluginMutationTarget {
+export interface ZCodeAgentUninstallPluginParams extends ZCodeAgentWorkspaceTarget {
   marketplace?: string;
   pluginId?: string;
   pluginName?: string;
   removeCache?: boolean;
 }
 
-export interface ZCodeAgentUpdatePluginParams extends ZCodeAgentPluginMutationTarget {
+export interface ZCodeAgentUpdatePluginParams extends ZCodeAgentWorkspaceTarget {
   pluginId?: string;
   marketplace?: string;
 }
 
-export interface ZCodeAgentRestoreBuiltinPluginParams extends ZCodeAgentPluginMutationTarget {
+export interface ZCodeAgentRestoreBuiltinPluginParams extends ZCodeAgentWorkspaceTarget {
   pluginId: string;
 }
 
-export interface ZCodeAgentConfigurePluginParams extends ZCodeAgentPluginMutationTarget {
+export interface ZCodeAgentConfigurePluginParams extends ZCodeAgentWorkspaceTarget {
   clearOptionKeys?: string[];
   dryRun?: boolean;
   options: Record<string, unknown>;
@@ -88,7 +73,7 @@ export interface ZCodeAgentConfigurePluginParams extends ZCodeAgentPluginMutatio
   scope?: "user" | "workspace";
 }
 
-export interface ZCodeAgentResetPluginConfigParams extends ZCodeAgentPluginMutationTarget {
+export interface ZCodeAgentResetPluginConfigParams extends ZCodeAgentWorkspaceTarget {
   pluginId: string;
   scope?: "user" | "workspace";
 }
@@ -104,7 +89,7 @@ export interface ZCodeAgentDescribePluginParams extends ZCodeAgentWorkspaceTarge
   pluginName: string;
 }
 
-export interface ZCodeAgentSetPluginEnabledParams extends ZCodeAgentPluginMutationTarget {
+export interface ZCodeAgentSetPluginEnabledParams extends ZCodeAgentWorkspaceTarget {
   enabled: boolean;
   operationId?: string;
   pluginId: string;

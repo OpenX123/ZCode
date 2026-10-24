@@ -59,7 +59,6 @@ import type { MemoryRecallState } from "../memory/recall/index.js";
 import type { ProjectMemoryRecallPrefetch } from "./helpers/project-memory-recall.js";
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
 import type { ProjectMemoryUpdate } from "./helpers/project-memory-dream.js";
-import type { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 
 export interface AgentRuntimeInternal
@@ -171,5 +170,4 @@ export interface AgentRuntimeInternal
   pendingModelChangeTimeline?: PendingModelChangeTimeline;
   sessionStartHookRan: boolean;
   sessionTitleGenerationAttempted: boolean;
-  agentTelemetry: RuntimeTelemetryFacade;
 }

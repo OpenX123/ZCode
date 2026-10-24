@@ -50,7 +50,7 @@ import {
   waitForUserMessageContaining,
 } from "./helpers/conversation-session.js";
 import { getV4ComposerBackgroundWorkCounts } from "./helpers/v4-conversation.js";
-import { readDynamicWorkflowGrayMockStatus } from "#e2e/helpers/dynamic-workflow-gray";
+import { configureLocalDynamicWorkflowMode } from "#e2e/helpers/dynamic-workflow-gray";
 import { startDraftFromProject } from "#e2e/helpers/project-sidebar";
 
 const WORKFLOW_NAME = "release-check";
@@ -147,10 +147,7 @@ describe("已保存工作流中枢 E2E", () => {
 
     // 只需要 workspace 就绪即可进入自动化页，不需要账号或配置模型 provider。
     await prepareConversationE2E({ skipProvider: true });
-
-    const configStatus = await readDynamicWorkflowGrayMockStatus();
-    expect(configStatus.mode).toBe("alwaysOn");
-    expect(configStatus.configRequests).toBeGreaterThan(0);
+    await configureLocalDynamicWorkflowMode("alwaysOn");
 
     // 1) 打开自动化页，页标题切到「工作流」。
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, {
@@ -319,6 +316,7 @@ describe("全局工作流中枢 E2E", () => {
     this.timeout(150000);
 
     await prepareConversationE2E({ skipProvider: true });
+    await configureLocalDynamicWorkflowMode("alwaysOn");
 
     // 1) 自动化页 →「工作流」标签。
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
@@ -684,6 +682,7 @@ describe("直接启动 E2E", () => {
 
     // 只需要登录 + workspace，就绪即可；常量工作流不碰 provider（见组注释）。
     await prepareConversationE2E({ skipProvider: true });
+    await configureLocalDynamicWorkflowMode("alwaysOn");
 
     // 1) 自动化页 →「工作流」标签 → 常量工作流的卡片。
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
@@ -780,6 +779,7 @@ describe("直接启动 E2E", () => {
     this.timeout(150000);
 
     await prepareConversationE2E({ skipProvider: true });
+    await configureLocalDynamicWorkflowMode("alwaysOn");
 
     // 1) 自动化页 →「工作流」标签 → 编译失败工作流的卡片（frontmatter 合法，卡片照常出现）。
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
@@ -832,6 +832,7 @@ describe("直接启动 E2E", () => {
     this.timeout(150000);
 
     await prepareConversationE2E({ skipProvider: true });
+    await configureLocalDynamicWorkflowMode("alwaysOn");
 
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
     await clickTestIdByDom(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"), {
@@ -897,6 +898,7 @@ describe("直接启动 E2E", () => {
     this.timeout(150000);
 
     await prepareConversationE2E({ skipProvider: true });
+    await configureLocalDynamicWorkflowMode("alwaysOn");
 
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
     await clickTestIdByDom(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"), {
@@ -949,6 +951,7 @@ describe("直接启动 E2E", () => {
     this.timeout(180000);
 
     await prepareConversationE2E({ skipProvider: true });
+    await configureLocalDynamicWorkflowMode("alwaysOn");
 
     // 1) 自动化页 →「工作流」标签 → 无实参的项目档点「运行」即跑（不弹实参窗、不弹确认窗）。
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
@@ -1103,6 +1106,7 @@ describe("直接启动 E2E", () => {
     this.timeout(180000);
 
     await prepareConversationE2E({ skipProvider: true });
+    await configureLocalDynamicWorkflowMode("alwaysOn");
 
     // 1) 跑那条停留 running 的常量工作流（world.run sleep 40s），打开它的 run 侧板。
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
@@ -1182,6 +1186,7 @@ describe("直接启动 E2E", () => {
     this.timeout(240000);
 
     await prepareConversationE2E({ skipProvider: true });
+    await configureLocalDynamicWorkflowMode("alwaysOn");
 
     // 1) 中枢「运行」无实参的项目档：点即跑，新会话顶部的 run 卡跑到 completed。
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
@@ -1286,6 +1291,7 @@ describe("直接启动 E2E", () => {
     this.timeout(240000);
 
     await prepareConversationE2E({ skipProvider: true });
+    await configureLocalDynamicWorkflowMode("alwaysOn");
 
     // 1) 中枢「运行」无实参的项目档：点即跑，run 发布一份 markdown 产物后 completed。
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });

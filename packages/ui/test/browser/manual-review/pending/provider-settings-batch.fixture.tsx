@@ -24,8 +24,6 @@ import {
 } from "@/lib/providerSettingsFormTypes.js";
 import release from "../../../../../../config/provider/zcode-builtin.json";
 import { ProviderModelEditorFixture } from "./provider-model-editor.fixture.js";
-import { OffPeakEligibilityFixture } from "./offpeak-eligibility.fixture.js";
-import { OffPeakTeamEntryFixture } from "./offpeak-team-entry.fixture.js";
 import "@/styles.css";
 import { Checkbox } from "@/components/ui/checkbox.js";
 
@@ -263,15 +261,7 @@ createRoot(document.getElementById("root")!).render(
   >
     <TooltipProvider>
       <ZCodeIntlProvider initialLocale={params.get("locale") === "zh-CN" ? "zh-CN" : "en-US"}>
-        {params.has("teamEntry") ? (
-          <OffPeakTeamEntryFixture />
-        ) : params.has("offpeak") ? (
-          <OffPeakEligibilityFixture />
-        ) : params.has("editor") ? (
-          <ProviderModelEditorFixture />
-        ) : (
-          <Fixture />
-        )}
+        {params.has("editor") ? <ProviderModelEditorFixture /> : <Fixture />}
       </ZCodeIntlProvider>
     </TooltipProvider>
   </ServiceProvider>,

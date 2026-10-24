@@ -27,7 +27,6 @@ import {
   zcodeBrowserAmbientContextSchema,
   zcodeProtocolMcpServerSchema,
 } from "../zcode-protocol/index.js";
-import { highspeedMessageMetaSchema } from "../highspeed.js";
 import { sharedContextRefSchema } from "./shared-context-ref.js";
 import { conversationInputSourceSchema } from "./input-intent.js";
 export type { SharedContextRef } from "./shared-context-ref.js";
@@ -69,11 +68,7 @@ export const commandPayloadSchemas = {
     config: createSessionRequestedConfigSchema.optional(),
     // MCP 是 runtime 启动期配置，必须随 create 一次性进入 record，不能在首发后补写。
     mcpServers: z.array(zcodeProtocolMcpServerSchema).optional(),
-    // Off-Peak 工具面 flag，与 legacy session/create 等价——V4 createSession 是桌面
-    // 新会话的实际创建路径，不透传则 OffPeakCreate/OffPeakList 永不注册。additive，
-    // 旧 CLI 的 z.object 会静默丢弃该键（fail-closed）。
-    offPeakToolEnabled: z.boolean().optional(),
-    // 动态工作流灰度 flag，与 offPeakToolEnabled 同一模式。
+    // 动态工作流工具面由本地 Host 裁决。
     dynamicWorkflowEnabled: z.boolean().optional(),
     // 灰度 mode 与布尔同行（launch.md「On demand: activation」）；旧 CLI 的 z.object 静默丢弃。
     dynamicWorkflowMode: z.enum(DYNAMIC_WORKFLOW_MODES).optional(),
@@ -117,10 +112,8 @@ export const commandPayloadSchemas = {
       // 本次执行仍使用上面的标准 Selection；这里只携带不持久化语义、动态鉴权和 child 策略。
       // 仅 idle startNow 接受，防止 Secret/Ticket 进入普通 CommandInbox。
       modelExecution: modelExecutionSchema.optional(),
-      // Highspeed 卡快照随输入事实进入 message.data；不包含 runtime 凭据或 header。
-      // 加速本轮的模型与凭据走上面的 modelSelection + modelExecution，见
-      // docs/highspeed/highspeed-access-mode-migration.md。
-      highspeedMeta: highspeedMessageMetaSchema.optional(),
+      // 官方高速卡入口已退役；拒绝旧发送端补供卡片，不影响其他未知字段兼容。
+      highspeedMeta: z.never().optional(),
       automationId: z.string().min(1).optional(),
       offPeakTaskId: z.string().min(1).optional(),
       offPeakRunType: z.enum(["init", "resume"]).optional(),
@@ -170,17 +163,17 @@ export const commandPayloadSchemas = {
   applyFileRewind: z.object({ target: conversationRowTargetSchema }),
   editUserQuery: z
     .object({
-    target: conversationRowTargetSchema,
-    newText: z.string(),
+      target: conversationRowTargetSchema,
+      newText: z.string(),
       conversationQuotes: conversationQuotesSchema.optional(),
-    attachments: z.array(attachmentRefSchema).optional(),
-      // 编辑重发按新的主动发送处理：只接受本次重新 prepare 得到的卡与执行材料，
-      // 不从被 rewind 的历史消息复用旧凭据。
+      attachments: z.array(attachmentRefSchema).optional(),
+      // 编辑重发仅使用本次显式提交的模型选择和执行材料。
       modelSelection: modelSelectionSchema.optional(),
       modelExecution: modelExecutionSchema.optional(),
-      highspeedMeta: highspeedMessageMetaSchema.optional(),
-    // 缺省 preserve：仅切 conversation branch；rewind 会先安全恢复该轮文件。
-    workspaceMode: z.enum(["preserve", "rewind"]).optional(),
+      // 官方高速卡入口已退役；拒绝旧发送端补供卡片，不影响其他未知字段兼容。
+      highspeedMeta: z.never().optional(),
+      // 缺省 preserve：仅切 conversation branch；rewind 会先安全恢复该轮文件。
+      workspaceMode: z.enum(["preserve", "rewind"]).optional(),
     })
     .superRefine(requireModelSelectionForExecution),
   retryTurn: z.object({ target: conversationRowTargetSchema }),
@@ -190,24 +183,14 @@ export const commandPayloadSchemas = {
     target: conversationRowTargetSchema,
     feedback: z.enum(["like", "dislike"]).nullable(),
   }),
-  setHighspeedMetrics: z.object({
-    target: conversationRowTargetSchema,
-    regularTps: z.number().positive(),
-    outputTokens: z.number().int().nonnegative(),
-    durationMs: z.number().nonnegative(),
-    highspeedTps: z.number().positive(),
-    savedDurationMs: z.number().nonnegative(),
-    modelDurationMs: z.number().nonnegative().optional(),
-    toolDurationMs: z.number().nonnegative().optional(),
-    otherDurationMs: z.number().nonnegative().optional(),
-  }),
   sendQueuedNow: z
     .object({
       queueItemId: z.string(),
-      // 手动提升允许 Renderer 为原队列项补充同卡执行材料；凭据不入队列持久化面。
+      // 手动提升沿用队列的 canonical intent。
       modelSelection: modelSelectionSchema.optional(),
       modelExecution: modelExecutionSchema.optional(),
-      highspeedMeta: highspeedMessageMetaSchema.optional(),
+      // 官方高速卡入口已退役；拒绝旧发送端补供卡片，不影响其他未知字段兼容。
+      highspeedMeta: z.never().optional(),
     })
     .superRefine(requireModelSelectionForExecution),
   editQueueItem: z.object({ queueItemId: z.string(), newText: z.string() }),
@@ -336,7 +319,6 @@ export const ROW_TARGETING_COMMANDS: ReadonlySet<CommandType> = new Set([
   "editUserQuery",
   "retryTurn",
   "setAssistantFeedback",
-  "setHighspeedMetrics",
 ]);
 
 // ── 信封 ──

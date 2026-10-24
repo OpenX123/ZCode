@@ -8,8 +8,6 @@ export const providerProvisioningTriggerSchema = z.enum([
   "environment-online",
   "personal-config",
   "configured-default",
-  "account-settings",
-  "credential",
 ]);
 export type ProviderProvisioningTrigger = z.infer<typeof providerProvisioningTriggerSchema>;
 

@@ -124,14 +124,14 @@ describe("AiSdkModelAdapter", () => {
       },
     };
     adapter = new AiSdkModelAdapter({
-      registry: new TestProviderConfigFixture(startPlanRegistryConfig("initial-token")),
+      registry: new TestProviderConfigFixture(personalRegistryConfig("initial-token")),
       retry: { baseDelayMs: 0, jitter: false, maxAttempts: 2 },
       runtime,
     });
 
     const streamed: ModelStreamEvent[] = [];
     for await (const event of executeAdapterStreamText(adapter, {
-      providerId: "account:zai-start-plan" as never,
+      providerId: "personal-zai" as never,
       modelId: "glm-5.1" as never,
       properties: createTestModelProperties({}, { supportsNativeWebSearch: true }),
       messages: [{ role: "user", content: "Search current docs" }],
@@ -182,13 +182,13 @@ describe("AiSdkModelAdapter", () => {
       },
     };
     adapter = new AiSdkModelAdapter({
-      registry: new TestProviderConfigFixture(startPlanRegistryConfig("initial-token")),
+      registry: new TestProviderConfigFixture(personalRegistryConfig("initial-token")),
       retry: { baseDelayMs: 0, jitter: false, maxAttempts: 2 },
       runtime,
     });
 
     await executeAdapterGenerateText(adapter, {
-      providerId: "account:bigmodel-start-plan" as never,
+      providerId: "personal-bigmodel" as never,
       modelId: "glm-5.1" as never,
       messages: [{ role: "user", content: "Ping" }],
       async refreshRuntimeHeadersBeforeAttempt({ attempt }) {
@@ -2940,7 +2940,7 @@ describe("AiSdkModelAdapter", () => {
         attempts += 1;
         throw new ProviderBusinessError({
           providerCode: "3010",
-          providerId: "account:zai-start-plan",
+          providerId: "personal-zai",
           providerKind: "openai-compatible",
           providerMessage: "当前系统繁忙，请稍后再试或升级账户。",
           responseBodySummary: {
@@ -7243,21 +7243,21 @@ function createInternalProviderNativeWebSearchContract(): ModelToolContract {
   };
 }
 
-function startPlanRegistryConfig(runtimeHeader: string) {
+function personalRegistryConfig(runtimeHeader: string) {
   return {
     providers: {
-      "account:bigmodel-start-plan": {
+      "personal-bigmodel": {
         kind: "anthropic" as const,
         apiKey: "client-id.client-secret",
-        baseURL: "https://zcode.z.ai/api/v1/zcode-plan/anthropic",
+        baseURL: "https://provider.invalid/v1",
         headers: {
           "X-Runtime-Token": runtimeHeader,
         },
       },
-      "account:zai-start-plan": {
+      "personal-zai": {
         kind: "anthropic" as const,
         apiKey: "client-id.client-secret",
-        baseURL: "https://zcode.z.ai/api/v1/zcode-plan/anthropic",
+        baseURL: "https://provider.invalid/v1",
         headers: {
           "X-Runtime-Token": runtimeHeader,
         },

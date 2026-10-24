@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { join } from "node:path";
 import { DesktopCommandIds } from "@zcode/shared";
 
 const appMock = {
@@ -119,7 +118,7 @@ function stubProcessPlatform(platform: NodeJS.Platform): void {
   });
 }
 
-describe("desktopCommandHandlers resolveFeedbackUrl", () => {
+describe("desktopCommandHandlers", () => {
   beforeEach(() => {
     vi.resetModules();
     appMock.getAppPath.mockClear();
@@ -135,171 +134,6 @@ describe("desktopCommandHandlers resolveFeedbackUrl", () => {
     stubProcessPlatform(originalPlatform);
   });
 
-  it("优先使用远端 JSON 里的 feedback_url", async () => {
-    const logger = {
-      warn: vi.fn(),
-    };
-    // Bugfix: 这个用例需要 resetModules 后重新导入 desktopCommandHandlers。
-    // 在全量测试并发执行时，Electron 相关模块初始化偶尔会比单跑慢很多，默认 5s 超时不够稳定，
-    // 但实际断言链路本身很短。这里单独放宽超时，避免 verify:pre-push 被偶发慢启动误杀。
-    const { resolveFeedbackUrl } = await import("../src/main/desktopCommandHandlers.js");
-
-    const feedbackUrl = await resolveFeedbackUrl({
-      logger,
-      fetchRemoteConfig: async () => ({
-        feedback_url: "https://remote.example.com/feedback",
-      }),
-      readLocalConfig: () => ({
-        feedback_url: "https://local.example.com/feedback",
-      }),
-    });
-
-    expect(feedbackUrl).toBe("https://remote.example.com/feedback");
-  });
-
-  it("远端不可用时回退到本地 JSON", async () => {
-    const logger = {
-      warn: vi.fn(),
-    };
-    const { resolveFeedbackUrl } = await import("../src/main/desktopCommandHandlers.js");
-
-    const feedbackUrl = await resolveFeedbackUrl({
-      logger,
-      fetchRemoteConfig: async () => {
-        throw new Error("network down");
-      },
-      readLocalConfig: () => ({
-        feedback_url: "https://local.example.com/feedback",
-      }),
-    });
-
-    expect(feedbackUrl).toBe("https://local.example.com/feedback");
-    expect(logger.warn).toHaveBeenCalledWith(
-      "[feedback] failed to fetch remote config:",
-      expect.any(Error),
-    );
-  });
-
-  it("两个 JSON 都没有有效地址时返回 undefined", async () => {
-    const logger = {
-      warn: vi.fn(),
-    };
-    const { resolveFeedbackUrl } = await import("../src/main/desktopCommandHandlers.js");
-
-    const feedbackUrl = await resolveFeedbackUrl({
-      logger,
-      fetchRemoteConfig: async () => ({}),
-      readLocalConfig: () => ({}),
-    });
-
-    expect(feedbackUrl).toBeUndefined();
-  });
-
-  it("中文界面只打开中文社群入口，缺失时不跨语言回退", async () => {
-    const logger = {
-      warn: vi.fn(),
-    };
-    const { resolveCommunityUrl } = await import("../src/main/desktopCommandHandlers.js");
-
-    await expect(
-      resolveCommunityUrl({
-        locale: "zh-CN",
-        logger,
-        fetchRemoteConfig: async () => ({
-          community_urls: {
-            "zh-CN": "https://remote.example.com/zh-community",
-            "en-US": "https://remote.example.com/en-community",
-          },
-        }),
-      }),
-    ).resolves.toBe("https://remote.example.com/zh-community");
-
-    await expect(
-      resolveCommunityUrl({
-        locale: "zh-CN",
-        logger,
-        fetchRemoteConfig: async () => ({
-          community_urls: {
-            "en-US": "https://remote.example.com/en-community",
-          },
-        }),
-      }),
-    ).resolves.toBeUndefined();
-  });
-
-  it("英文界面优先使用本地英文入口，不被远端中文入口截获", async () => {
-    const logger = {
-      warn: vi.fn(),
-    };
-    const { resolveCommunityUrl } = await import("../src/main/desktopCommandHandlers.js");
-
-    const communityUrl = await resolveCommunityUrl({
-      locale: "en-US",
-      logger,
-      fetchRemoteConfig: async () => ({
-        community_urls: {
-          "zh-CN": "https://remote.example.com/zh-community",
-        },
-      }),
-      readLocalConfig: () => ({
-        community_urls: {
-          "zh-CN": "https://local.example.com/zh-community",
-          "en-US": "https://local.example.com/en-community",
-        },
-      }),
-    });
-
-    expect(communityUrl).toBe("https://local.example.com/en-community");
-  });
-
-  it("正式包从 resources/config 读取内置配置，开发态继续读取仓库配置", async () => {
-    const { resolveLocalAppConfigPath } = await import("../src/main/desktopCommandHandlers.js");
-
-    // Bugfix：resolveLocalAppConfigPath 用宿主 path.join 拼接，Windows 上分隔符是 `\`，
-    // 而这里原来写死 POSIX 字面量，两条断言在 Windows 上都对不上。改用宿主 join 组装期望值，
-    // 断言仍然表达同一组「正式包读 resources/config、开发态回到仓库 config」。
-    expect(
-      resolveLocalAppConfigPath({
-        isPackaged: true,
-        resourcesPath: "/Applications/ZCode.app/Contents/Resources",
-        appPath: "/Applications/ZCode.app/Contents/Resources/app.asar",
-      }),
-    ).toBe(join("/Applications/ZCode.app/Contents/Resources", "config/default.json"));
-    expect(
-      resolveLocalAppConfigPath({
-        isPackaged: false,
-        appPath: "/repo/packages/desktop",
-      }),
-    ).toBe(join("/repo", "config", "default.json"));
-  });
-
-  it("中文界面打开中文 changelog，其他语言打开英文 changelog", async () => {
-    const { openChangelog } = await import("../src/main/desktopCommandHandlers.js");
-    const { shell } = await import("electron");
-
-    await openChangelog("zh-CN");
-    await openChangelog("en-US");
-
-    expect(shell.openExternal).toHaveBeenNthCalledWith(1, "https://zcode.z.ai/cn/changelog");
-    expect(shell.openExternal).toHaveBeenNthCalledWith(2, "https://zcode.z.ai/en/changelog");
-  });
-
-  it("changelog 按当前非生产 endpoint 打开", async () => {
-    const { executeDesktopCommand } = await import("../src/main/desktopCommandHandlers.js");
-    const { shell } = await import("electron");
-    const commandOptions = createCommandOptions({
-      settings: { zcodeEndpointOrigin: "https://zcode.z.ai" },
-    });
-
-    await executeDesktopCommand({
-      ...commandOptions,
-      command: DesktopCommandIds.OpenChangelog,
-      currentApplicationLocale: "en-US",
-    });
-
-    expect(shell.openExternal).toHaveBeenCalledWith("https://zcode.z.ai/en/changelog");
-  });
-
   it("relaunch app 命令交给主进程重启回调", async () => {
     const { executeDesktopCommand } = await import("../src/main/desktopCommandHandlers.js");
     const onRelaunchApp = vi.fn(async () => undefined);
@@ -311,70 +145,6 @@ describe("desktopCommandHandlers resolveFeedbackUrl", () => {
     });
 
     expect(onRelaunchApp).toHaveBeenCalledTimes(1);
-  });
-
-  it("清理 Coding Plan webview 持久 partition，避免账号切换后复用旧凭据", async () => {
-    const { executeDesktopCommand } = await import("../src/main/desktopCommandHandlers.js");
-    const commandOptions = createCommandOptions();
-
-    await executeDesktopCommand({
-      ...commandOptions,
-      command: DesktopCommandIds.ClearCodingPlanWebviewStorage,
-    });
-
-    expect(sessionFromPartitionMock).toHaveBeenCalledWith("persist:zcode-coding-plan");
-    expect(sessionFromPartitionMock).toHaveBeenCalledWith("persist:zcode-rewards");
-    expect(codingPlanPartitionSession.clearStorageData).toHaveBeenCalledTimes(2);
-    expect(commandOptions.logger.info).toHaveBeenCalledWith(
-      "[coding-plan-webview] cleared persistent partition storage",
-    );
-  });
-
-  it("非生产 endpoint 菜单命令能保存 test、自定义和 reset", async () => {
-    const { executeDesktopCommand } = await import("../src/main/desktopCommandHandlers.js");
-    const onZCodeEndpointChanged = vi.fn();
-    const commandOptions = createCommandOptions({ onZCodeEndpointChanged });
-
-    await executeDesktopCommand({
-      ...commandOptions,
-      command: DesktopCommandIds.SetZCodeEndpointTest,
-    });
-    expect(commandOptions.settingService.update).toHaveBeenLastCalledWith({
-      zcodeEndpointOrigin: "https://zcode.z.ai",
-    });
-
-    await executeDesktopCommand({
-      ...commandOptions,
-      command: DesktopCommandIds.ResetZCodeEndpoint,
-    });
-    expect(commandOptions.settingService.update).toHaveBeenLastCalledWith({
-      zcodeEndpointOrigin: undefined,
-    });
-    expect(onZCodeEndpointChanged).toHaveBeenCalledTimes(2);
-  });
-
-  it("Custom endpoint 菜单打开主进程输入窗并保存提交值", async () => {
-    const { executeDesktopCommand } = await import("../src/main/desktopCommandHandlers.js");
-    const onZCodeEndpointChanged = vi.fn();
-    const commandOptions = createCommandOptions({ onZCodeEndpointChanged });
-
-    const commandPromise = executeDesktopCommand({
-      ...commandOptions,
-      command: DesktopCommandIds.SetZCodeEndpointCustom,
-    });
-    await vi.waitFor(() => expect(BrowserWindowMock).toHaveBeenCalledTimes(1));
-    const promptWindow = browserWindowInstances[0];
-    expect(promptWindow?.loadURL).toHaveBeenCalledWith(expect.stringContaining("data:text/html"));
-
-    promptWindow?.emitTitle(
-      "zcode-endpoint-submit:" + encodeURIComponent("http://localhost:3030/path"),
-    );
-    await commandPromise;
-
-    expect(commandOptions.settingService.update).toHaveBeenCalledWith({
-      zcodeEndpointOrigin: "http://localhost:3030",
-    });
-    expect(onZCodeEndpointChanged).toHaveBeenCalledTimes(1);
   });
 
   it("系统缩放命令会限制在缩小 3 档和放大 5 档之间", async () => {

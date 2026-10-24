@@ -1,3 +1,25 @@
+import type { ConversationRow } from "@zcode/shared/zcode-protocol-v4";
+
+/** 导入时落盘的公开 rows 副本；会话里的只读块靠它渲染，不回源。 */
+export interface ImportedConversationShare {
+  contentBlocks?: unknown[];
+  shareId: string;
+  contextId: string;
+  title: string;
+  rows: ConversationRow[];
+  /**
+   * 本端渲染不了、已跳过的行数（副本里有新 row kind，或 formatVersion 比本端新）。
+   * >0 时只读块顶部必须出软提示，否则用户会以为内容丢了。
+   */
+  unsupportedRowCount: number;
+  artifacts: Array<{
+    artifactId: string;
+    displayName: string;
+    mimeType?: string;
+    workspaceRelativePath?: string;
+  }>;
+}
+
 import { ServiceChannels } from "@zcode/shared";
 import type {
   TraceId,
@@ -140,6 +162,10 @@ export interface ZCodeSessionWorkspaceRuntimeIdentity {
 }
 
 export interface IZCodeSessionService {
+  getImportedConversation(input: {
+    workspacePath: string;
+    contextId: string;
+  }): Promise<ImportedConversationShare | null>;
   initializeWorkspace(params: ZCodeSessionWorkspaceTarget): Promise<ZCodeSessionInitializeResult>;
   getWorkspaceRuntimeIdentity(
     params: ZCodeSessionWorkspaceTarget,

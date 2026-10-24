@@ -1,4 +1,3 @@
-import { recordArmsCustomEventForE2E } from "@zcode/ui";
 import { DesktopCommandIds, buildLocalMediaPreviewUrl, type IPlatformService } from "@zcode/shared";
 
 import { desktopBrowserPlatformBridge } from "./desktopBrowserPlatformBridge.js";
@@ -37,11 +36,6 @@ export function createDesktopPlatform(options: {
     bindRemoteWorkspaceSessionContext: (context) =>
       window.zcode.bindRemoteWorkspaceSessionContext?.(context) ??
       Promise.reject(new Error("Desktop bindRemoteWorkspaceSessionContext bridge unavailable")),
-    startWebRemoteControl: (context) => window.zcode.startWebRemoteControl(context),
-    stopWebRemoteControl: () => window.zcode.stopWebRemoteControl(),
-    getWebRemoteControlStatus: () => window.zcode.getWebRemoteControlStatus(),
-    onWebRemoteControlStatusChanged: (handler) =>
-      window.zcode.onWebRemoteControlStatusChanged?.(handler) ?? (() => {}),
     disposeRemoteSession: (sessionId) => window.zcode.disposeRemoteSession(sessionId),
     isDockerAvailable: () => window.zcode.isDockerAvailable(),
     listWSLDistros: () => window.zcode.listWSLDistros(),
@@ -51,9 +45,6 @@ export function createDesktopPlatform(options: {
     saveMcpToUserDirectory: (payload) => window.zcode.saveMcpToUserDirectory(payload),
     migrateLegacyCommonMcp: (payload) => window.zcode.migrateLegacyCommonMcp(payload),
     openExternal: (url) => window.zcode.openExternal(url),
-    openFeedback: () => window.zcode.executeDesktopCommand(DesktopCommandIds.OpenFeedback),
-    openCommunity: () => window.zcode.executeDesktopCommand(DesktopCommandIds.OpenCommunity),
-    canOpenCommunity: (locale) => window.zcode.canOpenCommunity(locale),
     openInFileManager: (path) => window.zcode.openInFileManager(path),
     openExternalFile: (path) => window.zcode.openExternalFile(path),
     openCuaPermissionOnboarding: window.zcode.openCuaPermissionOnboarding
@@ -69,37 +60,12 @@ export function createDesktopPlatform(options: {
     startCuaHelperPermissionDrag: window.zcode.startCuaHelperPermissionDrag
       ? () => window.zcode.startCuaHelperPermissionDrag?.()
       : undefined,
-    notifyWebRemoteControlAuthStateChanged: (change) =>
-      window.zcode.notifyWebRemoteControlAuthStateChanged(change),
-    registerOAuthState: (payload) => window.zcode.registerOAuthState(payload),
-    onOAuthCallback: (callback) => window.zcode.onOAuthCallback(callback),
-    onPaymentCallback: (callback) => window.zcode.onPaymentCallback(callback),
-    onShareImport: (callback) => window.zcode.onShareImport?.(callback) ?? (() => {}),
     notifyRendererReady: () => window.zcode.notifyRendererReady(),
-    reportTelemetryEvent: (payload) => window.zcode.reportTelemetryEvent(payload),
-    reportArmsCustomEvent: (payload) => {
-      recordArmsCustomEventForE2E(payload);
-      return window.zcode.reportArmsCustomEvent(payload);
-    },
-    getRendererActionTraceConfig: window.zcode.getRendererActionTraceConfig
-      ? () => window.zcode.getRendererActionTraceConfig!()
-      : undefined,
-    onRendererActionTraceConfigChanged: window.zcode.onRendererActionTraceConfigChanged
-      ? (callback) => window.zcode.onRendererActionTraceConfigChanged!(callback)
-      : undefined,
-    reportLocalTtftBatch: (batch) => window.zcode.reportLocalTtftBatch(batch),
-    reportRendererActionTraceBatch: window.zcode.reportRendererActionTraceBatch
-      ? (batch) => window.zcode.reportRendererActionTraceBatch!(batch)
-      : undefined,
     reportRendererHeapSample: window.zcode.reportRendererHeapSample
       ? (sample) => window.zcode.reportRendererHeapSample!(sample)
       : undefined,
     showTaskNotification: (payload) => window.zcode.showTaskNotification(payload),
     syncWindowTabs: (paths) => window.zcode.syncWindowTabs(paths),
-    syncWebRemoteControlWorkspaces: (workspaces) =>
-      window.zcode.syncWebRemoteControlWorkspaces?.(workspaces),
-    onWebRemoteControlReconnectWorkspace: (handler) =>
-      window.zcode.onWebRemoteControlReconnectWorkspace?.(handler) ?? (() => {}),
     syncWindowUnreadCount: (count) => window.zcode.syncWindowUnreadCount(count),
     syncActiveTaskSession: (sessionId) => window.zcode.syncActiveTaskSession(sessionId),
     syncAppSettings: (patch) => window.zcode.syncAppSettings?.(patch),
@@ -160,19 +126,6 @@ export function createDesktopPlatform(options: {
     exportLogs: () => window.zcode.exportLogs(),
     captureWindowScreenshot: () =>
       window.zcode.captureWindowScreenshot?.() ?? Promise.resolve(null),
-    onUpdateReady: (callback) => window.zcode.onUpdateReady(callback),
-    onUpdateCheckResult: (callback) => window.zcode.onUpdateCheckResult(callback),
-    onUpdateStateChanged: (callback) => window.zcode.onUpdateStateChanged?.(callback) ?? (() => {}),
-    getUpdateState: () =>
-      window.zcode.getUpdateState?.() ?? Promise.resolve({ kind: "idle", enabled: true }),
-    downloadUpdate: () => window.zcode.downloadUpdate?.() ?? Promise.resolve(),
-    cancelUpdateDownload: () => window.zcode.cancelUpdateDownload?.() ?? Promise.resolve(),
-    openUpdateStatusWindow: () => window.zcode.openUpdateStatusWindow?.() ?? Promise.resolve(),
-    getAutoUpdatePreferences: () =>
-      window.zcode.getAutoUpdatePreferences?.() ??
-      Promise.resolve({ autoDownloadAndInstallUpdates: false }),
-    setAutoDownloadAndInstallUpdates: (enabled) =>
-      window.zcode.setAutoDownloadAndInstallUpdates?.(enabled) ?? Promise.resolve(),
     getDesktopSessionActivity: () =>
       window.zcode.getDesktopSessionActivity?.() ??
       Promise.resolve({ runningAgentSessionCount: 0 }),
@@ -182,11 +135,6 @@ export function createDesktopPlatform(options: {
     onSettingsChanged: (callback) => window.zcode.onSettingsChanged?.(callback) ?? (() => {}),
     onApplicationLocaleChanged: (callback) =>
       window.zcode.onApplicationLocaleChanged?.(callback) ?? (() => {}),
-    onPostUpdateReleaseNotes: (callback) => window.zcode.onPostUpdateReleaseNotes(callback),
-    acknowledgePostUpdateReleaseNotes: (version) =>
-      window.zcode.acknowledgePostUpdateReleaseNotes(version),
-    skipUpdateVersion: (version) => window.zcode.skipUpdateVersion?.(version) ?? Promise.resolve(),
-    quitAndInstallUpdate: () => window.zcode.quitAndInstallUpdate(),
     getInstalledEditors: (filePath) => window.zcode.getInstalledEditors(filePath),
     getApplicationIcon: (bundleId) =>
       window.zcode.getApplicationIcon?.(bundleId) ?? Promise.resolve(null),

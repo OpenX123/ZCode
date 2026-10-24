@@ -1,61 +1,48 @@
-import { stageV4ComposerDraftAttachments } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
 import { readProjectSidebarView } from "@/project-sidebar/index.js";
+import { stageV4ComposerDraftAttachments } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
 /* eslint-disable max-lines -- Root workspace action hook 集中编排项目、远程和 conversation 入口；合并期保持动作边界完整，后续按领域拆分。 */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import {
-  DesktopCommandIds,
-  remoteHostIdFromWorkspaceIdentity,
-  type AppSettings,
-  type IPlatformService,
-  type UserInfo,
-  type ZCodeTaskClientMode,
-} from "@zcode/shared";
-import type { IServiceAccessor } from "@zcode/services";
 import type {
   CreateTaskOptions,
   CreateTaskRequest,
   RemoteConnectionOpenPreference,
 } from "@/app-shell/types.js";
+import type { WorkbenchNewTaskTarget } from "@/conversation-workspace-target/workbenchTarget.js";
+import { resolveWorkbenchNewTaskTarget } from "@/conversation-workspace-target/workbenchTarget.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
-import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
-import { resolveLogoutProviderFamilyDomain } from "@/lib/providerFamilyDomainSettings.js";
+import { useComposerClientNamespace } from "@/hooks/useServices.js";
 import { isRendererReloadNavigation } from "@/lib/rendererNavigation.js";
 import { parseWslUncWorkspacePath } from "@/lib/wslUncWorkspace.js";
 import { logger } from "@/logger.js";
-import { useComposerClientNamespace } from "@/hooks/useServices.js";
-import {
-  resolveComposerScope,
-  ensurePendingTaskDraft,
-  bindPendingTaskDraft,
-  rememberComposerWorkspaceScope,
-  readComposerWorkspaceScope,
-} from "@/v4/composer/composerDraftStore.js";
 import { openFolderFromWorkspaceEntry } from "@/root/openWorkspaceFolderEntry.js";
+import type { RootProps } from "@/root/types.js";
 import { useConversationWorkspaceActions } from "@/root/useConversationWorkspaceActions.js";
+import { type TabStore, type TabStoreState } from "@/store/tabStore.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { notifyTaskNavigationCommitted } from "@/store/zcodeSessionStoreNavigation.js";
-import { type TabStore, type TabStoreState } from "@/store/tabStore.js";
-import type { RootProps } from "@/root/types.js";
 import {
-  hadPersistedPaneLayoutAtModuleLoad,
-  INITIAL_PANE_LAYOUT,
-  usePaneLayoutStore,
-} from "@/v4/paneLayoutStore.js";
-import { resolveWorkbenchNewTaskTarget } from "@/conversation-workspace-target/workbenchTarget.js";
-import type { WorkbenchNewTaskTarget } from "@/conversation-workspace-target/workbenchTarget.js";
-import { useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
-import {
+  bindPendingTaskDraft,
+  ensurePendingTaskDraft,
   persistV4ComposerDraft,
+  readComposerWorkspaceScope,
   readV4ComposerDraft,
+  rememberComposerWorkspaceScope,
+  resolveComposerScope,
   V4_DRAFT_SCOPE_ROOT,
 } from "@/v4/composer/composerDraftStore.js";
-
+import { hadPersistedPaneLayoutAtModuleLoad, usePaneLayoutStore } from "@/v4/paneLayoutStore.js";
+import { useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
+import type { IServiceAccessor } from "@zcode/services";
+import {
+  remoteHostIdFromWorkspaceIdentity,
+  type IPlatformService,
+  type ZCodeTaskClientMode,
+} from "@zcode/shared";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 /** 新任务落点：identity 缺省一律归一化为 null，供只读校验、focus/addTab 统一消费。 */
 export interface NewTaskTargetResolution {
   workspacePath: string;
   workspaceIdentity: string | null;
 }
-
 /**
  * 解析新任务落点：请求显式带 targetWorkspace 时（跨项目发起已保存工作流）直接采用它，不再询问 workbench 焦点；
  * 否则惰性回退到 resolveWorkbenchNewTaskTarget。identity 缺省归一化为 null。
@@ -81,7 +68,6 @@ export function resolveNewTaskTargetFromRequest(
     workspaceIdentity: fallback.workspaceIdentity ?? null,
   };
 }
-
 export function useRootWorkspaceActions({
   intl,
   platform,
@@ -94,15 +80,8 @@ export function useRootWorkspaceActions({
   allowOpenWorkspace,
   preferDirectoryBrowser,
   openDirectoryBrowser,
-  refreshProviderState,
-  updateAppSettings,
-  setOAuthError,
-  setUser,
-  onProviderFamilyDomainClearedAfterLogout,
-  userId,
   onOpenRemoteConnection,
   openRemoteProjectWorkspace,
-  openMobileProjectDraft,
   workbenchGroupClientMode = "desktop-continuous",
 }: {
   intl: ReturnType<typeof import("@/i18n/IntlProvider.js").useZCodeIntl>["intl"];
@@ -116,12 +95,6 @@ export function useRootWorkspaceActions({
   allowOpenWorkspace: NonNullable<RootProps["allowOpenWorkspace"]>;
   preferDirectoryBrowser: boolean;
   openDirectoryBrowser?: () => void;
-  refreshProviderState: () => Promise<void>;
-  updateAppSettings: (patch: Partial<AppSettings>) => Promise<void>;
-  setOAuthError: (error: string | null) => void;
-  setUser: (user: UserInfo | null) => void;
-  onProviderFamilyDomainClearedAfterLogout?: () => void;
-  userId?: string;
   onOpenRemoteConnection?: (preference?: RemoteConnectionOpenPreference) => void;
   openRemoteProjectWorkspace?: (target: {
     hostId: string;
@@ -131,7 +104,6 @@ export function useRootWorkspaceActions({
     projectId: string | null;
     isCurrent?: () => boolean;
   }) => Promise<void>;
-  openMobileProjectDraft?: (request: CreateTaskOptions) => Promise<void>;
   workbenchGroupClientMode?: ZCodeTaskClientMode;
 }) {
   const navigationSequence = useRef(0);
@@ -143,7 +115,6 @@ export function useRootWorkspaceActions({
   useLayoutEffect(() => {
     remoteProjectOpener.current = openRemoteProjectWorkspace;
   });
-
   useEffect(() => {
     useWorkbenchGroupStore.getState().configureClientMode(workbenchGroupClientMode);
     if (workbenchGroupClientMode === "desktop-continuous" && !isRendererReloadNavigation()) {
@@ -168,7 +139,6 @@ export function useRootWorkspaceActions({
       }
     }
   }, [workbenchGroupClientMode]);
-
   const composerClientNamespace = useComposerClientNamespace();
   const startDraftInWorkspace = useCallback(
     (workspacePath: string, workspaceIdentity?: string, options?: CreateTaskOptions) => {
@@ -244,7 +214,6 @@ export function useRootWorkspaceActions({
     },
     [workbenchGroupClientMode, composerClientNamespace],
   );
-
   const startNewTaskFromActiveWorkspace = useCallback(
     async (source: string, request?: CreateTaskRequest) => {
       const openRemoteProjectWorkspace = remoteProjectOpener.current;
@@ -343,16 +312,6 @@ export function useRootWorkspaceActions({
           if (hostId && !projectId) throw new Error("project.remote-project-required");
         }
         if (!isCurrent()) return;
-        if (workbenchGroupClientMode === "web-remote-replayable") {
-          if (!openMobileProjectDraft) throw new Error("project.remote-navigation-unavailable");
-          // 归属先在共享入口解析，目录仍只由 bridge owner 准备；旧 Root 不写交接后的草稿。
-          await openMobileProjectDraft({
-            ...requestOptions,
-            ...(projectId ? { projectId } : {}),
-            ...(hostId ? { hostId } : {}),
-          });
-          return;
-        }
         if (!services.projectService) throw new Error("project.service-unavailable");
         const pendingDraft =
           !projectId && (!hostId || hostId === "local")
@@ -410,12 +369,10 @@ export function useRootWorkspaceActions({
       activeWorkspaceIdentity,
       tabStoreApi,
       addTab,
-      openMobileProjectDraft,
       workbenchGroupClientMode,
       startDraftInWorkspace,
     ],
   );
-
   const {
     handleSelectConversationWorkspace,
     handleResolveConversationWorkspace,
@@ -427,85 +384,6 @@ export function useRootWorkspaceActions({
     createTask: startNewTaskFromActiveWorkspace,
     setWorkspaceActionError,
   });
-
-  const handleLogout = useCallback(async () => {
-    let runningAgentSessionCount: number | null = null;
-    try {
-      const sessionActivity = await platform.getDesktopSessionActivity?.();
-      runningAgentSessionCount =
-        typeof sessionActivity?.runningAgentSessionCount === "number"
-          ? sessionActivity.runningAgentSessionCount
-          : null;
-    } catch (error) {
-      logger.warn("[Root] 查询桌面运行中会话数量失败，使用保守退出登录文案", { error });
-    }
-
-    const confirmed = await requestConfirmation({
-      title: intl.formatMessage({ id: "logout.confirm.title" }),
-      description:
-        runningAgentSessionCount !== null && runningAgentSessionCount > 0
-          ? intl.formatMessage(
-              { id: "logout.confirm.descriptionWithRunningSessions" },
-              { count: String(runningAgentSessionCount) },
-            )
-          : intl.formatMessage({ id: "logout.confirm.descriptionDefault" }),
-      confirmLabel: intl.formatMessage({ id: "logout.confirm.ok" }),
-      cancelLabel: intl.formatMessage({ id: "logout.confirm.cancel" }),
-    });
-    if (!confirmed) {
-      return;
-    }
-
-    // Bug 原因：telemetry 是辅助链路；等待网络重试会延迟退出登录，甚至在旧的无超时实现里
-    // 无限阻塞主流程。这里只调度事件，Main 侧负责有界重试与退出 drain。
-    void reportAppTelemetryEvent(
-      platform,
-      {
-        elementName: "app_user_logout",
-        eventRegion: "app_profile",
-        eventType: "ck",
-        eventExtraDetail: {},
-        userId,
-      },
-      "Root",
-    );
-    const settingsBeforeLogout = await services.settingService.get();
-    const nextProviderFamilyDomain = resolveLogoutProviderFamilyDomain({
-      currentDomain: settingsBeforeLogout.providerFamilyDomain,
-    });
-    await services.oauthService.logout();
-    await updateAppSettings({
-      providerFamilyDomain: (nextProviderFamilyDomain ?? "") as AppSettings["providerFamilyDomain"],
-      providerFamilyDomainUpdatedAt: Date.now(),
-      providerFamilyDomainMigrated: true,
-    });
-    if (!nextProviderFamilyDomain) {
-      onProviderFamilyDomainClearedAfterLogout?.();
-    }
-    // ZAI/BigModel provider 已恢复为 App 登录镜像。
-    // 派生 Coding/Start key 由 OAuth logout 的 host hook 统一清理，Root 只负责刷新展示态。
-    setOAuthError(null);
-    setUser(null);
-    // 退出登录后刷新 Account Source 与 Registry，避免继续展示退出前的 Provider 状态。
-    await refreshProviderState();
-    // Coding Plan 官网 webview 使用独立持久 partition，App logout 必须同步清理。
-    await platform.executeDesktopCommand(DesktopCommandIds.ClearCodingPlanWebviewStorage);
-    await platform.executeDesktopCommand(DesktopCommandIds.RelaunchApp);
-  }, [
-    intl,
-    requestConfirmation,
-    refreshProviderState,
-    onProviderFamilyDomainClearedAfterLogout,
-    platform,
-    services.oauthService,
-    services.modelSelectionService,
-    services.settingService,
-    setOAuthError,
-    setUser,
-    updateAppSettings,
-    userId,
-  ]);
-
   const handleSelectProject = useCallback(
     async (path: string) => {
       logger.info("[Root] handleSelectProject called with path:", path);
@@ -535,14 +413,12 @@ export function useRootWorkspaceActions({
             return;
           }
         }
-
         // 桌面端：检查是否已有其他窗口打开了该目录，如果是则激活该窗口对应 tab
         const result = await platform.activateOrSetWorkspace(path);
         if (result.activated) {
           logger.info("[Root] 目录已在其他窗口打开，已激活该窗口对应 tab，跳过重复打开");
           return;
         }
-
         // 新增 tab（如果已在本窗口打开则激活它）
         addTab(path);
         // 打开 workspace 是 workspace-only 意图，不是“继续上次会话”。
@@ -564,7 +440,6 @@ export function useRootWorkspaceActions({
       supportsSettings,
     ],
   );
-
   const handleOpenWorkspace = useCallback(() => {
     if (!allowOpenWorkspace) {
       // Web 远程控制当前只保证“进入 desktop 已打开的 workspace”。
@@ -575,7 +450,6 @@ export function useRootWorkspaceActions({
       return;
     }
     setWorkspaceActionError(null);
-
     if (preferDirectoryBrowser) {
       void openFolderFromWorkspaceEntry({
         preferDirectoryBrowser,
@@ -587,7 +461,6 @@ export function useRootWorkspaceActions({
       });
       return;
     }
-
     // 打开工作区中间页作为“新标签页”会在启动空态、Cmd/Ctrl+O
     // 和菜单打开工作区时抢占整页。现在打开工作区只保留为动作：本地优先直接弹系统目录选择，
     // 不再进入中间页面；不支持系统目录选择的壳层由启动兜底负责创建默认 workspace。
@@ -597,7 +470,6 @@ export function useRootWorkspaceActions({
       });
       return;
     }
-
     void openFolderFromWorkspaceEntry({
       selectDirectory: () => platform.selectDirectory(),
       onSelectProject: (path) => {
@@ -613,13 +485,11 @@ export function useRootWorkspaceActions({
     preferDirectoryBrowser,
     supportsSettings,
   ]);
-
   const handleOpenFolderFromWorkspaceMenu = useCallback(() => {
     if (!allowOpenWorkspace) {
       logger.info("[Root] 当前模式不支持从空态菜单打开文件夹，已忽略请求");
       return;
     }
-
     // 空态 workspace 菜单的 Open folder 需要复用根级打开工作区动作。
     // 因此这里调用同一个入口函数，只把 Root 里的 selectDirectory 与项目选择回调注入进去。
     if (preferDirectoryBrowser) {
@@ -633,14 +503,12 @@ export function useRootWorkspaceActions({
       });
       return;
     }
-
     if (!supportsSettings) {
       void handleEnsureConversationWorkspace().catch((error) => {
         logger.error("[Root] 从空态菜单创建对话 workspace 失败", { error });
       });
       return;
     }
-
     void openFolderFromWorkspaceEntry({
       selectDirectory: () => platform.selectDirectory(),
       onSelectProject: (path) => {
@@ -656,19 +524,16 @@ export function useRootWorkspaceActions({
     preferDirectoryBrowser,
     supportsSettings,
   ]);
-
   const handleCreateTask = useCallback(
     (request?: CreateTaskRequest) => {
       return startNewTaskFromActiveWorkspace("sidebar new task", request);
     },
     [startNewTaskFromActiveWorkspace],
   );
-
   const handleBackFromSettings = useCallback(() => {
     if (!activeWorkspacePath) {
       return;
     }
-
     // 设置页返回最近 workspace 时不能只按 path 激活。
     // 同一路径可能存在不同远端身份，丢掉 activeWorkspaceIdentity 会把远程工作区切到 path-only 桶。
     const activated = tabStoreApi
@@ -688,13 +553,11 @@ export function useRootWorkspaceActions({
       });
     }
   }, [activeWorkspaceIdentity, activeWorkspacePath, tabStoreApi]);
-
   return {
     workspaceActionError,
     setWorkspaceActionError,
     startDraftInWorkspace,
     startNewTaskFromActiveWorkspace,
-    handleLogout,
     handleSelectProject,
     handleSelectConversationWorkspace,
     handleResolveConversationWorkspace,

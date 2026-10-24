@@ -3,7 +3,6 @@ import type { ComposerDraftHandoff } from "@/v4/composer/composerDraftWorkspaceT
 import type { RefObject } from "react";
 import type {
   ZCodeProvider,
-  SessionCreateSource,
   ZCodeTaskRuntimeStatus,
   ZCodeTaskMeta,
   GitChangeSourceId,
@@ -12,14 +11,10 @@ import type {
   RemoteTarget,
   SourceServerUpdateTarget,
   RemoteWorkspaceSessionEntry,
-  UpdateStatePayload,
-  UserInfo,
 } from "@zcode/shared";
-import type { IFeedbackService, IServiceAccessor } from "@zcode/services";
+import type { IServiceAccessor } from "@zcode/services";
 import type { SavedWorkflowsOpenTarget } from "@/settings/saved-workflows/SavedWorkflowsSection.js";
 import type { SavedWorkflowHubTarget } from "@/v4/savedWorkflowHubContext.js";
-import type { WebRemoteControlWorkspaceSwitcherApi } from "@/root/types.js";
-import type { WebRemoteControlTerminalTransportState } from "@/root/types.js";
 import type { BrowserNavigationRequest, RecentClosedSidePaneTab } from "@/hooks/useAppPanels.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { AssistantPreviewCardsAutoOpenRequest } from "@/lib/assistantPreviewCards.js";
@@ -47,7 +42,6 @@ import type { ComposerMentionPrefill } from "@/store/zcodeSessionStoreTypes.js";
 import type { TaskFindDialogProps } from "@/quickpick/TaskFindDialog.js";
 import type { AutomationsNavigationTab, OpenAutomationsMain } from "@/lib/taskNavigationHistory.js";
 import type { SidePaneFullViewController } from "@/side-pane-full-view/contract.js";
-
 export interface WorkspaceShellZCodeState {
   activeTaskId: WorkspaceZCodeUIState["activeTaskId"];
   draftFocusVersion: WorkspaceZCodeUIState["draftFocusVersion"];
@@ -59,7 +53,6 @@ export interface WorkspaceShellZCodeState {
   taskStatus: ZCodeTaskRuntimeStatus;
   taskError: string | null;
 }
-
 export interface CreateTaskOptions {
   /** Renderer 发起方租约；异步准备期间取消或换草稿后不得导航。 */
   isCurrent?: () => boolean;
@@ -76,7 +69,6 @@ export interface CreateTaskOptions {
   /** 仅分组组织意图，不决定执行项目或 cwd。 */
   taskGroupId?: string | null;
   hostId?: string;
-  createSource?: SessionCreateSource;
   /** 新草稿输入框预填文本；只写草稿，不自动发送。 */
   initialPrompt?: string;
   /** 创建项目后的当前草稿交接，仅在 renderer 内存中传递。 */
@@ -91,24 +83,25 @@ export interface CreateTaskOptions {
     workspaceIdentity?: string;
   };
 }
-
 export type CreateTaskRequest = ZCodeProvider | CreateTaskOptions;
-
 export interface RemoteWorkspaceRecoveryStatus {
   mode: "automatic" | "manual";
   attempt?: number;
   limit?: number;
 }
-
 /** 仅用于 Renderer 连接反馈，不传入 Host 的恢复/遥测协议。 */
 export interface RemoteConnectionFeedbackOptions {
   announceReusedConnection?: boolean;
 }
-
 export type DeviceAdditionResult =
-  | { kind: "connected"; sourceServerId: string | undefined }
-  | { kind: "cancelled"; background?: boolean };
-
+  | {
+      kind: "connected";
+      sourceServerId: string | undefined;
+    }
+  | {
+      kind: "cancelled";
+      background?: boolean;
+    };
 /** 仅当前 renderer 内存中的原 owner 引用；不序列化草稿或凭据。 */
 export interface DeviceAdditionReturnTarget {
   /** 已有设备连接留在原项目页；只有新增设备往返设置。 */
@@ -120,7 +113,6 @@ export interface DeviceAdditionReturnTarget {
   canFinish?(result: DeviceAdditionResult): Promise<boolean>;
   finish(result: DeviceAdditionResult): void | Promise<void>;
 }
-
 export interface RemoteConnectionOpenPreference {
   returnTarget?: DeviceAdditionReturnTarget;
   /** 完成意图由发起入口确定；凭据、安装和重试不得替换它。 */
@@ -133,7 +125,14 @@ export interface RemoteConnectionOpenPreference {
     profileId?: string;
     /** 交接前固定的非敏感失败身份，不从最新 Profile 重建。 */
     failedTarget?: SourceServerUpdateTarget;
-    resolvedWslTarget?: Required<Extract<RemoteTarget, { kind: "wsl" }>>;
+    resolvedWslTarget?: Required<
+      Extract<
+        RemoteTarget,
+        {
+          kind: "wsl";
+        }
+      >
+    >;
   };
   /** 已有项目的连接意图；安装、升级和凭据交互结束后仍打开该目录。 */
   preferredDirectoryPath?: string;
@@ -147,10 +146,8 @@ export interface RemoteConnectionOpenPreference {
   /** 用户从设备/连接记录点击“连接”时精确选择的 Profile；弹窗消费后直达第 4 步。 */
   preferredProfileId?: string;
 }
-
 export interface AppProps {
   services: IServiceAccessor;
-  baseFeedbackService: IFeedbackService;
   onConnectRemote: (options: RemoteTarget, requestId?: string) => Promise<string>;
   onSelectRemoteProject: (
     sessionId: string,
@@ -161,13 +158,9 @@ export interface AppProps {
   ) => Promise<void>;
   onCancelRemoteProject: (sessionId: string) => Promise<void>;
   onReconnectRemoteWorkspace: (workspaceKey: string) => Promise<void>;
-  onLogout?: () => void;
-  onLogin?: () => void;
-  user?: UserInfo | null;
   reconnectingRemoteWorkspaceKeys: string[];
   remoteWorkspaceRecoveryByWorkspaceKey?: Record<string, RemoteWorkspaceRecoveryStatus>;
   remoteWorkspaceErrorByWorkspaceKey: Record<string, string>;
-
   remoteConnectionLogs?: RemoteConnectionLogEntry[];
   onCreateTask: (request?: CreateTaskRequest) => void;
   onCreateConversationTask?: () => void;
@@ -183,10 +176,7 @@ export interface AppProps {
   remoteConnectionInProgress?: boolean;
   onReturnToWorkspace?: () => void;
   allowOpenWorkspace?: boolean;
-  webRemoteControlWorkspaceSwitcher?: WebRemoteControlWorkspaceSwitcherApi;
   initialSidebarFileTreeOpen?: boolean;
-  initialWebRemoteControlMobileNavigationIntent?: import("@zcode/shared").WebRemoteControlMobileNavigationIntent;
-  webRemoteControlTerminalTransportState?: WebRemoteControlTerminalTransportState;
   allowRemoteWorkspace?: boolean;
   remoteWorkspaceSessions?: RemoteWorkspaceSessionEntry[];
   workspaceAbsPath: string;
@@ -198,15 +188,12 @@ export interface AppProps {
   isWindowsDesktop?: boolean;
   supportsEmbeddedBrowser?: boolean;
 }
-
 export interface GitChangeSummary {
   added: number;
   removed: number;
 }
-
 export type WorkspaceMainView = "chat" | "automations" | "plugin-store";
-
-export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackService"> {
+export interface WorkspaceShellLayoutProps extends AppProps {
   workspaceReadOnlyReason?: string;
   workspaceMainView: WorkspaceMainView;
   pluginStoreOpenVersion: number;
@@ -230,8 +217,6 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   desktopWindowChromeState: DesktopWindowChromeState | null;
   macWindowControlsLeftPaddingPx: number;
   windowsWindowControlsRightPaddingPx: number;
-  updateReadyVersion: string | null;
-  updateState: UpdateStatePayload | null;
   sidebarContainerRef: RefObject<HTMLElement | null>;
   toggleSidebarShortcutLabel: string;
   newTaskShortcutLabel: string;
@@ -324,7 +309,6 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
     targetWorkspacePath: string,
     targetWorkspaceIdentity?: string,
     targetWorkspacePurpose?: import("@zcode/shared").WorkspacePurpose,
-    createSource?: SessionCreateSource,
   ) => void;
   handleOpenCommandCenter: () => void;
   handleRefreshGit: () => void;

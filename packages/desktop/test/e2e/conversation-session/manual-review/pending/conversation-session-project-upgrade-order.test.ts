@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { waitForWorkspaceApp, DEFAULT_WORKSPACE } from "#e2e/helpers/desktop-app";
-import { loginWithApiKey } from "#e2e/helpers/conversation-session";
 import {
   SAVED_PROJECT_NAMES,
   MIGRATED_REMOTE_NAME,
@@ -113,14 +112,6 @@ describe("虚拟项目升级顺序", () => {
     );
     await browser.refresh();
     try {
-      // 隔离夹具无账号登录态；刷新可能回欢迎页，复用真实登录步骤后再检查顺序。
-      const login = $('[data-testid="login-use-api-key-button"]');
-      await browser.waitUntil(
-        async () =>
-          (await login.isExisting()) || (await $('[data-project-name="empty-saved"]').isExisting()),
-        { timeout: 45_000 },
-      );
-      if (await login.isExisting()) await loginWithApiKey();
       await $('[data-project-name="empty-saved"]').waitForExist({ timeout: 45_000 });
     } catch (error) {
       await browser.saveScreenshot(

@@ -1,20 +1,11 @@
-import { installPluginSandboxHostBridge } from "./pluginSandbox/hostBridge.js";
 import {
   databaseStartupControlSchema,
-  databaseStartupStateSchema,
   databaseStartupPortPayloadSchema,
+  databaseStartupStateSchema,
 } from "@zcode/shared";
+import { installPluginSandboxHostBridge } from "./pluginSandbox/hostBridge.js";
 /* eslint-disable max-lines -- preload bridge 集中暴露桌面平台 IPC，拆散会让 contextBridge 权限边界更难审计。 */
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
-import {
-  installArmsRumBridgeIpcForward,
-  scheduleArmsEventBridgePatch,
-} from "../shared/armsRumBridgeForward.js";
-
-// ARMS frame preload 闭包内的 send 不会随后序 ipcRenderer.send 补丁生效，须同步包装 Bridge.send
-installArmsRumBridgeIpcForward(ipcRenderer);
-scheduleArmsEventBridgePatch();
-
 /** 从 command-line 参数中解析 --device-id= */
 function parseDeviceIdFromArgs(): string {
   for (const arg of process.argv) {
@@ -31,98 +22,62 @@ contextBridge.exposeInMainWorld("__ZCODE_DEVICE_ID__", parseDeviceIdFromArgs());
 import type {
   AppSettings,
   ApplicationIconRequest,
-  BindRemoteWorkspaceSessionContextResult,
   BindRemoteWorkspaceSessionContextIpcResult,
-  BrowserViewOperationPayload,
+  BindRemoteWorkspaceSessionContextResult,
   BrowserGuestAttachResult,
+  BrowserViewCloseTabNotification,
+  BrowserViewCloseTabRequest,
+  BrowserViewOperationPayload,
+  BrowserViewResidencyReportPayload,
+  BrowserViewResidencyTransitionPayload,
+  BrowserViewRestoreTabsRequest,
+  BrowserViewRestoredTabShell,
   BrowserViewScreenshotSurfacePreparePayload,
   BrowserViewScreenshotSurfaceReadyPayload,
   BrowserViewScreenshotSurfaceReleasePayload,
   BrowserViewViewportChangedPayload,
-  BrowserViewCloseTabNotification,
-  BrowserViewCloseTabRequest,
-  BrowserViewResidencyReportPayload,
-  BrowserViewResidencyTransitionPayload,
-  BrowserViewRestoredTabShell,
-  BrowserViewRestoreTabsRequest,
   BrowserViewportSize,
-  DesktopZoomState,
-  DesktopWindowChromeState,
+  CreateTempTextAttachmentRequest,
   DesktopCommandId,
   DesktopTitleBarTheme,
+  DesktopWindowChromeState,
+  DesktopZoomState,
   EmbeddedBrowserOpenUrlRequest,
   EmbeddedBrowserPermissionPromptEvent,
   EmbeddedBrowserPermissionResolveRequest,
-  EmbeddedBrowserSitePermissionUpdateRequest,
   EmbeddedBrowserSitePermissionResetRequest,
+  EmbeddedBrowserSitePermissionUpdateRequest,
   EmbeddedBrowserSitePermissionsSnapshot,
+  LoadCliMcpFromUserDirectoryRequest,
   Locale,
-  OAuthStateRegistration,
-  WebRemoteControlAuthStateChange,
+  MaterializeWorkflowArtifactFileRequest,
+  MigrateLegacyCommonMcpRequest,
+  OpenCuaPermissionOnboardingOptions,
   OpenInEditorOptions,
-  RemoteTarget,
-  TaskNotificationPayload,
-  TelemetryRendererContext,
-  RendererActionTraceBatchV1,
-  RendererActionTraceConfigV1,
-  RendererHeapSample,
-  PostUpdateReleaseNotesPayload,
+  PrintPageToPdfResult,
+  RemoteConnectionRuntimeLog,
   RemoteSessionClosedEvent,
   RemoteSessionReconnectedEvent,
-  UpdateCheckResultPayload,
-  UpdateStatePayload,
-  ZCodeStdioTapDevState,
-  LoadCliMcpFromUserDirectoryRequest,
-  MigrateLegacyCommonMcpRequest,
+  RemoteTarget,
+  RendererHeapSample,
+  SSHConfigAliasOption,
   SaveCliMcpToUserDirectoryRequest,
   SaveFileRequest,
   SaveFileResult,
-  PrintPageToPdfResult,
-  SSHConfigAliasOption,
-  WebRemoteControlContext,
-  WebRemoteControlReconnectWorkspaceRequest,
-  WebRemoteControlReconnectWorkspaceResult,
-  WebRemoteControlStatus,
-  WebRemoteControlWorkspaceTarget,
-  RemoteConnectionRuntimeLog,
+  TaskNotificationPayload,
   WindowControlsOverlayMetrics,
   WindowControlsOverlayReadyPayload,
-  CreateTempTextAttachmentRequest,
-  MaterializeWorkflowArtifactFileRequest,
-  OpenCuaPermissionOnboardingOptions,
-  ConfigureFinalArmsCustomEventE2ERequest,
-  FinalArmsCustomEventE2EEntry,
+  ZCodeStdioTapDevState,
 } from "@zcode/shared";
-import { unwrapRemoteWorkspaceBindResult } from "./remoteWorkspaceBindBridge.js";
 import {
   InternalChannels,
   PlatformChannels,
   formatZCodeRendererProcessName,
   scopedServicePortPayloadSchema,
-  shouldEnableE2ETestBridge,
 } from "@zcode/shared";
-import { createOAuthCallbackHandler } from "./oauthCallbackBridge.js";
-
-if (shouldEnableE2ETestBridge(process.env)) {
-  contextBridge.exposeInMainWorld("__zcodeFinalArmsCustomEventsE2E", {
-    read: (): Promise<FinalArmsCustomEventE2EEntry[]> =>
-      ipcRenderer.invoke(PlatformChannels.ReadFinalArmsCustomEventsE2E),
-    clear: (): Promise<void> => ipcRenderer.invoke(PlatformChannels.ClearFinalArmsCustomEventsE2E),
-    configure: (request: ConfigureFinalArmsCustomEventE2ERequest): Promise<void> =>
-      ipcRenderer.invoke(PlatformChannels.ConfigureFinalArmsCustomEventsE2E, request),
-  });
-}
-
-const updateReadyCallbacks = new Set<(version: string) => void>();
-const updateStateCallbacks = new Set<(payload: UpdateStatePayload) => void>();
-const postUpdateReleaseNotesCallbacks = new Set<(payload: PostUpdateReleaseNotesPayload) => void>();
+import { unwrapRemoteWorkspaceBindResult } from "./remoteWorkspaceBindBridge.js";
 const openWorkspacePathCallbacks = new Set<(path: string) => void>();
-let latestReadyUpdateVersion: string | null = null;
-let latestUpdateState: UpdateStatePayload | null = null;
-let latestPostUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
 const pendingOpenWorkspacePaths: string[] = [];
-const shareImportCallbacks = new Set<(payload: { shareCode: string }) => void>();
-const pendingShareImports: { shareCode: string }[] = [];
 const MACOS_WINDOW_CONTROLS_BASE_LEFT_PADDING_PX = 96;
 const WINDOWS_WINDOW_CONTROLS_BASE_RIGHT_PADDING_PX = 136;
 const WINDOWS_TITLE_BAR_HEIGHT_PX = 48;
@@ -211,41 +166,8 @@ ipcRenderer.on(PlatformChannels.OpenWorkspacePath, (_event: unknown, path: strin
   }
 });
 
-ipcRenderer.on(PlatformChannels.ShareImport, (_event: unknown, payload: { shareCode: string }) => {
-  if (shareImportCallbacks.size === 0) {
-    pendingShareImports.push(payload);
-    return;
-  }
-  for (const callback of shareImportCallbacks) callback(payload);
-});
-
 function updateRendererProcessTitle(): void {
   process.title = formatZCodeRendererProcessName(document.title);
-}
-
-function notifyUpdateReadyCallbacks(version: string): void {
-  latestReadyUpdateVersion = version;
-  for (const callback of updateReadyCallbacks) {
-    callback(version);
-  }
-}
-
-function notifyPostUpdateReleaseNotesCallbacks(payload: PostUpdateReleaseNotesPayload): void {
-  latestPostUpdateReleaseNotes = payload;
-  for (const callback of postUpdateReleaseNotesCallbacks) {
-    callback(payload);
-  }
-}
-
-function notifyUpdateStateCallbacks(payload: UpdateStatePayload): void {
-  latestUpdateState = payload;
-  // UpdateReady 是兼容旧交互的一次性缓存，但 update-downloaded
-  // 之后 Squirrel.Mac 可能再上报 staging error。此时 main 会广播 idle/error，
-  // preload 必须同步清掉旧 ready，否则 React 重新订阅时会把已失效版本回放出来。
-  latestReadyUpdateVersion = payload.kind === "update-downloaded" ? payload.version : null;
-  for (const callback of updateStateCallbacks) {
-    callback(payload);
-  }
 }
 
 // 进程检索体验优化：renderer 在系统里通常只会显示成通用 helper 名称，
@@ -296,19 +218,6 @@ contextBridge.exposeInMainWorld("zcode", {
       .then((result: BindRemoteWorkspaceSessionContextIpcResult) =>
         unwrapRemoteWorkspaceBindResult(result),
       ),
-  startWebRemoteControl: (context: WebRemoteControlContext) =>
-    ipcRenderer.invoke(PlatformChannels.StartWebRemoteControl, context),
-  stopWebRemoteControl: (): Promise<void> =>
-    ipcRenderer.invoke(PlatformChannels.StopWebRemoteControl),
-  getWebRemoteControlStatus: () => ipcRenderer.invoke(PlatformChannels.GetWebRemoteControlStatus),
-  onWebRemoteControlStatusChanged: (
-    callback: (status: WebRemoteControlStatus) => void,
-  ): (() => void) => {
-    const handler = (_event: unknown, payload: WebRemoteControlStatus) => callback(payload);
-    ipcRenderer.on(PlatformChannels.WebRemoteControlStatusChanged, handler);
-    return () =>
-      ipcRenderer.removeListener(PlatformChannels.WebRemoteControlStatusChanged, handler);
-  },
   disposeRemoteSession: (sessionId: string): Promise<void> =>
     ipcRenderer.invoke(PlatformChannels.DisposeRemoteSession, sessionId),
   isDockerAvailable: (): Promise<boolean> => ipcRenderer.invoke(PlatformChannels.IsDockerAvailable),
@@ -380,32 +289,6 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.invoke(PlatformChannels.ActivateOrSetWorkspace, path),
   /** 同步当前窗口所有 tab 的 workspace 路径到 main 进程 */
   syncWindowTabs: (paths: string[]) => ipcRenderer.send(PlatformChannels.SyncWindowTabs, paths),
-  /** 同步当前窗口里 Web 远程控制允许切换的 workspace */
-  syncWebRemoteControlWorkspaces: (workspaces: WebRemoteControlWorkspaceTarget[]) =>
-    ipcRenderer.send(PlatformChannels.SyncWebRemoteControlWorkspaces, workspaces),
-  onWebRemoteControlReconnectWorkspace: (
-    callback: (
-      request: WebRemoteControlReconnectWorkspaceRequest,
-    ) => Promise<WebRemoteControlReconnectWorkspaceResult>,
-  ) => {
-    const handler = async (event: Electron.IpcRendererEvent, payload: unknown) => {
-      const request = payload as WebRemoteControlReconnectWorkspaceRequest;
-      try {
-        const result = await callback(request);
-        event.sender.send(PlatformChannels.WebRemoteControlReconnectWorkspace, result);
-      } catch (error) {
-        event.sender.send(PlatformChannels.WebRemoteControlReconnectWorkspace, {
-          requestId: request.requestId,
-          workspaceKey: request.workspaceKey,
-          success: false,
-          error: error instanceof Error ? error.message : String(error),
-        } satisfies WebRemoteControlReconnectWorkspaceResult);
-      }
-    };
-    ipcRenderer.on(PlatformChannels.WebRemoteControlReconnectWorkspace, handler);
-    return () =>
-      ipcRenderer.removeListener(PlatformChannels.WebRemoteControlReconnectWorkspace, handler);
-  },
   /** 同步当前窗口的未读 task 数到 main 进程 */
   syncWindowUnreadCount: (count: number) =>
     ipcRenderer.send(PlatformChannels.SyncWindowUnreadCount, count),
@@ -681,9 +564,6 @@ contextBridge.exposeInMainWorld("zcode", {
   },
   /** 打开外部 URL（用于 OAuth 跳转浏览器） */
   openExternal: (url: string) => ipcRenderer.send(PlatformChannels.OpenExternal, url),
-  /** 查询当前语言下是否存在可用的用户社群入口 */
-  canOpenCommunity: (locale: Locale): Promise<boolean> =>
-    ipcRenderer.invoke(PlatformChannels.CanOpenCommunity, locale),
   /** 在系统文件管理器中打开指定路径 */
   openInFileManager: (path: string) => ipcRenderer.invoke(PlatformChannels.OpenInFileManager, path),
   /** 使用系统默认应用打开本地文件 */
@@ -702,74 +582,8 @@ contextBridge.exposeInMainWorld("zcode", {
   /** 从权限浮窗拖拽 Helper.app 到 macOS 权限列表。必须是 send —— invoke 的往返会错过手势。 */
   startCuaHelperPermissionDrag: () =>
     ipcRenderer.send(PlatformChannels.StartCuaHelperPermissionDrag),
-  notifyWebRemoteControlAuthStateChanged: (change: WebRemoteControlAuthStateChange) =>
-    ipcRenderer.send(PlatformChannels.WebRemoteControlAuthStateChanged, change),
-  /** 上报 OAuth state 用于 deep link 路由 */
-  registerOAuthState: (payload: OAuthStateRegistration) =>
-    ipcRenderer.send(PlatformChannels.OAuthRegisterState, payload),
-  /** 注册 OAuth deep link 回调，返回 disposer */
-  onOAuthCallback: (cb: (url: string) => void): (() => void) => {
-    const handler = createOAuthCallbackHandler(cb, () => {
-      ipcRenderer.send(PlatformChannels.OAuthCallbackHandled);
-    });
-    ipcRenderer.on(PlatformChannels.OAuthCallback, handler);
-    return () => ipcRenderer.removeListener(PlatformChannels.OAuthCallback, handler);
-  },
-  /** 注册支付 deep link 回调，返回 disposer */
-  onPaymentCallback: (callback: (url: string) => void): (() => void) => {
-    const handler = (_event: unknown, url: string) => callback(url);
-    ipcRenderer.on(PlatformChannels.PaymentCallback, handler);
-    return () => ipcRenderer.removeListener(PlatformChannels.PaymentCallback, handler);
-  },
-  onShareImport: (callback: (payload: { shareCode: string }) => void): (() => void) => {
-    shareImportCallbacks.add(callback);
-    while (pendingShareImports.length > 0) {
-      const payload = pendingShareImports.shift();
-      if (payload) callback(payload);
-    }
-    return () => shareImportCallbacks.delete(callback);
-  },
   /** 通知 main process renderer 已就绪 */
   notifyRendererReady: () => ipcRenderer.send(PlatformChannels.RendererReady),
-  /** 同步 renderer telemetry 上下文到 main process */
-  syncTelemetryContext: (context: TelemetryRendererContext) =>
-    ipcRenderer.send(PlatformChannels.SyncTelemetryContext, context),
-  /** 通过 main process 统一上报业务 telemetry 事件 */
-  reportTelemetryEvent: (payload: {
-    context: TelemetryRendererContext;
-    elementName: string;
-    eventRegion: string;
-    eventType: string;
-    eventText?: string;
-    eventExtraDetail: Record<string, string>;
-    userId?: string;
-    talkId?: string;
-    messageId?: string;
-  }) => ipcRenderer.invoke(PlatformChannels.ReportTelemetryEvent, payload),
-  /** 通过 main process 统一上报 ARMS 自定义事件 */
-  reportArmsCustomEvent: (payload: {
-    name: string;
-    group: string;
-    value?: number;
-    properties?: Record<string, string | number | boolean | undefined>;
-  }) => ipcRenderer.invoke(PlatformChannels.ReportArmsCustomEvent, payload),
-  /** 读取 Renderer 用户操作 Trace 灰度配置。 */
-  getRendererActionTraceConfig: (): Promise<RendererActionTraceConfigV1> =>
-    ipcRenderer.invoke(PlatformChannels.GetRendererActionTraceConfig),
-  /** 订阅 Main 推送的 Renderer 用户操作 Trace 配置变化。 */
-  onRendererActionTraceConfigChanged: (
-    callback: (config: RendererActionTraceConfigV1) => void,
-  ): (() => void) => {
-    const handler = (_event: unknown, config: RendererActionTraceConfigV1) => callback(config);
-    ipcRenderer.on(PlatformChannels.RendererActionTraceConfigChanged, handler);
-    return () =>
-      ipcRenderer.removeListener(PlatformChannels.RendererActionTraceConfigChanged, handler);
-  },
-  /** 发送已结束 Span；使用 send 避免遥测往返阻塞业务。 */
-  reportLocalTtftBatch: (batch: import("@zcode/shared").LocalTtftBatch): void =>
-    ipcRenderer.send(PlatformChannels.ReportLocalTtftBatch, batch),
-  reportRendererActionTraceBatch: (batch: RendererActionTraceBatchV1): void =>
-    ipcRenderer.send(PlatformChannels.ReportRendererActionTraceBatch, batch),
   /**
    * 主窗口 renderer 的 60 秒 heap 读数。
    * 只提供单向 send：main 不回执，renderer 也不能靠它反查 main 的进程事实。
@@ -837,69 +651,7 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.ApplicationLocaleChanged, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.ApplicationLocaleChanged, handler);
   },
-  /** 注册"手动检查更新"结果的回调，返回 disposer */
-  onUpdateCheckResult: (callback: (payload: UpdateCheckResultPayload) => void): (() => void) => {
-    const handler = (_event: unknown, payload: UpdateCheckResultPayload) => callback(payload);
-    ipcRenderer.on(PlatformChannels.UpdateCheckResult, handler);
-    return () => ipcRenderer.removeListener(PlatformChannels.UpdateCheckResult, handler);
-  },
-  getUpdateState: (): Promise<UpdateStatePayload> =>
-    ipcRenderer.invoke(PlatformChannels.GetUpdateState),
-  /** 开始下载当前已发现的更新 */
-  downloadUpdate: () => ipcRenderer.invoke(PlatformChannels.DownloadUpdate),
-  /** 取消当前正在下载的更新 */
-  cancelUpdateDownload: () => ipcRenderer.invoke(PlatformChannels.CancelUpdateDownload),
-  /** 打开独立更新窗口 */
-  openUpdateStatusWindow: () => ipcRenderer.invoke(PlatformChannels.OpenUpdateStatusWindow),
-  /** 读取自动更新偏好 */
-  getAutoUpdatePreferences: () => ipcRenderer.invoke(PlatformChannels.GetAutoUpdatePreferences),
-  /** 写入“自动下载并安装更新”偏好 */
-  setAutoDownloadAndInstallUpdates: (enabled: boolean) =>
-    ipcRenderer.invoke(PlatformChannels.SetAutoDownloadAndInstallUpdates, enabled),
   getDesktopSessionActivity: () => ipcRenderer.invoke(PlatformChannels.GetDesktopSessionActivity),
-  /** 注册自动更新持续状态变化，返回 disposer */
-  onUpdateStateChanged: (callback: (payload: UpdateStatePayload) => void): (() => void) => {
-    updateStateCallbacks.add(callback);
-    if (latestUpdateState) {
-      callback(latestUpdateState);
-    }
-    return () => {
-      updateStateCallbacks.delete(callback);
-    };
-  },
-  /** 注册新版本已下载完毕的回调，返回 disposer */
-  onUpdateReady: (callback: (version: string) => void): (() => void) => {
-    // 主进程的 update-ready 是一次性事件，常常早于 React effect 注册。
-    // 这里在 preload 层先缓存最新版本，并在订阅时立即回放，
-    // 这样 UI 即使晚挂载，也能拿到“更新已下载完毕”的稳定状态。
-    updateReadyCallbacks.add(callback);
-    if (latestReadyUpdateVersion) {
-      callback(latestReadyUpdateVersion);
-    }
-    return () => {
-      updateReadyCallbacks.delete(callback);
-    };
-  },
-  /** 注册更新安装后的版本说明，返回 disposer */
-  onPostUpdateReleaseNotes: (
-    callback: (payload: PostUpdateReleaseNotesPayload) => void,
-  ): (() => void) => {
-    postUpdateReleaseNotesCallbacks.add(callback);
-    if (latestPostUpdateReleaseNotes) {
-      callback(latestPostUpdateReleaseNotes);
-    }
-    return () => {
-      postUpdateReleaseNotesCallbacks.delete(callback);
-    };
-  },
-  /** 标记当前版本说明已读 */
-  acknowledgePostUpdateReleaseNotes: (version: string) =>
-    ipcRenderer.invoke(PlatformChannels.AcknowledgePostUpdateReleaseNotes, version),
-  /** 跳过当前已发现的更新版本 */
-  skipUpdateVersion: (version: string) =>
-    ipcRenderer.invoke(PlatformChannels.SkipUpdateVersion, version),
-  /** 用户确认重启安装更新 */
-  quitAndInstallUpdate: () => ipcRenderer.invoke(PlatformChannels.QuitAndInstallUpdate),
   /** 获取已安装的编辑器/终端列表（含图标） */
   getInstalledEditors: (filePath?: string) =>
     ipcRenderer.invoke(PlatformChannels.GetInstalledEditors, filePath),
@@ -1011,23 +763,7 @@ ipcRenderer.on(PlatformChannels.TaskNotificationSound, () => {
   window.postMessage(InternalChannels.TaskNotificationSound, "*");
 });
 
-ipcRenderer.on(PlatformChannels.UpdateReady, (_event, version: string) => {
-  notifyUpdateReadyCallbacks(version);
-});
-
-ipcRenderer.on(PlatformChannels.UpdateStateChanged, (_event, payload: UpdateStatePayload) => {
-  notifyUpdateStateCallbacks(payload);
-});
-
-ipcRenderer.on(
-  PlatformChannels.PostUpdateReleaseNotes,
-  (_event, payload: PostUpdateReleaseNotesPayload) => {
-    notifyPostUpdateReleaseNotesCallbacks(payload);
-  },
-);
-
 // dom-ready autoInject 之后 Bridge 若被重置，再尝试一次包装
-scheduleArmsEventBridgePatch();
 
 // 启动控制面先于普通 RPC；reload 从 Main 的通知镜像补齐，不触发新迁移。
 ipcRenderer.on(InternalChannels.DatabaseStartupState, (_event, raw: unknown) => {

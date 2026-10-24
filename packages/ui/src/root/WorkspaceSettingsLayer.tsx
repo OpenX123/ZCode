@@ -9,7 +9,6 @@ export function WorkspaceSettingsLayer({
   isDesktop,
   isMacDesktop,
   isWindowsDesktop,
-  isWebRemoteControl,
   windowsWindowControlsRightPaddingPx,
   captionWorkspacePath,
   onBack,
@@ -17,9 +16,6 @@ export function WorkspaceSettingsLayer({
   onOpenWorkspace,
   onOpenRemoteWorkspace,
   allowOpenWorkspace,
-  onLogin,
-  onLogout,
-  user,
 }: WorkspaceSettingsLayerProps) {
   useEffect(() => {
     logger.info("[Root] settings layer mounted");
@@ -36,7 +32,6 @@ export function WorkspaceSettingsLayer({
             isDesktop={isDesktop}
             isMacDesktop={isMacDesktop}
             isWindowsDesktop={isWindowsDesktop}
-            isWebRemoteControl={isWebRemoteControl}
             windowsWindowControlsRightPaddingPx={windowsWindowControlsRightPaddingPx}
             captionWorkspacePath={captionWorkspacePath}
             onBack={onBack}
@@ -44,9 +39,6 @@ export function WorkspaceSettingsLayer({
             onOpenWorkspace={onOpenWorkspace}
             onOpenRemoteWorkspace={onOpenRemoteWorkspace}
             allowOpenWorkspace={allowOpenWorkspace}
-            onLogin={onLogin}
-            onLogout={onLogout}
-            user={user}
           />
         </ServiceProvider>
       ) : (
@@ -54,7 +46,6 @@ export function WorkspaceSettingsLayer({
           isDesktop={isDesktop}
           isMacDesktop={isMacDesktop}
           isWindowsDesktop={isWindowsDesktop}
-          isWebRemoteControl={isWebRemoteControl}
           windowsWindowControlsRightPaddingPx={windowsWindowControlsRightPaddingPx}
           captionWorkspacePath={captionWorkspacePath}
           onBack={onBack}
@@ -62,9 +53,6 @@ export function WorkspaceSettingsLayer({
           onOpenWorkspace={onOpenWorkspace}
           onOpenRemoteWorkspace={onOpenRemoteWorkspace}
           allowOpenWorkspace={allowOpenWorkspace}
-          onLogin={onLogin}
-          onLogout={onLogout}
-          user={user}
         />
       )}
     </div>

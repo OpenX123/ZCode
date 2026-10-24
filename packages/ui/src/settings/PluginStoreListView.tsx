@@ -1,4 +1,3 @@
-import { useUiPluginRecommendations } from "@/plugin-ui/index.js";
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 /* eslint-disable max-lines -- 商店列表页把搜索/公开-社区-个人分段/Featured/分类折叠聚合成一个连贯浏览面，拆散反而难以维持 1:1 布局。 */
 import { useMemo, useState } from "react";
@@ -70,19 +69,7 @@ export function PluginStoreListView({
     () => items.filter((item) => resolvePluginStoreSegment(item) === segment),
     [items, segment],
   );
-  const { recommendations } = useUiPluginRecommendations(true);
-  const uiItems = useMemo(() => {
-    // 市场目录顺序与新标签页推荐顺序不同；复用推荐配置，未推荐项稳定排到末尾。
-    const ranks = new Map<string, number>();
-    for (const { pluginId } of recommendations) {
-      if (!ranks.has(pluginId)) ranks.set(pluginId, ranks.size);
-    }
-    return segmentItems
-      .filter(isUiPluginItem)
-      .sort(
-        (left, right) => (ranks.get(left.id) ?? ranks.size) - (ranks.get(right.id) ?? ranks.size),
-      );
-  }, [segmentItems, recommendations]);
+  const uiItems = useMemo(() => segmentItems.filter(isUiPluginItem), [segmentItems]);
   const publicItems = useMemo(
     () => segmentItems.filter((item) => !isUiPluginItem(item)),
     [segmentItems],

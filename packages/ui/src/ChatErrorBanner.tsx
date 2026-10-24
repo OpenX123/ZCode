@@ -1,6 +1,5 @@
 import { getRemoteConnectionFailureCode } from "@/lib/remoteWorkspaceServiceError.js";
 import { formatRemoteConnectionError } from "@/lib/remoteConnectionPresentation.js";
-import { CodingPlanEntryButton } from "@/settings/CodingPlanEntryButton.js";
 /**
  * ChatErrorBanner — 错误提示组件
  *
@@ -17,7 +16,7 @@ import {
   TID_CHAT_ERROR_BANNER,
   TID_CHAT_ERROR_HOOK_ICON,
 } from "@zcode/shared/test-ids";
-import { AnchorIcon, CopyIcon, InfoIcon, RocketIcon, SettingsIcon, X } from "lucide-react";
+import { AnchorIcon, CopyIcon, InfoIcon, SettingsIcon, X } from "lucide-react";
 import { useZCodeIntl } from "./i18n/IntlProvider.js";
 import type { IntlInstance } from "./i18n/IntlProvider.js";
 import { Button } from "./components/ui/button.js";
@@ -30,14 +29,6 @@ import {
 } from "./components/ui/dialog.js";
 import { cn } from "./components/lib/utils.js";
 import { toast } from "./components/ui/toast.js";
-import { useFeedbackStore } from "@/feedback/feedbackStore.js";
-import { getProviderBusinessErrorMessageId } from "@/lib/providerBusinessError.js";
-import { buildErrorFeedbackDescription } from "@/lib/errorFeedbackDraft.js";
-import {
-  isSuspiciousEmptyModelResultMessage,
-  resolveOffPeakTicketExpiredBusinessCode,
-  resolveRequestVerificationBusinessCode,
-} from "@/lib/providerBusinessError.js";
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
 
 const HISTORICAL_MODEL_UNAVAILABLE_MESSAGES = [
@@ -56,7 +47,6 @@ const LOCALIZED_ERROR_CODES = new Set([
   // 服务层错误 message 是跨进程兜底，不能作为最终 UI 语言来源。
   // 历史任务模型不可用要按稳定 code 本地化，避免英文界面显示中文提示。
   "ZCODE_RUNTIME_MODEL_UNAVAILABLE",
-  "ZCODE_BIGMODEL_TEAM_PLAN_MEMBER_REQUIRED",
 ]);
 
 const MODEL_CONFIG_MISSING_CODES = new Set([
@@ -69,7 +59,7 @@ function isModelConfigMissingError(error: Pick<ZCodeUiError, "code" | "message">
   // Bugfix: 桌面端发送前 registry 为空时，agent 会退回 CLI config 并抛 Model config is missing。
   // 真实原因是“当前没有可用模型”，不能把 CLI 配置路径直接暴露给桌面用户。
   // 这里只按结构化 code 识别，避免 UNKNOWN/SEND_FAILED 等包装错误的可读 message
-  // 碰巧包含同一段文本时被误判，并连带隐藏复制、反馈等诊断入口。
+  // 碰巧包含同一段文本时被误判，并连带隐藏复制等诊断入口。
   return Boolean(error.code && MODEL_CONFIG_MISSING_CODES.has(error.code));
 }
 
@@ -90,7 +80,7 @@ function parseClaudeUnknownCommandMessage(message: string): {
 
 /**
  * 缺模型横幅的措辞目标。远端 workspace 的模型目录来自远端 Registry，但本机配置保存后
- * 会由 Provisioning 自动下发到远端，因此只区分措辞，配置/升级动作始终指向本机。
+ * 会由 Provisioning 自动下发到远端，因此只区分措辞，配置动作始终指向本机。
  */
 export type ChatErrorBannerModelConfigTarget = "local" | "remote";
 
@@ -134,16 +124,7 @@ export function resolveChatErrorBannerDisplayMessage(
         );
   }
 
-  const providerBusinessCode =
-    resolveRequestVerificationBusinessCode(error.code, error.message) ??
-    resolveOffPeakTicketExpiredBusinessCode(error.code, error.message) ??
-    error.code;
-  const providerBusinessMessageId = getProviderBusinessErrorMessageId(providerBusinessCode);
-  if (providerBusinessMessageId) {
-    return intl.formatMessage({ id: providerBusinessMessageId });
-  }
-
-  if (isSuspiciousEmptyModelResultMessage(error.message)) {
+  if (error.message.includes("Model returned no text")) {
     return intl.formatMessage({ id: "zcode.error.modelSuspiciousEmpty" });
   }
 
@@ -170,10 +151,8 @@ export function ChatErrorBanner({
   retryDisabled,
   onDismiss,
   onOpenModelSettings,
-  onOpenUpgrade,
   modelConfigTarget = "local",
   onReconnect,
-  remoteKind,
 }: {
   error: ZCodeUiError;
   onReconnect?: () => void;
@@ -183,11 +162,9 @@ export function ChatErrorBanner({
   retryDisabled?: boolean;
   onDismiss?: () => void;
   onOpenModelSettings?: () => void;
-  onOpenUpgrade?: () => void;
   modelConfigTarget?: ChatErrorBannerModelConfigTarget;
 }) {
   const { intl } = useZCodeIntl();
-  const openFeedbackSubmit = useFeedbackStore((state) => state.openSubmit);
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const actionButtonClassName = "shrink-0";
   const iconButtonClassName = "shrink-0";
@@ -202,31 +179,6 @@ export function ChatErrorBanner({
   if (shouldSuppressChatErrorBanner(error)) {
     return null;
   }
-
-  const handleOpenFeedback = async () => {
-    openFeedbackSubmit({
-      title: localizedErrorMessage.slice(0, 80),
-      type: "bug",
-      module: remoteConnectionFailure
-        ? remoteKind === "ssh"
-          ? "SSH连接失败"
-          : remoteKind === "wsl"
-            ? "WSL连接失败"
-            : "其它"
-        : "模型调用报错",
-      severity: "P2-中",
-      includeLogs: true,
-      description: buildErrorFeedbackDescription({
-        message: localizedErrorMessage,
-        detail: error.detail,
-        traceId: error.traceId,
-        formatMessage: (id: string, values?: Record<string, string>) =>
-          intl.formatMessage({ id }, values),
-      }),
-      screenshots: [],
-    });
-    toast(intl.formatMessage({ id: "chat.error.feedbackOpened" }));
-  };
 
   const handleCopyError = async () => {
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
@@ -285,24 +237,6 @@ export function ChatErrorBanner({
 
         {modelConfigMissing ? (
           <>
-            {onOpenUpgrade ? (
-              <CodingPlanEntryButton
-                type="button"
-                variant="default"
-                size="sm"
-                onClick={onOpenUpgrade}
-                className={cn(
-                  actionButtonClassName,
-                  "button-gradient gap-1.5 text-white hover:bg-transparent hover:opacity-90 dark:bg-[#484A58] dark:hover:bg-[#484A58]",
-                )}
-                aria-label={intl.formatMessage({
-                  id: "chat.quota.action.upgrade",
-                })}
-              >
-                <RocketIcon className="size-3.5" />
-                {intl.formatMessage({ id: "chat.quota.action.upgrade" })}
-              </CodingPlanEntryButton>
-            ) : null}
             <Button
               type="button"
               variant="outline"
@@ -362,26 +296,6 @@ export function ChatErrorBanner({
           >
             <CopyIcon className="size-3.5" />
             {intl.formatMessage({ id: "chat.error.copyFull" })}
-          </Button>
-        ) : null}
-
-        {/* Bugfix: 错误横幅本身就是异常态，不能再经过 Radix Tooltip 的 Popper/Slot 状态链。
-            这里改成普通 Button，避免无可用模型等错误触发横幅时发生 Maximum update depth 循环。 */}
-        {!modelConfigMissing ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              void handleOpenFeedback();
-            }}
-            // ChatErrorBanner 这里之前混用了原生 button，导致按钮体系、焦点态和禁用态都绕开了设计系统。
-            // 统一收口到 Button 组件后，错误横幅里的所有操作按钮才能保持同一套交互和主题表现。
-            className={cn(actionButtonClassName)}
-            aria-label={intl.formatMessage({ id: "chat.error.feedback" })}
-            title={error.traceId}
-          >
-            {intl.formatMessage({ id: "chat.error.feedback" })}
           </Button>
         ) : null}
 

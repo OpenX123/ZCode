@@ -17,7 +17,6 @@ export type {
   ZCodeAppOptions,
   ZCodeModelOption,
 } from "./app/types.js";
-export * from "./auth-login.js";
 export {
   inspectZCodeCustomCommand,
   listZCodeCustomCommands,
@@ -30,14 +29,6 @@ export type {
 } from "./custom-commands.js";
 export { createModelAdapter } from "./model-factory.js";
 export type { CreateModelAdapterOptions } from "./model-factory.js";
-export {
-  createDefaultProviderEndpointRoutingPort,
-  resolveProcessProviderEndpointRoutingPort,
-} from "./provider-endpoint-routing.js";
-export type {
-  CreateDefaultProviderEndpointRoutingPortOptions,
-  ResolveProcessProviderEndpointRoutingPortOptions,
-} from "./provider-endpoint-routing.js";
 export { startProcessProviderRegistryRuntime } from "./app/process-provider-registry-runtime.js";
 export type { ProcessProviderRegistryRuntimeOptions } from "./app/process-provider-registry-runtime.js";
 export {
@@ -77,7 +68,6 @@ export { runZCodeProtocolAgent } from "./zcode-protocol-entrypoint.js";
 // Exposed for the CLI's --output-format stream-json: it needs the same event
 // shape the protocol server emits, rather than inventing a second one.
 export { mapSessionEvent } from "./zcode-protocol/session-mapper.js";
-export { prepareZCodeTelemetryEnv, shutdownZCodeTelemetry } from "./telemetry-bootstrap.js";
 export type { SessionTranscriptMessage, SessionTranscriptPart } from "./session-transcript.js";
 export { listZCodeSessions, resolveLatestSession } from "./sessions.js";
 export { inspectZCodeSkill, listZCodeSkills } from "./skills.js";

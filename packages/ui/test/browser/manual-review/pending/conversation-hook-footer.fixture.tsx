@@ -99,7 +99,6 @@ createRoot(document.getElementById("root")!).render(
             codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
             compactForRemoteControl: mobile,
           }}
-          onFeedbackChange={() => undefined}
         />
       </main>
     </ZCodeIntlProvider>

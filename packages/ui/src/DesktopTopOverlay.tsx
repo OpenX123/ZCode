@@ -1,5 +1,5 @@
 import { SidebarTooltipProvider } from "@/ControlHintTooltip.js";
-import type { IPlatformService, UpdateStatePayload } from "@zcode/shared";
+import type { IPlatformService } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 import {
   ArrowLeftIcon,
@@ -9,7 +9,6 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { UpdateStatusButton } from "@/UpdateStatusButton.js";
 import { DesktopTopOverlayActionButton } from "@/DesktopTopOverlayActionButton.js";
 import { ZCodeStartupLogoBadge } from "@/root/RootStartupLoading.js";
 import {
@@ -26,8 +25,6 @@ interface DesktopTopOverlayProps {
   macWindowControlsLeftPaddingPx?: number;
   windowsWindowControlsRightPaddingPx?: number;
   isSidebarVisible: boolean;
-  updateReadyVersion: string | null;
-  updateState: UpdateStatePayload | null;
   toggleSidebarShortcutLabel: string;
   newTaskShortcutLabel: string;
   goBackShortcutLabel: string;
@@ -56,8 +53,6 @@ export function DesktopTopOverlay({
   macWindowControlsLeftPaddingPx,
   windowsWindowControlsRightPaddingPx,
   isSidebarVisible,
-  updateReadyVersion,
-  updateState,
   toggleSidebarShortcutLabel,
   newTaskShortcutLabel,
   goBackShortcutLabel,
@@ -214,13 +209,7 @@ export function DesktopTopOverlay({
                   但收起态本身已经改成把操作集中到顶部浮层里，如果这里还继续依赖侧栏宽度判断，
                   用户就会在最需要全局入口的时候反而看不到更新按钮。
                   所以展开态继续走容器查询，收起态则强制显示。 */}
-            <UpdateStatusButton
-              platform={platform}
-              version={updateReadyVersion}
-              updateState={updateState}
-              isMacDesktop={isMacDesktop}
-              isWindowsDesktop={isWindowsDesktop}
-            />
+
             {/* </div> */}
           </div>
         </div>

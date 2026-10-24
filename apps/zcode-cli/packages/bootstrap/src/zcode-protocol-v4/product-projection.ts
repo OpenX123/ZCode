@@ -345,8 +345,7 @@ export type ConversationRowTargetAction =
   | "applyFileRewind"
   | "fileChanges"
   | "fileRewindPreview"
-  | "setAssistantFeedback"
-  | "setHighspeedMetrics";
+  | "setAssistantFeedback";
 
 export type ConversationRowTargetResolution =
   | {
@@ -372,9 +371,6 @@ function modelRetryReasonCode(
   switch (reason) {
     case "rate_limited":
       return "fault.provider.rateLimited";
-    // off-peak 排队（429/3105）语义上就是"上游让我们等"，UI 归入限流可恢复形态。
-    case "offpeak_queued":
-      return "fault.provider.rateLimited";
     case "provider_overloaded":
     case "server_error":
       return "fault.provider.serverError";
@@ -390,6 +386,8 @@ function modelRetryReasonCode(
     case "reasoning_signature_repair":
       return "fault.provider.requestFailed";
   }
+  // 旧事件可能包含已退役的重试原因，仅恢复为通用请求失败，不启用官方执行分支。
+  return "fault.provider.requestFailed";
 }
 
 function streamRecoveryReasonCode(
@@ -851,17 +849,6 @@ export class ProductProjection {
     if (action === "setAssistantFeedback") {
       const messageId = this.messageIdByRowId.get(row.rowId);
       if (row.kind !== "assistantText" || !messageId) {
-        return {
-          ok: false,
-          status: "rejected",
-          reasonCode: "guard.actionUnavailable",
-        };
-      }
-      return { ok: true, action, row, messageId };
-    }
-    if (action === "setHighspeedMetrics") {
-      const messageId = this.messageIdByRowId.get(row.rowId);
-      if (row.kind !== "userInput" || !row.highspeed || !messageId) {
         return {
           ok: false,
           status: "rejected",

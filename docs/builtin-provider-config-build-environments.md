@@ -18,36 +18,11 @@
 `pnpm provider:config:check-test` 只检查生成结果是否过期，不写文件；纳入单测。
 不更改 Release Schema、个人 Overlay、Registry 或账号／模型选择。
 
-## 测试配置的生成规则（Todo147）
+## 测试配置生成与运行时边界
 
-对照 `staging_backup@790884b1ce`，仅转换 `zhipu-account` Provider 的以下模型地址：
+测试配置继续由生产源生成并复用完整 Release 校验；普通 API 模板与用户地址不通过官方账号或套餐重写。生成与构建仅处理仓库本地文件，不联网更新目录，也不迁移用户数据。
 
-| 生产 Base URL                                  | 测试 Base URL                                          |
-| ---------------------------------------------- | ------------------------------------------------------ |
-| https://api.z.ai/api/anthropic                 | https://api.z.ai/api/anthropic                 |
-| https://open.bigmodel.cn/api/anthropic         | https://open.bigmodel.cn/api/anthropic                  |
-| https://zcode.z.ai/api/v1/zcode-plan/anthropic | https://zcode.z.ai/api/v1/zcode-plan/anthropic |
-| https://zcode.z.ai/api/v1/off-peak/anthropic   | https://zcode.z.ai/api/v1/off-peak/anthropic   |
-| https://zcode.z.ai/api/v1/highspeed/anthropic  | https://zcode.z.ai/api/v1/highspeed/anthropic  |
-
-- 每次从完整生产配置重新生成，不增量修改旧测试配置，不维护第二份模型能力。
-- 手动模板、第三方地址、Key 管理链接等字段原样保留；新增未知账号地址时明确失败，要求补充映射，不偷偷请求生产。
-- 对命中上述生产地址的站点规则，保留原规则并在其后生成测试 URL 对应规则。
-  一条规则只描述一个站点，模型匹配、API 类型、能力、Map 和相对顺序全部继承。
-  保留生产规则是因为测试包里的手动 API 模板仍指向生产官方入口。
-- 完整 Release 校验后才写生成文件；无网络、无用户数据迁移、无在线发布。
-- 构建仍只读取选定文件，不在并行构建时隐式重写源文件；先同步再构建，沿用 Todo146 缓存输入。
-
-```text
-编辑生产 JSON → 同步脚本（账号 URL 映射 + 派生站点规则）→ 测试 JSON
-                       ↓ 校验生成结果
-                  原双环境打包流程
-```
-
-签名准入另外在现有 Adapter 增加 `api.z.ai`、`zcode.z.ai` 精确 hostname，
-`bigmodel.cn` 已由既有 `*.bigmodel.cn` 覆盖。不扩大到整个 `*.z.ai`，
-也不改变公共 Family 分类工具的其他消费者。与产品环境开关无关，仅依实际 URL 判断。
-账号 Start／Off-Peak 的不签名例外优先于域名；个人／团队及显式套餐 Key 继续走原入口。
+运行时只采用构建选择的随包文件。旧 Endpoint、Active/LKG 下载缓存和远端刷新控制文件均不参与读取；Host 与 Agent 共用同一随包路径。Personal 覆盖保持原有所有者和持久化机制。
 
 ```text
 ZCODE_ENV + 对应完整 JSON
@@ -87,8 +62,7 @@ Server 保持原有 JSON 编译常量。开发态 Desktop 根据同一个编译�
 - 不通过覆写仓库源文件选择环境；不同环境并行构建须使用各自 worktree／输出目录，
   不新增对同一个 dist 的并发写入保证。
 
-线上配置发布、revision/LKG 选择和 endpoint 隔离不变：本次只决定包内初始配置。
-桌面 continuous 和手机 shared-host/replayable 链路无状态、协议或执行权变更。
+配置只随仓库构建发布；运行时不下载官方配置、不按 Endpoint 选择缓存。普通会话执行与 SSH 身份边界不变。
 
 ## 验证
 

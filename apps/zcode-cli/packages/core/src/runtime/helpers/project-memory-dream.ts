@@ -83,108 +83,89 @@ async function executeProjectMemoryDream(
   runtime: AgentRuntimeInternal,
   context: ProjectMemoryAgentContext,
 ): Promise<void> {
-  const telemetry = runtime.agentTelemetry.detached({
-    causation: context.causation,
-    executionKind: "background",
-    operation: "project_memory_dream",
-    targetKind: "project_memory",
-    traceContext: context.traceContext,
-    trigger: "scheduler",
-  });
+  let acquiredPriorMtimeMs: number | undefined;
+  try {
+    const nowMs = runtime.now().getTime();
+    const lastConsolidatedAtMs = await readDreamLastConsolidatedAt(context.memoryRoot);
+    const timing = evaluateAutoDreamTiming({
+      lastConsolidatedAtMs,
+      lastScanAtMs: runtime.memoryDreamLastScanAtMs,
+      nowMs,
+    });
+    if (timing.decision === "skip") {
+      return;
+    }
 
-  await telemetry.run(async () => {
-    let acquiredPriorMtimeMs: number | undefined;
-    try {
-      const nowMs = runtime.now().getTime();
-      const lastConsolidatedAtMs = await readDreamLastConsolidatedAt(context.memoryRoot);
-      const timing = evaluateAutoDreamTiming({
-        lastConsolidatedAtMs,
-        lastScanAtMs: runtime.memoryDreamLastScanAtMs,
-        nowMs,
-      });
-      if (timing.decision === "skip") {
-        telemetry.setResultType("metadata");
-        telemetry.finishCompleted();
-        return;
-      }
+    runtime.memoryDreamLastScanAtMs = nowMs;
+    const sessions = selectProjectDreamSessions({
+      currentSessionId: runtime.sessionId,
+      sessions: await runtime.sessionStore!.listSessions(),
+      workspacePath: context.workspaceRoot,
+      workspaceIdentity: runtime.config.memory?.workspaceIdentity,
+    });
+    const transcriptSessionIds = await recentModelIoSessionIds(
+      runtime,
+      sessions,
+      context,
+      lastConsolidatedAtMs,
+    );
+    if (transcriptSessionIds.length < DREAM_MINIMUM_TRANSCRIPT_SESSIONS) {
+      return;
+    }
 
-      runtime.memoryDreamLastScanAtMs = nowMs;
-      const sessions = selectProjectDreamSessions({
-        currentSessionId: runtime.sessionId,
-        sessions: await runtime.sessionStore!.listSessions(),
-        workspacePath: context.workspaceRoot,
-        workspaceIdentity: runtime.config.memory?.workspaceIdentity,
-      });
-      const transcriptSessionIds = await recentModelIoSessionIds(
-        runtime,
-        sessions,
-        context,
-        lastConsolidatedAtMs,
-      );
-      if (transcriptSessionIds.length < DREAM_MINIMUM_TRANSCRIPT_SESSIONS) {
-        telemetry.setResultType("metadata");
-        telemetry.finishCompleted();
-        return;
-      }
+    const priorMtimeMs = await acquireDreamLock({ memoryRoot: context.memoryRoot, nowMs });
+    if (priorMtimeMs === null) {
+      return;
+    }
+    acquiredPriorMtimeMs = priorMtimeMs;
 
-      const priorMtimeMs = await acquireDreamLock({ memoryRoot: context.memoryRoot, nowMs });
-      if (priorMtimeMs === null) {
-        telemetry.setResultType("metadata");
-        telemetry.finishCompleted();
-        return;
-      }
-      acquiredPriorMtimeMs = priorMtimeMs;
+    const prompt = buildMemoryDreamPrompt({
+      memoryRoot: context.memoryRoot,
+      sessionIds: transcriptSessionIds,
+      transcriptRoot: runtime.modelIoDir!,
+    });
+    const request = prepareProjectMemoryAgentRequest(context, prompt);
+    const executor = createProjectMemoryAgentToolExecutor(runtime, context);
+    const touchedPaths = new Set<string>();
 
-      const prompt = buildMemoryDreamPrompt({
-        memoryRoot: context.memoryRoot,
-        sessionIds: transcriptSessionIds,
-        transcriptRoot: runtime.modelIoDir!,
-      });
-      const request = prepareProjectMemoryAgentRequest(context, prompt);
-      const executor = createProjectMemoryAgentToolExecutor(runtime, context);
-      const touchedPaths = new Set<string>();
+    await runMemoryAgentLoop({
+      executeTool: (toolCall, options) => {
+        collectDreamTouchedPaths(touchedPaths, {
+          rootDir: context.memoryRoot,
+          toolCall,
+          workingDirectory: context.workingDirectory,
+          workspaceRoot: context.workspaceRoot,
+        });
+        return executor.execute(toolCall, {
+          signal: options.abortSignal,
+          traceContext: context.traceContext,
+        });
+      },
+      maxTurns: DREAM_MAX_TURNS,
+      request,
+      model: context.model,
+      rootDir: context.memoryRoot,
+      workingDirectory: context.workingDirectory,
+      workspaceRoot: context.workspaceRoot,
+    });
 
-      await runMemoryAgentLoop({
-        executeTool: (toolCall, options) => {
-          collectDreamTouchedPaths(touchedPaths, {
-            rootDir: context.memoryRoot,
-            toolCall,
-            workingDirectory: context.workingDirectory,
-            workspaceRoot: context.workspaceRoot,
-          });
-          return executor.execute(toolCall, {
-            signal: options.abortSignal,
-            traceContext: context.traceContext,
-          });
-        },
-        maxTurns: DREAM_MAX_TURNS,
-        request,
-        model: context.model,
-        rootDir: context.memoryRoot,
-        workingDirectory: context.workingDirectory,
-        workspaceRoot: context.workspaceRoot,
-      });
-
-      const paths = [...touchedPaths];
-      if (paths.length > 0) {
-        runtime.pendingMemoryUpdate = createProjectMemoryUpdate(runtime, paths);
-        invalidateProjectMemoryRecallPaths(runtime, paths);
-      }
-      telemetry.finishCompleted();
-    } catch (error) {
-      telemetry.finishFailed("execute", "internal", error);
-      if (acquiredPriorMtimeMs !== undefined) {
-        try {
-          await restoreDreamLockAfterFailure({
-            memoryRoot: context.memoryRoot,
-            priorMtimeMs: acquiredPriorMtimeMs,
-          });
-        } catch {
-          // Dream 已失败；lock 恢复失败不改变前台 turn，也不追加第二套恢复机制。
-        }
+    const paths = [...touchedPaths];
+    if (paths.length > 0) {
+      runtime.pendingMemoryUpdate = createProjectMemoryUpdate(runtime, paths);
+      invalidateProjectMemoryRecallPaths(runtime, paths);
+    }
+  } catch {
+    if (acquiredPriorMtimeMs !== undefined) {
+      try {
+        await restoreDreamLockAfterFailure({
+          memoryRoot: context.memoryRoot,
+          priorMtimeMs: acquiredPriorMtimeMs,
+        });
+      } catch {
+        // Dream 已失败；lock 恢复失败不改变前台 turn，也不追加第二套恢复机制。
       }
     }
-  });
+  }
 }
 
 async function recentModelIoSessionIds(

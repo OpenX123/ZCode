@@ -12,7 +12,6 @@ vi.mock("@zcode/core", () => ({
 }));
 
 vi.mock("../src/plugins.js", () => ({
-  enrichCachedClaudeMarketplaceIconsForOverview: vi.fn(),
   getZCodePluginsOverview: mocks.getZCodePluginsOverview,
   resolveZCodePlugins: mocks.resolveZCodePlugins,
   updateZCodePluginMarketplace: mocks.updateZCodePluginMarketplace,

@@ -34,7 +34,6 @@ import {
   TID_COMPOSER_WORK_OUTSIDE_PROJECT,
   TID_COMPOSER_WORKSPACE_TRIGGER,
 } from "@zcode/shared/test-ids";
-import { runUserAction, runUserActionAsync } from "@/lib/userActionTelemetry.js";
 
 import type { ProjectSidebarProps, RemoteProjectHost } from "@/project-sidebar/contract.js";
 import { remoteHostIdFromWorkspaceIdentity } from "@/project-sidebar/contract.js";
@@ -314,16 +313,7 @@ export function ProjectComposerMenu({
             data-testid={TID_COMPOSER_PROJECT_DETACH}
             onClick={(event) => {
               event.stopPropagation();
-              void runUserActionAsync({
-                input: {
-                  featureId: "workspace.project_binding",
-                  action: "detach",
-                  trigger: "button",
-                },
-                operation: () => Promise.resolve(onSelectConversationWorkspace()),
-                completed: { resultSource: "optimistic_projection" },
-                failureStage: "project_detach",
-              });
+              void Promise.resolve(onSelectConversationWorkspace());
             }}
           >
             <X className="size-3.5" />
@@ -423,24 +413,12 @@ export function ProjectComposerMenu({
                           projectId: project.id,
                           hostId: project.hostId,
                         });
-                        runUserAction({
-                          input: {
-                            featureId: "workspace.project_binding",
-                            action: isConversationWorkspace ? "attach" : "switch",
-                            trigger: "menu",
-                            workspaceKind: isRemoteWorkspace ? "remote" : "local",
-                          },
-                          // 同侧栏项目新建入口：由 Root/Host 解析主要目录及远程 attachment。
-                          operation: () =>
-                            createProjectTask({
-                              projectId: project.id,
-                              ...(compactForRemoteControl ||
-                              directory.hosts.some((host) => host.id === project.hostId)
-                                ? { hostId: project.hostId }
-                                : {}),
-                            }),
-                          completed: { resultSource: "local_commit" },
-                          failureStage: "project_switch",
+                        createProjectTask({
+                          projectId: project.id,
+                          ...(compactForRemoteControl ||
+                          directory.hosts.some((host) => host.id === project.hostId)
+                            ? { hostId: project.hostId }
+                            : {}),
                         });
                       }}
                     >
@@ -502,17 +480,7 @@ export function ProjectComposerMenu({
                     `[ProjectComposerMenu] open remote dialog from workspace menu workspace=${workspacePath}`,
                   );
                   // 连接流程由 Root 唯一持有；聊天只提供有效性检查与完成结果接缝。
-                  runUserAction({
-                    input: {
-                      featureId: "workspace.remote.lifecycle",
-                      action: "open_dialog",
-                      trigger: "menu",
-                      workspaceKind: "remote",
-                    },
-                    operation: addDevice,
-                    completed: { resultSource: "local_commit" },
-                    failureStage: "dialog_open",
-                  });
+                  addDevice();
                 }}
               >
                 <Cloud className="size-4 text-foreground-subtle" />
@@ -523,18 +491,7 @@ export function ProjectComposerMenu({
               <DropdownMenuCheckboxItem
                 data-testid={TID_COMPOSER_WORK_OUTSIDE_PROJECT}
                 checked={isConversationWorkspace}
-                onSelect={() =>
-                  void runUserActionAsync({
-                    input: {
-                      featureId: "workspace.project_binding",
-                      action: "work_outside_project",
-                      trigger: "menu",
-                    },
-                    operation: () => Promise.resolve(onSelectConversationWorkspace()),
-                    completed: { resultSource: "optimistic_projection" },
-                    failureStage: "project_detach",
-                  })
-                }
+                onSelect={() => void Promise.resolve(onSelectConversationWorkspace())}
               >
                 <MessageCircle className="size-4 text-foreground-subtle" />
                 <span>{intl.formatMessage({ id: "chat.empty.workOutsideProject" })}</span>

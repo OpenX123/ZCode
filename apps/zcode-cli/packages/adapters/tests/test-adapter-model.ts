@@ -39,9 +39,16 @@ export function executeAdapterStreamText(
 function createAdapterTestModel(adapter: TestAiSdkModelAdapter, request: TestModelTextRequest) {
   const maxOutputTokens = request.maxOutputTokens ?? 32_000;
   return adapter.createModel({
-    ...(request.accountMode || request.refreshRuntimeHeadersBeforeAttempt
+    ...(request.refreshRuntimeHeadersBeforeAttempt
       ? {
-          accountMode: request.accountMode ?? ("individual-coding-plan" as const),
+          requestDependencies: {
+            requestAuth: {
+              source: {
+                resolve: async (input) =>
+                  (await request.refreshRuntimeHeadersBeforeAttempt!(input)).requestAuth!,
+              },
+            },
+          },
         }
       : {}),
     providerId: request.providerId,
@@ -77,7 +84,6 @@ function invocationContext(request: ModelTextRequest): ModelInvocationContext {
     modelRetryBudget: request.modelRetryBudget,
     modelRequestSessionType: request.modelRequestSessionType,
     preserveProviderStreamBoundaries: request.preserveProviderStreamBoundaries,
-    refreshRuntimeHeadersBeforeAttempt: request.refreshRuntimeHeadersBeforeAttempt,
     statusSink: request.statusSink,
     streamIdleTimeoutRetryNumber: request.streamIdleTimeoutRetryNumber,
     streamRecovery: request.streamRecovery,

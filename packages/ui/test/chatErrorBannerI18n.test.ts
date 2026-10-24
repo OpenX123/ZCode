@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   MEDIA_BUDGET_CURRENT_IMAGE_TOO_LARGE_ERROR_CODE,
   MEDIA_BUDGET_CURRENT_VIDEO_TOO_LARGE_ERROR_CODE,
-  OFF_PEAK_TICKET_EXPIRED_MARKER,
 } from "@zcode/shared";
 import { resolveChatErrorBannerDisplayMessage } from "@/ChatErrorBanner.js";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
@@ -21,6 +20,19 @@ function createIntl(messages: Record<string, string>): IntlInstance {
 }
 
 describe("ChatErrorBanner i18n", () => {
+  it.each([
+    [zhCN, "当前没有可用模型。请先在模型设置中配置模型 API。"],
+    [enUS, "No model available. Configure a model API in Model Settings."],
+  ] as const)("无模型只引导配置普通模型 API", (messages, expected) => {
+    expect(
+      resolveChatErrorBannerDisplayMessage(
+        { code: "model_config_missing", message: "Model config is missing" },
+        createIntl(messages),
+        "local",
+      ),
+    ).toBe(expected);
+  });
+
   it("uses the remote wording for an empty remote workspace instead of local plan copy", () => {
     const zhIntl = createIntl(zhCN);
     const enIntl = createIntl(enUS);
@@ -88,28 +100,20 @@ describe("ChatErrorBanner i18n", () => {
     ).toBe("Current image attachments are too large. Remove or compress images and try again.");
   });
 
-  it("闲时票据不可用不展示上游原文（3102 与包装后的稳定标记都要本地化）", () => {
-    const zhIntl = createIntl(zhCN);
-    const enIntl = createIntl(enUS);
-
-    expect(
-      resolveChatErrorBannerDisplayMessage(
-        { code: "3102", message: "off peak ticket is invaliad or expired" },
-        zhIntl,
-      ),
-    ).toBe("已超过单次最长运行时间，请创建新的闲时任务继续。");
-
-    // 外层 code 被压成包装码时靠适配层写入的稳定标记兜底。
-    expect(
-      resolveChatErrorBannerDisplayMessage(
-        {
-          code: "PROVIDER_BUSINESS_ERROR",
-          message: `${OFF_PEAK_TICKET_EXPIRED_MARKER}: off peak ticket is invaliad or expired`,
-        },
-        enIntl,
-      ),
-    ).toBe(
-      "This run exceeded the maximum single-run time. Create a new off-peak task to continue.",
+  it("普通 API 业务错误保留原文，不套用旧套餐处理", () => {
+    const message = "Provider quota exceeded";
+    expect(resolveChatErrorBannerDisplayMessage({ code: "1308", message }, createIntl(enUS))).toBe(
+      message,
     );
+  });
+
+  it("退役团队套餐错误不再驱动专属本地化", () => {
+    const message = "Historical provider error";
+    expect(
+      resolveChatErrorBannerDisplayMessage(
+        { code: "ZCODE_BIGMODEL_TEAM_PLAN_MEMBER_REQUIRED", message },
+        createIntl(enUS),
+      ),
+    ).toBe(message);
   });
 });

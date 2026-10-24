@@ -18,7 +18,6 @@ function projectProviderSettingsProviders(
     templateId: provider.templateId,
     executable: provider.executable,
     enabled: provider.enabled,
-    accountState: provider.accountState,
     hasPersonalConfig: provider.personalConfig !== undefined,
     issues: provider.issues,
     personalConfig: structuredClone(provider.personalConfig ?? {}),

@@ -7,7 +7,6 @@ import type {
   SessionTitleSource,
   TraceContext,
 } from "../deps.js";
-import type { AgentTelemetryCausation } from "@zcode/contracts";
 import type { AgentRuntimeInternal } from "../internal.js";
 import {
   persistFallbackGoalSummaryTitle,
@@ -36,13 +35,11 @@ export function maybeStartSessionTitleGeneration(
   options?: {
     deferIfProviderRuntimeHeadersRefresh?: boolean;
     goalSummaryTargetID?: string;
-    offPeakExecutionId?: string;
   },
 ): boolean {
   return maybeStartSessionTitleGenerationFromSeed.call(this, input, {
     deferIfProviderRuntimeHeadersRefresh: options?.deferIfProviderRuntimeHeadersRefresh,
     goalSummaryTargetID: options?.goalSummaryTargetID,
-    offPeakExecutionId: options?.offPeakExecutionId,
     messageID,
     traceContext,
   });
@@ -53,12 +50,10 @@ export function maybeStartDeferredSessionTitleGeneration(
   input: string,
   messageID: MessageId,
   traceContext: TraceContext,
-  offPeakExecutionId?: string,
 ): boolean {
   return maybeStartSessionTitleGenerationFromSeed.call(this, input, {
     messageID,
     traceContext,
-    offPeakExecutionId,
   });
 }
 
@@ -85,7 +80,6 @@ function maybeStartSessionTitleGenerationFromSeed(
     messageID?: MessageId;
     traceContext: TraceContext;
     bypassShortInputGuard?: boolean;
-    offPeakExecutionId?: string;
   },
 ): boolean {
   if (
@@ -104,14 +98,10 @@ function maybeStartSessionTitleGenerationFromSeed(
     return false;
   }
   this.sessionTitleGenerationAttempted = true;
-  // 标题任务会越过当前 Turn 的生命周期。入队时冻结 causation，避免后续 await、
-  // 调度器或实现重构使后台 Trace 静默丢失指向触发 Span 的 Link。
-  const causation = this.agentTelemetry.captureCausation();
-  const modelContext = retainTitleModelContext(this, options.offPeakExecutionId);
+  const modelContext = retainTitleModelContext(this);
 
   const generation = generateAndPersistSessionTitle
     .call(this, input, options.messageID, options.traceContext, {
-      causation,
       modelContext,
       goalSummaryTargetID: options.goalSummaryTargetID,
     })
@@ -187,7 +177,6 @@ async function generateAndPersistSessionTitle(
   messageID: MessageId | undefined,
   traceContext: TraceContext,
   options: {
-    causation?: AgentTelemetryCausation;
     goalSummaryTargetID?: string;
     modelContext?: TitleModelContext;
   } = {},
@@ -230,7 +219,6 @@ async function generateAndPersistSessionTitle(
   }
 
   const generated = await generateTitleCandidate.call(this, input, {
-    causation: options.causation,
     modelContext: options.modelContext,
     messageID,
     querySource: SESSION_TITLE_QUERY_SOURCE,

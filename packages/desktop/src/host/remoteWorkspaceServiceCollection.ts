@@ -1,68 +1,62 @@
 import {
-  ServiceCollection,
-  IFileService,
-  IGenUiService,
-  IMediaPreviewService,
-  IGitService,
-  IGitCheckpointService,
-  ISystemService,
-  ITerminalService,
-  ISettingService,
-  IOnboardingRecordService,
-  ICredentialService,
-  IBroadcastService,
-  IZCodeTaskService,
-  IZCodeAgentService,
-  IZCodeSessionService,
-  IConversationShareService,
-  createUnsupportedConversationShareService,
   IBotsService,
+  IBroadcastService,
+  ICommandsService,
+  ICredentialService,
+  IFileService,
   IFileWatcherService,
-  IOAuthService,
-  IModelSelectionService,
-  IProviderSettingsService,
-  ISourceServerWorkspaceService,
-  IUsageStatsService,
-  ICodingPlanSubscriptionService,
-  IClientConfigService,
-  IClientScenesService,
-  ISkillsService,
-  ISkillSyncService,
+  IGenUiService,
+  IGitCheckpointService,
+  IGitService,
+  IHooksService,
   IMcpSyncService,
+  IMediaPreviewService,
+  IMemoryService,
+  IModelSelectionService,
+  IOnboardingRecordService,
+  IOutputStyleService,
+  IPluginManagementService,
   IPluginSyncService,
   IPluginsService,
-  IPluginManagementService,
-  ISubagentsService,
-  ICommandsService,
-  IHooksService,
-  IMemoryService,
-  IOutputStyleService,
-  ISettingsSyncService,
   IProjectService,
-  ITaskGroupService,
-  IRemoteProjectService,
   IPromptAttachmentTransferService,
-  type ServiceDescriptor,
+  IProviderSettingsService,
+  IRemoteProjectService,
+  ISettingService,
+  ISettingsSyncService,
+  ISkillSyncService,
+  ISkillsService,
+  ISourceServerWorkspaceService,
+  ISubagentsService,
+  ISystemService,
+  ITaskGroupService,
+  ITerminalService,
+  IUsageStatsService,
+  IZCodeAgentService,
+  IZCodeSessionService,
+  IZCodeTaskService,
+  ServiceCollection,
   type IServiceAccessor,
+  type ServiceDescriptor,
 } from "@zcode/services";
 import {
-  REMOTE_WORKSPACE_RPC_CHANNELS,
-  assertRemoteWorkspaceRpcContract,
-} from "./remoteWorkspaceRpcContract.js";
-import {
-  createServiceLogger,
   createLegacySingleRootProjectService,
   createRemoteProjectService,
+  createServiceLogger,
 } from "@zcode/services/node";
+import type { RemoteTarget } from "@zcode/shared";
 import {
   buildServerRemoteWorkspaceIdentity,
   remoteHostIdFromWorkspaceIdentity,
 } from "@zcode/shared";
-import type { RemoteTarget } from "@zcode/shared";
 import {
   createRemoteProviderProvisioningExecutorFromWorkspace,
   registerRemoteProviderProvisioningExecutor,
 } from "./remoteProviderProvisioningService.js";
+import {
+  REMOTE_WORKSPACE_RPC_CHANNELS,
+  assertRemoteWorkspaceRpcContract,
+} from "./remoteWorkspaceRpcContract.js";
 
 export const REMOTE_WORKSPACE_RPC_REGISTRATIONS = [
   ["fileService", IFileService],
@@ -79,16 +73,12 @@ export const REMOTE_WORKSPACE_RPC_REGISTRATIONS = [
   ["zcodeTaskService", IZCodeTaskService],
   ["zcodeAgentService", IZCodeAgentService],
   ["zcodeSessionService", IZCodeSessionService],
-  ["conversationShareService", IConversationShareService],
   ["botsService", IBotsService],
   ["fileWatcherService", IFileWatcherService],
-  ["oauthService", IOAuthService],
   ["providerSettingsService", IProviderSettingsService],
   ["modelSelectionService", IModelSelectionService],
   ["sourceServerWorkspaceService", ISourceServerWorkspaceService],
   ["usageStatsService", IUsageStatsService],
-  ["codingPlanSubscriptionService", ICodingPlanSubscriptionService],
-  ["clientScenesService", IClientScenesService],
   ["skillsService", ISkillsService],
   ["skillSyncService", ISkillSyncService],
   ["mcpSyncService", IMcpSyncService],
@@ -105,19 +95,6 @@ export const REMOTE_WORKSPACE_RPC_REGISTRATIONS = [
 ] as const satisfies readonly [keyof IServiceAccessor, ServiceDescriptor<unknown>][];
 
 const conversationShareLog = createServiceLogger("conversation-share");
-
-function createUnsupportedRemoteConversationShareService(): IConversationShareService {
-  return createUnsupportedConversationShareService({
-    message: "Conversation sharing is not available for this client or remote target",
-    onRejected: (action) => {
-      conversationShareLog.warn(undefined, "conversation share action rejected", {
-        action,
-        kind: "feature_disabled",
-        reason: "server_remote_unsupported",
-      });
-    },
-  });
-}
 
 export function resolveServerProjectService(params: {
   connectionServices: IServiceAccessor;
@@ -174,7 +151,6 @@ export function resolveServerProjectService(params: {
 }
 
 export function createServerRemoteWorkspaceServiceCollection(params: {
-  clientConfigService: IClientConfigService;
   connectionServices: IServiceAccessor;
   virtualProjects?: boolean;
   serverId?: string;
@@ -207,26 +183,12 @@ export function createServerRemoteWorkspaceServiceCollection(params: {
     .register(IZCodeTaskService, params.connectionServices.zcodeTaskService)
     .register(IZCodeAgentService, params.connectionServices.zcodeAgentService)
     .register(IZCodeSessionService, params.connectionServices.zcodeSessionService)
-    // R3 的分享属于目标 Environment；不能恢复旧 SSH 的本机 JWT 混装。
-    .register(
-      IConversationShareService,
-      params.targetKind === "server"
-        ? createUnsupportedRemoteConversationShareService()
-        : params.connectionServices.conversationShareService,
-    )
     .register(IBotsService, params.connectionServices.botsService)
     .register(IFileWatcherService, params.connectionServices.fileWatcherService)
-    .register(IOAuthService, params.connectionServices.oauthService)
     .register(IProviderSettingsService, params.connectionServices.providerSettingsService)
     .register(IModelSelectionService, params.connectionServices.modelSelectionService)
     .register(ISourceServerWorkspaceService, params.connectionServices.sourceServerWorkspaceService)
     .register(IUsageStatsService, params.connectionServices.usageStatsService)
-    .register(
-      ICodingPlanSubscriptionService,
-      params.connectionServices.codingPlanSubscriptionService,
-    )
-    .register(IClientConfigService, params.clientConfigService)
-    .register(IClientScenesService, params.connectionServices.clientScenesService)
     .register(ISkillsService, params.connectionServices.skillsService)
     .register(ISkillSyncService, params.connectionServices.skillSyncService)
     .register(IMcpSyncService, params.connectionServices.mcpSyncService)

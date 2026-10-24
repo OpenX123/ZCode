@@ -267,7 +267,7 @@ export function useProjectTree(isDesktop = false) {
       }));
   }, [tree, tabs, registry]);
   const scopeKey = JSON.stringify(scopes);
-  useProjectUnreadSignals(scopes, refresh, isDesktop);
+  useProjectUnreadSignals(scopes, refresh);
   const sourceVersion = JSON.stringify(
     directory.hosts.map((host) => [host.id, host.membershipId, host.connectionStatus]).sort(),
   );

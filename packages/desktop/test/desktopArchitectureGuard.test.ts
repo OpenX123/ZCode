@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   detectArchitectureMismatch,
   formatArchitectureMismatchDialogText,
-  resolveArchitectureDownloadUrl,
 } from "../src/main/desktopArchitectureGuard.js";
 
 describe("detectArchitectureMismatch", () => {
@@ -47,13 +46,6 @@ describe("detectArchitectureMismatch", () => {
   });
 });
 
-describe("resolveArchitectureDownloadUrl", () => {
-  it("按语言分流到官网下载页", () => {
-    expect(resolveArchitectureDownloadUrl("zh-CN")).toBe("https://zcode.z.ai/cn");
-    expect(resolveArchitectureDownloadUrl("en-US")).toBe("https://zcode.z.ai/en");
-  });
-});
-
 describe("formatArchitectureMismatchDialogText", () => {
   const mismatch = { binaryArch: "x64", nativeArch: "arm64" } as const;
 
@@ -62,7 +54,8 @@ describe("formatArchitectureMismatchDialogText", () => {
     expect(text.title).toBe("架构不匹配");
     expect(text.detail).toContain("x64");
     expect(text.detail).toContain("arm64");
-    expect(text.downloadButton).toBe("前往下载");
+    expect(text.dismissButton).toBe("知道了");
+    expect(text.detail).not.toMatch(/官网|https?:/);
   });
 
   it("英文文案包含运行架构与推荐架构", () => {
@@ -70,6 +63,7 @@ describe("formatArchitectureMismatchDialogText", () => {
     expect(text.title).toBe("Architecture Mismatch");
     expect(text.detail).toContain("x64");
     expect(text.detail).toContain("arm64");
-    expect(text.downloadButton).toBe("Download");
+    expect(text.dismissButton).toBe("OK");
+    expect(text.detail).not.toMatch(/https?:/);
   });
 });

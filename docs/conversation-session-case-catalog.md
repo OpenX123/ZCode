@@ -1,5 +1,9 @@
 # Conversation Session Case Catalog
 
+> 2026-10-24 独立桌面版本：SHARE / 云分享发布与匿名页、官方账号、Start/Coding/Team Plan、奖励营销、官方更新与手机云远控相关条目均已退役。下文此类内容仅为历史验收记录，不是当前产品要求；已删除的 spec / fixture 路径不再提供执行入口。旧导入副本的本地只读展示和普通工具/工作流断言继续保留。当前范围与 H01–H07 以独立桌面规格为准。
+
+> 测试入口补充：套餐导航/团队连接恢复/有效套餐映射、官方 Built-in 下载失败、真实官方账号导入及 ARMS TEL10 专属用例与夹具已删除。普通 Provider 重启、Turbo、ToolSearch 用例保留并改用 Personal API 配置；旧登录 fallback 已退出共享 helper。下文相关旧条目仅供历史追溯。
+
 ## 项目与任务草稿生命周期（2026-10-16）
 
 PD01–PD12 的前置、动作、断言与证据要求见 [统一生命周期规格](ui/project-task-draft-lifecycle.md)。产品语义 accepted；自动化保持 manual-review/pending，运行证据见 coverage matrix 与规格的验证记录，不代表已转正或发布。覆盖项目/任务新建、同目录项目隔离、接纳后默认配置、目录复用、迟到回执、手机独立恢复及旧数据认领。
@@ -579,7 +583,7 @@ Task 生命周期动作的产品入口固定在左侧 task 列表：重命名、
 | E06 | `running`，存在已稳定 assistant 历史；当前 primary turn、foreground subagent、goal continuation 或 goal verifier 可仍在运行     | fork stable assistant message                               | runningStableAssistantForkAllowed + forkDoesNotCopyBackgroundWork | 创建 child session；child 只复制 fork 点前稳定 transcript、fork 点配置和 fork 点前 goal 状态，不复制父 queue、active/background work 或 continuation inbox，不回滚共享 workspace；父 session 继续运行                                                                                                                                                                                              | accepted |
 | E07 | 目标 fork 点为 `completed(success)` assistant；父 session 已有 goal/target，queue 任意                                          | fork stable assistant message                               | forkInheritsSessionGoal + forkDoesNotCopyQueue                    | 创建 child session；child 继承 fork 点之前的 goal target、iteration、verifier timeline；父 queue 保留；child queue 为空；若父 session 保留 held queue，创建 queue 的输入必须发生在父 active turn 明确运行中，不能依赖刚完成时的短暂 busy 窗口                                                                                                                                                      | accepted |
 | E08 | `error`，或 assistant turn 只有 failed/error partial、没有进入稳定 `completed(success)` 产品最终态                              | fork assistant partial                                      | forkRequiresStableCompletedAssistant                              | reject 或入口 disabled；不能创建 fork session；failed/error partial 不形成可 fork 的稳定历史点；stop 产生的 interrupted partial 由 E02/E03 单独覆盖                                                                                                                                                                                                                                                | accepted |
-| E09 | session 曾 edit 旧 user query 并完成重跑                                                                                        | fork 编辑后 active branch 的 assistant message              | forkUsesEditedActiveBranch                                        | edit ACK 后 replacement user row 必须在 branch cut 后可见；创建 child session 后只包含编辑后的 active branch，不带被 edit/rewind 掉的旧 user/assistant 分支；edit/fork 的定位必须绑定当前 session 的稳定 message id，不能被其他 session 的最新 DOM 状态串扰                                                                                                                                                                                              | accepted |
+| E09 | session 曾 edit 旧 user query 并完成重跑                                                                                        | fork 编辑后 active branch 的 assistant message              | forkUsesEditedActiveBranch                                        | edit ACK 后 replacement user row 必须在 branch cut 后可见；创建 child session 后只包含编辑后的 active branch，不带被 edit/rewind 掉的旧 user/assistant 分支；edit/fork 的定位必须绑定当前 session 的稳定 message id，不能被其他 session 的最新 DOM 状态串扰                                                                                                                                        | accepted |
 | E10 | assistant turn 经历工具调用后才产生最终回复；UI 将多条 raw assistant 合并为一条可见 assistant；v4 可保留多段 assistant text row | fork 最终可见 assistant message                             | forkCopiesLogicalAssistantTurnEnd                                 | 创建 child session；按持久化 turn anchor 解析固定 ordered messageIds 与 boundaryMessageId，child 必须包含同一逻辑 turn 内工具结果之后的最终 assistant 回复、对应 tool block 和该 turn 已产生的 workspace 文件事实；fork 不得使用早段 raw assistant id 截断历史；v4 多段 assistant row 只能在该 turn 最后一段完成态 assistant text row 上展示 fork action；retry 另受 latestAssistantRetryOnly 约束 | accepted |
 | E11 | `completed(success)`，当前模型的思考档位不是通用五档（代表：GLM-5.2=`max/high/nothink`）                                        | fork assistant message，打开 child 后再冷恢复并发送后续输入 | forkInheritsModelThoughtCapabilities                              | child 必须在原子 fork bundle 中写入现有扁平 `runtime/model_selection={modelId,providerId,thoughtLevel?}`，并让 live runtime、冷恢复 snapshot 与后续 provider 请求使用同一 fork-time provider/model/thought；菜单只能显示该模型实际档位，禁止回退通用五档。旧 child 若没有 entry，只允许从同一 `forkOrigin` 的 hidden fork notice 恢复 variant，不迁移或扫描无关历史                                | accepted |
 
@@ -2143,7 +2147,7 @@ artifact 为 `packages/desktop/.e2e-artifacts/desktop-e2e-20260722-144548-301/su
 | T12  | 桌面本地 draft 粘贴两张 inline 图片，当前模型明确支持图片；动态图片 provider 在旧 Electron/Host/Agent 完全退出后写入本 spec 隔离 HOME | 新进程首次读取配置，eager upload 完成后立即发送正文                         | pastedImageProviderPathProjection            | provider seed 不与旧进程后台 refresh 并发写同一配置；durable data URL artifact 位于 `cli/artifacts/<session>`，派生图片位于独立的 `cli/image-cache/<session>`；最终真实 user content 严格保持 `query -> image1 -> image2 -> path1 -> path2`，每个 path 为普通 `[Image: source: <absolute path>]` 文本，不进入 system-reminder、runtime attachment 或 MCS | accepted |
 | T13  | T12 会话已完成并持久化，派生图片文件被删除但 durable data URL artifact 仍在                                                           | 完整重启 CLI/Electron，恢复该 session 后发送普通 follow-up                  | pastedImageDerivedPathColdRebuild            | 动态 provider 仍来自进程退出窗口写入的隔离配置；发送边界从 durable artifact 重建同一确定性路径；provider-visible 历史仍含 image base64 与恰好一个对应 path 文本，UI 历史附件不因派生缓存缺失而变化                                                                                                                                                       | accepted |
 | T14  | 历史 user turn 含 inline/paste 图片，当前模型明确 `supportsImages=false`；text-only provider 与 T12 同批在无并发 writer 时写入        | 发送后续普通文本                                                            | pastedImageTextOnlyPathProjection            | provider seed 不会被旧 Host 的 registry refresh 覆盖；image block 被替换成既有 omitted 文本且请求不含 `data:image`；同一真实 user content 继续保留派生 absolute path，path 不被包进 system-reminder/MCS                                                                                                                                                  | accepted |
-| T15 | App Personal 模型缺失输入能力配置，同时存在完整的图片模型 | 冷启动加载两份配置并打开模型菜单 | incompleteImageCapabilityBlocksExecution | App Registry 不收录不完整模型为可执行选项，完整图片模型仍可选；不能把缺省 seed 的 text-only 默认值当作未知能力。旧 unknown-capability 测试名不再证明当前 Registry 支持缺失能力 | accepted |
+| T15  | App Personal 模型缺失输入能力配置，同时存在完整的图片模型                                                                             | 冷启动加载两份配置并打开模型菜单                                            | incompleteImageCapabilityBlocksExecution     | App Registry 不收录不完整模型为可执行选项，完整图片模型仍可选；不能把缺省 seed 的 text-only 默认值当作未知能力。旧 unknown-capability 测试名不再证明当前 Registry 支持缺失能力                                                                                                                                                                           | accepted |
 | T16  | 派生缓存支持该 inline 图片 MIME，但派生文件和 durable artifact 都不可读取                                                             | 发送请求进入最终 provider projection                                        | imagePathMaterializationFailsClosed          | 请求在本地以明确的附件物化错误失败；不得向 provider 发送空 path、失效 path 或缺少 path 的降级请求                                                                                                                                                                                                                                                        | accepted |
 | T17  | inline 图片 MIME 不在派生缓存支持范围，但原图片 provider 链路可继续处理                                                               | eager prime 或发送前 ensure 遇到该 MIME                                     | unsupportedImageCacheSkipsPath               | 派生缓存返回 unsupported，不写 cache、不追加 path，也不中断请求；支持图片的模型仍收到原 image/base64，text-only 模型仍收到既有 omitted 文本                                                                                                                                                                                                              | accepted |
 | AT01 | 桌面任一 V4 对话 pane，composer 无附件                                                                                                | 把一个或多个 OS 文件拖到时间线、空态或状态区                                | paneWideExternalFileDrop                     | 指针所在 pane 的 composer 仅添加一次附件，随后沿原有预传/发送门禁执行；其他 split pane 不接收                                                                                                                                                                                                                                                            | accepted |
@@ -3755,54 +3759,54 @@ WFS03（accepted）：Snippet 运行→完成/失败；运行摘要计时且代�
 本节只覆盖桌面端「入口在不在场」，不重复 DWG-01～DWG-07 已有的单测语义，
 也不覆盖已存在 run 的渲染与 Resume 收回（DWG-07 的 UI 单测已承担）。
 
-| ID       | 前置状态                                       | 动作                              | 断言                                                                                               | 决策     |
-| -------- | ---------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------- | -------- |
-| DWG-08-A | 服务端成功响应但不下发 `dynamicWorkflow` key   | 打开 `/` 面板、`+` 菜单、自动化页 | `/` 面板有 `goal`、无 `workflow`；`+` 菜单有「添加目标」、无「工作流」；自动化页无两个标题标签     | accepted |
-| DWG-08-B | 服务端下发 `dynamicWorkflow.mode = "alwaysOn"` | 同上                              | `/` 面板 `workflow` 紧随 `goal`；`+` 菜单「工作流」紧随「目标」；自动化页「自动化 / 工作流」都在场 | accepted |
+| ID       | 前置状态                    | 动作                              | 断言                                                                                               | 决策     |
+| -------- | --------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------- | -------- |
+| DWG-08-A | 本地设置明确选择 `disabled` | 打开 `/` 面板、`+` 菜单、自动化页 | `/` 面板有 `goal`、无 `workflow`；`+` 菜单有「添加目标」、无「工作流」；自动化页无两个标题标签     | accepted |
+| DWG-08-B | 本地设置明确选择 `alwaysOn` | 同上                              | `/` 面板 `workflow` 紧随 `goal`；`+` 菜单「工作流」紧随「目标」；自动化页「自动化 / 工作流」都在场 | accepted |
 
 两档共用同一组动作、相反断言。`goal` 不参与灰度，两档都必须在场，作为「CLI catalog 已送达」的正向对照；
 `disabled` 档额外要求在观察窗内标签不会迟到出现，避免把「还没渲染」读成「已关闭」。
 不扩展 `onDemand`（本版本行为与 `alwaysOn` 相同，由 `isDynamicWorkflowModeEnabled` 单测覆盖）、
 本地 `ZCODE_DYNAMIC_WORKFLOW_MODE` 覆盖档位、手机远控与 SSH/WSL/Docker 远端 Host。
 
-## SHARE. 会话分享与继续工作
+## SHARE. 会话分享与继续工作（已退役：2026-10-24）
 
 SHARE-OAUTH01（accepted）：完整 Web 入口承载分享页时，从 `/share/:code` 或 `/cn/share/:code` 选择 Z.ai / BigModel 登录，`code` / `authCode` 回到对应分享 callback 后必须调用认证服务，交换 token 并返回原分享页。覆盖 390/1024px、深浅主题；缺少 state 或结果参数及普通分享路径不得误入回调。独立 `web-share` 的路径式回调规则保持不变；本用例不代表真实第三方 OAuth 或部署网关验收。
 
 Todo139 补充 accepted 用例：SHARE30 在 Root／Recent／公共默认三种接收方状态分别首次导入，工具栏及首条 Submission 的 modelSelection/mode 与普通新任务一致，context_refs 保留且 Root 正文不迁移；SHARE31 无模型／View 延迟时内容可打开，空 snapshot 不阻断初始化，用户先编辑后迟到结果不覆盖；SHARE32 同路径不同 identity、远程回退本地及 reused=true，使用结果的实际目标并保留已有会话，导入不更新 Recent。三项均要求 UI 加草稿／提交 payload 证据；不展开与 queue/goal 的无关叉乘，不开放手机导入入口。
 
-| ID      | 前置状态                                                              | 事件                                        | 期望结果                                                                                         | Review   |
-| ------- | --------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------ | -------- |
-| SHARE01 | Desktop local，至少一轮 completed                                     | 发布全部/部分轮次                           | 公开 ID 稳定，prepare→upload→confirm 返回真实链接                                                | accepted |
-| SHARE02 | 当前最后一轮 running，之前有 completed                                | 打开分享                                    | running 可见但不可选，completed 可发布                                                           | accepted |
-| SHARE03 | SSH/WSL/Docker，产物位于远端                                          | 发布                                        | 本地 JWT/API + 远端 Rows/File；range staging 后上传                                              | accepted |
-| SHARE04 | 手机 web-remote-replayable attachment                                 | 调用发布 RPC                                | service 层拒绝，不产生 preparation                                                               | accepted |
-| SHARE05 | 正式 attachment 与 fileChanges 同路径                                 | 发布                                        | 正式事实优先，仅上传一次                                                                         | accepted |
-| SHARE06 | 文件越界、变化、空 chunk 或哈希不符                                   | 发布                                        | prepare 前 fail closed                                                                           | accepted |
-| SHARE07 | confirm 返回 3215                                                     | 轮询                                        | 同 preparation/DTO 串行重试，最多 2 分钟                                                         | accepted |
-| SHARE08 | public_importable 分享                                                | deep link 导入                              | 当前本地 workspace 创建新 task/session，安装全部产物并写 pending shared_context                  | accepted |
-| SHARE09 | public_readonly 分享                                                  | deep link 导入                              | 403/import_not_allowed，不创建目录                                                               | accepted |
-| SHARE10 | 导入下载/rename/SQLite 任一步失败                                     | import                                      | 只清理本次 marker/staging/importRoot，不删除用户 workspace                                       | accepted |
-| SHARE11 | 导入成功后远端 share 过期                                             | 继续对话                                    | 本地会话和文件独立可用                                                                           | accepted |
-| SHARE12 | `/cn/share/:code`，public_readonly                                    | 匿名访问落地页                              | 预览公开 Rows/产物，不触发 OAuth，不显示导入 CTA                                                 | planned  |
-| SHARE13 | `/cn/share/:code`，public_importable                                  | 匿名访问落地页                              | 预览成功，显示仅携带 share code 的 Desktop Deep Link                                             | planned  |
-| SHARE14 | `/cn/share/:code`，private                                            | 未登录访问                                  | 显示登录入口，不泄漏分享是否存在                                                                 | planned  |
-| SHARE15 | `/cn/share/:code`，private                                            | owner OAuth 成功                            | 回到原 share 路径，带 JWT 预览并显示继续 CTA                                                     | planned  |
-| SHARE16 | `/cn/share/callback`                                                  | 非法 state/nonce                            | 拒绝回跳和 token 写入，不能开放重定向                                                            | planned  |
-| SHARE17 | `/cn/share` 与 remote 独立静态部署                                    | 分别发布/回滚                               | `/cn/share/*` 与 `/remote/v4/*` 互不覆盖                                                         | planned  |
-| SHARE21 | 导入完成后的 pending context                                          | 点击 Composer Chip                          | 右侧只打开一个 `/cn/share/:code` Browser Tab，中心显示 handover 空态                             | planned  |
-| SHARE22 | 首条 Share 输入遇到 busy                                              | queue/guide                                 | context 进入 reserved，消费时与 user message 原子 attach，删除队列后回到 pending                 | planned  |
-| SHARE23 | 同一 share 在不同 workspace                                           | 重复 Deep Link                              | 同 workspace 复用 session，不同 workspace 创建独立 session，不覆盖已有 workspace 文件            | planned  |
-| SHARE24 | Desktop 导入进度或终态变化                                            | 导入阶段事件                                | 同一导入操作只更新一个 Toast；成功/失败原位替换进度提示，不堆叠旧消息                            | accepted |
-| SHARE18 | Desktop local/SSH attachment 已完成 V4 handshake                      | 发布                                        | Share 与 conversation RPC 复用同一 trusted Agent scope；raw Agent 零调用                         | accepted |
-| SHARE19 | 同一份 Desktop V4 rows fixture                                        | Share 正文渲染                              | user bubble、assistant Markdown、Reasoning、ToolLayout 和 turn/work 顺序与 Desktop 一致          | accepted |
-| SHARE20 | 长 Markdown / table fixture                                           | Share 页面阅读                              | 页面纵向可滚动、table 横向独立滚动，Markdown 不因缺少 TooltipProvider 降级为纯文本               | accepted |
-| SHARE25 | 一轮含 PDF 预览卡片、三个已存在 MP4 卡片和正文 `~/...` 路径           | 打开选择阶段                                | 只检查并分享 PDF；三个视频显示可跳过 warning；`~/...` 不生成候选；最终只上传 PDF                 | planned  |
-| SHARE26 | 一轮含不存在且没有可见预览卡片的 Markdown 路径                        | 打开选择阶段                                | 文件不进入候选、不告警、不上传；没有独立 artifact row 也不会进入分享                             | planned  |
-| SHARE27 | Desktop local，Session A 分享成功态 dock 未关闭，Session B 无分享状态 | 切换 A→B，进入 B 分享并点击下一步，再切回 A | B 只显示自己的选择/确认阶段，Next 不跳到 A 的成功 dock；A 仍保留自己的成功 dock；关闭 A 不清理 B | accepted |
+| ID                   | 前置状态                                                              | 事件                                        | 期望结果                                                                                         | Review   |
+| -------------------- | --------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------ | -------- |
+| ~~SHARE01 ~~ retired | Desktop local，至少一轮 completed                                     | 发布全部/部分轮次                           | 公开 ID 稳定，prepare→upload→confirm 返回真实链接                                                | accepted |
+| ~~SHARE02 ~~ retired | 当前最后一轮 running，之前有 completed                                | 打开分享                                    | running 可见但不可选，completed 可发布                                                           | accepted |
+| ~~SHARE03 ~~ retired | SSH/WSL/Docker，产物位于远端                                          | 发布                                        | 本地 JWT/API + 远端 Rows/File；range staging 后上传                                              | accepted |
+| ~~SHARE04 ~~ retired | 手机 web-remote-replayable attachment                                 | 调用发布 RPC                                | service 层拒绝，不产生 preparation                                                               | accepted |
+| ~~SHARE05 ~~ retired | 正式 attachment 与 fileChanges 同路径                                 | 发布                                        | 正式事实优先，仅上传一次                                                                         | accepted |
+| ~~SHARE06 ~~ retired | 文件越界、变化、空 chunk 或哈希不符                                   | 发布                                        | prepare 前 fail closed                                                                           | accepted |
+| ~~SHARE07 ~~ retired | confirm 返回 3215                                                     | 轮询                                        | 同 preparation/DTO 串行重试，最多 2 分钟                                                         | accepted |
+| ~~SHARE08 ~~ retired | public_importable 分享                                                | deep link 导入                              | 当前本地 workspace 创建新 task/session，安装全部产物并写 pending shared_context                  | accepted |
+| ~~SHARE09 ~~ retired | public_readonly 分享                                                  | deep link 导入                              | 403/import_not_allowed，不创建目录                                                               | accepted |
+| ~~SHARE10 ~~ retired | 导入下载/rename/SQLite 任一步失败                                     | import                                      | 只清理本次 marker/staging/importRoot，不删除用户 workspace                                       | accepted |
+| ~~SHARE11 ~~ retired | 导入成功后远端 share 过期                                             | 继续对话                                    | 本地会话和文件独立可用                                                                           | accepted |
+| ~~SHARE12 ~~ retired | `/cn/share/:code`，public_readonly                                    | 匿名访问落地页                              | 预览公开 Rows/产物，不触发 OAuth，不显示导入 CTA                                                 | planned  |
+| ~~SHARE13 ~~ retired | `/cn/share/:code`，public_importable                                  | 匿名访问落地页                              | 预览成功，显示仅携带 share code 的 Desktop Deep Link                                             | planned  |
+| ~~SHARE14 ~~ retired | `/cn/share/:code`，private                                            | 未登录访问                                  | 显示登录入口，不泄漏分享是否存在                                                                 | planned  |
+| ~~SHARE15 ~~ retired | `/cn/share/:code`，private                                            | owner OAuth 成功                            | 回到原 share 路径，带 JWT 预览并显示继续 CTA                                                     | planned  |
+| ~~SHARE16 ~~ retired | `/cn/share/callback`                                                  | 非法 state/nonce                            | 拒绝回跳和 token 写入，不能开放重定向                                                            | planned  |
+| ~~SHARE17 ~~ retired | `/cn/share` 与 remote 独立静态部署                                    | 分别发布/回滚                               | `/cn/share/*` 与 `/remote/v4/*` 互不覆盖                                                         | planned  |
+| ~~SHARE21 ~~ retired | 导入完成后的 pending context                                          | 点击 Composer Chip                          | 右侧只打开一个 `/cn/share/:code` Browser Tab，中心显示 handover 空态                             | planned  |
+| ~~SHARE22 ~~ retired | 首条 Share 输入遇到 busy                                              | queue/guide                                 | context 进入 reserved，消费时与 user message 原子 attach，删除队列后回到 pending                 | planned  |
+| ~~SHARE23 ~~ retired | 同一 share 在不同 workspace                                           | 重复 Deep Link                              | 同 workspace 复用 session，不同 workspace 创建独立 session，不覆盖已有 workspace 文件            | planned  |
+| ~~SHARE24 ~~ retired | Desktop 导入进度或终态变化                                            | 导入阶段事件                                | 同一导入操作只更新一个 Toast；成功/失败原位替换进度提示，不堆叠旧消息                            | accepted |
+| ~~SHARE18 ~~ retired | Desktop local/SSH attachment 已完成 V4 handshake                      | 发布                                        | Share 与 conversation RPC 复用同一 trusted Agent scope；raw Agent 零调用                         | accepted |
+| ~~SHARE19 ~~ retired | 同一份 Desktop V4 rows fixture                                        | Share 正文渲染                              | user bubble、assistant Markdown、Reasoning、ToolLayout 和 turn/work 顺序与 Desktop 一致          | accepted |
+| ~~SHARE20 ~~ retired | 长 Markdown / table fixture                                           | Share 页面阅读                              | 页面纵向可滚动、table 横向独立滚动，Markdown 不因缺少 TooltipProvider 降级为纯文本               | accepted |
+| ~~SHARE25 ~~ retired | 一轮含 PDF 预览卡片、三个已存在 MP4 卡片和正文 `~/...` 路径           | 打开选择阶段                                | 只检查并分享 PDF；三个视频显示可跳过 warning；`~/...` 不生成候选；最终只上传 PDF                 | planned  |
+| ~~SHARE26 ~~ retired | 一轮含不存在且没有可见预览卡片的 Markdown 路径                        | 打开选择阶段                                | 文件不进入候选、不告警、不上传；没有独立 artifact row 也不会进入分享                             | planned  |
+| ~~SHARE27 ~~ retired | Desktop local，Session A 分享成功态 dock 未关闭，Session B 无分享状态 | 切换 A→B，进入 B 分享并点击下一步，再切回 A | B 只显示自己的选择/确认阶段，Next 不跳到 A 的成功 dock；A 仍保留自己的成功 dock；关闭 A 不清理 B | accepted |
 
-| SHARE28 | 分享确认 Dock 已打开 | 窄面板缩放后恢复宽度 | 权限文案完整、按钮不溢出、正文独立滚动、标题/权限/确认状态保留 | accepted |
-| SHARE29 | 当前 session 分享已打开 | 再次点击顶部分享按钮 | 收起浮窗并保留当前草稿；不影响其它 session；发布中禁用关闭（SHARE34 更新） | accepted |
+| ~~SHARE28 ~~ retired| 分享确认 Dock 已打开 | 窄面板缩放后恢复宽度 | 权限文案完整、按钮不溢出、正文独立滚动、标题/权限/确认状态保留 | accepted |
+| ~~SHARE29 ~~ retired| 当前 session 分享已打开 | 再次点击顶部分享按钮 | 收起浮窗并保留当前草稿；不影响其它 session；发布中禁用关闭（SHARE34 更新） | accepted |
 
 不与 queue、goal、compact、provider、主题和 locale 做全笛卡尔积；这些维度用分享不进入 realtime
 和 shared_context 唯一注入不变量剪枝。Server Remote、Web 发布和手机发布首期不开放。
@@ -3951,7 +3955,7 @@ ARM 验证：验证：相关单测 12 文件 / 67 项通过；最终 Electron `d
 
 AMT 验证：4 个相关单测文件 / 15 项通过；桌面 E2E `desktop-e2e-20260911073739200-p10328-ec7ec1db666a0f0c` 2/2 通过，真实历史正文/标题及开启归档后的列表、选中态、另一条同名未读均验证。Host getTaskMeta 0.4ms 完成早于 V4 冷恢复约 1 秒，日志无标题 readSession 请求。root typecheck、desktop typecheck:e2e、fixture check、格式检查、lint（48 个既有 warnings / 0 errors）、architecture（baseline 0 / new 0）通过。代码涉及 ui 与 project-sidebar，CLI/Host 事实归属、owner/lease、continuous/replayable 边界不变；实现净减约 50 行。真实手机配对、SSH/WSL、Windows/Linux GUI 未复跑，远端身份与 attachment 迟到结果由单测覆盖。保持 pending。
 
-## Start Plan bucket 提醒（2026-09-10）
+## Start Plan bucket 提醒（2026-09-10）（已退役：2026-10-24）
 
 | Case  | Setup / Action                                                                         | Expected                                                          | Decision |
 | ----- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | -------- |
@@ -4150,7 +4154,7 @@ SSH 代表完整 Electron E2E；WSL/Docker 复用同一 adapter/backend 合同�
 | RPN-14  | 项目连接状态与设备标注同源；项目编辑与设备设置分别操作                                              | accepted；状态 UT、原型深浅主题/窄屏、本地 Electron 离线详情/Escape 通过；手机真机待补                                                                                                                                                                                                            |
 | RPN-15  | 目录绑定失败不生成幽灵项目                                                                          | accepted；目录失败组件 UT 通过；真实远端权限/路径错误待补                                                                                                                                                                                                                                         |
 | RPN-16  | 外部删除一个远程项目目录后重连：失败项目保留、其他项目恢复，目录恢复后可重试                        | accepted；真实磁盘 + Host/Registry、真实 File RPC、Renderer 组恢复回归通过；真实 SSH / 手机 E2E 待验证（当前环境缺 SSH 凭据）                                                                                                                                                                     |
-| RPN-17  | 桌面端远程项目菜单进入「远程设备设置」并定位所属设备卡；本地项目与 Web 端不显示                     | pending；组件 UT + 本地 Electron 离线项目 E2E（`conversation-session-rpn-project-navigation.test.ts`），2026-10-16 macOS 2/2 通过（run `desktop-e2e-20261016051334510-p86123-0b51278142f23118`、`desktop-e2e-20261016051551421-p89435-dd716c1c99ce78e4`）；在线 SSH、Windows/Linux 未执行                                                                                                                                                                                            |
+| RPN-17  | 桌面端远程项目菜单进入「远程设备设置」并定位所属设备卡；本地项目与 Web 端不显示                     | pending；组件 UT + 本地 Electron 离线项目 E2E（`conversation-session-rpn-project-navigation.test.ts`），2026-10-16 macOS 2/2 通过（run `desktop-e2e-20261016051334510-p86123-0b51278142f23118`、`desktop-e2e-20261016051551421-p89435-dd716c1c99ce78e4`）；在线 SSH、Windows/Linux 未执行         |
 
 RPN-16 回归（2026-09-16）：`remoteWorkspacePreparation.test.ts` 覆盖真实目录删除后的手动/自动恢复、恢复目录后重试与取消；`serverRemoteConnection.test.ts` 覆盖真实 File RPC 的 ENOENT 与共享连接存活；`remoteWorkspaceDirectoryRecovery.test.ts` 覆盖失败发起项目与两个 sibling 的隔离。185 条相关测试通过。本地项目导航 E2E 重跑 1/1 通过，run `desktop-e2e-20260916150456883-p88284-c3ee928bcbf4fc2e`；它只证明导航/离线条目保留，不能替代真实 SSH 三项目删除场景或手机 E2E。
 
@@ -4187,7 +4191,7 @@ Pending E2E `conversation-session-create-telemetry.test.ts` 验证真实预热�
 
 Memory MEM08 埋点补充（2026-09-17）：现有 Desktop Memory 用例同时断言默认关闭会话和新建开启会话的 `send_btn`、`message_completion`、`agent_step` 均携带同值 `memory_enabled`；开关中途变更、旧协议兼容及子 Agent 归属由 telemetry/gateway 单测补充。新增断言验证结果以本次执行记录为准。
 
-## Todo156 Start 后续修复
+## Todo156 Start 后续修复（已退役：2026-10-24）
 
 验收边界使用 [Todo156 SF-01～SF-19](working-memory/provider-refactor/steps/todo-156-start-plan-followup-final-decisions.md) 的最终决策。`conversation-session-start-plan-independent` 待人工复核用例补充 SF-01/02/08/10/13：付费连接下 Start 圆环、团队下拉选中、套餐名称、带参数副屏首条的关闭／确认／不了，断言实际模型请求和主输入框草稿不变。其余缓存状态组合由 `startPlanRecommendationFreshness`、`providerFamilyConnectionVisibility` 与状态卡测试覆盖；桌面／手机视口与深浅主题另走浏览器视觉用例。此记录不是 CI 转正或全部 SF 的 E2E 覆盖声明。
 
@@ -4283,12 +4287,12 @@ R3A-UI-04 / RDUX-11-04 回归（2026-10-12 macOS 真实 SSH 1/1 PASS，仍 pendi
 
 ### RDUX-13 设置设备卡与更新（accepted）
 
-| 用例       | 设置、动作与断言                                                                                                                      | 证据入口                                                                                                        |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| 用例       | 设置、动作与断言                                                                                                                                                                    | 证据入口                                                                                                        |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | RDUX-13-01 | 真实 SSH 成功后设备卡显示连接、项目；在线缺少草稿缓存、断线后残留其他项目缓存时，点击最近项目直接打开原项目并校正草稿范围，项目 ID 与入口数不变，不出现创建弹窗；更多菜单含设备信息 | `manual-review/pending/conversation-session-remote-device-cards.test.ts`                                        |
-| RDUX-13-02 | 未占用端口连接失败 → 设置页无新增设备卡 → 默认折叠未完成区域 → 展开、删除/清理                                                        | 同上                                                                                                            |
-| RDUX-13-03 | 浅色/深色 × 1440/900/480px，设备卡与未完成列表截图                                                                                    | 同上；480px 是桌面窄屏，手机不开放设备管理                                                                      |
-| RDUX-13-04 | 同设备跨连接/重连/重启去重；稍后仅本次运行；可选更新不弹 toast；强制更新任务清单                                                      | `sourceServerUpdateNotifications`、`sourceServerUpdatePreferences`、`sourceServerManagementPanel` 组件/单元回归 |
+| RDUX-13-02 | 未占用端口连接失败 → 设置页无新增设备卡 → 默认折叠未完成区域 → 展开、删除/清理                                                                                                      | 同上                                                                                                            |
+| RDUX-13-03 | 浅色/深色 × 1440/900/480px，设备卡与未完成列表截图                                                                                                                                  | 同上；480px 是桌面窄屏，手机不开放设备管理                                                                      |
+| RDUX-13-04 | 同设备跨连接/重连/重启去重；稍后仅本次运行；可选更新不弹 toast；强制更新任务清单                                                                                                    | `sourceServerUpdateNotifications`、`sourceServerUpdatePreferences`、`sourceServerManagementPanel` 组件/单元回归 |
 
 新增 E2E 保持 pending，不自动人工转正。远控 management 门禁、任务 continuous/replayable 合同不变。
 
@@ -4331,7 +4335,7 @@ R3A-UI-04 / RDUX-11-04 回归（2026-10-12 macOS 真实 SSH 1/1 PASS，仍 pendi
 规则与字段位置。沿用 390/1200 宽度 × 深浅主题 × 中英文组件集成，导入不可恢复错误不提供原样重试，
 网页 429/5xx 不误报内容问题。组件证据不等同于 Desktop/手机 shared-host 整链路验证。
 
-### SHARE-WF02：分享完整工作流快照
+### SHARE-WF02：分享完整工作流快照（已退役：2026-10-24）
 
 已接受：父会话可见的阶段/参与者/完成卡、六类产物、未知块原位降级；不共享子代理全文或执行能力。
 Setup：服务生成固定 journal 前缀的公开投影；browser fixture 为 5 阶段、9 代理、14 条看板记录、Markdown 和文件。
@@ -4339,7 +4343,7 @@ Action：打开桌面/手机、中英文、Zai Light/Dark 分享页，展开看�
 Assert：原正文不被折叠隐藏，数据/文档实际可读，未知块摘要保留，无宿主请求及横向溢出。
 分层证据：采集器与跨语言 fixture 单测验证版本、水位、闭包和哈希；browser pending 验证展示与点击。
 
-### SHARE-WF03：真实工作流展示一致性
+### SHARE-WF03：真实工作流展示一致性（已退役：2026-10-24）
 
 Setup：回归数据为一次失败编译、一次成功创建、后台完成轮和后续用户轮；不得把导航目录当分享目录。
 Action：全选分享，打开运行卡、完成卡、看板、两份文档；禁用 OSS 文件请求。
@@ -4347,7 +4351,7 @@ Assert：仅两个对应轮次的卡片；完成统计、产物清单与客户�
 默认 fixture 可直接执行 `node packages/web/test/e2e/manual-review/pending/share-workflow-parity.mjs`；
 真实采集的 preview 可通过 `SHARE_PARITY_PREVIEW` 指向本地文件，原始会话数据不入仓。
 
-### SHARE34：预检认证错误明确展示
+### SHARE34：预检认证错误明确展示（已退役：2026-10-24）
 
 模拟 capabilities 前缺少 token 的 authentication_required 错误。点击分享预检状态，必须
 显示先登录/重新登录指引，标题不归因为内容问题，无空阶段占位；Next 禁用，重试触发重新预检。
@@ -4592,13 +4596,13 @@ OAuth 初始化冲突自动写入隔离：已拒绝的初始化不再调用自�
 
 已维护项目创建定向单测，并扩展 `ui-shell/manual-review/pending/project-native-directory-picker.test.ts` 与 `conversation-session/manual-review/pending/conversation-session-virtual-project-mobile.test.ts`。创建 helper 同步增加显式信任动作；不通过通用点击工具自动吞掉确认。桌面和手机触摸取消/确认已运行通过；远端身份、失败/登记重试与恢复由定向单测验证。真实 SSH/WSL/Docker、实体手机及带 Hook 场景未执行，不计入 formal 覆盖。
 
-## SHARE-TOOLS01：工具公开展示一致性
+## SHARE-TOOLS01：工具公开展示一致性（已退役：2026-10-24）
 
 accepted：同一份 WebFetch、Search、Read、Edit、Bash、Agent、Skill、Todo、MCP、Node REPL、CUA、消息与任务控制工具事实，发布后分享页与默认设置 App 展示同类摘要、图标、终态和只读详情。Fetch 同时带 URL/prompt 时只显示 URL；工具分组沿用共同算法。图片在原工具下保持顺序，公开页不能调用宿主。旧分享、未知块和旧能力服务端保留原行展示。子代理完整会话及插件交互应用为 pruned（只读边界）。
 
 SHARE-TOOLS01 补充 accepted：Write/Diff 等工具的图片正文缺少公开资源时，展开显示静态预览不可用，不访问本机路径且不永久 Loading；公开页在桌面/手机宽度、深浅主题、中英文验证。HTTP 403 显示隐藏分享状态，HTML 400 显示请求失败而非契约损坏。
 
-### SHARE-REVIEW：工具展示失败收口（accepted）
+### SHARE-REVIEW：工具展示失败收口（accepted）（已退役：2026-10-24）
 
 远端打开菜单过滤及失败 Toast、内嵌图片 reject/空结果/切换路径、审批能力注入与插件入口。共享浏览器组件验证覆盖 390/1200、深浅主题；测试保持 manual-review/pending，不计为真实 Desktop/SSH 或手机配对链路通过。
 
@@ -4646,7 +4650,7 @@ SHARE34（accepted）：顶部非模态分享浮窗；现有选择面板临时�
 
 SHARE34 选择面板补充：固定顶部全选（支持半选）、中间列表滚动与 32px 渐隐、底部已选轮数或超限 warning。容量基于待确认草稿与服务返回行数，检查中/超限/空选禁用确认；取消回滚，全选按 product turn 原子更新。点击列表项切换选择，独立定位按钮仅跳转正文；键盘与复选框操作不重复切换。
 
-### SHARE34 行为覆盖计划（2026-09-23）
+### SHARE34 行为覆盖计划（2026-09-23）（已退役：2026-10-24）
 
 目标为本次交互重构的有效行为覆盖率 ≥95%，不是仓库行覆盖率，也不是真实发布 API 的端到端覆盖率。分母固定为下面 24 项，每项必须有前置、动作、结果断言并实际通过；主题/语言/尺寸副本不重复计数。P0（04–13、19–22）必须全部通过。其余既有分享服务、导入、SSH 发布契约沿用 SHARE18/28，不以组件模拟替代。普通 Web/手机 remote 无分享入口保持不变；窄屏仅证明共享组件布局。
 
@@ -4698,14 +4702,14 @@ SHARE34 重构收尾：旧 scope/stage/view、正文勾选、遮罩和 reopen ta
 
 ## 右侧面板切换的渲染隔离（SPT，accepted/pending）
 
-| Case  | 前置与操作                                                                 | 预期                                                                                                                                           |
-| ----- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| SPT01 | Dev 空草稿、多个项目；深浅主题各展开/收起右侧面板两轮                      | 面板状态切换；项目数据与导航语义未变时，ProjectNodeContent 渲染次数为零。记录 RAF 耗时，不用机器相关时间阈值判定。无模型请求。                 |
-| SPT02 | 430/1250px、中英、深浅主题；工具栏完整布局、缩窄、恢复、改变模型文案       | 完整布局放得下时不克隆；溢出时沿用折叠顺序；恢复后清除压缩态；打开的菜单、焦点和触发按钮实例保持。                                             |
-| SPT03 | 44 个项目，桌面/手机布局、深浅主题；父级更新、真实新建按钮、等价刷新、改名 | 前三项项目内容重渲染为零；新建进入草稿；改名后显示新名称。使用实际新建/远端导航 hook 与 RPC 方法代理，手机走 replayable 分支。                 |
-| SPT04 | 多项目真实 Dev App，深浅主题；已有会话按 Cmd/Ctrl+N，回选会话后再次新建    | 收到原生菜单事件；保持项目归属并显示草稿；项目内容零重渲染；回选仍命中当前任务。使用真实 Root/App/WorkspaceShell/tab store，记录首帧和 trace。 |
-| SPT05 | 批量收起工具；桌面/手机、深浅主题、中英文；默认展开、嵌套和 forceMount | accepted：挂载/重挂载不测量完全隐藏详情；首次展开、收起和快速反向切换保留动画，鼠标/键盘可用，展开记忆不丢；默认展开和 forceMount 高度有效。记录真实 DOM 测量、动画事件和耗时；时间线滚动沿用 SRM10。 |
-| SPT06 | 44 个项目，桌面/手机、深浅主题；一个任务持续更新活动时间，再完成、改名和操作项目 | 活动更新只渲染所属项目；其他项目内容零渲染；侧栏与消息区 loading 保持旋转但不逐帧重算样式；完成后 loading 消失，标题、未读与项目操作继续使用最新数据。 |
+| Case  | 前置与操作                                                                       | 预期                                                                                                                                                                                                  |
+| ----- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SPT01 | Dev 空草稿、多个项目；深浅主题各展开/收起右侧面板两轮                            | 面板状态切换；项目数据与导航语义未变时，ProjectNodeContent 渲染次数为零。记录 RAF 耗时，不用机器相关时间阈值判定。无模型请求。                                                                        |
+| SPT02 | 430/1250px、中英、深浅主题；工具栏完整布局、缩窄、恢复、改变模型文案             | 完整布局放得下时不克隆；溢出时沿用折叠顺序；恢复后清除压缩态；打开的菜单、焦点和触发按钮实例保持。                                                                                                    |
+| SPT03 | 44 个项目，桌面/手机布局、深浅主题；父级更新、真实新建按钮、等价刷新、改名       | 前三项项目内容重渲染为零；新建进入草稿；改名后显示新名称。使用实际新建/远端导航 hook 与 RPC 方法代理，手机走 replayable 分支。                                                                        |
+| SPT04 | 多项目真实 Dev App，深浅主题；已有会话按 Cmd/Ctrl+N，回选会话后再次新建          | 收到原生菜单事件；保持项目归属并显示草稿；项目内容零重渲染；回选仍命中当前任务。使用真实 Root/App/WorkspaceShell/tab store，记录首帧和 trace。                                                        |
+| SPT05 | 批量收起工具；桌面/手机、深浅主题、中英文；默认展开、嵌套和 forceMount           | accepted：挂载/重挂载不测量完全隐藏详情；首次展开、收起和快速反向切换保留动画，鼠标/键盘可用，展开记忆不丢；默认展开和 forceMount 高度有效。记录真实 DOM 测量、动画事件和耗时；时间线滚动沿用 SRM10。 |
+| SPT06 | 44 个项目，桌面/手机、深浅主题；一个任务持续更新活动时间，再完成、改名和操作项目 | 活动更新只渲染所属项目；其他项目内容零渲染；侧栏与消息区 loading 保持旋转但不逐帧重算样式；完成后 loading 消失，标题、未读与项目操作继续使用最新数据。                                                |
 
 规格见 [Side Pane tabs](ui/side-pane-tabs.md)。SPT01/04 使用真实 Dev App 的多项目现场，SPT02/03/05/06 使用真实 hook/组件的独立浏览器夹具。SPT03 的 Host 与手机 bridge 响应使用 fixture；不覆盖远端传输、业务数据迁移或模型请求。SPT04 不发送 prompt，保留既有草稿预热；原生菜单链路只适用于桌面，手机共享边界由 SPT03 验证。
 
@@ -4729,7 +4733,7 @@ TD01–TD08 均 accepted，详见 [规则与用例](ui/composer-text-draft-persi
 | ID    | Setup / Action                                                                                                   | Assertion                                                                                                                                             |
 | ----- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | SPR01 | 生产 renderer、8 个固定已完成历史会话；真实点击切换 136 次；8/40/72/136 次及停止切换后，等待 35 秒并强制 GC 两次 | 非当前会话 snapshot 与已关闭 store 为零，当前 store 恰好一个；历史正文每次可见；保存各检查点 heap snapshot，不用 RSS 或切换耗时阈值代替对象释放断言。 |
-| SPR02 | lease owner 切换、草稿晋升后返回草稿、layer 换代、Suspense 中止 render                                              | 新 owner 的首帧不能读取旧 lease；同 lease 的草稿晋升不重挂 Composer；中止 render 不替换已提交 owner。                                                           |
+| SPR02 | lease owner 切换、草稿晋升后返回草稿、layer 换代、Suspense 中止 render                                           | 新 owner 的首帧不能读取旧 lease；同 lease 的草稿晋升不重挂 Composer；中止 render 不替换已提交 owner。                                                 |
 
 SPR01 是连接隔离 Electron 的独立 `node:test` / CDP E2E，保持 pending，不进入 WDIO 或 Docker preset；无模型请求。SPR02 沿用 SessionPane 组件回归与 lease owner 单测。共享 UI 引用边界适用于 desktop continuous / mobile replayable；本项不改变 Host、协议或身份路由，真实手机传输验证单独记录。
 
@@ -4738,7 +4742,7 @@ SPR01 是连接隔离 Electron 的独立 `node:test` / CDP E2E，保持 pending�
 | ID    | 场景与断言                                                                | 验证                                                                                                                      |
 | ----- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | PCD01 | 侧栏/草稿菜单新建成功，当前草稿左上角选中新项目，正文及附件保留；深浅主题 | `packages/ui/test/browser/manual-review/pending/project-created-draft.test.mjs`（pending）                                |
-| PCD02 | 已有会话、保存/刷新期间草稿换代、取消/失败不导航                          | `packages/ui/test/projectCreation.test.ts`、`composerDraftWorkspaceTransfer.test.ts`；PCD01 浏览器补已有会话                                                        |
+| PCD02 | 已有会话、保存/刷新期间草稿换代、取消/失败不导航                          | `packages/ui/test/projectCreation.test.ts`、`composerDraftWorkspaceTransfer.test.ts`；PCD01 浏览器补已有会话              |
 | PCD03 | 远端登记入口成功后选择，手机 Root 重建后保留正文、附件及分组意图          | `packages/ui/test/projectCreation.test.ts`；`conversation-session-virtual-project-mobile.test.ts`（pending，shared-host） |
 
 ## 左侧边栏 Tooltip 延迟（SBT）
@@ -4753,3 +4757,7 @@ SPR01 是连接隔离 Electron 的独立 `node:test` / CDP E2E，保持 pending�
 ## R3A-BLD-07：用户服务探测被跳过（2026-10-19）
 
 沿用 `conversation-session-r3-daemon-detached.test.ts` 的 accepted / pending 场景：独立 Linux SSH 目标首次以 detached 模式连接；桌面断开不杀 daemon。终止 daemon 后，在该目标的非交互 shell 设置 `SYSTEMD_OFFLINE=1`，确认真实 `systemctl --user show --property=Version` 退出 0 但没有属性响应，再通过桌面设备重连。必须进入 ready、`serviceRegistered=false`，Supervisor/Core 均换代，原任务可续发；最后恢复 shell 配置。禁止以替换 systemctl 或直接设置 ZCode 跳过注册开关代替该场景。
+
+## 独立桌面 Coding Harness（2026-10-24）
+
+H01–H07 产品边界 accepted；前置、操作、断言及证据要求见 [规格](desktop/standalone-coding-harness-spec.md)。手机云端远控明确移除，不扩展独立配对；会话历史和普通模型、SSH、MCP 凭据保留。新增 E2E 保持 manual-review/pending。

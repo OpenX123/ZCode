@@ -28,7 +28,8 @@ export class LocalTtftObserver {
   private lastClockSample?: number;
   private readonly clocks = new Map<string, LocalTtftCalibration>();
   constructor(
-    private readonly onRecord: (record: LocalTtftRecord) => void,
+    private readonly onRecord: (record: LocalTtftRecord) => void = (record) =>
+      logger.debug("[local-ttft] measurement", record),
     private readonly now = localTtftNow,
     private readonly wallNow = Date.now,
     private readonly readForeground?: () => boolean,
@@ -339,4 +340,11 @@ export function setLocalTtftObserver(value: LocalTtftObserver | undefined): void
 }
 export function getLocalTtftObserver(): LocalTtftObserver | undefined {
   return observer;
+}
+
+/** 本地发送计时随队列确认流程延续，不包含账号或上报数据。 */
+export interface ComposerTimingSeed {
+  localTtft?: LocalTtftContext;
+  sendTime: number;
+  queueConfirmed?: boolean;
 }

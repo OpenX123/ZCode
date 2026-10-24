@@ -13,14 +13,6 @@ import { recordModelHistoryRound, type RegularTurnLoopState } from "./turn-loop-
 // 只恢复 1 次会让连续短暂抖动直接失败，和模型默认 10 次 retry 的用户预期差距过大。
 const STREAM_RECOVERY_MAX_RETRIES = 10;
 const PREVIOUS_MESSAGE_ANCHOR_SUFFIX = "previous-message-anchor";
-const START_PLAN_BUSY_PROVIDER_CODES = new Set(["3008", "3009", "3010"]);
-const START_PLAN_BUSY_RETRY_PROVIDER_IDS = new Set([
-  "account:bigmodel-start-plan",
-  "account:zai-start-plan",
-]);
-const START_PLAN_BUSY_MAIN_TURN_ADMISSION_RETRY_DELAYS_MS = [1_000, 2_000] as const;
-export const START_PLAN_BUSY_AUTO_RETRY_EXHAUSTED_MESSAGE =
-  "Start Plan is busy and automatic model stream recovery reached the maximum retry count.";
 const TRANSIENT_ERROR_CODES = new Set([
   "model_request_timeout",
   "model_rate_limited",
@@ -48,68 +40,12 @@ export function hasStreamRecoveryBudget(state: RegularTurnLoopState): boolean {
   return state.streamRecoveryRetryCount < STREAM_RECOVERY_MAX_RETRIES;
 }
 
-export function isStartPlanBusyStreamRecoveryFailure(error: unknown): boolean {
-  for (const record of walkErrorRecords(error)) {
-    const context = asRecord(record.context);
-    const providerCode =
-      stringValue(record.providerCode) ??
-      stringValue(context?.providerCode) ??
-      stringValue(record.code) ??
-      stringValue(context?.code);
-    if (providerCode && START_PLAN_BUSY_PROVIDER_CODES.has(providerCode)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-export function createStartPlanBusyAutoRetryExhaustedError(error: unknown): Error {
-  const providerCode = findStartPlanBusyProviderCode(error) ?? "3010";
-  const exhaustedError = new Error(START_PLAN_BUSY_AUTO_RETRY_EXHAUSTED_MESSAGE, {
-    cause: error instanceof Error ? error : undefined,
-  }) as Error & {
-    code?: string;
-    context?: Record<string, unknown>;
-  };
-  exhaustedError.name = "StartPlanBusyAutoRetryExhaustedError";
-  exhaustedError.code = "model_rate_limited";
-  exhaustedError.context = {
-    providerCode,
-    reason: "rate_limited",
-    retryable: false,
-    startPlanBusyAutoRetryExhausted: true,
-  };
-  return exhaustedError;
-}
-
 export function beginStreamRecoveryAttempt(state: RegularTurnLoopState): StreamRecoveryAttempt {
   state.streamRecoveryRetryCount += 1;
   return {
     retryNumber: state.streamRecoveryRetryCount,
     maxRetries: STREAM_RECOVERY_MAX_RETRIES,
   };
-}
-
-export function beginStartPlanBusyAdmissionRetryAttempt(
-  state: RegularTurnLoopState,
-): StreamRecoveryAttempt {
-  state.streamRecoveryRetryCount += 1;
-  return {
-    retryNumber: state.streamRecoveryRetryCount,
-    maxRetries: START_PLAN_BUSY_MAIN_TURN_ADMISSION_RETRY_DELAYS_MS.length,
-  };
-}
-
-export function getStartPlanBusyAdmissionRetryDelayMs(input: {
-  error: unknown;
-  providerId: string;
-  state: RegularTurnLoopState;
-  turnNumber: number;
-}): number | undefined {
-  if (input.turnNumber <= 0) return undefined;
-  if (!START_PLAN_BUSY_RETRY_PROVIDER_IDS.has(input.providerId)) return undefined;
-  if (!isStartPlanBusyStreamRecoveryFailure(input.error)) return undefined;
-  return START_PLAN_BUSY_MAIN_TURN_ADMISSION_RETRY_DELAYS_MS[input.state.streamRecoveryRetryCount];
 }
 
 export async function emitStreamRecoveryStarted(
@@ -275,23 +211,6 @@ export async function recoverPartialAssistantOutputFailure(input: {
 
 function createPreviousMessageRecoveryAnchorId(assistantMessageId: MessageId): string {
   return `${assistantMessageId}:${PREVIOUS_MESSAGE_ANCHOR_SUFFIX}`;
-}
-
-function findStartPlanBusyProviderCode(error: unknown): string | undefined {
-  for (const record of walkErrorRecords(error)) {
-    const context = asRecord(record.context);
-    const candidates = [
-      stringValue(record.providerCode),
-      stringValue(context?.providerCode),
-      stringValue(record.code),
-      stringValue(context?.code),
-    ].filter((code): code is string => code !== undefined);
-    const providerCode = candidates.find((code) => START_PLAN_BUSY_PROVIDER_CODES.has(code));
-    if (providerCode) {
-      return providerCode;
-    }
-  }
-  return undefined;
 }
 
 function isRetryableStreamRecoveryFailure(error: unknown): boolean {

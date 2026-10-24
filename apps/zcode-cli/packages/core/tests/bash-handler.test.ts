@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { CoreErrorType, SessionEventType, createImageProcessorError } from "@zcode/contracts";
+import { SessionEventType, createImageProcessorError } from "@zcode/contracts";
 import { isErrorForToolResult } from "../src/runtime/helpers/tool-result.js";
 import { decideBashCwdPolicy } from "../src/tool/handlers/bash-cwd-policy.js";
 import { bashHandler, bashToolEntry, createBashToolEntry } from "../src/tool/handlers/bash.js";
@@ -11,7 +11,6 @@ import { resolveTimeoutMs } from "../src/tool/executor/timeout.js";
 import type {
   BashInput,
   BashOutput,
-  CommandExecutionSpanWriter,
   ExecutionPort,
   ExecutionRequest,
   ExecutionResult,
@@ -21,7 +20,6 @@ import type {
   ImageProcessorPort,
   ExecutionShellSelection,
   SessionEvent,
-  ToolExecutionSpanWriter,
 } from "@zcode/contracts";
 import { createReadFileStateKey } from "../src/tool/read-file-state.js";
 import type { ReadFileStateMap, ToolExecutionContext } from "../src/tool/types.js";
@@ -214,21 +212,18 @@ describe("Bash cwd policy", () => {
 });
 
 describe("bashHandler", () => {
-  it("把非零退出码保留为事实，只有结构化执行错误才标记 Command 失败", async () => {
-    const outcomes: string[] = [];
-    const telemetry = recordingBashTelemetry(outcomes);
+  it("保留非零退出码与结构化启动错误的业务结果", async () => {
     const nonZeroPort: ExecutionPort = {
       async run() {
         return executionResult({ status: "failed", exitCode: 1 });
       },
     };
-    await bashHandler(
+    const nonZero = await bashHandler(
       { command: "grep missing file.txt" },
-      contextWith(nonZeroPort, { telemetry }),
+      contextWith(nonZeroPort),
     );
-    expect(outcomes).toEqual(["exit:1", "completed"]);
+    expect(nonZero).toMatchObject({ status: "failed", exitCode: 1 });
 
-    outcomes.length = 0;
     const spawnErrorPort: ExecutionPort = {
       async run() {
         return executionResult({
@@ -237,8 +232,11 @@ describe("bashHandler", () => {
         });
       },
     };
-    await bashHandler({ command: "missing-command" }, contextWith(spawnErrorPort, { telemetry }));
-    expect(outcomes).toEqual(["failed:spawn"]);
+    const spawnError = await bashHandler(
+      { command: "missing-command" },
+      contextWith(spawnErrorPort),
+    );
+    expect(spawnError).toMatchObject({ status: "spawn_error", stderr: "spawn failed" });
   });
 
   it.each([
@@ -2616,7 +2614,6 @@ function contextWith(
     readFileState?: ReadFileStateMap;
     runtimeScope?: ToolExecutionContext["runtimeScope"];
     setWorkingDirectory?: ToolExecutionContext["setWorkingDirectory"];
-    telemetry?: ToolExecutionSpanWriter;
     workingDirectory?: string;
     workspaceRoot?: string;
   } = {},
@@ -2636,51 +2633,10 @@ function contextWith(
     readFileState: options.readFileState,
     runtimeScope: options.runtimeScope,
     setWorkingDirectory: options.setWorkingDirectory,
-    telemetry: options.telemetry,
     workingDirectory: options.workingDirectory ?? defaultCommandRoot,
     workspaceRoot: options.workspaceRoot ?? defaultCommandRoot,
     sessionId: "sess_test",
     turnId: "turn_test",
-  };
-}
-
-function recordingBashTelemetry(outcomes: string[]): ToolExecutionSpanWriter {
-  const command: CommandExecutionSpanWriter = {
-    captureCausation: () => undefined,
-    finishBackgrounded() {
-      outcomes.push("backgrounded");
-    },
-    finishCancelled() {
-      outcomes.push("cancelled");
-    },
-    finishCompleted() {
-      outcomes.push("completed");
-    },
-    finishFailed(stage) {
-      outcomes.push(`failed:${stage}`);
-    },
-    markFirstOutput() {},
-    markTerminationRequested() {},
-    run: (execute) => execute(),
-    setExitCode(exitCode) {
-      outcomes.push(`exit:${exitCode}`);
-    },
-    setOutputBytes() {},
-    setSignal() {},
-    setTimedOut() {},
-  };
-  return {
-    captureCausation: () => undefined,
-    finishCancelled() {},
-    finishCompleted() {},
-    finishDenied() {},
-    finishFailed() {},
-    markPermissionRequested() {},
-    run: (execute) => execute(),
-    setOutputBytes() {},
-    setOutputTruncated() {},
-    setPermissionDecision() {},
-    startCommand: () => command,
   };
 }
 

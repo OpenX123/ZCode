@@ -53,7 +53,7 @@ import {
   formatRemoteConnectionError,
 } from "@/lib/remoteConnectionPresentation.js";
 import { runSourceServerUpdate } from "@/lib/sourceServerUpdateAction.js";
-import { startUserAction, type UserActionHandle } from "@/lib/userActionTelemetry.js";
+
 import {
   useRemoteBoundaryAcknowledgement,
   RemoteConnectionConnectingStep,
@@ -153,13 +153,6 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   const refreshingIntentRef = useRef<number | null>(null);
   const [refreshingIntent, setRefreshingIntent] = useState(false);
   const consumedOpenIntentIdRef = useRef<number | undefined>(undefined);
-  const activeTraceRef = useRef<{ requestId: string; trace: UserActionHandle } | null>(null);
-  const cancelActiveTrace = useCallback(() => {
-    const active = activeTraceRef.current;
-    activeTraceRef.current = null;
-    active?.trace.cancel();
-  }, []);
-  useEffect(() => cancelActiveTrace, [cancelActiveTrace]);
   const [cancelled, setCancelled] = useState(false);
   const [error, setError] = useState("");
   const [errorCode, setErrorCode] = useState<string>();
@@ -483,7 +476,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   const closeDialog = useCallback(
     (options?: { preserveSession?: boolean; keepOpen?: boolean }) => {
       settleForceUpdate(false);
-      cancelActiveTrace();
+
       entryEpochRef.current += 1;
       setBlockedCompletion(null);
       setCompletionRunning(false);
@@ -528,7 +521,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     },
     [
       addingDevice,
-      cancelActiveTrace,
+
       cancelPendingRemoteConnection,
       connectedSessionId,
       connectingRequestId,
@@ -681,19 +674,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     resetConnectionLogs();
     setUpgradeProfileId(null);
     setCurrentStep("connecting");
-    const trace = startUserAction({
-      featureId: "workspace.remote.lifecycle",
-      action: "connect",
-      trigger: "button",
-      workspaceKind: "remote",
-      remoteKind: nextTarget.kind,
-    });
-    activeTraceRef.current = { requestId, trace };
-    const finishTrace = (finish: (action: UserActionHandle) => void) => {
-      if (activeTraceRef.current?.requestId !== requestId) return;
-      activeTraceRef.current = null;
-      finish(trace);
-    };
+
     try {
       let sessionId: string;
       try {
@@ -720,7 +701,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
             nextTarget.kind === "wsl" ? (failure.resolvedWslTarget ?? nextTarget) : nextTarget;
           updatePendingRemoteTarget(installTarget);
           setPendingInstallConfirmation(installTarget);
-          finishTrace((action) => action.cancel());
+
           return;
         }
         throw error;
@@ -796,14 +777,14 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
             deferCompletion();
             return;
           }
-          finishTrace((action) => action.complete({ resultSource: "platform_result" }));
+
           closeDialog({ preserveSession: true });
           return;
         }
         if (onConnectionReady) {
           await onConnectionReady(sessionId);
           if (entryEpochRef.current !== operationEpoch) return;
-          finishTrace((action) => action.complete({ resultSource: "platform_result" }));
+
           return;
         }
         if (preferredDirectoryPath?.trim()) {
@@ -827,7 +808,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
             setRecognizedDeviceName(undefined);
             updateConnectingRequestId(null);
             applyOpenState(false);
-            finishTrace((action) => action.complete({ resultSource: "platform_result" }));
+
             return;
           } catch (selectionError) {
             if (entryEpochRef.current !== operationEpoch) {
@@ -847,7 +828,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
               onProjectIntentCleared?.();
               resetFeedback();
               setCancelled(true);
-              finishTrace((action) => action.cancel());
+
               return;
             }
             // 历史目录可能已被删除或权限变化；保留连接并回退目录浏览器，不能把快速入口变成死路。
@@ -861,7 +842,6 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
         setCurrentStep(completionState.step);
         minimizedRef.current = false;
         applyOpenState(completionState.open);
-        finishTrace((action) => action.complete({ resultSource: "platform_result" }));
       };
       const deferCompletion = () => {
         setConnectedSessionId(completion === "device-management" ? null : sessionId);
@@ -905,7 +885,6 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
             resumeBackground();
           },
         });
-        finishTrace((action) => action.complete({ resultSource: "platform_result" }));
       };
       await finishConnection();
     } catch (connectError) {
@@ -918,7 +897,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       ) {
         resetFeedback();
         setCancelled(true);
-        finishTrace((action) => action.cancel());
+
         return;
       }
       const completionState = getRemoteConnectionCompletionDialogState("error");
@@ -940,7 +919,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       setError(errorMessage);
       setCurrentStep(completionState.step);
       if (!minimizedRef.current) applyOpenState(completionState.open);
-      finishTrace((action) => action.fail({ failureStage: "remote_connect" }));
+
       if (reasonCode === "source-server-upgrade-required" && nextTarget.kind !== "server") {
         const failedTarget =
           nextTarget.kind === "wsl" ? (failure.resolvedWslTarget ?? nextTarget) : nextTarget;
@@ -955,7 +934,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       }
     } finally {
       // 所有失去归属的返回都结束旁路遥测；显式取消已在撤销请求前同步结算。
-      finishTrace((action) => action.cancel());
+
       // 成功恢复原目录会先清空 requestId；仍属同一流程时必须结束 busy，取消/重试则由新 epoch 接管。
       if (entryEpochRef.current === operationEpoch) {
         activeRequestIdRef.current = null;
@@ -1122,7 +1101,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       return;
     }
     settleForceUpdate(false);
-    cancelActiveTrace();
+
     const requestId = activeRequestIdRef.current;
     entryEpochRef.current += 1;
     setBlockedCompletion(null);
@@ -1140,7 +1119,6 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     setCancelled(true);
     if (requestId) void cancelPendingRemoteConnection(requestId);
   }, [
-    cancelActiveTrace,
     cancelPendingRemoteConnection,
     closeDialog,
     completion,
@@ -2080,7 +2058,6 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
         : undefined,
       onBack: () => {
         void withConfirmedDiscard(async () => {
-          cancelActiveTrace();
           const epoch = ++entryEpochRef.current;
           setBlockedCompletion(null);
           setCompletionRunning(false);

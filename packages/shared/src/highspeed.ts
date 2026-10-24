@@ -1,9 +1,10 @@
 import { z } from "zod";
-import {
-  modelExecutionSelectionFallbackReasonSchema,
-  type ModelExecutionSelectionFallback,
-} from "./model-execution.js";
-import type { ModelSelection } from "./model-selection.js";
+// 仅用于投影已保存的旧加速卡历史；实时执行协议不再接受回退声明。
+const highspeedFallbackReasonSchema = z.enum([
+  "highspeed_card_expired",
+  "highspeed_request_failed",
+  "highspeed_selection_unavailable",
+]);
 import { BUILTIN_MODEL_PROVIDER_IDS } from "./model-provider-types.js";
 
 /**
@@ -97,7 +98,7 @@ export const highspeedMessageMetaSchema = z
     /** Turn 内加速请求失败并回落普通模型的时刻；只用于投影降级提示，不改变分享统计。 */
     fallbackAt: z.number().int().nonnegative().optional(),
     /** 回落原因：卡过期或其他加速请求失败；Renderer 据此选择提示文案，缺省按卡过期处理旧数据。 */
-    fallbackReason: modelExecutionSelectionFallbackReasonSchema.optional(),
+    fallbackReason: highspeedFallbackReasonSchema.optional(),
   })
   .strict();
 
@@ -186,35 +187,6 @@ export interface HighspeedPrepareTurnParams {
   automationId?: string;
   waitBudgetMs?: number;
 }
-
-/**
- * 单轮加速执行材料。静态事实（端点、API 形态、模型能力）由 Built-in Provider Config
- * 提供，这里只携带「本轮选哪个模型」和「本次执行的动态鉴权」，禁止再下发 provider 定义。
- */
-export interface HighspeedTurnExecution {
-  modelSelection: ModelSelection;
-  requestAuth: { apiKey: string; headers: Record<string, string> };
-  /**
-   * 加速请求任何失败时退回原模型跑完本轮；卡过期（3402）与其他失败按规则给出不同原因。
-   * 退回目标 `target` 是抽卡时的提交选择（会话原模型 + 档位），CLI 优先用它，缺省才退回会话常驻选择。
-   */
-  selectionFallback: ModelExecutionSelectionFallback;
-}
-
-export type HighspeedPrepareTurnResult =
-  | {
-      kind: "accelerated";
-      card: HighspeedCardSnapshot;
-      nextDrawAt: number;
-      /** Mock 只保留加速业务语义，省略该字段即可继续使用 session 普通推理路由。 */
-      execution?: HighspeedTurnExecution;
-    }
-  | {
-      kind: "fallback";
-      reason: HighspeedPrepareFallbackReason;
-      card?: HighspeedCardSnapshot;
-      nextDrawAt: number | null;
-    };
 
 export interface HighspeedServiceSnapshot {
   card: HighspeedCardSnapshot | null;

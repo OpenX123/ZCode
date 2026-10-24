@@ -55,7 +55,6 @@ import {
   PromptMentionNode,
 } from "./mentions/nodes/PromptMentionNode.js";
 import { logger } from "./logger.js";
-import { recordInputLag } from "./lib/uiPerfArmsTelemetry.js";
 import { navigatePromptHistory } from "./lib/promptHistory.js";
 import { resolveMobileInputTextSizeClassName } from "@/lib/mobileTextInput.js";
 import type { MentionItemData } from "@/mentions/mentionTypes.js";
@@ -868,14 +867,6 @@ function TextContentPlugin({
         onChange(nextText);
 
         const lagMs = performance.now() - startedAt;
-        // 程序化改写与 IME 组合态不算打字卡顿(判定在 recordInputLag 内统一短路)。
-        recordInputLag({
-          lagMs,
-          textLength: nextText.length,
-          isProgrammatic: tags.has(PROGRAMMATIC_UPDATE_TAG),
-          isComposing: composingRef.current,
-          taskId: taskId ?? undefined,
-        });
       },
     );
   }, [editor, onChange, taskId]);
@@ -907,7 +898,8 @@ function E2ELexicalInputBridgePlugin({ inputTestId }: { inputTestId?: string }) 
       getEditorState: () => editor.getEditorState(),
       getText: () => getEditorMarkdown(editor.getEditorState()),
       setText: (text: string) => replaceEditorText(editor, text),
-      setTextWithPluginMentions: (text: string) => replaceEditorTextWithPluginMentions(editor, text),
+      setTextWithPluginMentions: (text: string) =>
+        replaceEditorTextWithPluginMentions(editor, text),
       setEditorStateJson: (editorStateJson: string) =>
         replaceEditorStateJson(editor, editorStateJson),
     };
@@ -1287,7 +1279,8 @@ function EditorApiPlugin({
       setMention: (mention, trailingText) =>
         replaceEditorWithMention(editor, mention, trailingText),
       setText: (text: string) => replaceEditorText(editor, text),
-      setTextWithPluginMentions: (text: string) => replaceEditorTextWithPluginMentions(editor, text),
+      setTextWithPluginMentions: (text: string) =>
+        replaceEditorTextWithPluginMentions(editor, text),
       setEditorStateJson: (editorStateJson: string) =>
         replaceEditorStateJson(editor, editorStateJson),
       setSkillMention: (skillName: string, markdown = `$${skillName}`, trailingText = " ") =>

@@ -44,7 +44,7 @@ export async function prepareSSHConnectionPage(caseMarker: string): Promise<void
       await browser.execute(() =>
         Boolean(
           document.querySelector(
-            '[data-testid="onboarding-page"], [data-testid^="v4-session-pane-"], [data-testid="login-use-api-key-button"]',
+            '[data-testid="onboarding-page"], [data-testid^="v4-session-pane-"]',
           ),
         ),
       ),

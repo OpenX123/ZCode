@@ -9,6 +9,8 @@ description: 修改 ZCode 会话管理（左侧任务列表、tasks-index.sqlite
 
 权威 spec：`docs/superpowers/specs/2026-09-09-virtual-project-design.md` 与 `docs/ui/task-grouped-view.md`。2026-10-13 分组恢复裁决覆盖历史 Group 合并 Project 方案。本 skill 不重复 spec，只讲「为什么」和「怎么不踩坑」。
 
+当前功能边界见 `docs/desktop/standalone-coding-harness-spec.md`：官方手机远控、闲时任务和套餐已退役，下文相关字段仅表示历史数据兼容，不能据此恢复入口。会话、普通定时自动化与 SSH 身份隔离继续保留。
+
 ## 1. 一句话原则
 
 **会话事实归 CLI，组织态归 Host；每个字段只有一个写者。**
@@ -44,7 +46,7 @@ Host tasks-index    project_id、pinned、archived、unread_at(+CAS)、sort_orde
 | I9  | 删除 = CLI 软删除（`time_deleted`），app `deleted` 是镜像；冷种子 / listSessions / TUI 必须过滤                                                                             | 已删 session 复活                                                   |
 | I10 | 两库 schema 只加不删不改旧列语义；新列可空或带默认；`ON CONFLICT(workspace_key, task_id)` 的唯一约束必须保留                                                                | 降级后旧版本崩溃                                                    |
 | I11 | 派生目录 hash（`sessions/{hash}`、`agent-config/{provider}/{hash}`、CLI memory）输入是真实目录 + identity，与项目无关，不迁移                                               | 升级后配置 / 记忆丢失                                               |
-| I12 | 手机远控 bridge / queue / snapshot key 只用 workspaceKey；桌面 continuous 与手机 replayable 边界不变                                                                        | 远控串会话                                                          |
+| I12 | 会话 bridge / queue / snapshot key 只用 workspaceKey；桌面 continuous 与旧 replayable 历史字段明确区分                                                                      | 跨工作区串会话                                                      |
 | I13 | Host 组织态只存在原列，不做副本；旧列 `deleted` / `title_overridden` 是「待交接给 CLI 的意图」，每次启动全表对账，不能只补 NULL                                             | 降级期删除 / 重命名在再升级后丢失                                   |
 | I14 | sessions-index snapshot 缺席不等于删除；删除只能来自 `session.removed` 或 `sessionsIndex/reconcile` 返回 deleted                                                            | 事件丢失后任务复活或误删                                            |
 | I15 | 恢复 CLI 库备份必须关闭外键并校验行数 / 哈希；`message`/`part` 对 `session` 是 ON DELETE CASCADE，裸 DELETE 会清空正文                                                      | 恢复后消息全丢                                                      |
@@ -83,7 +85,7 @@ Host tasks-index    project_id、pinned、archived、unread_at(+CAS)、sort_orde
 4. 是否用 `workspacePath` 做了身份判等或建 key？远程必须带 `workspaceIdentity`。
 5. 新增列 / 表是否可空或带默认、是否更新了 `schema.baseline.sql` 与 migration 的 `touchedTables`、是否有逐表哈希单测？
 6. 改了 CLI 配置发现逻辑？只允许在 skills / subagents / 路径策略三处消费 `additionalDirectories`；其余保持只按 `workingDirectory`。
-7. 涉及标题 / 状态 / 未读 / 归档 / 删除的行为变化，e2e 是否覆盖了「桌面 + 手机远控」「本地 + SSH/WSL」两组交叉？
+7. 涉及标题 / 状态 / 未读 / 归档 / 删除的行为变化，e2e 是否覆盖了本地桌面与 SSH/WSL，以及旧历史兼容投影？
 8. 涉及 schema 的改动，是否跑过「旧 fixture 升级 → 旧代码路径读写（含修改既有行：删除、重命名）→ 再升级」的 e2e？
 9. 触碰删除 / 标题的代码，是否保持了「意图位 → 惰性交接 → 镜像回写」三段，以及 orphan 的处理？
 

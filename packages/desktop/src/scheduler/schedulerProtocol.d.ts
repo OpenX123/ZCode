@@ -13,25 +13,9 @@ export type SchedulerToMainMessage =
       workspaceIdentity?: string;
     }
   | {
-      type: "offpeak-dispatch-request";
-      offPeakTaskId: string;
-      prompt: string;
-      permissionMode: string;
-      modelSelection: ModelSelection;
-      conversationId?: string;
-      sessionId?: string;
-      serverTicketId?: string;
-      workspacePath: string;
-      workspaceIdentity?: string;
-    }
-  | {
       type: "scheduler-log";
       level: "info" | "warn" | "error";
       message: string;
-    }
-  | {
-      type: "offpeak-active-count";
-      count: number;
     };
 /** main → scheduler */
 export type MainToSchedulerMessage =
@@ -40,15 +24,6 @@ export type MainToSchedulerMessage =
       runId: string;
       ok: boolean;
       taskId?: string;
-      sessionId?: string;
-      error?: string;
-      failureKind?: "transient" | "permanent";
-    }
-  | {
-      type: "offpeak-dispatch-result";
-      offPeakTaskId: string;
-      ok: boolean;
-      conversationId?: string;
       sessionId?: string;
       error?: string;
       failureKind?: "transient" | "permanent";

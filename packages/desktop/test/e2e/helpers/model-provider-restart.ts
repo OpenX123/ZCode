@@ -1,13 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import {
-  BUILTIN_MODEL_PROVIDER_IDS,
-  BUILTIN_PROVIDER_TEMPLATE_IDS,
-  ZCODE_AGENT_PROVIDER,
-  encodeCustomModelValue,
-  type ProviderFamilyConnectionSelection,
-} from "@zcode/shared";
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
+import { ZCODE_AGENT_PROVIDER, encodeCustomModelValue } from "@zcode/shared";
 import { TID_CHAT_MODEL_SELECT_TRIGGER, TID_V4_MODEL_CONFIG } from "@zcode/shared/test-ids";
 import { getE2EAppDataPaths } from "./desktop-app.js";
 import { getUpstreamApiKey } from "./upstream-provider.js";
@@ -26,80 +20,14 @@ import {
 import { getV4DraftThoughtState } from "./v4-conversation.js";
 
 const paths = getE2EAppDataPaths();
-const SETTINGS_FILE = join(paths.appDataDir, "setting.json");
-const CREDENTIALS_FILE = paths.credentialsFile;
 const MODEL_SELECTION_RECENT_KEY_PREFIX = "zcode-model-selection-recent-v1";
 
 export { seedTurboAgentStartupModel } from "./model-provider-restart-runtime.js";
 
-export const E2E_BIGMODEL_PLAN_PROVIDER_ID = BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan;
-export const E2E_BIGMODEL_START_PROVIDER_ID = BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan;
-export const E2E_BIGMODEL_API_PROVIDER_ID = BUILTIN_PROVIDER_TEMPLATE_IDS.bigmodel;
-export const E2E_PLAN_FIRST_MODEL = "GLM-5.3";
-export const E2E_PLAN_DEFAULT_MODEL = "GLM-5.2";
-export const E2E_PLAN_NON_DEFAULT_MODEL = "GLM-5.3-Flash";
-export const E2E_PLAN_TURBO_MODEL = "GLM-5-Turbo";
-
-export async function seedBigModelConnectionSelection(
-  selection: ProviderFamilyConnectionSelection,
-) {
-  await writeJsonPatch(SETTINGS_FILE, {
-    providerFamilyConnectionSelections: {
-      bigmodel: selection,
-    },
-    providerFamilyDomain: "bigmodel",
-    providerFamilyDomainMigrated: true,
-  });
-}
-
-export async function readBigModelConnectionSelection(): Promise<
-  ProviderFamilyConnectionSelection | undefined
-> {
-  const settings = await readJson(SETTINGS_FILE);
-  const selections = settings.providerFamilyConnectionSelections;
-  if (!selections || typeof selections !== "object" || Array.isArray(selections)) {
-    return undefined;
-  }
-  return (selections as { bigmodel?: ProviderFamilyConnectionSelection }).bigmodel;
-}
-
-export async function seedBigModelOAuthCredential() {
-  await writeJsonPatch(CREDENTIALS_FILE, {
-    "oauth:active_provider": "bigmodel",
-    "oauth:bigmodel:access_token": "e2e-bigmodel-oauth-token",
-    "oauth:bigmodel:user_info": JSON.stringify({
-      displayName: "BigModel E2E",
-      id: "bigmodel-e2e-user",
-      username: "bigmodel-e2e-user",
-    }),
-  });
-}
-
-/** 为需要经过 Highspeed 网关鉴权的 E2E 补齐登录 JWT。 */
-export async function seedHighspeedLoginCredential() {
-  await writeJsonPatch(CREDENTIALS_FILE, {
-    zcodejwttoken: "e2e-highspeed-zcode-jwt",
-  });
-}
-
-/**
- * 为需要实际进入 BigModel Start Plan 的 E2E 补齐 zcode JWT。
- *
- * Start Plan 与个人 Coding Plan 共用 OAuth 用户身份，但请求授权读取的是
- * `zcodejwttoken`；只 seed business access token 会让菜单把 Start Plan 判成未认证。
- */
-export async function seedBigModelStartPlanCredential() {
-  await writeJsonPatch(CREDENTIALS_FILE, {
-    "oauth:active_provider": "bigmodel",
-    "oauth:bigmodel:access_token": "e2e-bigmodel-oauth-token",
-    "oauth:bigmodel:user_info": JSON.stringify({
-      displayName: "BigModel E2E",
-      id: "bigmodel-e2e-user",
-      username: "bigmodel-e2e-user",
-    }),
-    zcodejwttoken: "e2e-bigmodel-start-plan-jwt",
-  });
-}
+export const E2E_GLM_PROVIDER_ID = "e2e-glm-api";
+export const E2E_GLM_DEFAULT_MODEL = "GLM-5.2";
+export const E2E_GLM_NON_DEFAULT_MODEL = "GLM-5.3-Flash";
+export const E2E_GLM_TURBO_MODEL = "GLM-5-Turbo";
 
 export async function seedReplayProvider(params: {
   apiKey?: string;
@@ -116,10 +44,7 @@ export async function seedReplayProvider(params: {
   const provider: PersonalProviderConfigSeed = {
     id: params.id,
     label: params.name,
-    // 内建 account provider 的模型规则按 anthropic-messages 匹配；若用 OpenAI Chat Completions
-    // 格式覆盖连接配置，GLM builtin model rules 不会命中，模型在 Registry 中
-    // 会因缺少完整 option/properties 被过滤，UI 菜单就看不到该计划模型。
-    apiFormat: params.id.startsWith("account:") ? "anthropic-messages" : "openai-chat-completions",
+    apiFormat: "openai-chat-completions",
     apiKey: params.apiKey ?? getUpstreamApiKey(),
     baseURL,
     enabled: params.enabled ?? true,
@@ -315,7 +240,7 @@ export async function waitForV4DraftModelConfig(params: { model: string; thought
   return latest;
 }
 
-export async function waitForPlanModelIoRequest(expectedText: string) {
+export async function waitForModelIoRequest(expectedText: string) {
   const debugDir = join(paths.homeDir, ".zcode", "cli", "debug");
   let matched: { model?: string; thinking?: { type?: string } } | null = null;
   await browser.waitUntil(
@@ -343,7 +268,7 @@ export async function waitForPlanModelIoRequest(expectedText: string) {
       }
       return false;
     },
-    { timeout: 30000, timeoutMsg: `没有找到 Plan model IO 请求: ${expectedText}` },
+    { timeout: 30000, timeoutMsg: `没有找到 model IO 请求: ${expectedText}` },
   );
   return matched as { model?: string; thinking?: { type?: string } } | null;
 }
@@ -391,19 +316,5 @@ export async function waitForSelectedModel(providerId: string, modelId: string) 
       `toolbar 没有选择 ${expected}，actual=${actual}，storedConfig=${storedConfig}`,
       { cause: error },
     );
-  }
-}
-
-async function writeJsonPatch(file: string, patch: Record<string, unknown>) {
-  const current = await readJson(file);
-  await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify({ ...current, ...patch }, null, 2), "utf-8");
-}
-
-async function readJson(file: string): Promise<Record<string, unknown>> {
-  try {
-    return JSON.parse(await readFile(file, "utf-8")) as Record<string, unknown>;
-  } catch {
-    return {};
   }
 }

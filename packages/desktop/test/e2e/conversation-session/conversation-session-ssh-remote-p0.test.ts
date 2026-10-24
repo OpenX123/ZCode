@@ -5,7 +5,6 @@ import {
   refreshSeededOpenAIProvidersThroughSettings,
   seedCustomOpenAIChatCompletionsProvider,
 } from "../helpers/custom-openai-provider.js";
-import { resolveSeededReplayBaseUrl } from "../helpers/custom-openai-provider-store.js";
 import {
   selectUpstreamProviderModelById,
   selectUpstreamThoughtLevelValue,
@@ -21,10 +20,6 @@ import {
   waitForV4AssistantMessageContaining,
   waitForV4ConversationState,
 } from "../helpers/v4-conversation.js";
-import {
-  beginConversationTelemetryCapture,
-  waitForConversationReportInventory,
-} from "../helpers/conversation-telemetry-parity-capture.js";
 import {
   clickLastEnabledSSHDialogButton,
   createSSHReplayTunnel,
@@ -105,7 +100,6 @@ describe(`${CASE_MARKER}: SSH remote workspace P0`, () => {
     await prepareV4ConversationE2E({ skipProvider: true });
     const initialHosts = await readHostProcesses();
     expect(initialHosts).toHaveLength(1);
-    const telemetryCapture = await beginConversationTelemetryCapture();
 
     replayTunnel = await createReplayTunnel(config);
     const previousReplayBaseURL = process.env.E2E_PROVIDER_RUNTIME_BASE_URL;
@@ -158,46 +152,6 @@ describe(`${CASE_MARKER}: SSH remote workspace P0`, () => {
     await assertTaskRow(taskA, { active: false, running: false });
     await assertTaskRow(taskB, { active: true, running: false });
     expect(await readHostProcesses()).toEqual(initialHosts);
-
-    const reports = await waitForConversationReportInventory(telemetryCapture, {
-      agent_step: 4,
-      message_completion: 4,
-    });
-    for (const task of [taskA, taskB]) {
-      const taskReports = reports.filter((report) => report.talk_id === task.taskId);
-      expect(taskReports.filter((report) => report.element_name === "agent_step")).toHaveLength(2);
-      expect(
-        taskReports.filter((report) => report.element_name === "message_completion"),
-      ).toHaveLength(2);
-      for (const report of taskReports.filter(
-        (candidate) =>
-          candidate.element_name === "agent_step" ||
-          candidate.element_name === "message_completion",
-      )) {
-        // 遥测合同（docs/monitoring/conversation-telemetry-v4.md）：remote_kind 由稳定 workspace
-        // identity 经 parseRemoteWorkspaceIdentity 解析，R3 Source Server 工作区的 identity kind 是
-        // "server"（上方 waitForRemoteTab 亦按此断言）；SSH 只是物理线路，不是该字段的取值。
-        expect(report.event_extra_detail).toMatchObject({
-          workspace_kind: "remote",
-          remote_kind: "server",
-        });
-      }
-    }
-    process.stdout.write(
-      `[${CASE_MARKER}] telemetry ${JSON.stringify(
-        [taskA, taskB].map((task) => {
-          const taskReports = reports.filter((report) => report.talk_id === task.taskId);
-          return {
-            agentStepCount: taskReports.filter((report) => report.element_name === "agent_step")
-              .length,
-            completionCount: taskReports.filter(
-              (report) => report.element_name === "message_completion",
-            ).length,
-            taskId: task.taskId,
-          };
-        }),
-      )}\n`,
-    );
     expect(runningRowMismatches).toEqual([]);
   });
 });
