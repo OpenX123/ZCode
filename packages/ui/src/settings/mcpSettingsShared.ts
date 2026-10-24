@@ -9,8 +9,8 @@ export const SOURCE_META: Record<
   { label: string; section: string; badgeClass: string }
 > = {
   zcodeagentmcp: {
-    label: "ZCode Agent",
-    section: "ZCode Agent",
+    label: "YCode Agent",
+    section: "YCode Agent",
     badgeClass: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400",
   },
 };

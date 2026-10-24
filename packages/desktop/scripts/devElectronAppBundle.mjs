@@ -2,7 +2,7 @@ import { access, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promis
 import { dirname, posix } from "node:path";
 
 export const DEV_ELECTRON_PROTOCOL_SCHEME = "zcode";
-export const DEV_ELECTRON_APP_NAME = "ZCode Dev";
+export const DEV_ELECTRON_APP_NAME = "YCode Dev";
 export const DEV_ELECTRON_APP_BUNDLE_ID = "dev.zcode.app.development";
 // 副本布局版本，见 prepareDevElectronAppBundle 中的指纹说明。
 export const DEV_ELECTRON_BUNDLE_FORMAT = 2;
@@ -111,6 +111,14 @@ export async function prepareDevElectronAppBundle({
     // 指纹最后写：中途失败时下次仍会判定为需要重拷，不会留下半成品缓存。
     if (sourceStamp !== undefined) await writeFile(sourceStampPath, sourceStamp, "utf8");
   }
+
+  // 开发副本也使用产品图标，保持 Dock 与打包版一致。
+  const resourcesPath = posix.join(appPath, "Contents", "Resources");
+  await mkdir(resourcesPath, { recursive: true });
+  await cp(
+    new URL("../build/icon.icns", import.meta.url),
+    posix.join(resourcesPath, "electron.icns"),
+  );
 
   return {
     appPath,

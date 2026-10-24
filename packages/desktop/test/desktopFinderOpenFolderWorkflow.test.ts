@@ -26,8 +26,8 @@ describe("desktopFinderOpenFolderWorkflow", () => {
     });
 
     const infoPlist = readInfoPlist(homeDir);
-    expect(infoPlist).toContain("<string>在ZCode中打开</string>");
-    expect(infoPlist).not.toContain("<string>Open in ZCode</string>");
+    expect(infoPlist).toContain("<string>在YCode中打开</string>");
+    expect(infoPlist).not.toContain("<string>Open in YCode</string>");
     expect(refreshServicesIndex).toHaveBeenCalledTimes(1);
   });
 
@@ -44,8 +44,8 @@ describe("desktopFinderOpenFolderWorkflow", () => {
     });
 
     const infoPlist = readInfoPlist(homeDir);
-    expect(infoPlist).toContain("<string>Open in ZCode</string>");
-    expect(infoPlist).not.toContain("<string>在ZCode中打开</string>");
+    expect(infoPlist).toContain("<string>Open in YCode</string>");
+    expect(infoPlist).not.toContain("<string>在YCode中打开</string>");
     expect(infoPlist).toContain("<string>5</string>");
     expect(refreshServicesIndex).toHaveBeenCalledTimes(1);
   });

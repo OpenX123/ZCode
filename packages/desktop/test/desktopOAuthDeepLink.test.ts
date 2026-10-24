@@ -159,7 +159,7 @@ describe("desktopOAuthDeepLink workspace open routing", () => {
       targetWindow,
       expect.objectContaining({
         buttons: ["打开文件夹", "取消"],
-        title: "打开外部 ZCode 链接？",
+        title: "打开外部 YCode 链接？",
       }),
     );
     expect(targetWindow.webContents.send).toHaveBeenCalledWith(
@@ -183,7 +183,7 @@ describe("desktopOAuthDeepLink workspace open routing", () => {
     expect(electronMocks.showMessageBoxSync).toHaveBeenCalledWith(
       expect.objectContaining({
         buttons: ["Open folder", "Cancel"],
-        title: "Open external ZCode link?",
+        title: "Open external YCode link?",
       }),
     );
     expect(logger.warn).toHaveBeenCalledWith(

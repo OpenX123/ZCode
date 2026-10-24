@@ -747,6 +747,10 @@ global:
   acceptedUpstreamSnapshot: scripts/architecture/upstream-snapshot.json
 
 exceptions:
+  - id: ycode-brand-indicator-copy
+    rule: unmanaged-new-file
+    paths: [packages/desktop/src/main/windowsCuaOperationIndicatorContent.ts]
+    reason: 已准入的上游操作提示条仅将两处产品显示名由 ZCode 改为 YCode（docs/desktop/ycode-branding-spec.md）；接口、状态所有者、窗口尺寸和时序不变，不为其他实现开放例外。
   - id: side-pane-full-view-shortcut-command-edit
     rule: unmanaged-new-file
     paths: [packages/shared/src/shortcutCommands.ts]

@@ -26,7 +26,7 @@ describe("desktop product identity", () => {
     expect(resolveDesktopProductIdentity({ ZCODE_ENV: "test" })).toEqual({
       flavor: "preview",
       appId: "dev.zcode.app.preview",
-      productName: "ZCode Preview",
+      productName: "YCode Preview",
       linuxExecutableName: "zcode-preview",
       linuxPackageName: "zcode-preview",
       cuaHelperInstallVariant: "preview",
@@ -56,7 +56,7 @@ describe("desktop product identity", () => {
     }
   });
 
-  it("测试后端永远是 Preview 身份，开关无法把它变成正式 ZCode", () => {
+  it("测试后端永远是 Preview 身份，开关无法把它变成正式 YCode", () => {
     expect(resolveDesktopProductFlavor({ ZCODE_ENV: "test", ZCODE_PREVIEW_IDENTITY: "0" })).toBe(
       "preview",
     );
@@ -81,7 +81,7 @@ describe("desktop product identity", () => {
     expect(desktopProductIdentities.production).toEqual({
       flavor: "production",
       appId: "dev.zcode.app",
-      productName: "ZCode",
+      productName: "YCode",
       linuxExecutableName: "zcode",
       linuxPackageName: "zcode",
       cuaHelperInstallVariant: null,
