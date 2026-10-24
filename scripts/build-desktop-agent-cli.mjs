@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stageAgentBundle } from "../packages/desktop/scripts/stage-agent-bundle.mjs";
 import { runCommand } from "./spawn-command.mjs";
+import { cleanDist } from "../apps/zcode-cli/scripts/clean-dist.mjs";
 
 // adapters tsc 在内存受限机器上会 OOM（exit 134），给整条构建链路提高堆上限。
 process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ? process.env.NODE_OPTIONS + " " : ""}--max-old-space-size=8192`;
@@ -120,10 +121,12 @@ function stageDevAgentBundle() {
   });
 }
 
-function runBootstrapWithRemoteBuild() {
+async function runBootstrapWithRemoteBuild() {
   // Bug 原因：bootstrap 过去把 dist/zcode.cjs 存在当作本轮已构建，源码变化后仍会
   // 把上一代 Agent 放进 Source Server archive。bootstrap 成功必须代表本轮真实重建。
   for (const { packageDir, prepareScript } of cliWorkspaceBuilds) {
+    // tsc 不删除已移除源文件的旧输出；Server 整包复制依赖前必须从空 dist 构建。
+    await cleanDist(resolve(repoRoot, "apps/zcode-cli/packages", packageDir));
     // bootstrap:with-remote 会在 remote assets 阶段构建 agent bundle。
     // 通过 pnpm 逐包执行 tsc 时会再走 shim/env node 层，低内存本地环境里容易长时间卡住。
     // 这里只有 bootstrap 专用环境变量生效，直接复用当前 Node 启动 TypeScript CLI。
@@ -143,6 +146,7 @@ function runBootstrapWithRemoteBuild() {
     });
   }
 
+  await cleanDist(resolve(repoRoot, "apps/zcode-cli/packages/cli"));
   runCommand(process.execPath, ["scripts/build.mjs", "--desktop-agent"], {
     cwd: "apps/zcode-cli/packages/cli",
     env: pnpmRunEnv,
@@ -151,7 +155,7 @@ function runBootstrapWithRemoteBuild() {
 }
 
 if (useBootstrapWithRemoteBuild) {
-  runBootstrapWithRemoteBuild();
+  await runBootstrapWithRemoteBuild();
   stageDevAgentBundle();
   stageDevCuaPluginRuntime({ env: cuaPluginRuntimeStagingEnv });
   process.exit(0);
@@ -163,6 +167,10 @@ if (!useTurboBuild) {
   // 同时 agent 子 workspace 不包含根 packages/shared，但 agent 包依赖 @zcode/shared。
   // 因此默认改用仓库根 workspace 的明确 pnpm 包顺序构建，避免 WDIO 前置构建卡在子 workspace 解析。
   for (const filter of defaultBuildFilters) {
+    const workspace = cliWorkspaceBuilds.find(({ packageName }) => packageName === filter);
+    if (workspace) {
+      await cleanDist(resolve(repoRoot, "apps/zcode-cli/packages", workspace.packageDir));
+    }
     runCommand("pnpm", ["--filter", filter, "build"], {
       env: pnpmRunEnv,
       stdio: "inherit",
@@ -170,6 +178,7 @@ if (!useTurboBuild) {
   }
 
   await verifyRequiredDevPluginRuntimeArtifacts();
+  await cleanDist(resolve(repoRoot, "apps/zcode-cli/packages/cli"));
   runCommand("pnpm", ["--filter", "@zcode/cli", "build:desktop-agent"], {
     env: pnpmRunEnv,
     stdio: "inherit",
@@ -179,6 +188,10 @@ if (!useTurboBuild) {
   process.exit(0);
 }
 
+for (const { packageDir } of cliWorkspaceBuilds) {
+  await cleanDist(resolve(repoRoot, "apps/zcode-cli/packages", packageDir));
+}
+await cleanDist(resolve(repoRoot, "apps/zcode-cli/packages/cli"));
 runCommand(
   "pnpm",
   [
@@ -188,6 +201,7 @@ runCommand(
     "--cwd",
     "apps/zcode-cli",
     "run",
+    "--force",
     "build:desktop-agent",
     "--filter=@zcode/cli",
   ],
