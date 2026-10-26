@@ -2075,7 +2075,7 @@ const ToolCallRowView = memo(function ToolCallRowView({
     );
   }
   // 工具行去掉纵向内边距（对齐 z-code-2 无 per-tool padding）；连续工具间距由
-  // ConversationAssistantWorkItems 的 gap-4 组容器统一给。
+  // ConversationAssistantWorkItems 的 gap-3 组容器统一给。
   return (
     <RowShell rowId={row.rowId} className="py-0">
       <div data-conversation-selectable="true">

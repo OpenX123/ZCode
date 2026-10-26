@@ -105,3 +105,14 @@ export * from "./tracing/local-turn-preparation.js";
 export type { LocalTtftDetail } from "@zcode/shared";
 
 export * from "./interfaces/permission-full-access.js";
+export type {
+  ExternalEnginePort,
+  ExternalEngineTurnInput,
+  ExternalEngineSessionInput,
+  ExternalEngineTurnResult,
+  ExternalEnginePermissionRequest,
+  ExternalEnginePermissionOutcome,
+  ExternalEnginePermissionOption,
+} from "./external-engine/contract.js";
+
+export { ExternalEngineConnectionError } from "./external-engine/contract.js";

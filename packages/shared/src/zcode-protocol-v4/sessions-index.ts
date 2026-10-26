@@ -1,5 +1,6 @@
 // sessions-index topic：列表活性数据源；conflated 最新态，永不溢出。
 import { z } from "zod";
+import { sessionEngineSchema } from "../external-engine/index.js";
 import { timestampSchema } from "./core.js";
 import { sessionWorkflowActivitySchema } from "./sessions-index-workflow-activity.js";
 import {
@@ -27,6 +28,8 @@ export const pendingInteractionSummarySchema = z.object({
 export type PendingInteractionSummary = z.infer<typeof pendingInteractionSummarySchema>;
 
 export const sessionSummarySchema = z.object({
+  // 客户端身份直接来自 CLI 会话；缺省兼容旧摘要。
+  engine: sessionEngineSchema.optional(),
   sessionId: z.string(),
   workspaceId: z.string(),
   // fork 树。
@@ -93,6 +96,7 @@ export const sessionsIndexReconcileResultSchema = z
             .object({
               sessionId: z.string(),
               exists: z.literal(true),
+              engine: sessionEngineSchema.optional(),
               deleted: z.boolean(),
               title: z.string(),
               titleSource: sessionMetaStateSchema.shape.titleSource,

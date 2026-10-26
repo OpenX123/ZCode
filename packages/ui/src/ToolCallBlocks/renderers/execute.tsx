@@ -271,6 +271,9 @@ export function ExecuteToolCallBlock(context: ToolCallBlockRenderContext) {
   const { toolCallNode, isRunning, statusLabel, errorText, isOfficeMode = false } = context;
   const { toolCall } = toolCallNode;
   const secondaryText = getExecuteSecondaryText(toolCall.input);
+  const description = isPlainRecord(toolCall.input)
+    ? (toolCall.input.description ?? toolCall.input.command_description)
+    : undefined;
   const contentParts = getExecuteContentParts(toolCall.input);
   const outputText = extractExecuteResultText(toolCall.output);
   const rawOutputText = isPlainRecord(toolCall.raw)
@@ -301,6 +304,9 @@ export function ExecuteToolCallBlock(context: ToolCallBlockRenderContext) {
         data-testid="execute-detail"
         className="space-y-3 mb-2 rounded-xl border border-border bg-panel px-4 py-3"
       >
+        {typeof description === "string" && description.trim() ? (
+          <p className="text-ui-base text-foreground-subtle">{description}</p>
+        ) : null}
         <div className="space-y-1">
           <div className="flex items-start gap-2 font-sans text-ui-base text-foreground">
             <ExecuteCommand
@@ -330,6 +336,7 @@ export function ExecuteToolCallBlock(context: ToolCallBlockRenderContext) {
     ),
     [
       contentParts.executionCommand,
+      description,
       context.isPermissionPreview,
       failureVisibleText,
       intl,

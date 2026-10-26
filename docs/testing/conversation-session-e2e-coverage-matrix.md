@@ -4286,3 +4286,33 @@ Linux Electron 重建后 run `desktop-e2e-20261014-120739-442`，TD01/03/04 1/1 
 ## 独立桌面 Coding Harness（2026-10-24）
 
 用户已接受 H01–H07，详见 [规格](../desktop/standalone-coding-harness-spec.md)。覆盖无账号启动、普通 API Provider、核心 coding、旧数据、扩展与自动化、SSH、官方业务网络退出；实现与验证中，尚未声明转正或平台验收。
+
+## 外部 Agent 引擎（2026-10-25）
+
+E01–E11 产品规则已获用户确认，详见 [规格](../desktop/external-agent-engines-spec.md)。一期只覆盖本地桌面；远端入口隐藏并拒绝执行。
+
+- E01/E03 候选：`packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-external-engine-not-ready.test.ts`。未安装 adapter 时选择两家引擎并发送，应保留草稿、直达独立 Agent 引擎设置和官方终端登录命令；验证入口紧随模型设置、技术详情可展开、模型页不挂载引擎、切回后记忆分区；不得隐式安装或调用模型。
+- E04–E06/E11 由 ACP 脱敏帧与受控子进程测试验证协议映射、权限/停止与恢复；这些证据不等于真实账号在完整桌面中的验收。
+- 新增 E2E 保持 manual-review/pending；跨平台整机、真实账号续聊与进程退出仍需分别取得运行证据。
+
+### 外部引擎首发配置回归（E12，accepted）
+
+- 候选 `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-external-engine-prewarm.test.ts`：隔离的 ACP/官方状态夹具，选择后配置在首发前可见，切换模式后首发与续聊复用同一引擎会话，切换两家引擎不串配置。夹具不调用真实供应商；真实账号桌面另列证据。
+
+- E13（accepted，复用该候选）：模型目录一次展开且所有项目可见，无滚动容器；选择模型、提交深度后首发与续聊使用相同原始配置。用受控 ACP 响应断言实际回传，不调用真实账号；状态保留 manual-review/pending。
+
+### E14 外部引擎运行中配置与工具分段（accepted）
+
+复用候选 `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-external-engine-prewarm.test.ts`。两家引擎在受控运行窗口内切换模式、模型、思考深度；配置 ACK 后继续原 prompt，拒绝的配置提示且保留当前值。正文→工具→思考→最终正文保持分段，完成后过程折叠且最终回答外置。供应商由隔离 ACP 夹具替代，不代表真实 API 或跨平台验收；保留 pending，不自动准入 CI。
+
+### E15 外部引擎工具明细、子 Agent 与上下文（pending）
+
+扩展既有 external-engine-prewarm 候选：空参数工具后续补全命令与描述，终端输出通过独立通知到达；Agent 的子工具与活动按父标识嵌套，主回答保持独立；展开卡片可见完整命令、输出和活动，输入区显示供应商上报的真实上下文用量。受控 ACP 夹具，不等同真实供应商验收，保持 manual-review/pending。
+
+### E16 历史会话客户端 Logo 与右侧置顶（pending）
+
+扩展既有 `conversation-session-external-engine-prewarm.test.ts`：Claude Code 与 Codex 首发后，真实 CLI 摘要进入任务目录，图标成功加载且位于标题左侧；右侧置顶与取消置顶不切换会话，悬停保留 Logo，深浅主题截图核对。默认 YCode、旧摘要缺省、未读／手机标记共存和冷查询／SQLite 重开由定向 UT 覆盖。供应商由隔离 ACP 夹具替代，保持 manual-review/pending，不自动准入 CI。
+
+### E17 外部引擎冷恢复自动重试（accepted，候选保持 pending）
+
+扩展 `conversation-session-external-engine-prewarm.test.ts`：两家引擎冷恢复前注入前两次 resume internal error，第三次自动成功；无需手动重连，保留草稿、已确认模型/模式/思考档位和历史，不提交额外 prompt。原生供应商使用隔离 ACP 进程夹具；真实桌面原会话恢复另行取证，不代表跨平台或真实模型调用验收。

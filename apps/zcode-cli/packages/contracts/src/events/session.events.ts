@@ -87,6 +87,9 @@ export const SessionEventType = {
   SessionForked: "session_forked",
   SessionCompacted: "session_compacted",
   SessionTitleUpdated: "session_title_updated",
+  ExternalEngineUsageUpdated: "external_engine_usage_updated",
+  ExternalEngineCommandsUpdated: "external_engine_commands_updated",
+  ExternalEngineConfigUpdated: "external_engine_config_updated",
   SessionModeChanged: "session_mode_changed",
   SessionEnded: "session_ended",
   TurnStarted: "turn_started",
@@ -719,6 +722,21 @@ export interface TargetCompletionVerificationPayload {
   anchorTurnId?: TurnId;
 }
 
+export interface ExternalEngineUsageUpdatedPayload {
+  used: number;
+  size: number;
+}
+export interface ExternalEngineCommandsUpdatedPayload {
+  commands: Array<{ name: string; description: string; input?: { hint: string } }>;
+}
+
+export interface ExternalEngineConfigUpdatedPayload {
+  engine: import("@zcode/shared").SessionEngine;
+  engineConfigOptions: import("@zcode/shared").EngineConfigOption[];
+  engineConfigState?: import("@zcode/shared").EngineConfigState;
+  engineConfigError?: import("@zcode/shared").EngineConnectionFailure;
+}
+
 export interface ModelRequestPayload {
   messages: ModelMessage[];
   providerId: string;
@@ -891,6 +909,8 @@ export interface ModelErrorPayload {
 }
 
 export interface ToolCallScheduledPayload {
+  /** 外部引擎子工具的精确父调用，不代表 ZCode 子会话。 */
+  parentToolCallId?: string;
   toolCallId: ToolCallId;
   assistantMessageId?: MessageId;
   toolName: string;
@@ -917,6 +937,11 @@ export interface ToolCallStartedPayload {
 }
 
 export interface ToolCallProgressPayload {
+  /** ACP 后续通知补齐输入、输出及子 Agent 活动，更新同一个调用。 */
+  input?: Record<string, unknown>;
+  parentToolCallId?: string;
+  output?: string;
+  activityText?: string;
   toolCallId: ToolCallId;
   toolName?: string;
   elapsedMs?: number;
@@ -1317,6 +1342,9 @@ export type SessionEventPayload =
   | UserMessagePayload
   | AssistantMessagePayload
   | SystemMessagePayload
+  | ExternalEngineUsageUpdatedPayload
+  | ExternalEngineCommandsUpdatedPayload
+  | ExternalEngineConfigUpdatedPayload
   | ModelRequestPayload
   | ModelSelectedPayload
   | TurnExecutionModelFallbackPayload

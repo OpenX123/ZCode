@@ -1,3 +1,4 @@
+import { sessionEngineSchema, type SessionEngine } from "@zcode/shared/external-engine";
 // composer parity：v4 composer 的 per-session 草稿持久化（新做，轻量 localStorage）。
 //
 // 旧草稿面（zcodeSessionStore composerDraftByScopeId + chatComposerDraftStorage 写路径）
@@ -19,6 +20,7 @@ import type { ComposerMentionPrefill } from "@/store/zcodeSessionStoreTypes.js";
 
 export interface V4ComposerDraft {
   text: string;
+  engine?: SessionEngine;
   /** 未提交草稿的组织意图；真实任务归属始终由 Host 管理。 */
   projectId?: string | null;
   taskGroupId?: string | null;
@@ -278,6 +280,9 @@ function readDraft(value: unknown): V4ComposerDraft | null {
     );
   return {
     text: value.text,
+    ...(sessionEngineSchema.safeParse(value.engine).success
+      ? { engine: sessionEngineSchema.parse(value.engine) }
+      : {}),
     ...(value.taskGroupId === null || typeof value.taskGroupId === "string"
       ? { taskGroupId: value.taskGroupId as string | null }
       : {}),

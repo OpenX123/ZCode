@@ -21,6 +21,14 @@
 
 ## 实现
 
+### 底部入口
+
+- 左侧「设置」文字与齿轮组成一个主按钮，点击直接打开完整设置页；设置页复用时显示返回箭头和「返回工作区」。
+- 右侧使用滑杆图标，名称及提示为「快捷偏好」，只展开现有语言、主题、界面模式和桌面缩放菜单。不得与主入口同时展示齿轮或使用相同可访问名称。
+- 复用原有导航回调、偏好更新与桌面缩放命令，不新增状态所有者。窄侧栏、深浅主题与中英文均保留两个入口的可操作性。
+
+### 缩放链路
+
 - `packages/shared/src/platform.ts` 定义 `DesktopZoomState` 和 `IPlatformService` 的桌面缩放读取/订阅能力。
 - `packages/shared/src/channels.ts` 增加 `GetDesktopZoomLevel` 与 `DesktopZoomLevelChanged` 平台频道。
 - `packages/shared/src/protocol.ts` 与 `packages/shared/src/validationAppSettings.ts` 增加 `desktopZoomLevel`，允许旧配置缺省并按 `[-3, 5]` 接收持久化档位。
@@ -31,6 +39,8 @@
 - 桌面系统 View 菜单的可见缩放项顺序与 sidebar 二级菜单保持一致：`Zoom In`、`Zoom Out`、`Actual Size`。
 
 ## 验证
+
+- `settings-ui-polish.test.ts` 的 UP-01 覆盖主设置与快捷偏好的不同名称和图标、快捷菜单原有顺序、进入完整设置页及通过返回箭头回到工作区。
 
 - 单元测试覆盖缩放命令成功后写入 `desktopZoomLevel`，以及窗口创建时先应用持久化缩放。
 - `pnpm typecheck`

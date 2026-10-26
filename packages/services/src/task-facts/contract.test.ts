@@ -27,6 +27,39 @@ function fixture() {
   return { store, source, changed, port };
 }
 describe("task-facts contract", () => {
+  it("实时摘要与冷查询均透传客户端身份，旧摘要保持缺省", async () => {
+    const { port, source, store } = fixture();
+    for (const engine of [undefined, "zcode", "codex", "claude-code"] as const) {
+      await port.ingest(target, {
+        sessionId: target.taskId,
+        workspaceId: "/repo",
+        title: "CLI",
+        engine,
+        createdAt: 1,
+        lastActivityAt: 2,
+        phase: "completedSuccess",
+        sessionEnded: true,
+        hasBackgroundWork: false,
+      });
+      expect(vi.mocked(store.applyCliFacts).mock.lastCall?.[0].meta.engine).toBe(engine);
+      vi.mocked(source.reconcile).mockResolvedValue({
+        sessions: [
+          {
+            sessionId: target.taskId,
+            exists: true,
+            deleted: false,
+            title: "CLI",
+            engine,
+            titleSource: "generated",
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        ],
+      });
+      await port.refresh(target);
+      expect(vi.mocked(store.applyCliFacts).mock.lastCall?.[0].meta.engine).toBe(engine);
+    }
+  });
   it("discards a refresh response overtaken by a newer streamed fact", async () => {
     const { port, source, store } = fixture();
     let release!: () => void;

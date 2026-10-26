@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { modelSelectionSchema } from "../model-selection.js";
+import { sessionEngineSchema } from "../external-engine/contract.js";
 
 export const createSessionRequestedConfigSchema = z.object({
   modelSelection: modelSelectionSchema.optional(),
@@ -12,4 +13,6 @@ export const createSessionRequestedConfigSchema = z.object({
   // 会把“没传 mode”误变成“请求切回 build”，覆盖 workspace 默认 yolo。
   mode: z.string().optional(),
   planEnabled: z.boolean().optional(),
+  // 会话引擎只在创建时生效；不传即沿用 zcode，不做默认值改写（同上 mode 的口径）。
+  engine: sessionEngineSchema.optional(),
 });

@@ -138,8 +138,26 @@ describe("设置页 UI polish E2E", () => {
     ).toEqual({ right: "6px", bottom: "6px", top: 6 });
   });
 
-  it("UP-01: 偏好菜单按 language、theme、zoom 顺序展示偏好入口", async function () {
+  it("UP-01: 设置与快捷偏好入口分明，菜单按 language、theme、zoom 顺序展示", async function () {
     this.timeout(60000);
+
+    const entryLabels = await browser.execute(() => {
+      const preferences = [
+        ...document.querySelectorAll<HTMLElement>('[data-testid="sidebar-preferences-trigger"]'),
+      ].find((element) => element.getBoundingClientRect().width > 0);
+      const footer = preferences?.closest("footer");
+      const settings = footer?.querySelector('[data-testid="task-settings-button"]');
+      return {
+        settings: settings?.textContent?.trim(),
+        preferences: preferences?.getAttribute("aria-label"),
+        gearCount: footer?.querySelectorAll("svg.lucide-settings").length,
+        hasSliders: !!preferences?.querySelector("svg.lucide-sliders-horizontal"),
+      };
+    });
+    expect(entryLabels.settings).toMatch(/^(设置|Settings)$/);
+    expect(entryLabels.preferences).toMatch(/^(快捷偏好|Quick preferences)$/);
+    expect(entryLabels.gearCount).toBe(1);
+    expect(entryLabels.hasSliders).toBe(true);
 
     await clickVisibleTestId("sidebar-preferences-trigger", {
       timeout: 15000,
@@ -214,6 +232,14 @@ describe("设置页 UI polish E2E", () => {
         (await browser.execute(() => getComputedStyle(document.body).pointerEvents)) !== "none",
       { timeout: 10000, timeoutMsg: "偏好菜单未关闭或指针屏障尚未释放" },
     );
+
+    await clickVisibleTestId(TID_TASK_SETTINGS_BUTTON);
+    await $(sel(TID_SETTINGS_PAGE)).waitForDisplayed({ timeout: 15000 });
+    const back = await $(`${sel(TID_SETTINGS_PAGE)} footer ${sel(TID_TASK_SETTINGS_BUTTON)}`);
+    expect(await back.getText()).toMatch(/返回工作区|Back to workspace/);
+    expect(await back.$("svg.lucide-arrow-left").isExisting()).toBe(true);
+    await back.click();
+    await $(sel(TID_SETTINGS_PAGE)).waitForDisplayed({ reverse: true, timeout: 15000 });
   });
 
   it("UP-02: 设置页桌面 Sidebar 宽度为 268px 且与内容直接相接", async () => {

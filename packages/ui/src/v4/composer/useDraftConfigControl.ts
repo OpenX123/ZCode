@@ -1,3 +1,8 @@
+import {
+  useDraftModelReadinessGate,
+  type DraftModelReadinessGate,
+} from "@/v4/composer/useDraftModelReadinessGate.js";
+import { isExternalSessionEngine, resolveSessionEngine } from "@zcode/shared/external-engine";
 /* eslint-disable max-lines -- Composer 草稿 owner 同时收口选择、正文与提交生命周期，保持单一状态边界。 */
 // 当前编辑由 Composer 持有；进入已有 Session 从当前快照恢复权限/Plan，在线只响应新变化。
 // 菜单点击立即保存 Renderer 意图，Prewarm 与 Submission 只消费它，不反向覆盖。
@@ -87,6 +92,7 @@ export function shouldHydrateWorkspaceCatalog(params: {
 }
 
 export interface DraftConfigControl {
+  modelReadiness: DraftModelReadinessGate;
   modelSelectionRead: ModelSelectionRead;
   /** Renderer 下一次提交的配置；恢复采用当前权限，在线授权只同步对应字段。 */
   draftConfig: Partial<SessionConfigState>;
@@ -197,9 +203,19 @@ export function useDraftConfigControl(params: {
           }
         : loadedScope;
   let draft = currentState.draft;
+  const externalEngine = isExternalSessionEngine(resolveSessionEngine(sessionConfig ?? draft));
+  // 草稿 owner 已知引擎后再检查 Registry，外部引擎不读取内置模型目录。
+  const modelReadiness = useDraftModelReadinessGate({
+    workspacePath,
+    workspaceIdentity,
+    provider,
+    sessionId,
+    modelSelectionService,
+    enabled: !externalEngine,
+  });
   const modelSelectionRead = useModelSelectionServiceView(
     modelSelectionService,
-    true,
+    !externalEngine,
     "remote-waiting",
     {
       selection: draft.modelSelection ?? null,
@@ -275,6 +291,7 @@ export function useDraftConfigControl(params: {
     : draft.modelSelection;
   const draftConfig = useMemo<Partial<SessionConfigState>>(
     () => ({
+      engine: draft.engine,
       mode:
         currentState.initialization === "session" && !currentState.observedConfig
           ? undefined
@@ -286,6 +303,7 @@ export function useDraftConfigControl(params: {
       thought: effectiveSelection?.options?.reasoningLevel ?? "",
     }),
     [
+      draft.engine,
       draft.mode,
       draft.planEnabled,
       effectiveSelection,
@@ -368,6 +386,7 @@ export function useDraftConfigControl(params: {
           ? draftConfigRef.current.modelSelection
           : next.modelSelection;
       draftConfigRef.current = {
+        engine: next.engine,
         mode: next.mode,
         planEnabled: next.planEnabled ?? false,
         modelSelection: selection,
@@ -472,7 +491,7 @@ export function useDraftConfigControl(params: {
   );
   useEffect(() => {
     const store = useZCodeSessionStore.getState();
-    if (!agentStartupAllowed) {
+    if (!agentStartupAllowed || !modelReadiness.agentStartupAllowed || externalEngine) {
       store.setConfigOptionsStatus(workspacePath, "idle", workspaceIdentity);
       return;
     }
@@ -528,6 +547,8 @@ export function useDraftConfigControl(params: {
     workspaceCatalogHydrationFlights.set(workspaceKey, entry);
   }, [
     agentStartupAllowed,
+    modelReadiness.agentStartupAllowed,
+    externalEngine,
     displayProvider,
     dynamicWorkflowEnabled,
     sessionId,
@@ -621,6 +642,7 @@ export function useDraftConfigControl(params: {
   );
 
   return {
+    modelReadiness,
     modelSelectionRead,
     draftConfig,
     draftConfigRef,

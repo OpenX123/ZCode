@@ -35,7 +35,7 @@ export function FallbackToolCallBlock(context: FallbackToolCallBlockProps) {
   const kindLabel =
     toolCall.kind.length > 0
       ? toolCall.kind[0]!.toUpperCase() + toolCall.kind.slice(1)
-      : toolCall.kind;
+      : intl.formatMessage({ id: "chat.toolCall.toolCall" });
   const hasInlinePreview = displayModel.inlinePreview.type !== "none";
   const handleLoadFullToolCallFields = context.onLoadFullToolCallFields;
   const renderContent = useCallback(
@@ -92,12 +92,10 @@ export function FallbackToolCallBlock(context: FallbackToolCallBlockProps) {
       kindLabel={context.summaryOnly ? null : (context.kindLabelOverride ?? kindLabel)}
       sourceLabel={context.sourceLabel}
       primaryText={
-        context.summaryOnly
-          ? (context.summaryTextOverride ?? null)
-          : (toolCall.title ?? intl.formatMessage({ id: "chat.toolCall.toolCall" }))
+        context.summaryOnly ? (context.summaryTextOverride ?? null) : (toolCall.title ?? null)
       }
-      secondaryText={context.summaryOnly || toolCall.status === "failed" ? undefined : statusLabel}
-      statusLabel={toolCall.status === "failed" ? statusLabel : undefined}
+      statusLabel={statusLabel}
+      showStatusLabel={!context.summaryOnly}
       statusTooltip={toolCall.status === "failed" ? errorText : undefined}
       showFailureStatus={toolCall.status === "failed"}
       isRunning={isRunning}

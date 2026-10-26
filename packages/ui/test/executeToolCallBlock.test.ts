@@ -18,6 +18,7 @@ describe("ExecuteToolCallBlock", () => {
               title: "运行 npm install",
               input: {
                 command: "npm install",
+                command_description: "安装项目依赖",
               },
               output: {
                 stdout: "packages installed successfully",
@@ -56,7 +57,9 @@ describe("ExecuteToolCallBlock", () => {
       ),
     );
 
-    expect(html).toContain("输出结果");
+    expect(html).toContain("安装项目依赖");
+    expect(html).toContain("npm install");
+    expect(html).toContain('data-testid="bash-result-output"');
     expect(html).toContain("packages installed successfully");
     expect(html).not.toContain("&quot;stdout&quot;");
     expect(html).not.toContain("&quot;exitCode&quot;");

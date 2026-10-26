@@ -61,6 +61,10 @@ Default light and dark CSS variables still exist as fallback foundations, but ne
 
 ## Color Palette
 
+### 应用 Logo
+
+应用内 YCode 标识沿用原有 Y 字形，使用透明背景，不带方形底座、边框或底座阴影。浅色主题显示纯黑图形，深色主题显示纯白图形；历史任务默认客户端、标题栏、关于与启动界面保持一致。React 界面复用 `ZCodeAppLogo`，HTML 启动壳沿用同一透明资源和主题规则。
+
 ### Core semantic colors
 
 - **Brand**: `--color-brand`

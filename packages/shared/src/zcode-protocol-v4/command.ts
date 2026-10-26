@@ -245,6 +245,10 @@ export const commandPayloadSchemas = {
     mode: z.enum(["build", "edit", "plan", "yolo", "guarded"]),
   }),
   setFollowupMode: z.object({ mode: z.enum(["queue", "guide"]) }),
+  // 外部引擎会话切换引擎配置项（模式、模型等均为 configOptions）；zcode 会话拒绝。
+  // 与 switchModelConfig 分离：后者的 provider/model/thought 是 Provider Registry 语义。
+  prepareExternalEngineSession: z.object({}),
+  setEngineConfigOption: z.object({ configId: z.string().min(1), value: z.string().min(1) }),
   pauseGoal: z.object({}),
   resumeGoal: z.object({}),
   cancelBackgroundWork: z.object({ workId: z.string() }),
@@ -308,6 +312,8 @@ export const COMMANDS_REQUIRING_BASE_REVISION: ReadonlySet<CommandType> = new Se
   "setAutoDrain",
   "switchModelConfig",
   "switchCollaborationMode",
+  "setEngineConfigOption",
+  "prepareExternalEngineSession",
   "setFollowupMode",
   "pauseGoal",
   "resumeGoal",

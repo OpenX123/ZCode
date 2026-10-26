@@ -1,3 +1,4 @@
+import { EngineSettings } from "@/external-engine/index.js";
 import { SettingsMachinesProvider } from "@/settings/SettingsMachine.js";
 import { getWorkspaceSourceServerId } from "@/conversation-workspace-target/sourceIdentity.js";
 import { RemoteConnectionNavigationDot } from "@/remote-connection/RemoteConnectionNavigationDot.js";
@@ -167,14 +168,16 @@ export function SettingsPage({
   allowOpenWorkspace?: boolean;
 }) {
   const { intl, localePreference, setLocalePreference } = useZCodeIntl();
+  const localHostServices = useBaseWorkspaceServices();
   const { settingsSectionGroups, settingsSections } = useMemo(
     () =>
       createSettingsPageConfig({
+        externalEnginesAvailable: Boolean(localHostServices.externalEngineService),
         isDesktop: Boolean(isDesktop),
         isMacDesktop: Boolean(isMacDesktop),
         isWindowsDesktop: Boolean(isWindowsDesktop),
       }),
-    [isDesktop, isMacDesktop, isWindowsDesktop],
+    [isDesktop, isMacDesktop, isWindowsDesktop, localHostServices.externalEngineService],
   );
   const isLinuxDesktop = Boolean(isDesktop && !isMacDesktop && !isWindowsDesktop);
   const usesInlineWindowControls = Boolean(isWindowsDesktop || isLinuxDesktop);
@@ -266,11 +269,16 @@ export function SettingsPage({
   const requestOnboardingDialog = () => setNewUserOnboardingOpen(true);
   const setActiveSettingsSection = useCallback(
     (section: SettingsSectionId, fallbackSection: SettingsSectionId = activeSection) => {
-      const resolvedSection = resolveSettingsSection(section, fallbackSection);
+      // 能力隐藏的分区也可能收到历史或外部跳转意图；按可见分区解析，避免渲染空页。
+      const resolvedSection = resolveSettingsSectionForPlatform(
+        resolveSettingsSection(section, fallbackSection),
+        settingsSections,
+        fallbackSection,
+      );
       setActiveSection(resolvedSection);
       writeLastSettingsSectionPreference(resolvedSection);
     },
-    [activeSection],
+    [activeSection, settingsSections],
   );
   useEffect(() => {
     if (!isDesktop && activeSection === "remoteDevices") {
@@ -325,7 +333,6 @@ export function SettingsPage({
   const selectDirectory = useSelectDirectory();
   const services = useServices();
   const onboardingRecordService = services.onboardingRecordService;
-  const localHostServices = useBaseWorkspaceServices();
   const projectDirectory = useOptionalProjectDirectory();
   // SettingsPage 可能挂在远端 workspace 的 ServiceProvider 下；共享设置属于本机 Host，
   // 读写必须固定走本机 settingService，否则会写进远端 setting。
@@ -1267,6 +1274,11 @@ export function SettingsPage({
                                   setPendingModelProviderTarget(undefined)
                                 }
                               />
+                            </ServiceProvider>
+                          ) : activeSection === "agentEngines" ? (
+                            <ServiceProvider services={localHostServices}>
+                              {/* 引擎安装属于本机 Host；远端 workspace 不能改变设置页的服务所有者。 */}
+                              <EngineSettings />
                             </ServiceProvider>
                           ) : activeSection === "memory" ? (
                             <ServiceProvider services={localHostServices}>

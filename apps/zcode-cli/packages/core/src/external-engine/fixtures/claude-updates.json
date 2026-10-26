@@ -1,0 +1,103 @@
+[
+  {
+    "sessionUpdate": "available_commands_update",
+    "availableCommands": [
+      {
+        "name": "compact",
+        "description": "压缩上下文"
+      }
+    ]
+  },
+  {
+    "sessionUpdate": "usage_update",
+    "used": 100,
+    "size": 200000
+  },
+  {
+    "sessionUpdate": "agent_thought_chunk",
+    "content": {
+      "type": "text",
+      "text": "示例思考"
+    }
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "tool-example",
+    "title": "示例工具",
+    "rawInput": {
+      "file_path": "/workspace/example.txt",
+      "content": "after\n"
+    },
+    "_meta": {
+      "claudeCode": {
+        "toolName": "Write"
+      }
+    }
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "tool-example",
+    "rawInput": {
+      "file_path": "/workspace/example.txt",
+      "content": "after\n"
+    },
+    "_meta": {
+      "claudeCode": {
+        "toolName": "Write"
+      }
+    },
+    "content": [
+      {
+        "type": "diff",
+        "path": "/workspace/example.txt",
+        "oldText": "before\n",
+        "newText": "after\n"
+      }
+    ]
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "tool-example",
+    "status": "pending",
+    "kind": "edit",
+    "name": "Write",
+    "title": "示例工具",
+    "rawInput": {
+      "file_path": "/workspace/example.txt",
+      "content": "after\n"
+    },
+    "_meta": {
+      "claudeCode": {
+        "toolName": "Write"
+      }
+    },
+    "content": []
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "tool-example",
+    "_meta": {
+      "claudeCode": {
+        "toolName": "Write"
+      }
+    }
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "tool-example",
+    "status": "completed",
+    "rawOutput": "示例结果",
+    "_meta": {
+      "claudeCode": {
+        "toolName": "Write"
+      }
+    }
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "content": {
+      "type": "text",
+      "text": "示例正文"
+    }
+  }
+]

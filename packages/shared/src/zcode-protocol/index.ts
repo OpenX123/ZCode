@@ -1,3 +1,4 @@
+import { sessionEngineSchema } from "../external-engine/index.js";
 import { zcodeProtocolTraceSchema } from "./trace.js";
 // Bot 反向回复的名字解析/待澄清结果与 App、CLI 使用同一严格 schema。
 export { channelReplyRequestSchema, channelReplyResultSchema } from "../channel-mention.js";
@@ -1923,6 +1924,7 @@ export const zcodeDynamicWorkflowModeSchema = z.enum(DYNAMIC_WORKFLOW_MODES);
 
 export const zcodeSessionCreateParamsSchema = z
   .object({
+    engine: sessionEngineSchema.optional(),
     additionalDirectories: z.array(nonEmptyString).max(256).optional(),
     sessionId: nonEmptyString.optional(),
     workspace: zcodeWorkspaceRefSchema,
@@ -1965,6 +1967,8 @@ export type ZCodeSessionResumeParams = z.infer<typeof zcodeSessionResumeParamsSc
 
 export const zcodeSessionListParamsSchema = z
   .object({
+    // 仅精确 ID 查询可读取已驻留草稿，用于执行门禁；不创建 runtime，不进入任务索引。
+    includeDrafts: z.boolean().optional(),
     workspace: zcodeWorkspaceRefSchema.optional(),
     sessionIds: z.array(nonEmptyString).min(1).max(64).optional(),
     limit: z.number().int().positive().optional(),

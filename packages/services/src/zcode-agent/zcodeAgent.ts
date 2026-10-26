@@ -224,6 +224,7 @@ export type ZCodeAgentCuaPermissionObservation = CuaPermissionObservation &
   ZCodeAgentWorkspaceTarget;
 
 export interface ZCodeAgentCreateSessionParams extends ZCodeAgentWorkspaceTarget {
+  engine?: import("@zcode/shared/external-engine").SessionEngine;
   projectId?: string | null;
   additionalDirectories?: string[];
   sessionId?: string;

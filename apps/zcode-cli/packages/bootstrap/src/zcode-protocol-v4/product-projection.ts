@@ -1,3 +1,13 @@
+import {
+  isExternalSessionEngine,
+  sessionEngineSchema,
+  engineCommandSchema,
+  engineConfigOptionSchema,
+  engineConfigStateSchema,
+  engineConnectionFailureSchema,
+  type SessionEngine,
+  type EngineConfigOption,
+} from "@zcode/shared/external-engine";
 import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@zcode/shared/zcode-protocol-v4";
 // ProductProjection —— CLI 权威投影第二 reducer。
 // 输入：CLI 事件日志（SessionEvent，权威事实源）；输出：ConversationDelta[]。
@@ -242,6 +252,10 @@ function hookExecutionDisplayName(
  * 触碰」的字段——日志重放值永远优先（"最终值以日志为准"）。
  */
 export interface SessionConfigSeed {
+  engine?: SessionEngine;
+  engineConfigOptions?: EngineConfigOption[];
+  engineConfigState?: import("@zcode/shared").EngineConfigState;
+  engineConfigError?: import("@zcode/shared").EngineConnectionFailure;
   permissionGrant?: { interactionId: string };
   planEnabled?: boolean;
   modelSelection?: ModelSelectedPayload["modelSelection"];
@@ -593,6 +607,31 @@ export class ProductProjection {
   seedConfig(seed: SessionConfigSeed): void {
     const config = { ...this.snapshot.config };
     let changed = false;
+    if (seed.engine !== undefined && config.engine !== seed.engine) {
+      config.engine = seed.engine;
+      changed = true;
+    }
+    if (
+      seed.engineConfigOptions !== undefined &&
+      JSON.stringify(config.engineConfigOptions) !== JSON.stringify(seed.engineConfigOptions)
+    ) {
+      config.engineConfigOptions = structuredClone(seed.engineConfigOptions);
+      changed = true;
+    }
+    if (
+      seed.engineConfigState !== undefined &&
+      config.engineConfigState !== seed.engineConfigState
+    ) {
+      config.engineConfigState = seed.engineConfigState;
+      changed = true;
+    }
+    if (
+      seed.engineConfigState !== undefined &&
+      JSON.stringify(config.engineConfigError) !== JSON.stringify(seed.engineConfigError)
+    ) {
+      config.engineConfigError = seed.engineConfigError;
+      changed = true;
+    }
     if (!config.permissionGrant && seed.permissionGrant) {
       config.permissionGrant = seed.permissionGrant;
       changed = true;
@@ -645,6 +684,10 @@ export class ProductProjection {
     }
     if (changed) {
       this.snapshot = { ...this.snapshot, config };
+      this.snapshot = {
+        ...this.snapshot,
+        availability: computeAvailability(this.deriveContext({})),
+      };
     }
   }
 
@@ -1242,6 +1285,7 @@ export class ProductProjection {
         latestAssistantRowIdByTurn.set(row.turnId, row.rowId);
       }
     }
+    const externalEngine = isExternalSessionEngine(prospective.config.engine);
     const compactActive = prospective.control.activeWorks.some((work) => work.kind === "compact");
     const completionBlockingActive = prospective.control.activeWorks.length > 0;
     let latestEditable: ConversationRow | undefined;
@@ -1307,7 +1351,8 @@ export class ProductProjection {
     // entity target 历史表会保留旧记录；仅撤销 row action 不足以阻止
     // entityId 直查绕过 latest-only 语义。当前可编辑 authority 与 actions 在同一次
     // materialization 中更新，resolver 不再遍历 rows，也不把 rowId 当 canonical key。
-    this.currentEditableEntityId = latestEditableRowId === null ? null : latestEditableEntityId;
+    this.currentEditableEntityId =
+      externalEngine || latestEditableRowId === null ? null : latestEditableEntityId;
     const latestRetryableRowId = latestRetryable?.rowId ?? null;
     const deltas: ConversationDelta[] = [];
 
@@ -1317,6 +1362,7 @@ export class ProductProjection {
       const nextActions = { ...row.actions };
       if (row.kind === "turnHeader") {
         const canRewindFiles =
+          !externalEngine &&
           !completionBlockingActive &&
           prospective.pendingInteractions.length === 0 &&
           row.state !== "running" &&
@@ -1324,7 +1370,7 @@ export class ProductProjection {
         if (canRewindFiles) nextActions.canRewindFiles = true;
         else delete nextActions.canRewindFiles;
       } else if (row.kind === "userInput") {
-        if (row.rowId === latestEditableRowId) {
+        if (!externalEngine && row.rowId === latestEditableRowId) {
           nextActions.canEdit = true;
           nextActions.editDisposition = "rewind";
         } else {
@@ -1332,11 +1378,12 @@ export class ProductProjection {
           delete nextActions.editDisposition;
         }
       } else {
-        if (row.rowId === latestRetryableRowId) nextActions.canRetry = true;
+        if (!externalEngine && row.rowId === latestRetryableRowId) nextActions.canRetry = true;
         else delete nextActions.canRetry;
         const headerId = this.turnHeaderRowIdByTurnId.get(row.turnId);
         const header = headerId === undefined ? undefined : rowById.get(headerId);
         const canFork =
+          !externalEngine &&
           !compactActive &&
           row.state === "complete" &&
           header?.kind === "turnHeader" &&
@@ -1370,6 +1417,81 @@ export class ProductProjection {
   private reduce(fact: CanonicalConversationFact): ConversationDelta[] {
     const event = fact.event;
     switch (event.type) {
+      case SessionEventType.ExternalEngineUsageUpdated: {
+        const payload = event.payload as { used: number; size: number };
+        if (
+          !Number.isFinite(payload.used) ||
+          payload.used < 0 ||
+          !Number.isFinite(payload.size) ||
+          payload.size <= 0
+        )
+          return [];
+        this.contextWindowState = {
+          touchedByEvent: true,
+          usedTokens: payload.used,
+          maxTokens: payload.size,
+        };
+        return [
+          {
+            op: "state.updated",
+            patch: {
+              usage: {
+                ...this.snapshot.usage,
+                contextWindow: {
+                  usedTokens: payload.used,
+                  maxTokens: payload.size,
+                  autoCompactThresholdTokens: null,
+                },
+              },
+            },
+          },
+        ];
+      }
+      case SessionEventType.ExternalEngineCommandsUpdated: {
+        const payload = event.payload as { commands: unknown };
+        return [
+          {
+            op: "state.updated",
+            patch: {
+              config: {
+                ...this.snapshot.config,
+                engineCommands: engineCommandSchema.array().parse(payload.commands),
+              },
+            },
+          },
+        ];
+      }
+      case SessionEventType.ExternalEngineConfigUpdated: {
+        const payload = event.payload as {
+          engine: unknown;
+          engineConfigOptions: unknown;
+          engineConfigState?: unknown;
+          engineConfigError?: unknown;
+        };
+        const engine = sessionEngineSchema.parse(payload.engine);
+        const engineConfigOptions = engineConfigOptionSchema
+          .array()
+          .parse(payload.engineConfigOptions);
+        return [
+          {
+            op: "state.updated",
+            patch: {
+              config: {
+                ...this.snapshot.config,
+                engine,
+                engineConfigOptions,
+                engineConfigState: engineConfigStateSchema.parse(
+                  payload.engineConfigState ?? "ready",
+                ),
+                engineConfigError: engineConnectionFailureSchema
+                  .optional()
+                  .parse(payload.engineConfigError),
+              },
+              availability: computeAvailability({ ...this.deriveContext({}), engine }),
+            },
+          },
+        ];
+      }
       case SessionEventType.SessionCreated:
         return this.onSessionCreated(event);
       case SessionEventType.SessionResumed:
@@ -3133,6 +3255,7 @@ export class ProductProjection {
           row: {
             ...existing,
             toolName: payload.toolName,
+            ...(payload.parentToolCallId ? { parentToolCallId: payload.parentToolCallId } : {}),
             ...(payload.assistantMessageId
               ? { assistantResponseId: String(payload.assistantMessageId) }
               : {}),
@@ -3153,6 +3276,7 @@ export class ProductProjection {
         : {}),
       toolCallId,
       toolName: payload.toolName,
+      ...(payload.parentToolCallId ? { parentToolCallId: payload.parentToolCallId } : {}),
       status: "inputStreaming",
       inputText,
       input: payload.input,
@@ -3177,16 +3301,37 @@ export class ProductProjection {
   }
 
   /**
-   * MCP `notifications/progress`（A8）→ 行上的 progress。只在 running 时写：
-   * 终态之后迟到的进度通知不能把 success/error 行重新点亮；bash 的 stdout 字节进度不在这里消费。
+   * MCP 进度与 ACP 参数、输出、活动共用同一刷新入口；输入阶段允许补齐字段。
+   * 终态之后迟到的进度不能把 success/error 行重新点亮；Bash 尾窗仍走既有投影。
    */
   private onToolCallProgress(event: SessionEvent): ConversationDelta[] {
     if (this.isMirroredSubagentToolEvent(event) || !this.isRunning()) return [];
     const payload = event.payload as ToolCallProgressPayload;
-    const row = this.findToolRow(String(payload.toolCallId));
-    if (!row || row.status !== "running") return [];
+    const current = this.findToolRow(String(payload.toolCallId));
+    if (!current || !["running", "inputStreaming", "pendingApproval"].includes(current.status))
+      return [];
+    // ACP 先声明工具再补参数；参数刷新是同一调用的进度，不能重发 scheduled/start。
+    const refreshed =
+      payload.input !== undefined ||
+      payload.output !== undefined ||
+      payload.activityText !== undefined ||
+      payload.parentToolCallId !== undefined;
+    const row: ToolCallRow = {
+      ...current,
+      ...(refreshed && payload.toolName ? { toolName: payload.toolName } : {}),
+      ...(payload.input !== undefined
+        ? { input: payload.input, inputText: stringifyToolInput(payload.input) }
+        : {}),
+      ...(payload.parentToolCallId ? { parentToolCallId: payload.parentToolCallId } : {}),
+      ...(payload.output !== undefined ? { output: { text: payload.output } } : {}),
+      ...(payload.activityText !== undefined ? { activityText: payload.activityText } : {}),
+    };
+    const refreshDeltas: ConversationDelta[] = refreshed ? [{ op: "row.upserted", row }] : [];
     // 两个分支共用 ToolCallProgress：Bash 尾窗与 MCP 百分比必须分别投影，避免合并后互相覆盖。
-    if (row.toolName === "Bash") return projectToolActivity(event, row);
+    if (row.toolName === "Bash") {
+      const activity = projectToolActivity(event, row);
+      return activity.length ? activity : refreshDeltas;
+    }
     const total =
       typeof payload.total === "number" && Number.isFinite(payload.total) && payload.total > 0
         ? payload.total
@@ -3201,7 +3346,8 @@ export class ProductProjection {
       typeof payload.message === "string" && payload.message.trim().length > 0
         ? payload.message.trim().slice(0, 200)
         : undefined;
-    if (fraction === undefined && message === undefined && total === undefined) return [];
+    if (fraction === undefined && message === undefined && total === undefined)
+      return refreshDeltas;
     return [
       {
         op: "row.upserted",
@@ -5419,6 +5565,7 @@ export class ProductProjection {
     const nextGoal = goal === undefined ? this.snapshot.goal : goal;
     const nextQueue = queue ?? this.snapshot.queue;
     const context = {
+      engine: this.snapshot.config.engine,
       phase: next.phase,
       goalStatus: nextGoal?.status ?? null,
       // compacting 不是独立 phase（封闭枚举），从 activeWorks 派生。
@@ -5461,6 +5608,7 @@ export class ProductProjection {
     const goal = overrides.goal === undefined ? this.snapshot.goal : overrides.goal;
     const queue = overrides.queue ?? this.snapshot.queue;
     return {
+      engine: this.snapshot.config.engine,
       phase: this.snapshot.control.phase,
       goalStatus: goal?.status ?? null,
       compacting: this.snapshot.control.activeWorks.some((work) => work.kind === "compact"),

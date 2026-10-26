@@ -458,3 +458,35 @@ describe("history-first initialization", () => {
     expect(captured.chatPromptEditorProps?.submitDisabled).toBe(true);
   });
 });
+
+it("外部引擎隐藏 Registry 模型与内置模式，并独立显示未就绪引导", () => {
+  captured.modelControlsProps = null;
+  const html = renderComposerWithSnapshot(null, {
+    externalEngine: true,
+    draftMode: true,
+    sessionId: null,
+    engineControls: createElement("span", null, "Claude Code"),
+    engineNotReadyContent: createElement("p", { role: "alert" }, "engine_not_ready 草稿已保留"),
+  });
+  expect(html).toContain("Claude Code");
+  expect(html).toContain("engine_not_ready 草稿已保留");
+  expect(html).not.toContain(">mode</span>");
+  expect(captured.modelControlsProps).toBeNull();
+});
+
+it("外部引擎显示真实上下文用量，缺失用量时不显示百分比", () => {
+  const snapshot = makeSnapshot();
+  snapshot.usage.contextWindow = {
+    usedTokens: 1234,
+    maxTokens: 10000,
+    autoCompactThresholdTokens: null,
+  };
+  const html = renderComposerWithSnapshot(snapshot, { externalEngine: true });
+  expect(html).toContain('data-testid="chat-context-usage-trigger"');
+  expect(html).toContain("1,234");
+  expect(html).toContain("10,000");
+  expect(captured.modelControlsProps).toBeNull();
+  expect(renderComposerWithSnapshot(makeSnapshot(), { externalEngine: true })).not.toContain(
+    'data-testid="chat-context-usage-trigger"',
+  );
+});

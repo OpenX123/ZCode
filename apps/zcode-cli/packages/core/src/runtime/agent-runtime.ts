@@ -1,4 +1,15 @@
 import {
+  resolveSessionEngine,
+  isExternalSessionEngine,
+  type SessionEngine,
+  type EngineConfigOption,
+} from "@zcode/shared";
+import type { ExternalEnginePort } from "@zcode/contracts";
+import {
+  publishExternalEngineConfig,
+  prepareExternalEngineSession,
+} from "../external-engine/session.js";
+import {
   createTurnAgentDefinitions,
   createAgentDefinitionsReader,
   type GetAgentDefinitions,
@@ -147,6 +158,11 @@ export class AgentRuntime {
   private sessionId: SessionId;
   private turnNumber: number;
   private config: AgentRuntimeConfig;
+  private externalEnginePort?: ExternalEnginePort;
+  private engineConfigOptions: EngineConfigOption[] = [];
+  private engineConfigState?: import("@zcode/shared").EngineConfigState;
+  private engineConfigError?: import("@zcode/shared").EngineConnectionFailure;
+  private externalEnginePreparation?: Promise<void>;
   private appVersion: string;
   private permissionService: PermissionService;
   private permissionBroker: PermissionBrokerPort;
@@ -299,6 +315,7 @@ export class AgentRuntime {
     this.now = deps.now ?? (() => new Date());
     this.isRemoteWorkspace = deps.isRemoteWorkspace ?? (() => false);
     this.modelFactory = deps.modelFactory;
+    this.externalEnginePort = deps.externalEnginePort;
     this.modelIoDir = deps.modelIoDir;
     this.providerRuntimeHeadersPort = deps.providerRuntimeHeadersPort;
     this.browserControlPort = deps.browserControlPort;
@@ -340,12 +357,62 @@ export class AgentRuntime {
       runtime.initializeMessageHistoryFromContext(this.contextBuilder, this.rootTraceContext);
       this.contextInitialized = true;
     }
-    runtime.startMcpStartup(this.rootTraceContext);
+    if (!isExternalSessionEngine(this.config.engine))
+      runtime.startMcpStartup(this.rootTraceContext);
+  }
+
+  getSessionEngine(): SessionEngine {
+    return resolveSessionEngine(this.config);
+  }
+
+  async prepareExternalEngineSession(): Promise<void> {
+    // 同一 Runtime 的恢复与显式重试共享连接，避免并发 initialize/resume。
+    if (this.externalEnginePreparation) return this.externalEnginePreparation;
+    if (this.engineConfigState === "ready") return;
+    if (this.hasActiveOrQueuedTurnWork()) throw new Error("External engine is busy");
+    this.externalEnginePreparation = prepareExternalEngineSession(
+      this as unknown as AgentRuntimeInternal,
+      this.rootTraceContext,
+    );
+    try {
+      await this.externalEnginePreparation;
+    } finally {
+      this.externalEnginePreparation = undefined;
+    }
+  }
+
+  getEngineConfigState(): import("@zcode/shared").EngineConfigState | undefined {
+    return this.engineConfigState;
+  }
+
+  getEngineConfigError(): import("@zcode/shared").EngineConnectionFailure | undefined {
+    return this.engineConfigError ? { ...this.engineConfigError } : undefined;
+  }
+
+  getEngineConfigOptions(): EngineConfigOption[] {
+    return structuredClone(this.engineConfigOptions);
+  }
+
+  async setEngineConfigOption(configId: string, value: string): Promise<EngineConfigOption[]> {
+    if (!isExternalSessionEngine(this.config.engine) || !this.externalEnginePort)
+      throw new Error("External engine unavailable");
+    await this.prepareExternalEngineSession();
+    const option = this.engineConfigOptions.find((item) => item.id === configId);
+    if (!option?.options.some((item) => item.value === value))
+      throw new Error("Invalid external engine config option");
+    const options = await this.externalEnginePort.setConfigOption(this.sessionId, configId, value);
+    await publishExternalEngineConfig(
+      this as unknown as AgentRuntimeInternal,
+      options,
+      this.rootTraceContext,
+    );
+    return this.getEngineConfigOptions();
   }
 
   async closeBrowserSession(): Promise<void> {
     this.beginShutdown();
     disposeNodeReplSession(this.sessionId);
+    await this.externalEnginePort?.closeSession(this.sessionId);
     try {
       await this.browserControlPort?.closeSession?.({
         sessionId: this.sessionId,

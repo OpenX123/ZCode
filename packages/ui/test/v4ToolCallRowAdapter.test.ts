@@ -257,3 +257,14 @@ describe("toolCallRowToLegacyNode", () => {
     expect(empty.toolCall.input).toBeUndefined();
   });
 });
+
+it("外部 Agent 同时保留活动与最终结果并允许就地展开", () => {
+  const node = toolCallRowToLegacyNode(
+    makeRow({ toolName: "Agent", activityText: "工作过程", output: { text: "最终结果" } }),
+  );
+  expect(node.toolCall.content).toBe("工作过程\n\n最终结果");
+  expect(node.toolCall.raw).toMatchObject({ inlineAgentDetails: true });
+  expect(toolCallRowToLegacyNode(makeRow({ toolName: "Agent" })).toolCall.raw).not.toHaveProperty(
+    "inlineAgentDetails",
+  );
+});

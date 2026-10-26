@@ -328,6 +328,7 @@ export {
 } from "./plugin-ui-bridge/contract.js";
 
 export { IGenUiService } from "./gen-ui/contract.js";
+export { IExternalEngineService } from "./external-engine/contract.js";
 export type { GenUiPrepareParams } from "./gen-ui/contract.js";
 
 export { ITaskGroupService } from "#src/task-groups/contract.js";

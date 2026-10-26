@@ -2,6 +2,7 @@ import { databaseStartupControlSchema, databaseStartupStateSchema } from "./data
 import { mcpAppInstanceSchema } from "./mcp-apps/instance.js";
 /* eslint-disable max-lines -- 运行时 schema 当前集中在共享包入口，外部 relay payload 校验加入后先保持单一导出面。 */
 import { z } from "zod";
+import { sessionEngineSchema } from "./external-engine/index.js";
 import { networkCaptureControlSchema, networkCaptureBatchSchema } from "./networkCapture.js";
 import { browserCommandSchema } from "./browser-use/commands.js";
 import { browserCommandResultSchema } from "./browser-use/result.js";
@@ -1665,6 +1666,7 @@ export const zcodeTaskTargetSchema = zcodeTaskGoalSchema;
 export const zcodeTaskTargetChangedPatchSchema = zcodeTaskGoalChangedPatchSchema;
 
 export const zcodeTaskMetaSchema = z.object({
+  engine: sessionEngineSchema.optional(),
   taskId: nonEmptyStringSchema,
   traceId: nonEmptyStringSchema,
   title: z.string(),

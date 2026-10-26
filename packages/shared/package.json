@@ -29,6 +29,7 @@
     "./workspace-hook-review-monotonicity": "./src/workspace-hook-review-monotonicity.ts",
     "./workspace-hook-trust-store-file": "./src/workspace-hook-trust-store-file.ts",
     "./gen-ui": "./src/gen-ui/index.ts",
+    "./external-engine": "./src/external-engine/index.ts",
     "./testing/fake-relay-v2": "./test/fixtures/fake-relay-v2.ts"
   },
   "scripts": {

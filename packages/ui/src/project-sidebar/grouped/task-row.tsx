@@ -1,3 +1,4 @@
+import { TaskClientLogo } from "@/external-engine/index.js";
 import { TID_TASK_ITEM, testId } from "@zcode/shared/test-ids";
 import type { ProjectTask as ZCodeTaskMeta } from "@/project-sidebar/contract.js";
 import { memo, useState } from "react";
@@ -166,6 +167,7 @@ function GroupedTaskRowComponent({
       )}
     >
       <span className={TASK_GROUP_ROW_LINE_CLASS}>
+        <TaskClientLogo engine={task.engine} />
         <TaskTitleOverflowText
           as="span"
           className="text-foreground"
@@ -347,6 +349,7 @@ function GroupedTaskRowComponent({
       )}
     >
       <span className={TASK_GROUP_ROW_LINE_CLASS}>
+        <TaskClientLogo engine={task.engine} />
         <TaskTitleOverflowText as="span" className="text-foreground" title={taskTitle}>
           {/* Bugfix: grouped task 标题超出时不要显示省略号，右侧渐隐能保留标题连续性，避免和右侧状态元信息挤在一起。 */}
           {taskTitle}

@@ -25,12 +25,12 @@ export function createSession(db: DatabaseSync, input: CreateSessionInput): Sess
   db.prepare(
     `
       insert into session (
-        id, project_id, workspace_id, parent_id, trace_id, task_type, slug, directory, path,
+        engine, external_session_id, id, project_id, workspace_id, parent_id, trace_id, task_type, slug, directory, path,
         title, title_source, title_message_id, version,
         share_url, summary_additions, summary_deletions, summary_files, summary_diffs,
         revert, permission, time_created, time_updated, time_title_updated,
         time_compacting
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, null, null, null, ?, ?, ?, ?, null)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, null, null, null, ?, ?, ?, ?, null)
       on conflict(id) do update set
         project_id = excluded.project_id,
         workspace_id = excluded.workspace_id,
@@ -50,6 +50,8 @@ export function createSession(db: DatabaseSync, input: CreateSessionInput): Sess
         time_updated = excluded.time_updated
       `,
   ).run(
+    input.engine ?? "zcode",
+    input.externalSessionId ?? null,
     input.id,
     input.projectID,
     input.workspaceID ?? null,
@@ -85,6 +87,7 @@ export async function updateSession(
     values.push(value);
   };
   // Bug 根因：先读整行再 await 会用旧快照覆盖并发标题、权限和结果；只更新本次输入拥有的列。
+  set("external_session_id", input.externalSessionId);
   set("directory", input.directory);
   set("path", input.path);
   set("title", input.title);

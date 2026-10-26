@@ -58,15 +58,15 @@ epoch、CAS 和 product guard 裁决。
 
 当前命令全集以 `packages/shared/src/zcode-protocol-v4/command.ts` 为唯一类型事实源，主要分组如下：
 
-| 分组          | 命令                                                                                    |
-| ------------- | --------------------------------------------------------------------------------------- |
+| 分组          | 命令                                                                                                           |
+| ------------- | -------------------------------------------------------------------------------------------------------------- |
 | 会话/输入     | `createSession`、`createSelectionSideSession`、`sendText`、`sendGoalCommand`、`renameSession`、`deleteSession` |
-| 生成控制      | `stop`、`compact`、`retryTurn`、`editUserQuery`、`forkAssistant`                        |
-| 文件回退      | `applyFileRewind`                                                                       |
-| 队列          | `sendQueuedNow`、`editQueueItem`、`reorderQueueItem`、`deleteQueueItem`、`setAutoDrain` |
-| 配置          | `switchModelConfig`、`switchCollaborationMode`、`setFollowupMode`                       |
-| Goal/后台工作 | `pauseGoal`、`resumeGoal`、`cancelBackgroundWork`                                       |
-| 阻塞交互      | `resolveInteraction`、`snoozeInteractionAutoResolution`                                |
+| 生成控制      | `stop`、`compact`、`retryTurn`、`editUserQuery`、`forkAssistant`                                               |
+| 文件回退      | `applyFileRewind`                                                                                              |
+| 队列          | `sendQueuedNow`、`editQueueItem`、`reorderQueueItem`、`deleteQueueItem`、`setAutoDrain`                        |
+| 配置          | `switchModelConfig`、`switchCollaborationMode`、`setEngineConfigOption`、`prepareExternalEngineSession`、`setFollowupMode`                     |
+| Goal/后台工作 | `pauseGoal`、`resumeGoal`、`cancelBackgroundWork`                                                              |
+| 阻塞交互      | `resolveInteraction`、`snoozeInteractionAutoResolution`                                                        |
 
 `session/steer`、`session/rewind` 和独立 rewind 命令已经删除。引导输入由 `sendText` + `inputRouting`/follow-up mode 裁决；重试和编辑分别使用 `retryTurn`、`editUserQuery`；workspace 文件撤销使用 `applyFileRewind`，不会隐式截断会话历史。
 
@@ -120,6 +120,16 @@ Host 把带 revision 的 registry 同步给对应 workspace CLI。聊天 UI 用 
 重复下发。草稿可读取该 workspace 下的全局上次选择作为 create/预热种子，但它不能覆盖已有 session。
 
 运行中切换配置默认影响下一轮。secret 不进入 snapshot；远程 workspace 也使用同一 provider-registry command，不依赖旧版配置文件。
+
+### 会话引擎
+
+`createSession.config.engine` 可选 `zcode`（缺省）、`claude-code`、`codex`，创建后不可变；snapshot
+`config.engine` 缺省按 `zcode` 读取（`resolveSessionEngine`）。外部引擎会话不使用 Provider Registry：
+模式、模型、effort 等由引擎返回，投影为 `config.engineConfigOptions`，并通过 CAS 命令
+`setEngineConfigOption {configId, value}` 切换；历史恢复连接状态投影为 `config.engineConfigState`，失败后通过 CAS 命令 `prepareExternalEngineSession {}` 重试，保持原生会话 ID 与保存的配置值；`switchModelConfig`、`switchCollaborationMode` 在这类会话中
+被拒绝。外部引擎会话不下发 `canEdit`/`canRetry` row actions，`fork`、`compact`、`switchModelConfig`
+availability 为 `external_engine_unsupported`。未就绪时写路径返回 `engine_not_ready`。契约见
+`packages/shared/src/external-engine/contract.ts`，规则见 [external-agent-engines-spec](./desktop/external-agent-engines-spec.md)。
 
 ## 兼容工具调度事件
 

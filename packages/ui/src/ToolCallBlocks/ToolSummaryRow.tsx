@@ -71,17 +71,18 @@ function SummaryLeadingContent({
   return (
     <>
       {showIcon ? (
-        <span className="shrink-0 text-foreground-subtlest [&_svg]:text-foreground-subtlest">
+        <span className="shrink-0 text-foreground-subtle [&_svg]:text-foreground-subtle">
           {icon}
         </span>
       ) : null}
       {kindLabel != null && kindLabel !== false && kindLabel !== "" ? (
         <span
           className={cn(
-            "tool-summary-kind-label",
+            "tool-summary-kind-label min-w-0 truncate",
             kindLabelClassName,
             prioritizePrimaryText && "@max-[360px]/conversation:hidden",
           )}
+          title={typeof kindLabel === "string" ? kindLabel : undefined}
         >
           {kindLabel}
         </span>
@@ -112,7 +113,6 @@ function SummaryContent({
   prioritizePrimaryText,
   secondaryText,
   separator,
-  statusNode,
 }: Pick<
   ToolSummaryRowProps,
   | "animateContent"
@@ -125,9 +125,8 @@ function SummaryContent({
   | "prioritizePrimaryText"
   | "secondaryText"
   | "separator"
-  | "statusNode"
 >) {
-  const hasSummaryContent = [primaryText, secondaryText, diffCount, statusNode].some(
+  const hasSummaryContent = [primaryText, secondaryText, diffCount].some(
     (node) => node != null && node !== false && node !== "",
   );
 
@@ -140,7 +139,7 @@ function SummaryContent({
   return (
     <div
       className={cn(
-        "tool-summary-content min-w-0 flex max-w-full items-center gap-2 text-foreground-subtlest",
+        "tool-summary-content min-w-0 flex max-w-full items-center gap-2 text-foreground-subtle",
         prioritizePrimaryText && "flex-1 overflow-hidden",
       )}
     >
@@ -156,7 +155,6 @@ function SummaryContent({
         enabled={animateContent && !isExpanded}
         disableAnimation={disableContentAnimation}
       />
-      {statusNode}
     </div>
   );
 }
@@ -167,6 +165,12 @@ export function ToolSummaryRow(props: ToolSummaryRowProps) {
     <>
       <SummaryLeadingContent {...props} />
       <SummaryContent {...props} />
+      {/* 状态独立于可收缩摘要，长命令不能把状态挤成逐字换行。 */}
+      {props.statusNode ? (
+        <span className="shrink-0 whitespace-nowrap text-foreground-subtle">
+          {props.statusNode}
+        </span>
+      ) : null}
     </>
   );
 
@@ -179,7 +183,7 @@ export function ToolSummaryRow(props: ToolSummaryRowProps) {
         aria-label={action.ariaLabel}
         onClick={action.onActivate}
         onKeyDown={(event) => handleToolSummaryActionKeyDown(event, action.onActivate)}
-        className="group/tool-summary inline-flex max-w-full cursor-pointer items-center gap-2 self-start text-left text-ui-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
+        className="group/tool-summary inline-flex min-h-6 min-w-0 w-full max-w-full cursor-pointer items-center gap-2 self-start text-left text-ui-base leading-normal transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
         title={title}
       >
         {sharedContent}
@@ -206,7 +210,7 @@ export function ToolSummaryRow(props: ToolSummaryRowProps) {
             event.preventDefault();
             event.currentTarget.click();
           }}
-          className="group/tool-summary inline-flex max-w-full cursor-pointer items-center gap-2 self-start text-left text-ui-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
+          className="group/tool-summary inline-flex min-h-6 min-w-0 w-full max-w-full cursor-pointer items-center gap-2 self-start text-left text-ui-base leading-normal transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
           title={title}
         >
           {sharedContent}
@@ -226,7 +230,7 @@ export function ToolSummaryRow(props: ToolSummaryRowProps) {
   return (
     <div
       data-testid={testId(TID_TOOL_SUMMARY_TRIGGER, toolId)}
-      className="group/tool-summary cursor-default flex w-full items-center gap-2 text-left text-ui-base transition-colors focus-visible:outline-none"
+      className="group/tool-summary cursor-default flex min-h-6 min-w-0 w-full items-center gap-2 text-left text-ui-base leading-normal transition-colors focus-visible:outline-none"
       title={title}
     >
       {sharedContent}

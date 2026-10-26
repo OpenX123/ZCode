@@ -286,11 +286,11 @@ export async function setCustomSessionTitle(
   );
 }
 
-async function persistGeneratedSessionTitle(
+export async function persistGeneratedSessionTitle(
   this: AgentRuntimeInternal,
   input: {
     messageID: MessageId | undefined;
-    modelSelection: ModelSelection;
+    modelSelection?: ModelSelection;
     title: string;
     traceContext: TraceContext;
   },

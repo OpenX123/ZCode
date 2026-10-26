@@ -1,3 +1,5 @@
+import type { SessionEngine } from "@zcode/shared";
+import type { ExternalEnginePort } from "@zcode/contracts";
 import type { ToolSearchExecutionContext, ToolSearchMode } from "@zcode/contracts";
 import type { ZCodeProviderRuntimeHeadersRequestParams } from "@zcode/shared";
 import type { GetAgentDefinitions, LoadAgentDefinitions } from "../subagent/definitions.js";
@@ -116,6 +118,8 @@ import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-
 // -----------------------------------------------
 
 export interface AgentRuntimeConfig {
+  engine?: SessionEngine;
+  externalSessionId?: string;
   toolSearch?: { mode?: ToolSearchMode };
   /** shared-host CUA request routing metadata; desktop is the safe default. */
   clientMode?: "desktop-continuous" | "web-remote-replayable";
@@ -320,6 +324,7 @@ export interface MemoryRuntimeConfig {
 }
 
 export interface AgentRuntimeDeps {
+  externalEnginePort?: ExternalEnginePort;
   /** 只读目录入口；必须同步读取内存，不在请求收集阶段进行 I/O。 */
   getAgentDefinitions?: GetAgentDefinitions;
   /** 新父上下文读取一次；子执行不得继承此加载器。 */

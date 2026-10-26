@@ -372,3 +372,49 @@ describe("v4 原生 createSession", () => {
     ).rejects.toThrow(/createSessionRecord/);
   });
 });
+
+describe("外部引擎草稿握手", () => {
+  it.each(["claude-code", "codex"])(
+    "%s 在 createSession 返回前完成准备且不起 turn",
+    async (engine) => {
+      let ready = false;
+      const prepare = vi.fn(async () => {
+        ready = true;
+      });
+      const sendInput = vi.fn();
+      const app = makeApp({
+        runtime: { getSessionEngine: () => engine, prepareExternalEngineSession: prepare },
+        sendInput,
+      });
+      const record = makeRecord({ app, persistence: "deferred" });
+      const createSessionRecord = vi.fn(async () => ({ sessionId: "s1" }));
+      const result = await new V4CommandExecutor(makeHost(record, { createSessionRecord })).execute(
+        envelope("createSession", { workspaceId: "/w", config: { engine } }, "draft"),
+      );
+      expect(ready).toBe(true);
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(sendInput).not.toHaveBeenCalled();
+      expect(result).toEqual({ type: "createSession", sessionId: "s1" });
+    },
+  );
+  it("握手失败回收 deferred 记录并向上返回失败", async () => {
+    const prepare = vi.fn(async () => {
+      throw new Error("ACP adapter exited (signal SIGTRAP)");
+    });
+    const app = makeApp({
+      runtime: { getSessionEngine: () => "codex", prepareExternalEngineSession: prepare },
+    });
+    const record = makeRecord({ app, persistence: "deferred" });
+    const deleteSession = vi.fn(async () => {});
+    const service = makeHost(record, {
+      createSessionRecord: async () => ({ sessionId: "s1" }),
+      deleteSession,
+    });
+    await expect(
+      new V4CommandExecutor(service).execute(
+        envelope("createSession", { workspaceId: "/w", config: { engine: "codex" } }, "draft"),
+      ),
+    ).rejects.toThrow("SIGTRAP");
+    expect(deleteSession).toHaveBeenCalledWith("s1");
+  });
+});

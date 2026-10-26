@@ -8,10 +8,7 @@ import { highspeedMessageMetaSchema } from "../highspeed.js";
 import { executionOutputPreviewSchema } from "../execution-output-preview.js";
 import { timestampSchema } from "./core.js";
 import { conversationInputSourceSchema } from "./input-intent.js";
-import {
-  backgroundResultOriginMetaSchema,
-  workflowLaunchMetaSchema,
-} from "./workflow-row-meta.js";
+import { backgroundResultOriginMetaSchema, workflowLaunchMetaSchema } from "./workflow-row-meta.js";
 import { attachmentRefSchema } from "./attachment-ref.js";
 
 // RowBase。rowId：session 内单调、永不复用、事件日志的确定性纯函数。
@@ -208,6 +205,9 @@ export const toolCallRowSchema = z.object({
   // 同一模型 response 的正文与工具共享此 ID；optional 兼容旧 snapshot。
   assistantResponseId: z.string().min(1).optional(),
   toolCallId: z.string(),
+  // 外部引擎子调用仍属于本会话，不伪造 childSessionId。
+  parentToolCallId: z.string().optional(),
+  activityText: z.string().optional(),
   toolName: z.string(),
   status: z.enum(["inputStreaming", "pendingApproval", "running", "success", "error", "cancelled"]),
   inputText: z.string(),

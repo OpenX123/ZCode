@@ -126,6 +126,13 @@ vi.mock("@/store/StoreProvider.js", () => ({
 vi.mock("@/v4/composer/useDraftConfigControl.js", () => ({
   buildDraftCreateConfigPayload: () => ({}),
   useDraftConfigControl: () => ({
+    modelReadiness: {
+      agentStartupAllowed: true,
+      error: null,
+      dismissError: vi.fn(),
+      ensureReadyForSend: async () => true,
+      markProviderNotReady: vi.fn(),
+    },
     modelSelectionRead: { state: { status: "loading" }, reload: vi.fn() },
     captureAcceptedModelSelection: () => vi.fn(),
     draftConfigRef: { current: {} },

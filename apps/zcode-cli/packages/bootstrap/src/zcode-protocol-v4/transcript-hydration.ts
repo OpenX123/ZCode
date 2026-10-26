@@ -765,6 +765,10 @@ function synthesizeToolPart(
     return { resultType: "success", toolCallCount: 0 };
   }
   const toolCallId = part.callID;
+  const parentToolCallId =
+    typeof part.metadata?.parentToolCallId === "string"
+      ? part.metadata.parentToolCallId
+      : undefined;
   const persistedMetadata = parseCompletedToolPartMetadata(
     "metadata" in part.state ? part.state.metadata : part.metadata,
   );
@@ -774,6 +778,7 @@ function synthesizeToolPart(
       toolCallId,
       assistantMessageId,
       toolName: part.tool,
+      ...(parentToolCallId ? { parentToolCallId } : {}),
       input: part.state.input,
       ...(persistedMetadata?.display ? { display: persistedMetadata.display } : {}),
       schedule: stableToolSchedule(toolCallId),
@@ -808,6 +813,11 @@ function synthesizeToolPart(
   const subagentInfo = subagentInfoFromToolPart(part);
   if (subagentInfo && started) {
     synthesizeSubagentLifecycle(subagentInfo, subagentStatusFromToolPart(part), push, turnId);
+  }
+
+  const activityText = "metadata" in part.state ? part.state.metadata?.externalActivity : undefined;
+  if (typeof activityText === "string") {
+    push(SessionEventType.ToolCallProgress, { toolCallId, activityText }, turnId);
   }
 
   if (part.state.status === "completed") {

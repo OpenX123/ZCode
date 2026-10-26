@@ -48,6 +48,7 @@ async function createSession(
     throw new V4InputAdmissionRejectedError("proto.invalidPayload", "input must not be empty");
   }
   const { sessionId } = await host.createSessionRecord({
+    engine: payload.config?.engine,
     ...(payload.sessionId ? { sessionId: payload.sessionId } : {}),
     ...(payload.additionalDirectories
       ? { additionalDirectories: payload.additionalDirectories }
@@ -79,6 +80,16 @@ async function createSession(
         error: error instanceof Error ? error.message : String(error),
         sessionId,
       });
+    }
+  }
+  if (payload.config?.engine && payload.config.engine !== "zcode") {
+    const record = requireRecord(host, sessionId);
+    try {
+      // 草稿 ACK 前完成 ACP 握手和配置投影；首发复用此连接，不制造空 turn。
+      await record.app.runtime.prepareExternalEngineSession();
+    } catch (error) {
+      await host.deleteSession?.(sessionId);
+      throw error;
     }
   }
   let firstInput:

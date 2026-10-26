@@ -25,7 +25,7 @@ it.each(["source-first", "agent-first"])(
           .get(),
       ).toEqual(initial);
       expect(db.prepare("SELECT * FROM zcode_database_identity").all()).toEqual([]);
-      expect(db.prepare("SELECT COUNT(*) AS n FROM schema_migration").get()?.n).toBe(24);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM schema_migration").get()?.n).toBe(25);
     } finally {
       db.close();
     }

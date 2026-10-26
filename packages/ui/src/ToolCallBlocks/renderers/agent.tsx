@@ -257,6 +257,12 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
         : undefined,
     [context.agentSummaryAction, intl],
   );
+  const inlineDetails =
+    !summaryAction &&
+    typeof toolCall.raw === "object" &&
+    toolCall.raw !== null &&
+    "inlineAgentDetails" in toolCall.raw &&
+    toolCall.raw.inlineAgentDetails === true;
   const renderContent = useCallback(
     () => (
       <div className="ml-2 space-y-3 border-border border-l pl-3.5">
@@ -342,11 +348,10 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
         toolId={toolCall.toolId}
         icon={AGENT_TOOL_ICON}
         showIcon={context.showIcon !== false}
-        canToggle={false}
-        forceOpen={false}
+        canToggle={inlineDetails}
+        forceOpen={inlineDetails && context.forceOpen === true}
         summaryAction={summaryAction}
-        // 产品边界：Agent/Task 在父对话中只保留单行摘要；完整 child timeline 统一从
-        // 右侧 tab / 手机抽屉查看，因此这里既不自动展开，也不提供手动展开入口。
+        // 外部引擎没有本地 child session，活动在当前卡展开；原生子会话仍使用右侧 tab。
         kindLabel={fallbackLabel}
         expandedKindLabel={fallbackLabel}
         kindDetail={agentNameDetail}

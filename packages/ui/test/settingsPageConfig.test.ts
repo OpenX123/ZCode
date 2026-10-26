@@ -21,6 +21,28 @@ afterEach(() => {
 });
 
 describe("settingsPageConfig", () => {
+  it("有本地引擎服务时在模型设置之后展示独立入口，无服务时隐藏并回退", async () => {
+    const { createSettingsPageConfig, resolveSettingsSectionForPlatform } =
+      await loadSettingsPageConfig("test");
+    const enabled = createSettingsPageConfig({ externalEnginesAvailable: true });
+    const basics = enabled.settingsSectionGroups.find((group) => group.id === "basics")!;
+    const modelIndex = basics.sections.findIndex((section) => section.id === "modelProvider");
+    expect(basics.sections[modelIndex + 1]).toMatchObject({
+      id: "agentEngines",
+      titleId: "engine.settings.title",
+    });
+    expect(resolveSettingsSectionForPlatform("agentEngines", enabled.settingsSections)).toBe(
+      "agentEngines",
+    );
+    const disabled = createSettingsPageConfig();
+    expect(disabled.settingsSections.some((section) => section.id === "agentEngines")).toBe(false);
+    expect(resolveSettingsSectionForPlatform("agentEngines", disabled.settingsSections)).toBe(
+      "general",
+    );
+    expect(
+      resolveSettingsSectionForPlatform("agentEngines", disabled.settingsSections, "modelProvider"),
+    ).toBe("modelProvider");
+  });
   it("only exposes remote device management on desktop", () => {
     expect(isSettingsSectionAvailable("remoteDevices", true)).toBe(true);
     expect(isSettingsSectionAvailable("remoteDevices", false)).toBe(false);

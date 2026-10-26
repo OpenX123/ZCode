@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { cn } from "@/components/lib/utils.js";
-import appLogoUrl from "@/assets/ycode-logo.png";
+import { ZCodeAppLogo } from "@/components/mobile-ui/index.js";
 
 interface RootStartupLoadingProps {
   label: string;
@@ -25,7 +25,7 @@ export function RootStartupLoading({ label, children, busy = true }: RootStartup
   );
 }
 
-/** 初始化与引导共用品牌图标，保持底色、描边、圆角和标志比例一致。 */
+/** 初始化与引导共用透明品牌图标，保持标志比例一致。 */
 export function ZCodeStartupLogoBadge({
   animated = true,
   size = "default",
@@ -38,7 +38,6 @@ export function ZCodeStartupLogoBadge({
       data-desktop-logo-badge={size === "titlebar" ? "true" : undefined}
       className={cn("flex items-center justify-center", size === "titlebar" ? "size-5" : "size-24")}
     >
-      {/* 原图自带底色与圆角，完整展示，避免重复底座缩小标志。 */}
       <ZCodeStartupLogo className="size-full" animated={animated} />
     </div>
   );
@@ -52,18 +51,12 @@ export function ZCodeStartupLogo({
   animated?: boolean;
 }) {
   return (
-    <img
-      src={appLogoUrl}
-      alt=""
-      width="96"
-      height="96"
-      draggable={false}
+    <ZCodeAppLogo
       className={cn(
-        "shrink-0 select-none object-contain",
+        "size-24",
         animated && "motion-safe:animate-pulse",
         className,
       )}
-      aria-hidden="true"
     />
   );
 }

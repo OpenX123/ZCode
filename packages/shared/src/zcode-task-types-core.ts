@@ -324,6 +324,8 @@ export interface ZCodeTaskMeta {
   runtimeEpoch?: number;
   /** 创建此 task 时使用的 agent provider，缺省视为 "glm"（旧数据兼容） */
   provider?: ZCodeProvider;
+  /** CLI 会话的客户端身份；缺省表示内置引擎，不根据 provider 推断。 */
+  engine?: import("./external-engine/index.js").SessionEngine;
   /** 迁移来源；普通新建任务为空，用于识别 Claude Code 原生历史导入。 */
   migrationSource?: ZCodeTaskMigrationSource;
   /**

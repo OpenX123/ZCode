@@ -1,5 +1,12 @@
 import { z } from "zod";
 import { modelSelectionSchema } from "../model-selection.js";
+import {
+  engineCommandSchema,
+  engineConfigOptionSchema,
+  engineConfigStateSchema,
+  engineConnectionFailureSchema,
+  sessionEngineSchema,
+} from "../external-engine/contract.js";
 
 // ── config──
 export const sessionConfigStateSchema = z.object({
@@ -25,6 +32,15 @@ export const sessionConfigStateSchema = z.object({
       planEnabled: z.boolean(),
     })
     .optional(),
+  // additive：会话引擎，创建后不可变。缺省（含旧快照）视为 zcode，读取统一经
+  // resolveSessionEngine；不用 default，避免旧快照往返时被补写字段。
+  engine: sessionEngineSchema.optional(),
+  // 外部引擎会话的可选配置（mode / model / effort 等）；zcode 会话不下发。
+  engineConfigOptions: z.array(engineConfigOptionSchema).optional(),
+  engineConfigState: engineConfigStateSchema.optional(),
+  engineConfigError: engineConnectionFailureSchema.optional(),
+  /** 外部引擎可用命令，按会话投影，不混入 workspace 内置命令。 */
+  engineCommands: z.array(engineCommandSchema).optional(),
 });
 export type SessionConfigState = z.infer<typeof sessionConfigStateSchema>;
 

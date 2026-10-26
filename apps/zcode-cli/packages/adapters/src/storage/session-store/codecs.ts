@@ -56,6 +56,8 @@ export function decodeSessionRow(row: SessionRow): SessionInfo {
     parentID: row.parent_id ? (row.parent_id as SessionId) : undefined,
     traceID: row.trace_id ? (row.trace_id as TraceId) : undefined,
     taskType: decodeSessionTaskType(row.task_type),
+    engine: row.engine === "claude-code" || row.engine === "codex" ? row.engine : "zcode",
+    externalSessionId: row.external_session_id ?? undefined,
     slug: row.slug,
     directory: row.directory,
     path: row.path ?? undefined,

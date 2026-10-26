@@ -1,3 +1,4 @@
+import type { SessionEngine } from "@zcode/shared";
 // Session Store Port：为会话输入、消息和投影提供稳定的存储边界。
 // ============================================================
 
@@ -146,6 +147,8 @@ export interface MessageProjectionAnchor {
 }
 
 export interface SessionInfo {
+  engine?: SessionEngine;
+  externalSessionId?: string;
   id: SessionId;
   projectID: ProjectId;
   workspaceID?: WorkspaceId;
@@ -177,6 +180,8 @@ export interface SessionInfo {
 }
 
 export interface CreateSessionInput {
+  engine?: SessionEngine;
+  externalSessionId?: string;
   id: SessionId;
   projectID: ProjectId;
   workspaceID?: WorkspaceId;
@@ -250,6 +255,7 @@ export interface ForkCommitBundle {
 }
 
 export interface UpdateSessionInput {
+  externalSessionId?: string;
   id: SessionId;
   lastOutcome?: SessionLastOutcome;
   directory?: string;

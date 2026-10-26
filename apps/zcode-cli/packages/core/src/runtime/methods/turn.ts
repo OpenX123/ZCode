@@ -1,3 +1,6 @@
+import { isExternalSessionEngine } from "@zcode/shared";
+import { runExternalEngineTurn } from "../../external-engine/turn.js";
+import type { ExternalTurnLoopState } from "../../external-engine/contract.js";
 import { beginLocalTurnPreparation, type LocalTtftDetail } from "@zcode/contracts";
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
 import { withConversationQuotes } from "../helpers/conversation-quotes.js";
@@ -132,8 +135,9 @@ export async function executeTurnCommand(
       ? options.executionSelection
       : this.getSessionModelSelection());
   const admittedOutputStyle = this.config.outputStyle;
-  const compactInstructions = parseCompactCommand(input);
-  const rewindCommand = parseRewindCommand(input);
+  const externalEngine = isExternalSessionEngine(this.config.engine);
+  const compactInstructions = externalEngine ? null : parseCompactCommand(input);
+  const rewindCommand = externalEngine ? null : parseRewindCommand(input);
   const turnId = startReservation?.turnId ?? createTurnId();
   const queryId = options?.queryId ?? (options?.inputId as QueryId | undefined) ?? createQueryId();
   const displayInput = options?.displayInput ?? input;
@@ -161,7 +165,7 @@ export async function executeTurnCommand(
   let startedTarget: SessionGoal | null = null;
   let targetRunHeartbeat: ReturnType<typeof setInterval> | undefined;
   let userMessageId: MessageId | undefined;
-  let loopState: RegularTurnLoopState | undefined;
+  let loopState: RegularTurnLoopState | ExternalTurnLoopState | undefined;
   let shouldRetryTitleGenerationAfterTurn = false;
   // 线上“已工作 N 秒”但没有终态的根因候选是：内层 Turn try/catch 之前的 await
   // 拒绝直接穿出。记录当前阶段并区分是否已被内层处理，便于生产日志还原卡点。
@@ -214,7 +218,7 @@ export async function executeTurnCommand(
       let creationFailure: { error: unknown } | undefined;
       try {
         admittedModel =
-          rewindCommand === null
+          !externalEngine && rewindCommand === null
             ? createTurnModel(this, {
                 requestDependencies: options?.modelExecution?.requestDependencies,
                 selection: admittedModelSelection,
@@ -254,7 +258,7 @@ export async function executeTurnCommand(
       let phaseStartedAt: number;
       // Bug 根因：创建错误确定后仍执行 Context/SessionStart，会在 TurnStarted 前被二次 I/O 错误覆盖，
       // 并提前消费一次性 SessionStart。失败轮跳过它们，只复用后续输入持久化与终态主链。
-      if (!creationFailure) {
+      if (!creationFailure && !externalEngine) {
         phaseStartedAt = startTurnPhase("context_initialization");
         if (this.contextInitialized) {
           // 每个后续 model step 都按该步骤实际持有的 Model 重新投影 Context；
@@ -314,7 +318,7 @@ export async function executeTurnCommand(
         turnId,
         turnTraceContext,
         "regular",
-        creationFailure === undefined,
+        creationFailure === undefined && !externalEngine,
         options?.inputId === undefined ? {} : { inputId: options.inputId },
       );
       this.logger?.info("Turn started", {
@@ -333,15 +337,16 @@ export async function executeTurnCommand(
       // Session Selection；普通 Submission 才在真正开跑时应用其原子选择。
       // 创建失败轮不再应用：重复建模会在主 try 之外再次抛错；也不改写选择、mode、plan，
       // 不占用目标轮次。
-      const submissionModel = creationFailure
-        ? undefined
-        : await applySubmissionExecutionState(
-            this,
-            options?.intent,
-            turnTraceContext,
-            options?.modelExecution,
-            admittedModel,
-          );
+      const submissionModel =
+        creationFailure || externalEngine
+          ? undefined
+          : await applySubmissionExecutionState(
+              this,
+              options?.intent,
+              turnTraceContext,
+              options?.modelExecution,
+              admittedModel,
+            );
       startedTarget = creationFailure
         ? null
         : await this.readSessionTargetForContext(turnTraceContext);
@@ -416,14 +421,15 @@ export async function executeTurnCommand(
 
       try {
         phaseStartedAt = startTurnPhase("user_prompt_hooks");
-        const userPromptHookResult: HookRunResult = options?.skipUserPromptSubmitHooks
-          ? { additionalContexts: [] }
-          : await this.runUserPromptSubmitHooks(
-              input,
-              attachments,
-              turnTraceContext,
-              turnAbortSignal,
-            );
+        const userPromptHookResult: HookRunResult =
+          externalEngine || options?.skipUserPromptSubmitHooks
+            ? { additionalContexts: [] }
+            : await this.runUserPromptSubmitHooks(
+                input,
+                attachments,
+                turnTraceContext,
+                turnAbortSignal,
+              );
         completeTurnPhase("user_prompt_hooks", phaseStartedAt);
         if (userPromptHookResult.preventContinuation) {
           const response =
@@ -600,12 +606,17 @@ export async function executeTurnCommand(
         }
         // 配置读取曾早于输入展示/持久化，失败会让已发送消息从界面消失。
         // 在原有输入记录后固定本轮定义，错误/取消复用本层收尾，且不启动标题或模型请求。
-        await this.prepareAgentDefinitions({
-          signal: turnAbortSignal,
-          traceContext: turnTraceContext,
-        });
+        if (!externalEngine)
+          await this.prepareAgentDefinitions({
+            signal: turnAbortSignal,
+            traceContext: turnTraceContext,
+          });
         throwIfTurnAborted(turnAbortSignal);
-        if (options?.skipInputRecord !== true && options?.inputVisibility !== "model-only") {
+        if (
+          !externalEngine &&
+          options?.skipInputRecord !== true &&
+          options?.inputVisibility !== "model-only"
+        ) {
           // 修复原因：标题生成以前等主 turn 成功后才启动，用户 stop/cancel 首轮请求时
           // generated title 永远没有机会发起。首条 query 持久化后即可异步生成，避免被主链路取消拖死。
           const titleGenerationStarted = maybeStartSessionTitleGeneration.call(
@@ -624,7 +635,7 @@ export async function executeTurnCommand(
         // 根因：input 可能已经被自定义命令展开，解析它会让命令模板里的 plugin://
         // 凭空获得“用户引用”语义；这里只解析真实持久化的 canonical displayInput。
         // runtime 内部的 model-only continuation 不代表新的用户意图，不重复解析。
-        if (options?.inputVisibility !== "model-only") {
+        if (!externalEngine && options?.inputVisibility !== "model-only") {
           await this.injectPluginReferenceReminderFromTurn(
             displayInput,
             turnTraceContext,
@@ -632,78 +643,91 @@ export async function executeTurnCommand(
           );
         }
 
-        this.messageHistory.setCacheMiss();
-        const loopModel = submissionModel ?? admittedModel;
-        if (!loopModel) {
-          throw new Error("Turn model was not created before execution");
-        }
-        startProjectMemoryRecallPrefetch(
-          this,
-          {
-            model: loopModel,
+        if (externalEngine) {
+          loopState = await runExternalEngineTurn(this, {
+            input,
+            attachments: resolvedAttachments,
+            turnId,
+            userMessageId,
             traceContext: turnTraceContext,
+            signal: turnAbortSignal,
+            events,
+            turnMachine,
+          });
+        } else {
+          this.messageHistory.setCacheMiss();
+          const loopModel = submissionModel ?? admittedModel;
+          if (!loopModel) {
+            throw new Error("Turn model was not created before execution");
+          }
+          startProjectMemoryRecallPrefetch(
+            this,
+            {
+              model: loopModel,
+              traceContext: turnTraceContext,
+              turnAbortSignal,
+            },
+            ACTIVE_PROJECT_MEMORY_RETRIEVAL_BRANCH,
+          );
+          loopState = {
+            activeTurn,
+            ...(options?.automationId ? { automationId: options.automationId } : {}),
+            anomalyWarningsInjected: 0,
+            backgroundSubagentResultConsumed: options?.backgroundSubagentResultConsumed === true,
+            workflowResultConsumed: options?.workflowResultConsumed === true,
+            completedRealToolResultBatch: false,
+            currentUserMessageId: userMessageId,
+            events,
+            input,
+            ...(options?.inputId ? { inputId: options.inputId } : {}),
+            modelResponse: "",
+            model: loopModel,
+            ...(options?.modelExecution?.selectionScope === "execution"
+              ? { modelSelectionScope: "execution" as const }
+              : {}),
+            ...(options?.modelExecution?.subagents && admittedModelSelection
+              ? {
+                  subagentModelOverride: {
+                    selection: admittedModelSelection,
+                    requestDependencies: options?.modelExecution?.requestDependencies,
+                    background: options.modelExecution.subagents.background,
+                  },
+                }
+              : {}),
+            modelStepCount: 0,
+            historyRoundCount: 0,
+            reactiveCompactAttemptedInCurrentModelStep: false,
+            repeatedToolCallSignature: undefined,
+            repeatedToolCallStreakCount: 0,
+            stopHookContinuationCount: 0,
+            streamRecoveryRetryCount: 0,
+            tokenCount: 0,
+            toolCallCount: 0,
+            turnRequestState: {
+              // Turn 只借一次 canonical 成员集合，之后由显式 commit 推进；entry 本身
+              // 遵循 MessageHistory 的不可变约定。
+              entries: [...this.messageHistory.borrowReadOnlyRuntimeEntries()],
+              outputTokenContinuationCount: 0,
+            },
+            toolDisallowlist: options?.toolDisallowlist,
+            traceId,
             turnAbortSignal,
-          },
-          ACTIVE_PROJECT_MEMORY_RETRIEVAL_BRANCH,
-        );
-        loopState = {
-          activeTurn,
-          ...(options?.automationId ? { automationId: options.automationId } : {}),
-          anomalyWarningsInjected: 0,
-          backgroundSubagentResultConsumed: options?.backgroundSubagentResultConsumed === true,
-          workflowResultConsumed: options?.workflowResultConsumed === true,
-          completedRealToolResultBatch: false,
-          currentUserMessageId: userMessageId,
-          events,
-          input,
-          ...(options?.inputId ? { inputId: options.inputId } : {}),
-          modelResponse: "",
-          model: loopModel,
-          ...(options?.modelExecution?.selectionScope === "execution"
-            ? { modelSelectionScope: "execution" as const }
-            : {}),
-          ...(options?.modelExecution?.subagents && admittedModelSelection
-            ? {
-                subagentModelOverride: {
-                  selection: admittedModelSelection,
-                  requestDependencies: options?.modelExecution?.requestDependencies,
-                  background: options.modelExecution.subagents.background,
-                },
-              }
-            : {}),
-          modelStepCount: 0,
-          historyRoundCount: 0,
-          reactiveCompactAttemptedInCurrentModelStep: false,
-          repeatedToolCallSignature: undefined,
-          repeatedToolCallStreakCount: 0,
-          stopHookContinuationCount: 0,
-          streamRecoveryRetryCount: 0,
-          tokenCount: 0,
-          toolCallCount: 0,
-          turnRequestState: {
-            // Turn 只借一次 canonical 成员集合，之后由显式 commit 推进；entry 本身
-            // 遵循 MessageHistory 的不可变约定。
-            entries: [...this.messageHistory.borrowReadOnlyRuntimeEntries()],
-            outputTokenContinuationCount: 0,
-          },
-          toolDisallowlist: options?.toolDisallowlist,
-          traceId,
-          turnAbortSignal,
-          turnId,
-          turnMachine,
-          turnOutputStyle: admittedOutputStyle,
-          turnTraceContext,
-          userMessageId,
-        };
+            turnId,
+            turnMachine,
+            turnOutputStyle: admittedOutputStyle,
+            turnTraceContext,
+            userMessageId,
+          };
 
-        openGoalStateChangeReminderDeferral(activeTurn);
-        phaseStartedAt = startTurnPhase("regular_turn_loop");
-        try {
-          await runRegularTurnLoop.call(this, loopState);
-          completeTurnPhase("regular_turn_loop", phaseStartedAt);
-        } finally {
-          finishOutputTokenRecovery(loopState.turnRequestState);
-          await closeGoalStateChangeReminderDeferral.call(this, activeTurn, turnTraceContext);
+          openGoalStateChangeReminderDeferral(activeTurn);
+          phaseStartedAt = startTurnPhase("regular_turn_loop");
+          try {
+            await runRegularTurnLoop.call(this, loopState);
+            completeTurnPhase("regular_turn_loop", phaseStartedAt);
+          } finally {
+            finishOutputTokenRecovery(loopState.turnRequestState);
+            await closeGoalStateChangeReminderDeferral.call(this, activeTurn, turnTraceContext);
+          }
         }
         turnMachine = loopState.turnMachine;
 
@@ -725,7 +749,7 @@ export async function executeTurnCommand(
             traceContext: turnTraceContext,
           });
         }
-        if (loopState.stableBoundaryAssistantMessageId) {
+        if (loopState.model && loopState.stableBoundaryAssistantMessageId) {
           await appendBrowserTurnScreenshot(
             this,
             loopState,
@@ -784,7 +808,7 @@ export async function executeTurnCommand(
           toolCallCount: loopState.toolCallCount,
         });
         // 单轮执行策略只抑制本次成功 Turn 的后台提取，不修改 Session Memory 配置。
-        if (options?.modelExecution?.memoryExtraction !== "skip") {
+        if (loopState.model && options?.modelExecution?.memoryExtraction !== "skip") {
           scheduleProjectMemoryExtraction(this, {
             model: loopState.model,
             traceContext: turnTraceContext,

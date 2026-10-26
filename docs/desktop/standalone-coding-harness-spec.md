@@ -17,6 +17,7 @@
 ## 状态与接口
 
 - Provider Registry 是可执行模型的唯一事实源；随包 Built-in 和 Personal Repository 提供配置，不加载 Account Overlay 或远端配置缓存。
+- 例外：外部 Agent 引擎会话（Claude Code / Codex，见 [external-agent-engines-spec](./external-agent-engines-spec.md)）不经过 Provider Registry，可执行性由引擎就绪（adapter 已安装、官方 CLI 已登录）决定，未就绪返回 `engine_not_ready`。其模型调用由用户自己的官方 CLI 发起，属于用户显式配置，与 H07 不冲突；adapter 只在用户点击安装时访问 npm。
 - 跨 Environment 的 Provider 配置同步仅由连接上线、Personal 配置和默认选择变更触发；账号设置与官方凭据变化不触发同步。Source 仅依赖 Personal Repository 和对应文件，旧信封的账号字段只保留校验兼容，不读取或应用旧凭据。触发器只存在于运行时代际，不是持久化历史。
 - 本地 App Usage 错误只呈现本地读取失败和原始错误，不使用套餐、账号或 API Key 错误分类，也不跳转模型配置。
 - CLI 不装配执行遥测 facade、port、因果传播、span writer 或空实现；turn、step、工具、命令、compact、后台标题和 Memory 直接执行既有业务生命周期。模型请求归因、ModelStatus、本地日志、TTFT、用量与耗时、compact timeline 和 AbortSignal 继续保留，不能因删除观测包装改变取消或错误语义。

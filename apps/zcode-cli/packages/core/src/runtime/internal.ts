@@ -1,3 +1,5 @@
+import type { EngineConfigOption } from "@zcode/shared";
+import type { ExternalEnginePort } from "@zcode/contracts";
 import { PermissionService, ToolScheduler } from "./deps.js";
 import type {
   Logger,
@@ -66,6 +68,10 @@ export interface AgentRuntimeInternal
   sessionId: SessionId;
   turnNumber: number;
   config: AgentRuntimeConfig;
+  externalEnginePort?: ExternalEnginePort;
+  engineConfigOptions: EngineConfigOption[];
+  engineConfigState?: import("@zcode/shared").EngineConfigState;
+  engineConfigError?: import("@zcode/shared").EngineConnectionFailure;
   permissionService: PermissionService;
   permissionBroker: PermissionBrokerPort;
   toolScheduler: ToolScheduler;
