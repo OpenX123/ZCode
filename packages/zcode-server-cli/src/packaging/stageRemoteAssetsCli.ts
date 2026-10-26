@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,21 +7,7 @@ import {
   collectSourceServerRemoteReleaseArchives,
 } from "./remoteAssetRelease.js";
 
-async function run(
-  command: string,
-  args: readonly string[],
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-): Promise<void> {
-  await new Promise<void>((resolvePromise, rejectPromise) => {
-    const child = spawn(command, [...args], { cwd, env, stdio: "inherit" });
-    child.once("error", rejectPromise);
-    child.once("exit", (code) => {
-      if (code === 0) resolvePromise();
-      else rejectPromise(new Error(`${command} ${args.join(" ")} exited with code ${code}`));
-    });
-  });
-}
+import { runPackagingCommand as run } from "./stageArchives.js";
 
 async function main(): Promise<void> {
   const linuxOnly = process.argv.slice(2).includes("--linux");

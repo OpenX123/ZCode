@@ -1,230 +1,109 @@
-# ZCode
-
 <div align="center">
-  <img src="public/logo/icons/1024x1024.png" alt="ZCode" width="128" height="128" />
+  <img src="public/logo/icons/128x128.png" alt="YCode" width="88" height="88" />
+  <h1>YCode</h1>
+  <p><strong>你的 AI 编程工作台</strong></p>
+  <p>让模型、Agent、代码与工具，在同一个工作区协作。</p>
+
+[![Build](https://github.com/OpenX123/ZCode/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/OpenX123/ZCode/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/OpenX123/ZCode?label=release&color=6366f1)](https://github.com/OpenX123/ZCode/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/OpenX123/ZCode/total?color=0ea5e9)](https://github.com/OpenX123/ZCode/releases)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+![Platforms](https://img.shields.io/badge/macOS%20%7C%20Windows-ARM64%20%2B%20x64-18181b)
+
+  <p>简体中文 · <a href="README.en.md">English</a></p>
+  <h3><a href="https://github.com/OpenX123/ZCode/releases/latest">下载安装包</a> · <a href="#快速开始">开发指南</a> · <a href="https://github.com/OpenX123/ZCode/actions/workflows/build.yml">构建状态</a></h3>
 </div>
-<p align="center">
-  简体中文 | <a href="README.en.md">English</a>
-</p>
 
-ZCode 是独立的 coding harness，提供桌面应用、本地 Web 界面和终端 Agent。配置自己的 API Provider 即可使用，无需官方账号。支持会话、工具、Skills、插件、MCP、Subagents、SSH 工作区、自动化和动态工作流；用量在本地统计。普通 GLM / Z.ai API 与其他 Provider 使用同一配置机制。
+![YCode 桌面工作区：项目导航、Agent 引擎与会话输入](docs/images/readme/workspace.png)
 
-本版本已移除官方登录、套餐购买与额度、邀请营销、云配置、遥测上报、反馈上传、云分享、手机官方远控和官方自动更新。当前边界见 [独立 coding harness 规格](docs/desktop/standalone-coding-harness-spec.md)。
+YCode 是基于 Electron、React 和 TypeScript 的开源 AI 编程工作台。使用自己的 API Provider，或在本地桌面会话中选择 Claude Code、Codex，集中完成对话、工具调用、代码修改和项目管理。
 
-## 更新
+## 能做什么
 
-- **2026-10-19**：更新至 ZCode v3.16.2 版本。
-- **2026-10-16**：更新至 ZCode v3.16.1 版本。
-- 2026-10-10：更新至 ZCode v3.15.1 版本。
-- 2026-9-23：更新至 ZCode v3.14.3 版本。
+- **多种 Agent 引擎**：内置 Agent 支持自定义 Provider；Claude Code 和 Codex 通过 ACP 适配器接入，沿用各自的 CLI 登录和配置。适配器需在设置中显式安装；外部引擎目前面向本地桌面工作区。
+- **连续的工作流**：流式回答、推理与工具结果、权限确认、停止和历史续聊，在同一会话中展示。
+- **围绕代码工作**：项目与任务管理、文件与 Diff、Git、集成终端，以及独立的 Claude Code 原生终端入口。
+- **按需扩展**：Skills、插件、MCP、Subagents、定时自动化与动态工作流；支持自托管插件市场和自定义来源。
+- **本地与远程**：桌面工作区、SSH 远程开发，以及共用界面的本地 Web 开发入口；深浅主题与中英文界面。
 
-## 初始化
+API 凭据由用户配置，模型费用遵循所选供应商规则；外部 CLI 的授权与订阅由各自提供方管理。当前版本不依赖应用官方账号或套餐服务。各引擎能力并不完全相同，外部引擎的回滚、编辑重发等操作以界面实际可用状态为准。
 
-准备 Git、Node.js **24.14.0** 和 pnpm **10.33.2**，版本以 [mise.toml](mise.toml) 为准。以下开发和打包命令均在仓库根目录执行。
+## 下载与安装
+
+在 [GitHub Releases](https://github.com/OpenX123/ZCode/releases/latest) 下载对应架构的安装包。每次 `main` 更新，GitHub Actions 会自动构建以下四个目标；四项全部成功后发布 Release，并附 `SHA256SUMS`。
+
+| 系统    | 设备                    | 安装包                                   |
+| ------- | ----------------------- | ---------------------------------------- |
+| macOS   | Apple Silicon（M 系列） | `YCode-<version>-mac-arm64.dmg` / `.zip` |
+| macOS   | Intel                   | `YCode-<version>-mac-x64.dmg` / `.zip`   |
+| Windows | Intel / AMD 64 位       | `YCode-<version>-win-x64.exe`            |
+| Windows | ARM64                   | `YCode-<version>-win-arm64.exe`          |
+
+### macOS
+
+打开 `.dmg`，将 **YCode.app** 拖入「应用程序」。当前 GitHub 构建不含 Developer ID 签名与 Apple 公证；确认下载来自本仓库后，若首次打开提示“已损坏”或无法验证开发者，在终端执行：
 
 ```bash
+sudo xattr -rd com.apple.quarantine "/Applications/YCode.app"
+```
+
+随后重新打开应用。如果安装在其他目录，请相应替换命令中的路径。
+
+### Windows
+
+选择对应架构的 `.exe` 并运行安装向导。当前构建未配置代码签名；首次运行可能显示 SmartScreen 提示，请先核对下载来源和校验摘要。
+
+## 技术栈
+
+| 层           | 当前实现                                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------------------ |
+| 桌面容器     | Electron 41，Main / Host / Renderer 分层                                                               |
+| 界面         | React 19、TypeScript 6、Vite 8、Tailwind CSS 4、Radix UI / shadcn/ui                                   |
+| 状态与交互   | Zustand 5、Motion、Lexical、xterm.js                                                                   |
+| 服务与通信   | Node.js、Hono、HTTP / WebSocket、类型化 RPC；桌面 Agent 使用 stdio                                     |
+| Agent 与扩展 | 内置 TypeScript 运行时、AI SDK 6、MCP、ACP 外部引擎                                                    |
+| 数据与远程   | SQLite、本地文件持久化、ssh2 / SFTP、node-pty                                                          |
+| 工程与发布   | pnpm workspace、Turborepo、tsup、Vitest、WebdriverIO、Oxlint / Oxfmt、electron-builder、GitHub Actions |
+
+## 快速开始
+
+准备 Git、**Node.js 24.14.0**、**pnpm 10.33.2**，版本以 [mise.toml](mise.toml) 和 [package.json](package.json) 为准。
+
+```bash
+git clone https://github.com/OpenX123/ZCode.git
+cd ZCode
 pnpm bootstrap
-```
-
-`pnpm bootstrap` 安装 workspace 依赖、准备桌面本地运行资源，再执行 `build:bootstrap`。
-
-Agent CLI 与运行时源码位于 [apps/zcode-cli/](apps/zcode-cli/)，作为普通目录随本仓库一起克隆，无需单独拉取或初始化 Git submodule。
-
-根据需要选择其他初始化或构建入口：
-
-| 命令                           | 用途                                                              |
-| ------------------------------ | ----------------------------------------------------------------- |
-| `pnpm install`                 | 安装依赖                                                          |
-| `pnpm prepare:desktop-runtime` | 准备桌面运行资源，默认包含远程资源准备                            |
-| `pnpm prepare:remote-assets`   | 单独准备远程运行资源                                              |
-| `pnpm bootstrap:with-remote`   | 初始化依赖、本地与远程资源，并串行构建相关包；跳过桌面应用 bundle |
-| `pnpm build`                   | 递归执行各 workspace 包的构建脚本，包括包内的资源准备步骤         |
-
-默认 `bootstrap` 跳过远程资源准备，适合本地桌面开发。使用远程工作区或验证远程发行资源时，再运行对应准备命令。
-
-## 开发与运行
-
-### 桌面版
-
-```bash
 pnpm dev:desktop
-
-# 使用测试环境
-pnpm dev:desktop:test
 ```
 
-`pnpm dev:desktop` 默认等同于 `pnpm dev:desktop:prod`，两者均使用本地配置。启动脚本会准备本地运行资源、构建桌面 Agent，再启动 Electron 和源码监听。
+启动后在设置中配置 API Provider，或安装外部 Agent 适配器并完成对应 CLI 的登录。外部引擎说明见 [接入规范](docs/desktop/external-agent-engines-spec.md)。
 
-需要独立开发数据目录时，可设置 `ZCODE_DATA_BASE_DIR`。例如在 macOS / Linux 中：
+| 命令                                           | 用途                                |
+| ---------------------------------------------- | ----------------------------------- |
+| `pnpm dev:desktop`                             | 桌面开发                            |
+| `pnpm dev:desktop:test`                        | 测试环境桌面开发                    |
+| `pnpm dev:web`                                 | 同时启动 Web 界面与本地后端         |
+| `pnpm bootstrap:with-remote`                   | 准备包含远程资源的开发环境          |
+| `pnpm typecheck`                               | 类型检查                            |
+| `pnpm lint`                                    | 代码检查                            |
+| `pnpm verify:pre-push`                         | 提交前架构、Schema 与受影响单测检查 |
+| `pnpm bundle:desktop -- --os mac --arch arm64` | 构建 macOS ARM64 安装包             |
+| `pnpm bundle:desktop -- --os win --arch x64`   | 构建 Windows x64 安装包             |
 
-```bash
-ZCODE_DATA_BASE_DIR="$HOME/.zcode-dev-home" pnpm dev:desktop:test
-```
+Web 开发默认访问 `http://localhost:5173`，后端默认监听 `http://localhost:3030`。独立开发数据目录可通过 `ZCODE_DATA_BASE_DIR` 设置。包名、环境变量、内部 CLI 名称与历史数据路径保留兼容标识。
 
-### 远程功能（SSH/WSL）
+## 目录
 
-先执行 `pnpm bootstrap:with-remote` 准备远程资源（mock-cdn），再 `pnpm dev:desktop`；连接远程项目时资源选择「本地下载后上传」。开发态资源取自本地 `packages/desktop/mock-cdn` 和本地构建产物，经 SFTP 上传到远程，不访问 CDN。
+| 目录                                                   | 职责                                     |
+| ------------------------------------------------------ | ---------------------------------------- |
+| `packages/desktop`                                     | Electron、桌面宿主与安装包               |
+| `packages/ui` / `packages/web`                         | 共享界面与 Web 入口                      |
+| `packages/services` / `packages/server`                | 业务服务、持久化和 HTTP / WebSocket 服务 |
+| `packages/shared` / `packages/rpc` / `packages/client` | 共享契约、通信与客户端 SDK               |
+| `packages/provider` / `packages/provider-node`         | 模型供应商配置与 Node 实现               |
+| `apps/zcode-cli`                                       | Agent CLI、TUI、运行时、工具与扩展       |
+| `scripts` / `.github/workflows`                        | 本地构建与自动发布                       |
 
-### Web 开发
+## 许可与说明
 
-修改 Web 或后端源码时，使用开发模式：
-
-```bash
-pnpm dev:web
-
-# 指定后端工作区（macOS / Linux）
-ZCODE_SERVER_WORKSPACE=/path/to/project pnpm dev:web
-```
-
-该命令同时启动 Web 开发服务器（默认 `http://localhost:5173`）和后端（默认 `http://localhost:3030`）；浏览器访问前者。`/ws` 和 `/api` 请求代理到本地后端。
-
-Agent 源码修改后，执行 `pnpm --filter @zcode/cli... build` 并重启服务。需要验证完整发行包时，按下方“ZCode 命令行版”打包章节解压运行。
-
-### ZCode 命令行版
-
-命令行发行包包含 TUI、Web 和 Agent，统一使用 `zcode` 启动：无参数进入 TUI；第一个参数为 `--web` 时启动 Web；其他参数交给现有 Agent CLI 处理。两种模式都在本机运行，无需 Electron。
-
-```bash
-# 默认进入终端交互界面
-zcode
-
-# 启动 Web 界面
-zcode --web
-
-# 指定项目和端口，不自动打开浏览器
-zcode --web --workspace /path/to/project --port 3030 --no-open
-
-# 查看 CLI 或 Web 参数
-zcode --help
-zcode --web --help
-```
-
-Web 模式默认工作目录为当前目录，监听 `127.0.0.1`，默认不启用访问令牌，自动选择空闲端口并打开浏览器。访问终端输出的地址，按 `Ctrl+C` 停止服务。局域网访问可使用 `--host 0.0.0.0`；监听非本机地址时默认生成访问令牌，使用终端输出的带令牌链接。可通过 `--token` 指定令牌或 `--no-token` 关闭令牌认证。
-
-直接启动通用 Web 服务的 HTTP 入口时，通过 `ZCODE_SERVER_AUTH_TOKEN` 配置 API／WebSocket 认证；通过程序接口创建服务时，使用 `authToken` 选项。
-
-构建方式见下方打包章节。`pnpm build:zcode` 只生成发行包，不会替换 `PATH` 中已有的 `zcode`。如果命令仍指向旧安装或其他源码目录，macOS / Linux 可用 `command -v zcode` 检查，Windows 可用 `where.exe zcode` 检查。
-
-### CLI 源码开发
-
-CLI 的模型配置、非交互调用、工具与扩展、批量评测和轨迹记录见 [CLI 使用指南](apps/zcode-cli/docs/usage/README.md)。
-
-直接开发 TUI 或 Agent 时，运行源码入口：
-
-```bash
-pnpm --filter @zcode/cli dev --help
-pnpm --filter @zcode/cli dev
-
-# 构建 CLI 及其 workspace 依赖
-pnpm --filter @zcode/cli... build
-node apps/zcode-cli/packages/cli/dist/zcode.cjs --help
-```
-
-这个入口直接运行 Agent CLI，不经过发行包的 `--web` 分流。开发 Web 用 `pnpm dev:web`；验证统一的 `zcode` 命令，用下方解压后的 `bin/zcode.mjs`。
-
-### UI Plugin 开发
-
-参见 [UI Plugin：能力、API 与调试](UI_PLUGIN.md)，从 Excalidraw 的画布协作示例开始，了解插件安装更新、页面 API 和宿主联调入口。
-
-**向 `zcode-plugins` 提交插件 PR 时，必须在 PR 模板中声明是否为 UI Plugin，并填写插件名称。** 判断标准见[提交 PR 时声明插件类型](UI_PLUGIN.md#提交-pr-时声明插件类型)。
-
-## 配置
-
-根目录 [.env.example](.env.example) 提供本地运行与构建配置示例，可按需复制到 `.env`，本地覆盖放入 `.env.local`。Desktop 的开发环境通过 `dev:desktop:test` / `dev:desktop:prod` 选择。
-
-| 配置                                 | 用途                                             |
-| ------------------------------------ | ------------------------------------------------ |
-| `ZCODE_DATA_BASE_DIR`                | 应用数据基目录，数据写入其下的 `.zcode/`         |
-| `ZCODE_SERVER_WORKSPACE`             | Web 后端的工作区路径                             |
-| `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` | 本地 Provider 配置文件路径；未设置时使用内置配置 |
-| `ZCODE_DIST_BASE_URL`                | 命令行安装脚本使用的下载根地址                   |
-
-运行时变量可在启动命令的环境中显式设置。随客户端发布的默认配置见 [config/README.md](config/README.md)。
-
-## 打包
-
-第三方声明生成、发行校验流程及声明在发行物中的位置见 [third-party/README.md](third-party/README.md)。
-
-### 桌面版
-
-```bash
-pnpm bundle:desktop
-
-# 指定目标平台与 CPU 架构
-pnpm bundle:desktop -- --os win --arch x64
-
-pnpm bundle:desktop -- --help
-```
-
-默认目标为 macOS arm64，默认输出目录为 `packages/desktop/dist/`。`--os` 支持 `mac`、`win`、`linux`，`--arch` 支持 `x64`、`arm64`；实际打包与签名需要目标平台对应的工具和配置。
-
-安装：双击打开产物 DMG，将 ZCode 拖入"应用程序"。本地构建未签名，首次打开若被 macOS 拦截，执行：
-
-```bash
-sudo xattr -rd com.apple.quarantine /Applications/ZCode.app
-```
-
-### ZCode 命令行版
-
-构建入口为 `pnpm build:zcode`。脚本会依次构建 CLI/TUI、后端和 Web，收集 TUI 的原生库、worker 与运行时依赖，再组装发行包；运行发行包仍需要 Node.js，版本以 `mise.toml` 为准。
-
-打包前必须设置下载根地址 `ZCODE_DIST_BASE_URL`（可放在 `.env`、`.env.local` 或环境变量中），也可以通过 `--base-url` 传入。以下地址是占位示例，发布时替换为实际托管地址：
-
-```bash
-pnpm build:zcode --base-url https://downloads.example.com/zcode/
-
-# 已配置 ZCODE_DIST_BASE_URL 时
-pnpm build:zcode
-
-# 仅重新组包，复用已有的 Agent、后端和 Web 构建产物
-pnpm build:zcode --skip-build
-
-# 查看版本、输出目录等可选参数
-pnpm build:zcode --help
-```
-
-默认版本取根目录 `package.json`，输出目录为 `dist/zcode/`：
-
-- `releases/<version>/zcode-<version>.tar.gz`：运行包。
-- `releases/<version>/sha256.txt`：校验摘要。
-- `latest.json`、`install.sh`：版本索引和安装脚本。
-
-完整目录可上传到配置的下载根地址。安装脚本从该地址下载运行包，默认安装到 `~/.zcode/runtime`，并在 `~/.local/bin` 创建 `zcode` 命令。安装目录可通过 `ZCODE_DIST_HOME` 修改，命令目录可通过 `ZCODE_DIST_BIN_DIR` 修改。
-
-旧 Lite 用户需要改用上述构建命令、环境变量和新的安装脚本。新安装不会删除旧 Lite 目录，也不会迁移或删除已有会话数据。
-
-本地调试打包产物时，可直接解压运行，无需上传或安装：
-
-```bash
-zcode_version=$(node -p "require('./dist/zcode/latest.json').version")
-mkdir -p dist/zcode/debug
-tar -xzf "dist/zcode/releases/$zcode_version/zcode-$zcode_version.tar.gz" \
-  -C dist/zcode/debug
-# 默认启动 TUI
-node dist/zcode/debug/zcode/bin/zcode.mjs
-
-# 启动 Web
-node dist/zcode/debug/zcode/bin/zcode.mjs --web \
-  --workspace "$PWD" --port 3030 --no-open
-```
-
-浏览器打开 `http://127.0.0.1:3030`，即可验证同一后端服务托管 Web 页面和 Agent 的完整链路。该端口需要空闲；如正在运行 `pnpm dev:web`，可改用其他 `--port`。
-
-## 仓库结构
-
-| 目录                                                 | 职责                                       |
-| ---------------------------------------------------- | ------------------------------------------ |
-| `packages/desktop`                                   | Electron Main、Host、Renderer 与桌面打包   |
-| `packages/web`                                       | Web 客户端                                 |
-| `packages/server`                                    | HTTP / WebSocket 服务与远程连接            |
-| `packages/zcode-server-cli`                          | 独立 Server 启动与进程管理                 |
-| `packages/ui`                                        | 共享 React 组件、hooks 与 Zustand 状态     |
-| `packages/services`                                  | 业务服务与持久化                           |
-| `packages/shared`、`packages/rpc`、`packages/client` | 共享协议和类型、RPC 框架、Agent 客户端 SDK |
-| `packages/provider`、`packages/provider-node`        | Provider 公共能力与 Node 实现              |
-| `apps/zcode-cli`                                     | Agent CLI、TUI、运行时与工具               |
-| `scripts`、`config`、`third-party`                   | 构建维护脚本、内置配置与第三方声明材料     |
-
-## 项目声明
-
-功能范围、执行与数据风险，以及许可和第三方版权说明，详见 [NOTICE.md](NOTICE.md)。
+采用 [Apache-2.0](LICENSE) 许可，保留原始版权及第三方声明。使用范围和风险说明见 [NOTICE.md](NOTICE.md)，发行依赖说明见 [third-party/README.md](third-party/README.md)。

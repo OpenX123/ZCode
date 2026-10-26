@@ -1,8 +1,10 @@
-name: Build and package ZCode
+name: Build and release YCode
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +18,7 @@ jobs:
   package:
     name: Package ${{ matrix.os }} ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -26,10 +28,17 @@ jobs:
             runner: macos-14
           - os: mac
             arch: x64
-            runner: macos-14
+            runner: macos-15-intel
           - os: win
             arch: x64
-            runner: windows-latest
+            runner: windows-2025
+          - os: win
+            arch: arm64
+            runner: windows-11-arm
+
+    env:
+      ZCODE_ENV: production
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
     steps:
       - name: Checkout
@@ -49,17 +58,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
         env:
-          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
 
       - name: Build installer
         run: pnpm bundle:desktop -- --os ${{ matrix.os }} --arch ${{ matrix.arch }}
         env:
-          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
         with:
-          name: zcode-${{ matrix.os }}-${{ matrix.arch }}
+          name: ycode-${{ matrix.os }}-${{ matrix.arch }}
           path: |
             packages/desktop/dist/*.dmg
             packages/desktop/dist/*.zip
@@ -69,7 +78,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     needs: package
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -80,6 +89,7 @@ jobs:
       - name: Download installer artifacts
         uses: actions/download-artifact@v8
         with:
+          pattern: ycode-*
           path: release-assets
           merge-multiple: true
 
@@ -89,12 +99,13 @@ jobs:
           RELEASE_TAG: build-${{ github.run_number }}
         run: |
           set -euo pipefail
+          (cd release-assets && sha256sum -- *.dmg *.zip *.exe > SHA256SUMS)
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$RELEASE_TAG" release-assets/* \
               --repo "$GITHUB_REPOSITORY" \
-              --title "ZCode build $GITHUB_RUN_NUMBER" \
-              --notes "由 GitHub Actions 从提交 $GITHUB_SHA 自动构建。" \
+              --title "YCode build $GITHUB_RUN_NUMBER" \
+              --notes "由 GitHub Actions 从提交 $GITHUB_SHA 自动构建。包含 macOS / Windows 的 ARM64 与 x64 安装包。安装说明见仓库 README。" \
               --target "$GITHUB_SHA"
           fi

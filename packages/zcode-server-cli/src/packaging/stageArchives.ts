@@ -9,24 +9,36 @@ export async function runPackagingCommand(
   command: string,
   args: readonly string[],
   cwd: string,
+  commandEnv: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   await new Promise<void>((resolvePromise, rejectPromise) => {
     // Bug 原因：Windows runner 的 PATH 可能优先命中 Git Bash GNU tar，且系统没有
     // Info-ZIP；统一把逻辑 tar 与 Windows 上的逻辑 zip 映射到 System32 bsdtar。
     const useWindowsTarForZip = command === "zip" && process.platform === "win32";
-    const resolvedCommand =
-      command === "tar" || useWindowsTarForZip ? resolveHostTarCommand() : command;
-    const baseArgs = useWindowsTarForZip ? ["-acf", ...args.slice(1)] : [...args];
+    // Windows 的 pnpm 是 .cmd，直接 spawn 会 ENOENT；复用当前 pnpm 的 JS 入口，
+    // 由 Node 启动并保持参数边界，避免路径空格和 shell 拼接改变命令语义。
+    const pnpmEntry = command === "pnpm" ? commandEnv.npm_execpath : undefined;
+    if (command === "pnpm" && !pnpmEntry) {
+      throw new Error("Run packaging through pnpm so npm_execpath is available");
+    }
+    const resolvedCommand = pnpmEntry
+      ? process.execPath
+      : command === "tar" || useWindowsTarForZip
+        ? resolveHostTarCommand()
+        : command;
+    const baseArgs = pnpmEntry
+      ? [pnpmEntry, ...args]
+      : useWindowsTarForZip
+        ? ["-acf", ...args.slice(1)]
+        : [...args];
     // Bug 原因：COPYFILE_DISABLE 只能阻止 AppleDouble `._*`，bsdtar 仍会把 provenance/xattr
     // 写入 PAX header。Linux 解压时会为每个条目输出 unknown extended header，既刷爆连接日志，
     // 也可能在真实安装错误发生时把 stderr 根因淹没；macOS 打包必须同时禁用 xattr。
     const env = isTarCommand(resolvedCommand)
-      ? { ...process.env, COPYFILE_DISABLE: "1" }
-      : process.env;
+      ? { ...commandEnv, COPYFILE_DISABLE: "1" }
+      : commandEnv;
     const commandArgs =
-      command === "tar" && process.platform === "darwin"
-        ? ["--no-xattrs", ...baseArgs]
-        : baseArgs;
+      command === "tar" && process.platform === "darwin" ? ["--no-xattrs", ...baseArgs] : baseArgs;
     const child = spawn(resolvedCommand, commandArgs, {
       cwd,
       env,

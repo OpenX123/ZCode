@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { gunzipSync } from "node:zlib";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   collectBareModuleSpecifiers,
   isNodePtyRuntimePath,
@@ -15,6 +15,8 @@ import {
   stageRelease,
 } from "../src/packaging/stage.js";
 import { resolveHostTarCommand } from "../src/packaging/tarCommand.js";
+
+import { runPackagingCommand } from "../src/packaging/stageArchives.js";
 
 const execFileAsync = promisify(execFile);
 async function runTar(args: string[]): Promise<void> {
@@ -31,6 +33,7 @@ async function makeTempDir(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(
     temporaryDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })),
   );
@@ -862,4 +865,36 @@ describe("stageRelease", () => {
       );
     },
   );
+});
+
+describe("打包时启动 pnpm", () => {
+  it("通过当前 JS 入口启动，保留含空格路径、环境与参数", async () => {
+    const root = await makeTempDir();
+    const entry = join(root, "package manager.cjs");
+    const output = join(root, "result.json");
+    await writeFile(
+      entry,
+      `require("node:fs").writeFileSync(process.argv[2], JSON.stringify({args: process.argv.slice(3), cwd: process.cwd(), marker: process.env.PACKAGING_TEST_MARKER}));`,
+    );
+    vi.stubEnv("npm_execpath", entry);
+    await runPackagingCommand(
+      "pnpm",
+      [output, "argument with spaces", "--filter", "@zcode/server-cli"],
+      root,
+      { ...process.env, PACKAGING_TEST_MARKER: "forwarded" },
+    );
+    expect(JSON.parse(await readFile(output, "utf8"))).toEqual({
+      args: ["argument with spaces", "--filter", "@zcode/server-cli"],
+      cwd: await realpath(root),
+      marker: "forwarded",
+    });
+  });
+
+  it("包管理器失败时阻止继续发布", async () => {
+    const root = await makeTempDir();
+    const entry = join(root, "failure.cjs");
+    await writeFile(entry, "process.exit(23)");
+    vi.stubEnv("npm_execpath", entry);
+    await expect(runPackagingCommand("pnpm", [], root)).rejects.toThrow("exited with code 23");
+  });
 });

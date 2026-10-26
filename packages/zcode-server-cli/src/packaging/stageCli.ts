@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { access, chmod, mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,6 +13,7 @@ import {
   type ServerTarget,
 } from "../runtime/manifest.js";
 import { stageRelease } from "./stage.js";
+import { runPackagingCommand as runCommand } from "./stageArchives.js";
 import { resolveNodeDistBase } from "./nodeDistMirror.js";
 
 const log = (...args: unknown[]): void => console.log("[stage]", ...args);
@@ -36,18 +36,6 @@ async function findRepoRoot(startDir: string): Promise<string> {
       throw new Error("Unable to locate workspace root (pnpm-workspace.yaml)");
     current = parent;
   }
-}
-
-async function runCommand(command: string, args: readonly string[], cwd: string): Promise<void> {
-  await new Promise<void>((resolvePromise, rejectPromise) => {
-    const child = spawn(command, [...args], { cwd, stdio: ["ignore", "inherit", "inherit"] });
-    child.once("error", rejectPromise);
-    child.once("exit", (code) => {
-      if (code === 0) resolvePromise();
-      else
-        rejectPromise(new Error(`${command} ${args.join(" ")} exited with code ${code ?? "null"}`));
-    });
-  });
 }
 
 async function downloadFile(url: string, destinationPath: string): Promise<void> {
