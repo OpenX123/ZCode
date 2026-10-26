@@ -1,5 +1,30 @@
 # Task Grouped View
 
+## 历史会话客户端标识（2026-10-25）
+
+- 项目、分组、最近更新及全局置顶区的会话行，左侧固定显示客户端 Logo：`zcode` 使用应用自有 YCode Logo，`codex` 和 `claude-code` 使用对应官方图标；旧数据缺省为 `zcode`。
+- 客户端身份由 CLI 会话的 `engine` 经 sessions-index／reconcile 投影到既有 task meta；Host 仅镜像，不按 provider/model 推断、不为图标加载会话实例。冷恢复与实时列表使用同一字段，不新增身份缓存或数据库列。
+- 置顶标记与置顶／取消置顶按钮统一位于标题右侧；已置顶时常驻，未置顶时沿用 hover／键盘 focus 入口。Logo 不被 hover、置顶、运行或未读状态替换；错误、未读、运行及手机查看标记保留在独立状态区域。
+- 保留现有 pin/unpin 命令、组织归属、排序和事件隔离；点击右侧按钮不打开会话。深浅主题及窄侧栏都保持 Logo 比例、标题渐隐与操作可见性。
+- 回归覆盖三类引擎、历史缺省、冷恢复镜像、运行／未读与置顶共存、右侧取消置顶及悬停后 Logo 持续可见。
+
+```mermaid
+flowchart LR
+  A[CLI session engine] --> B[sessions-index 或 reconcile]
+  B --> C[既有 task-facts 镜像及 meta_json]
+  C --> D[项目 / 分组 / 最近更新行]
+  D --> E[左侧客户端 Logo 与独立状态]
+  D --> F[右侧置顶操作]
+  F --> G[既有 Host 组织态命令]
+```
+
+### 本轮验证（2026-10-25）
+
+- 定向 UI／task-facts／SQLite 测试 39/39，CLI 摘要投影 20/20；包含旧行补齐身份、缺省摘要保留身份与仓库重开后读取。
+- 隔离 macOS Electron 候选 E16 1/1（循环覆盖 Claude Code 和 Codex）通过，验证本地图标加载、左右几何、置顶与取消置顶不切换会话；深浅主题四张截图已核对。供应商由 ACP 夹具替代。报告：`packages/desktop/.e2e-artifacts/desktop-e2e-20261025044743700-p15062-23638e2e4c3df248/summary.md`。
+- 根类型检查、E2E 类型检查、架构检查通过；Lint 94 warnings / 0 errors。候选保持 manual-review/pending，未提交或推送。
+- 当前开发应用 Renderer 已热更新；运行中的旧 Host／CLI 需重启开发应用后才会提供新增身份摘要。未重启用户正在使用的应用，未宣称 Windows/Linux 或手机整机验收。
+
 ## 2026-10-13 恢复裁决（当前）
 
 状态：已实现，GUI 用例保持 manual-review/pending。以下裁决覆盖本文后面的历史实现说明。

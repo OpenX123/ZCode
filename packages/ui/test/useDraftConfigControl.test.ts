@@ -256,6 +256,35 @@ function installMinimalDom() {
 }
 
 describe("useDraftConfigControl slash command hydration", () => {
+  it("外部引擎恢复草稿不读取 Registry，也不加载 ZCode workspace命令", async () => {
+    const workspacePath = "/external-engine-draft";
+    const root = createRoot(installMinimalDom());
+    persistV4ComposerDraft(workspacePath, undefined, "__draft__", {
+      text: "保留正文",
+      engine: "codex",
+    });
+    const service = {
+      getView: vi.fn(),
+      onDidChange: vi.fn(() => ({ dispose() {} })),
+    } as unknown as IModelSelectionService;
+    let control: ReturnType<typeof useActualDraftConfigControl>;
+    function Probe() {
+      control = useActualDraftConfigControl({
+        workspacePath,
+        sessionId: null,
+        modelSelectionService: service,
+      });
+      return null;
+    }
+    await act(async () => root.render(createElement(Probe)));
+    expect(control!.composerDraft).toMatchObject({ text: "保留正文", engine: "codex" });
+    expect(service.getView).not.toHaveBeenCalled();
+    expect(service.onDidChange).not.toHaveBeenCalled();
+    expect(prepareWorkspaceMock).not.toHaveBeenCalled();
+    expect(control!.modelReadiness.agentStartupAllowed).toBe(true);
+    act(() => root.unmount());
+  });
+
   it("PD03 同目录切项目恢复各自正文；旧 Hook 回调不能写新项目", async () => {
     const workspacePath = "/shared-project-root";
     const root = createRoot(installMinimalDom());

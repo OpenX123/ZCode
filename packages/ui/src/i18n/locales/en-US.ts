@@ -1,5 +1,50 @@
 /** English translations */
 const enUS: Record<string, string> = {
+  "engine.cliFound": "Official CLI detected",
+  "engine.cliMissing": "Official CLI not detected. Install the official CLI in a terminal first.",
+
+  "engine.retryConnection": "Reconnect",
+  "engine.failure.not_ready":
+    "The engine is not ready. Check its adapter installation and official CLI login.",
+  "engine.failure.authentication":
+    "Your official CLI login has expired. Run {command} in a terminal, then reconnect.",
+  "engine.failure.session_not_found":
+    "The engine cannot find the original session. History and your draft are preserved. Check the official CLI session directory.",
+  "engine.failure.unsupported":
+    "The adapter does not support the required recovery method. Check the adapter and official CLI versions.",
+  "engine.failure.configuration":
+    "The engine rejected the original session or saved configuration. History and your draft are preserved. Check the engine version and session configuration.",
+  "engine.failure.timeout":
+    "The engine connection timed out and automatic recovery did not succeed. Check your connection, then reconnect.",
+  "engine.failure.transport":
+    "The engine process disconnected and automatic recovery did not succeed. Reconnect to retry.",
+  "engine.failure.request":
+    "The engine rejected the recovery request. History and your draft are preserved. Reconnect to retry.",
+  "engine.failure.protocol":
+    "The engine returned an incompatible response. Check the adapter and official CLI versions.",
+  "engine.restoreFailed": "Session settings could not be restored. Reconnect to retry",
+  "engine.connecting": "Connecting to engine…",
+  "engine.connectionFailed": "Engine connection failed",
+  "engine.configChangeFailed": "Configuration was not changed. Try again.",
+  "engine.select": "Session engine",
+  "engine.settings.title": "Agent engines",
+  "engine.settings.description":
+    "Manage Claude Code and Codex on this device. After installation, log in through the official CLI in a terminal.",
+  "engine.copyLoginCommand": "Copy {engine} login command",
+  "engine.technicalDetails": "Technical details",
+  "engine.refresh": "Refresh status",
+  "engine.ready": "Ready",
+  "engine.notReady": "Not ready",
+  "engine.install": "Install adapter",
+  "engine.installed": "Installed",
+  "engine.login": "Log in from a terminal:",
+  "engine.auth.loggedIn": "Logged in",
+  "engine.auth.loggedOut": "Logged out",
+  "engine.auth.unknown": "Login status unknown",
+  "engine.notReadyGuide":
+    "The engine is not ready. Install its adapter in Agent engines settings, then run the official login command in a terminal. Your draft is preserved.",
+  "engine.openSettings": "Configure Agent engines",
+
   "zcode.error.modelSuspiciousEmpty":
     "The model returned no content. Retry or check the API configuration.",
   "preview.image.copy": "Copy image",
@@ -3071,6 +3116,7 @@ const enUS: Record<string, string> = {
   "sidebar.settings.locale.en-US": "English",
   "sidebar.settings.locale.zh-CN": "中文简体",
   "sidebar.settings.interfaceZoom": "Interface zoom",
+  "sidebar.settings.quickPreferences": "Quick preferences",
   "sidebar.settings.theme.light": "Light theme",
   "sidebar.settings.theme.zai-light": "Light theme",
   "sidebar.settings.theme.zai-dark": "Dark theme",

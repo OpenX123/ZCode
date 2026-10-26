@@ -379,7 +379,9 @@ const ToolCallPresentation = memo(function ToolCallPresentation({
   codePreviewSettings,
   artifactNames: _artifactNames,
   onOpenExternalUrl,
+  nestedNode,
 }: {
+  nestedNode?: ReturnType<typeof toolCallRowToLegacyNode>;
   row: ToolCallRow;
   theme: Theme;
   codePreviewSettings: CodePreviewSettings;
@@ -402,7 +404,7 @@ const ToolCallPresentation = memo(function ToolCallPresentation({
   return (
     <div data-conversation-share-row-kind="toolCall" data-conversation-selectable="true">
       <ToolPresentation
-        toolCallNode={node}
+        toolCallNode={nestedNode ? { ...node, childToolCalls: nestedNode.childToolCalls } : node}
         theme={theme}
         codePreviewSettings={codePreviewSettings}
         onOpenBrowserUrl={onOpenExternalUrl}
@@ -707,6 +709,7 @@ function ReadonlyAssistantWorkItems({
             <ToolCallPresentation
               key={item.key}
               row={item.row}
+              nestedNode={item.node}
               theme={theme}
               codePreviewSettings={codePreviewSettings}
               artifactNames={artifactNames}

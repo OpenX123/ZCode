@@ -69,6 +69,9 @@ export async function preflightPromptTurn(
   record: V4SessionRecordView,
   params: StartPromptTurnParams,
 ): Promise<void> {
+  // ACP 会话沿用输入准入与持久化，但不依赖内置 Provider Registry。
+  if (record.app.runtime?.getSessionEngine?.() && record.app.runtime.getSessionEngine() !== "zcode")
+    return;
   // 排队输入的 execution 只在提升边界应用，准入阶段一律按普通 Selection 预检，供卡失效后提升。
   const usesExecutionSelection =
     params.modelExecution?.selectionScope === "execution" && !params.requireQueue;

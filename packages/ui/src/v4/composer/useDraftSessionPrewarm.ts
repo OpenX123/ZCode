@@ -42,10 +42,12 @@ export function startDraftSessionPrewarm(params: {
   onReady: (sessionId: string) => void;
   /** single-flight owner 用于等待不可取消的 createSession 收口；无论成功失败都只调用一次。 */
   onSettled?: () => void;
+  onError?: (error: Error) => void;
   /** 预热会话初始 config（全局「上次选择」，同步解析）；让投影首帧即全局、不闪。 */
   resolveInitialConfig?: () => Partial<SessionConfigState> | undefined;
 }): DraftPrewarmController {
-  const { workspaceKey, dispatchCommand, onReady, onSettled, resolveInitialConfig } = params;
+  const { workspaceKey, dispatchCommand, onReady, onSettled, onError, resolveInitialConfig } =
+    params;
   let disposed = false;
   let promotionState: "draft" | "pending" | "promoted" | "discarded" = "draft";
   let createdSessionId: string | null = null;
@@ -94,6 +96,7 @@ export function startDraftSessionPrewarm(params: {
           reasonCode: ack.reasonCode ?? null,
           workspaceKey,
         });
+        onError?.(new Error(ack.message ?? ack.reasonCode ?? "草稿会话创建失败，请重试"));
         return;
       }
       createdSessionId = ack.result.sessionId;
@@ -109,6 +112,7 @@ export function startDraftSessionPrewarm(params: {
       onReady(createdSessionId);
     })
     .catch((error) => {
+      onError?.(error instanceof Error ? error : new Error(String(error)));
       logger.warn("[v4-draft-prewarm] createSession 失败", {
         error: error instanceof Error ? error.message : String(error),
         workspaceKey,
@@ -148,6 +152,7 @@ export function startDraftSessionPrewarm(params: {
 export interface DraftSessionPrewarm {
   /** 当前 workspace/transport generation 已就绪的预热 binding。 */
   binding: DraftPrewarmBinding | null;
+  error: Error | null;
   /** 首发等待本 owner 当前创建任务；失败或换代即拒绝，不在发送路径另建会话。 */
   waitForSession(): Promise<DraftPrewarmBinding>;
 }
@@ -167,6 +172,7 @@ interface DraftPrewarmSubscriber {
   generation: object;
   invalidationVersion: number;
   onBinding: (binding: DraftPrewarmBinding | null) => void;
+  onError?: (error: Error | null) => void;
 }
 
 interface DraftPrewarmCurrent {
@@ -178,6 +184,7 @@ interface DraftPrewarmCurrent {
   retiring: boolean;
   /** 本代是第几次退避重试的产物；0 表示首发。 */
   retryAttempt: number;
+  error?: Error;
 }
 
 /**
@@ -265,7 +272,7 @@ class DraftSessionPrewarmCoordinator {
       this.requestedInvalidationVersion() !== invalidationVersion
     )
       throw new Error("草稿会话已切换，请重新发送");
-    if (!current.binding) throw new Error("草稿会话创建失败，请重试");
+    if (!current.binding) throw current.error ?? new Error("草稿会话创建失败，请重试");
     return current.binding;
   }
 
@@ -273,6 +280,7 @@ class DraftSessionPrewarmCoordinator {
     generation: object;
     invalidationVersion: number;
     onBinding: (binding: DraftPrewarmBinding | null) => void;
+    onError?: (error: Error | null) => void;
   }): () => void {
     if (this.cleanupTimer !== null) {
       clearTimeout(this.cleanupTimer);
@@ -411,6 +419,11 @@ class DraftSessionPrewarmCoordinator {
         current.binding = binding;
         this.emitBindings();
       },
+      onError: (error) => {
+        if (this.current !== current || current.retiring) return;
+        current.error = error;
+        this.emitBindings();
+      },
       onSettled: () => {
         current.settled = true;
         complete();
@@ -439,6 +452,7 @@ class DraftSessionPrewarmCoordinator {
       retryAttempt,
     };
     this.current = current;
+    this.emitBindings();
   }
 
   private retireCurrent(): void {
@@ -464,6 +478,11 @@ class DraftSessionPrewarmCoordinator {
 
   private emitBindingTo(subscriber: DraftPrewarmSubscriber): void {
     const current = this.current;
+    subscriber.onError?.(
+      current && !current.retiring && current.invalidationVersion === subscriber.invalidationVersion
+        ? (current.error ?? null)
+        : null,
+    );
     subscriber.onBinding(
       current && !current.retiring && current.invalidationVersion === subscriber.invalidationVersion
         ? current.binding
@@ -564,11 +583,15 @@ export function useDraftSessionPrewarm(params: {
     binding: DraftPrewarmBinding;
   } | null>(null);
 
+  const [failure, setFailure] = useState<{ generation: typeof generation; error: Error } | null>(
+    null,
+  );
   useEffect(() => {
     if (!enabled) return;
     return coordinator.acquire({
       generation,
       invalidationVersion,
+      onError: (error) => setFailure(error ? { generation, error } : null),
       onBinding: (binding) => {
         setReady((current) => {
           if (!binding) {
@@ -585,5 +608,9 @@ export function useDraftSessionPrewarm(params: {
     return coordinator.waitForSession(invalidationVersion, generation);
   }, [coordinator, enabled, generation, invalidationVersion]);
 
-  return { binding: ready?.generation === generation ? ready.binding : null, waitForSession };
+  return {
+    binding: ready?.generation === generation ? ready.binding : null,
+    error: failure?.generation === generation ? failure.error : null,
+    waitForSession,
+  };
 }

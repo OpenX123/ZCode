@@ -1,3 +1,4 @@
+import { sessionEngineSchema } from "./external-engine/index.js";
 /* oxlint-disable eslint(max-lines) -- re-home 产物：旧协议消息/会话承重类型集中迁移，保持单文件契约面。 */
 // re-home 迁移产物（为删除旧协议树铺路）。
 // 本文件承载旧 ZCode Protocol 中仍被存活栈（validation/background-task-notifications/
@@ -147,6 +148,7 @@ export const zcodeSessionGoalVerificationTimelineSchema = z
   .strict();
 export const zcodeSessionInfoSchema = z
   .object({
+    engine: sessionEngineSchema.optional(),
     sessionId: nonEmptyString,
     workspace: zcodeWorkspaceRefSchema,
     parentSessionId: nonEmptyString.optional(),

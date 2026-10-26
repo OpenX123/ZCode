@@ -1,3 +1,9 @@
+import {
+  EXTERNAL_ENGINES_DIR_ENV,
+  EXTERNAL_ENGINE_USER_HOME_ENV,
+} from "@zcode/shared/external-engine";
+import { IExternalEngineService } from "./external-engine/contract.js";
+import { createExternalEngineService } from "./external-engine/node.js";
 import { getZCodeDataRootDir as projectDataRoot } from "#src/paths.js";
 import {
   createProjectService,
@@ -1738,7 +1744,19 @@ export function createLocalServices(options: {
     hostId: options?.projectStorageHostId ?? "local",
     workspaceIdentity: undefined,
   });
+  // 安装状态只归桌面本地 Host 所有；远端不暴露安装频道，也不能借本机 CLI 执行。
+  const externalEnginesDir = join(projectDataRoot(), "engines");
+  const externalEngineUserHome = process.env.HOME?.trim() || homedir();
+  const externalEngineService =
+    options?.serviceAuthorityMode === "desktop-local"
+      ? createExternalEngineService({
+          enginesDir: externalEnginesDir,
+          env: { ...process.env, HOME: externalEngineUserHome },
+        })
+      : undefined;
   const zcodeAgentService = createZCodeAgentService({
+    externalEngineService,
+    externalEnginesSupported: Boolean(externalEngineService),
     prepareProjectExecution,
     prepareSessionCreation: async (target) =>
       (await taskIndexRepo.getProjectRepository()).reserveCreatedTask({
@@ -1873,6 +1891,12 @@ export function createLocalServices(options: {
       // 先拿到尚不存在的 provider_config.json 并发布短暂空 Registry。
       await providerConfigRuntime.start();
       return {
+        ...(externalEngineService
+          ? {
+              [EXTERNAL_ENGINES_DIR_ENV]: externalEnginesDir,
+              [EXTERNAL_ENGINE_USER_HOME_ENV]: externalEngineUserHome,
+            }
+          : {}),
         ...buildAgentRuntimeEnv({
           httpProxy: agentNetwork.httpProxy,
           noProxy: agentNetwork.noProxy,
@@ -2119,6 +2143,8 @@ export function createLocalServices(options: {
     .register(ISettingsSyncService, createSettingsSyncService({ settingService }))
     .register(IPromptAttachmentTransferService, createLocalPromptAttachmentTransferService());
 
+  if (externalEngineService) services.register(IExternalEngineService, externalEngineService);
+
   // 即使初始配置关闭也必须登记 lifecycle disposer：terminal fence 需要早于任意延迟 setting/acquire
   // 恢复，不能把"当前还没有 Helper"误当成"不需要生命周期所有者"。dispose 时串行 stop host。
   registerManagedCuaHelperHostForDispose(services, {
@@ -2197,6 +2223,7 @@ export function disposeServiceResources(services: ServiceCollection): void {
     services.getOptional(IBotsService),
     services.getOptional(IFileWatcherService),
     services.getOptional(ISubagentsService),
+    services.getOptional(IExternalEngineService),
   ].filter((service) => service !== undefined);
 
   for (const service of disposableServices) {
@@ -2236,6 +2263,7 @@ export async function disposeServiceResourcesAndWait(services: ServiceCollection
     services.getOptional(IBotsService),
     services.getOptional(IFileWatcherService),
     services.getOptional(ISubagentsService),
+    services.getOptional(IExternalEngineService),
   ].filter((service) => service !== undefined);
 
   for (const service of disposableServices) {

@@ -131,6 +131,7 @@ modules:
       - services
       - shared
       - ui
+      - external-engine-ui
       - conversation-workspace-target
       - remote-connection-flow
     publicEntrypoints:
@@ -252,6 +253,62 @@ modules:
     publicEntrypoints: [packages/shared/src/gen-ui/index.ts, packages/shared/src/gen-ui/contract.ts]
     layers: { domain: "." }
     owner: conversation
+  - id: external-engine-protocol
+    roots: [packages/shared/src/external-engine]
+    managed: true
+    requires: []
+    publicEntrypoints:
+      [
+        packages/shared/src/external-engine/index.ts,
+        packages/shared/src/external-engine/contract.ts,
+      ]
+    layers: { domain: "." }
+    owner: conversation
+  - id: cli-external-engine-contract
+    roots: [apps/zcode-cli/packages/contracts/src/external-engine]
+    managed: true
+    requires: [shared, zcode-cli, external-engine-protocol]
+    publicEntrypoints:
+      - apps/zcode-cli/packages/contracts/src/external-engine/index.ts
+      - apps/zcode-cli/packages/contracts/src/external-engine/contract.ts
+    layers: { domain: "." }
+    owner: conversation
+
+  - id: cli-external-engine-adapter
+    roots:
+      [
+        apps/zcode-cli/packages/adapters/src/external-engine,
+        apps/zcode-cli/packages/adapters/src/exec/acp-process.ts,
+      ]
+    managed: true
+    requires: [shared, zcode-cli, external-engine-protocol, cli-external-engine-contract]
+    publicEntrypoints:
+      - apps/zcode-cli/packages/adapters/src/external-engine/index.ts
+      - apps/zcode-cli/packages/adapters/src/external-engine/contract.ts
+    layers: { adapters: "." }
+    owner: conversation
+
+  - id: cli-external-engine-runtime
+    roots: [apps/zcode-cli/packages/core/src/external-engine]
+    managed: true
+    requires: [shared, zcode-cli, external-engine-protocol, cli-external-engine-contract]
+    publicEntrypoints:
+      - apps/zcode-cli/packages/core/src/external-engine/index.ts
+      - apps/zcode-cli/packages/core/src/external-engine/contract.ts
+    layers: { app: "." }
+    owner: conversation
+
+  - id: external-engine-ui
+    roots: [packages/ui/src/external-engine, packages/ui/src/hooks/external-engine]
+    managed: true
+    requires: [ui, shared, services, external-engine-protocol, external-engine-service, mobile-ui]
+    publicEntrypoints:
+      - packages/ui/src/external-engine/index.ts
+      - packages/ui/src/external-engine/contract.ts
+      - packages/ui/src/hooks/external-engine/index.ts
+    layers: { ui: "." }
+    owner: conversation
+
   - id: gen-ui-service
     roots: [packages/services/src/gen-ui]
     managed: true
@@ -261,6 +318,20 @@ modules:
         packages/services/src/gen-ui/index.ts,
         packages/services/src/gen-ui/contract.ts,
         packages/services/src/gen-ui/node.ts,
+      ]
+    layers: { domain: domain, app: app, adapters: adapters }
+    layerOrder: [domain, app, adapters]
+    owner: conversation
+
+  - id: external-engine-service
+    roots: [packages/services/src/external-engine]
+    managed: true
+    requires: [services, shared, rpc, external-engine-protocol]
+    publicEntrypoints:
+      [
+        packages/services/src/external-engine/index.ts,
+        packages/services/src/external-engine/contract.ts,
+        packages/services/src/external-engine/node.ts,
       ]
     layers: { domain: domain, app: app, adapters: adapters }
     layerOrder: [domain, app, adapters]
@@ -790,6 +861,10 @@ exceptions:
       - packages/ui/src/components/workflow-timeline/useWorkflowSettingsModelChoices.ts
       - packages/ui/src/hooks/useDynamicWorkflowAvailability.ts
     reason: 已准入的上游工作流文件仅移除商业模型展示依赖并改用本地设置投影；保留既有界面与状态所有者，不引入跨层依赖，整目录治理不在本次精简范围内。
+  - id: external-engine-session-config-edit
+    rule: unmanaged-new-file
+    paths: [packages/shared/src/zcode-protocol-v4/create-session-config.ts]
+    reason: 已存在的 createSession 请求配置只追加可选 engine 字段（docs/desktop/external-agent-engines-spec.md），引擎值域由受管模块 external-engine-protocol 提供；字段语义、owner 与模块边界不变，接管整个 shared 包不在本次范围内。
   - id: standalone-existing-local-observation-edit
     rule: unmanaged-new-file
     paths:

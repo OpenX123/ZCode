@@ -1,3 +1,8 @@
+import { isExternalSessionEngine } from "@zcode/shared";
+import {
+  prepareExternalEngineSession,
+  restoreExternalEngineConfig,
+} from "../../external-engine/session.js";
 import { restorePermissionGrantMarker } from "../helpers/permission-grant-resume.js";
 import { executionStateSchema, resolveExecutionState } from "@zcode/shared";
 import { SESSION_ENTRY_EXECUTION_STATE } from "@zcode/contracts";
@@ -92,6 +97,9 @@ export async function resumeFromStore(
     },
   });
 
+  this.config.engine = session.engine ?? "zcode";
+  this.config.externalSessionId = session.externalSessionId;
+
   const messages =
     options?.persistedMessages ??
     (await this.sessionStore.messages({
@@ -149,7 +157,8 @@ export async function resumeFromStore(
     workingDirectory: this.workingDirectory,
     workspaceRoot: this.workspaceRoot,
   });
-  await this.ensureContextInitialized(traceContext);
+  if (!isExternalSessionEngine(this.config.engine))
+    await this.ensureContextInitialized(traceContext);
   const recoveredCompactTimelineCount = await this.recoverInterruptedCompactTimelines(
     messages,
     traceContext,
@@ -260,11 +269,9 @@ export async function resumeFromStore(
     traceContext,
   );
   await this.appendEvent(resumedEvent, traceContext);
-  const sessionStartHookResult = await this.runSessionStartHooks(
-    "resume",
-    traceContext,
-    options?.abortSignal,
-  );
+  const sessionStartHookResult = isExternalSessionEngine(this.config.engine)
+    ? { additionalContexts: [] }
+    : await this.runSessionStartHooks("resume", traceContext, options?.abortSignal);
   this.injectHookAdditionalContextIntoMessageHistory(
     HookEventName.SessionStart,
     sessionStartHookResult.additionalContexts,
@@ -322,6 +329,20 @@ export async function resumeFromStore(
     sessionId: this.sessionId,
     status: "completed",
   });
+
+  if (isExternalSessionEngine(this.config.engine)) {
+    await restoreExternalEngineConfig(this);
+    // 原生连接失败不能抹掉可读历史；错误通过同一配置投影呈现并允许重试。
+    try {
+      await prepareExternalEngineSession(this, traceContext);
+    } catch {
+      this.logger?.warn("External engine session restore failed", {
+        event: "session.external_engine.restore_failed",
+        module: "core.runtime",
+        sessionId: this.sessionId,
+      });
+    }
+  }
 
   return {
     ...hydration,

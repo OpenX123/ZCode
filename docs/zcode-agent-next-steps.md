@@ -6,7 +6,7 @@ The product path has moved from the retired multi-agent compatibility stack to a
 
 - `apps/zcode-cli` is a normal workspace package and exposes `zcode app-server --stdio`.
 - The app host uses `IZCodeAgentService` and the V4 conversation command/projection surface; production code no longer has the retired protocol service/process-manager modules.
-- Desktop and remote workspace runtimes launch only the bundled GLM/ZCode Agent runtime plus required tools such as ripgrep.
+- Desktop and remote workspace runtimes launch only the bundled GLM/ZCode Agent runtime plus required tools such as ripgrep. Each session may still choose an external engine (Claude Code / Codex) at creation; the same `app-server` owns its projection and drives the official CLI through an ACP adapter, so no second agent process manager or host-level switch exists. See [external-agent-engines-spec](./desktop/external-agent-engines-spec.md).
 - Retired third-party runtime installers, adapter entrypoints, proxy traffic, agent switching UI, and old runtime manifests have been removed from the current product path.
 - Canonical conversation state comes from V4 snapshots/events. The renderer materializes it through `packages/ui/src/v4/conversationProjectionStore.ts` and `sessionDataLayer.ts`; `zcodeSessionStore` only retains task-shell/session metadata that is outside the transcript projection.
 

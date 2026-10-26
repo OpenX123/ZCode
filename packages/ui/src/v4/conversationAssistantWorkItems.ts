@@ -50,7 +50,8 @@ export type ConversationAssistantWorkRenderItem =
       kind: "agentToolCall";
       key: string;
       row: ToolCallRow;
-      subagentRow: SubagentRow;
+      subagentRow?: SubagentRow;
+      node: TaskChatToolCallTreeNode;
     };
 
 export const ENABLE_EXPLORE_TOOL_CALL_GROUPING = true;
@@ -292,9 +293,38 @@ export function buildAssistantWorkRenderItems(
     }
     return !shouldDeferUnclassifiedShellToolCall(row);
   });
-  const { subagentByAgentToolRowId, claimedSubagentRowIds } = pairSubagentRows(visibleRows);
+  // 外部引擎提供父调用而非本地子会话；仅派生展示树，不新增会话或执行状态。
+  const toolById = new Map(
+    visibleRows.filter(isToolCallRow).map((row) => [`${row.turnId}\0${row.toolCallId}`, row]),
+  );
+  const childrenByRowId = new Map<number, ToolCallRow[]>();
+  const nestedRowIds = new Set<number>();
+  for (const row of visibleRows) {
+    if (!isToolCallRow(row) || !row.parentToolCallId) continue;
+    const parent = toolById.get(`${row.turnId}\0${row.parentToolCallId}`);
+    if (!parent || !isAgentToolCallRow(parent)) continue;
+    const visited = new Set([row.toolCallId]);
+    let ancestor: ToolCallRow | undefined = parent;
+    while (ancestor && !visited.has(ancestor.toolCallId)) {
+      visited.add(ancestor.toolCallId);
+      ancestor = ancestor.parentToolCallId
+        ? toolById.get(`${row.turnId}\0${ancestor.parentToolCallId}`)
+        : undefined;
+    }
+    if (ancestor) continue;
+    const children = childrenByRowId.get(parent.rowId) ?? [];
+    children.push(row);
+    childrenByRowId.set(parent.rowId, children);
+    nestedRowIds.add(row.rowId);
+  }
+  const toolNode = (row: ToolCallRow): TaskChatToolCallTreeNode => ({
+    ...toolCallRowToLegacyNode(row),
+    childToolCalls: (childrenByRowId.get(row.rowId) ?? []).map(toolNode),
+  });
+  const rootRows = visibleRows.filter((row) => !nestedRowIds.has(row.rowId));
+  const { subagentByAgentToolRowId, claimedSubagentRowIds } = pairSubagentRows(rootRows);
   const preparedRows = prepareCuaGroups(
-    visibleRows,
+    rootRows,
     enableCuaGrouping,
     options?.stageTailIsRunning === true,
   );
@@ -320,12 +350,13 @@ export function buildAssistantWorkRenderItems(
     }
     if (isToolCallRow(row)) {
       const pairedSubagent = subagentByAgentToolRowId.get(row.rowId);
-      if (pairedSubagent) {
+      if (pairedSubagent || childrenByRowId.has(row.rowId)) {
         items.push({
           kind: "agentToolCall",
           key: `agent:${row.rowId}`,
           row,
           subagentRow: pairedSubagent,
+          node: toolNode(row),
         });
         index += 1;
         continue;

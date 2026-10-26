@@ -4,7 +4,6 @@ import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { getAgentPrimaryText } from "@/ToolCallBlocks/renderers/agentHelpers.js";
 import type { ConversationAssistantWorkRenderItem } from "@/v4/conversationAssistantWorkItems.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
-import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
 
 export function openSubagentSessionFromSummary({
   backgrounded: _backgrounded = false,
@@ -42,9 +41,9 @@ export function ConversationAgentToolCallRow({
   item: Extract<ConversationAssistantWorkRenderItem, { kind: "agentToolCall" }>;
   context: ConversationRowRenderContext;
 }) {
-  const toolCallNode = useMemo(() => toolCallRowToLegacyNode(item.row), [item.row]);
-  const childSessionId = item.subagentRow.childSessionId;
-  const subagentType = item.subagentRow.subagentType;
+  const toolCallNode = item.node;
+  const childSessionId = item.subagentRow?.childSessionId;
+  const subagentType = item.subagentRow?.subagentType ?? "subagent";
   // 与 Agent 摘要行复用同一 title resolver，保证右侧 tab 和用户点击的可见标题逐字一致。
   const title = getAgentPrimaryText(toolCallNode.toolCall, "");
   const canOpenChildSession = Boolean(
@@ -83,7 +82,7 @@ export function ConversationAgentToolCallRow({
         onOpenBrowserUrl={context.onOpenBrowserUrl}
         onOpenAutomationsMain={context.onOpenAutomationsMain}
         agentSummaryAction={agentSummaryAction}
-        authoritativeAgentType={subagentType}
+        authoritativeAgentType={item.subagentRow?.subagentType}
       />
     </div>
   );

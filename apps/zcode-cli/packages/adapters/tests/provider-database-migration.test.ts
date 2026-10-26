@@ -187,6 +187,8 @@ describe("DB109 会话库正式数据迁移", () => {
       ...sessionBefore,
       time_deleted: null,
       last_outcome: null,
+      engine: "zcode",
+      external_session_id: null,
     });
     const history = await store.messages({ sessionID });
     expect(history[0]?.info).not.toHaveProperty("model");

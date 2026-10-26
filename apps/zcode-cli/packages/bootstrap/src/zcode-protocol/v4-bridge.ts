@@ -1108,6 +1108,7 @@ export function createConversationV4Gateway(
     // createSession op 内（半初始化 record 的回收顺序修过 bug，不重复实现）。
     // 语义决策（draft persistence / firstInput 走原生 prompt turn）在原生 handler。
     createSessionRecord: async ({
+      engine,
       sessionId,
       additionalDirectories,
       workspaceId,
@@ -1128,6 +1129,7 @@ export function createConversationV4Gateway(
       // shared parser 统一兼容 WSL legacy 与显式 user identity；非远程格式继续按
       // 本地 workspacePath 处理。
       const created = await createSessionRecordForV4(context, {
+        engine,
         sessionId,
         additionalDirectories,
         workspace: resolveWorkspaceRefFromId(workspaceId),
@@ -1434,6 +1436,7 @@ export function createConversationV4Gateway(
       });
       return stored.map((session) => ({
         sessionId: String(session.id),
+        engine: session.engine ?? "zcode",
         workspaceId,
         ...(session.parentID ? { parentSessionId: String(session.parentID) } : {}),
         title: session.title ?? "",
@@ -1480,6 +1483,7 @@ export function createConversationV4Gateway(
           return {
             sessionId,
             exists: true as const,
+            engine: session.engine ?? "zcode",
             deleted: session.time.deleted !== undefined,
             title: session.title,
             titleSource: normalizeStoredTitleSource(session.titleSource),
@@ -1587,6 +1591,10 @@ export function createConversationV4Gateway(
       const selection =
         record.app.runtime.getSessionModelSelection() ?? record.restoredModelSelection;
       return {
+        engine: record.app.runtime.getSessionEngine(),
+        engineConfigOptions: record.app.runtime.getEngineConfigOptions(),
+        engineConfigState: record.app.runtime.getEngineConfigState(),
+        engineConfigError: record.app.runtime.getEngineConfigError(),
         modelSelection: cloneModelSelection(selection),
         provider: selection?.providerId ?? "",
         model: selection?.modelId ?? "",

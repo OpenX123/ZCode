@@ -693,7 +693,7 @@ describe("buildAssistantWorkRenderItems", () => {
       throw new Error("expected paired agent item");
     }
     expect(agentItem.row.rowId).toBe(1);
-    expect(agentItem.subagentRow.rowId).toBe(2);
+    expect(agentItem.subagentRow?.rowId).toBe(2);
     expect(agentItem).not.toHaveProperty("showSubagentOutputPreview");
     expect(items.some((item) => item.kind === "row" && item.row.rowId === 2)).toBe(false);
   });
@@ -722,7 +722,9 @@ describe("buildAssistantWorkRenderItems", () => {
 
     const items = buildRenderItems(rows);
     const pairs = items.flatMap((item) =>
-      item.kind === "agentToolCall" ? [[item.row.toolCallId, item.subagentRow.childSessionId]] : [],
+      item.kind === "agentToolCall"
+        ? [[item.row.toolCallId, item.subagentRow?.childSessionId]]
+        : [],
     );
 
     expect(pairs).toEqual([
@@ -773,7 +775,28 @@ describe("buildAssistantWorkRenderItems", () => {
     if (agentItem?.kind !== "agentToolCall") {
       throw new Error("expected paired agent item");
     }
-    expect(agentItem.subagentRow.backgrounded).toBe(true);
+    expect(agentItem.subagentRow?.backgrounded).toBe(true);
     expect(agentItem).not.toHaveProperty("showSubagentOutputPreview");
   });
+});
+
+it("外部 Agent 按父调用嵌套并发子工具，无父工具时保持可见", () => {
+  const rows = [
+    toolCall(1, "Agent", { description: "A" }),
+    toolCall(2, "Agent", { description: "B" }),
+    toolCall(3, "Bash", { command: "echo B" }, { parentToolCallId: "tool-2" }),
+    toolCall(4, "Read", { file_path: "A.txt" }, { parentToolCallId: "tool-1" }),
+    toolCall(5, "Read", { file_path: "orphan.txt" }, { parentToolCallId: "missing" }),
+  ];
+  const items = buildRenderItems(rows);
+  expect(items).toHaveLength(3);
+  expect(items[0]).toMatchObject({
+    kind: "agentToolCall",
+    node: { childToolCalls: [{ toolCall: { toolId: "tool-4" } }] },
+  });
+  expect(items[1]).toMatchObject({
+    kind: "agentToolCall",
+    node: { childToolCalls: [{ toolCall: { toolId: "tool-3" } }] },
+  });
+  expect(items[2]).toMatchObject({ kind: "row", row: { rowId: 5 } });
 });

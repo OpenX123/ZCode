@@ -101,8 +101,9 @@ export function toolCallRowToLegacyNode(row: ToolCallRow): TaskChatToolCallTreeN
       // V4 ToolCallRow 没有 legacy taskNotification raw；background Agent
       // 的终态摘要只落在 output。Agent renderer 读取 content 展示活动结果，因此在
       // Agent/Task 行显式桥接，避免失败详情虽已投影却仍只显示一张空卡。
-      ...((row.toolName === "Agent" || row.toolName === "Task") && row.output?.text
-        ? { content: row.output.text }
+      ...((row.toolName === "Agent" || row.toolName === "Task") &&
+      (row.activityText || row.output?.text)
+        ? { content: [row.activityText, row.output?.text].filter(Boolean).join("\n\n") }
         : {}),
       // v4 row 是自包含投影，部分 provider 只把工具失败正文塞进 output，
       // 不补回 legacy error 会让 ToolOutput 看不到失败原因，只剩一张空的 failed 摘要。
@@ -110,6 +111,7 @@ export function toolCallRowToLegacyNode(row: ToolCallRow): TaskChatToolCallTreeN
       raw: {
         error: row.error,
         rawOutput: row.output?.text,
+        ...(row.activityText !== undefined ? { inlineAgentDetails: true } : {}),
         outputPreview: row.outputPreview,
         outputTruncated: row.output?.truncated,
         status: legacyStatus,
@@ -125,8 +127,7 @@ export function toolCallRowToLegacyNode(row: ToolCallRow): TaskChatToolCallTreeN
       },
       startedAt: typeof row.startedAt === "number" ? row.startedAt : undefined,
     },
-    // subagent 不内嵌 child rows；v4 工具行没有子树，嵌套工具在旧形态里也
-    // 由独立 row（subagent/toolCall）表达。
+    // 持久化行各自独立；外部子调用由工作区 builder 按 parentToolCallId 关联展示。
     childToolCalls: [],
   };
 }

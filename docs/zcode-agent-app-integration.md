@@ -5,6 +5,10 @@
 ZCode App 只启动 ZCode Agent（`apps/zcode-cli` 的 `zcode app-server --stdio`）。退役的多 Agent
 process manager、第三方 runtime installer、proxy traffic 和 UI agent switch 不属于当前产品路径。
 
+会话可在创建时选择外部引擎（Claude Code / Codex）。外部引擎会话仍由同一个 `app-server` 拥有 V4 投影、
+队列与权限交互，只把单轮执行交给经 ACP adapter 驱动的官方 CLI；Host 不另起 Agent 进程，只负责
+adapter 安装与就绪检测（`IExternalEngineService`）。详见 [external-agent-engines-spec](./desktop/external-agent-engines-spec.md)。
+
 ## 进程与服务边界
 
 ```text

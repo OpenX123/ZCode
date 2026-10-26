@@ -7,6 +7,19 @@ import type { CommandEnvelope, CommandResult } from "@zcode/shared/zcode-protoco
 import { NATIVE_HANDLERS } from "./handlers/index.js";
 import type { V4CommandCoreHost } from "./types.js";
 
+const EXTERNAL_ENGINE_UNSUPPORTED_COMMANDS = new Set<CommandEnvelope["type"]>([
+  "switchModelConfig",
+  "switchCollaborationMode",
+  "compact",
+  "editUserQuery",
+  "retryTurn",
+  "forkAssistant",
+  "applyFileRewind",
+  "createSelectionSideSession",
+  "sendGoalCommand",
+  "resumeGoal",
+]);
+
 const SELECTION_SIDE_CHAT_RESTRICTED_COMMANDS = new Set<CommandEnvelope["type"]>([
   "sendGoalCommand",
   "pauseGoal",
@@ -47,6 +60,19 @@ export class V4CommandExecutor {
       this.host.getRecord(envelope.sessionId)?.taskType === "selection_side_chat"
     ) {
       throw new V4SelectionSideChatRestrictedCommandError(envelope.type);
+    }
+    const runtime = envelope.sessionId
+      ? this.host.getRecord(envelope.sessionId)?.app.runtime
+      : undefined;
+    // 外部引擎不拥有本地模型历史与文件 checkpoint，所有写入口统一拒绝，不能只灰显 UI。
+    if (
+      runtime?.getSessionEngine?.() !== undefined &&
+      runtime.getSessionEngine() !== "zcode" &&
+      EXTERNAL_ENGINE_UNSUPPORTED_COMMANDS.has(envelope.type)
+    ) {
+      throw Object.assign(new Error("外部引擎不支持该操作"), {
+        reasonCode: "external_engine_unsupported",
+      });
     }
     const handler = NATIVE_HANDLERS[envelope.type as keyof typeof NATIVE_HANDLERS];
     if (!handler) {

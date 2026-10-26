@@ -233,6 +233,7 @@ export interface V4CommandCoreHost {
    * 语义决策（draft persistence / firstInput 提交）留在原生 handler，不进钩子。
    */
   createSessionRecord?(params: {
+    engine?: NonNullable<CommandPayloadMap["createSession"]["config"]>["engine"];
     sessionId?: string;
     additionalDirectories?: string[];
     workspaceId: string;

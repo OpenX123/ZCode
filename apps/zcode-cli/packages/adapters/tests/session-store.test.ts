@@ -149,7 +149,11 @@ describe("virtual project CLI session facts", () => {
             own.id,
           ]),
         );
-        expect(db.prepare("SELECT * FROM session").get()).toEqual(oldSession);
+        expect(db.prepare("SELECT * FROM session").get()).toEqual({
+          ...oldSession,
+          engine: "zcode",
+          external_session_id: null,
+        });
         expect(await store.listSessions()).toEqual([]);
         expect((await store.messages({ sessionID }))[0]).toMatchObject({
           info: { modelSelection: { providerId: "legacy-p", modelId: "legacy-m" } },
@@ -170,7 +174,11 @@ describe("virtual project CLI session facts", () => {
       const reopened = await createSqliteSessionStore({ dbPath });
       reopened.close();
       expect(db.prepare("SELECT * FROM schema_migration ORDER BY id").all()).toEqual(before);
-      expect(db.prepare("SELECT * FROM session").get()).toEqual(oldSession);
+      expect(db.prepare("SELECT * FROM session").get()).toEqual({
+        ...oldSession,
+        engine: "zcode",
+        external_session_id: null,
+      });
     } finally {
       db.close();
       await rm(root, { recursive: true, force: true });
@@ -638,6 +646,7 @@ describe("SQLite session store", () => {
       "0022_backfilled_session_reasoning",
       "0023_session_soft_delete_outcome",
       "0024_session_database_identity",
+      "0025_external_engine",
     ];
 
     try {
@@ -676,6 +685,7 @@ describe("SQLite session store", () => {
         "0.16.5",
         "0.16.9",
         "0.16.9",
+        "0.17.0",
       ]);
 
       db.close();
@@ -713,7 +723,7 @@ describe("SQLite session store", () => {
         ]),
       );
       expect(attempts.flat().filter((result) => !result.ok)).toEqual([]);
-      expect(attempts.flat().every((result) => result.migrationIds?.length === 24)).toBe(true);
+      expect(attempts.flat().every((result) => result.migrationIds?.length === 25)).toBe(true);
     },
     CONCURRENT_STARTUP_TEST_TIMEOUT_MS,
   );
@@ -940,6 +950,7 @@ describe("SQLite session store", () => {
         "0022_backfilled_session_reasoning",
         "0023_session_soft_delete_outcome",
         "0024_session_database_identity",
+        "0025_external_engine",
       ]);
       store.close();
     } finally {

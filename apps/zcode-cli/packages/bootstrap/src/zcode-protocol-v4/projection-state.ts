@@ -1,3 +1,4 @@
+import { isExternalSessionEngine, type SessionEngine } from "@zcode/shared/external-engine";
 // ProductProjection 状态工厂与派生规则。
 // 本文件只放纯函数：初始快照、availability/inputRouting 派生、revision 递进判定。
 import type {
@@ -104,6 +105,7 @@ function denied(reasonCode: string): ActionAvailability {
 // （10 §4.2.1 phase 封闭枚举），从 activeWorks / goal.status 派生后传入。
 // queueLength/autoDrain 用于 held 派生（heldQueueInputRequiresChoice，2026-07-05 裁决）。
 export interface AvailabilityContext {
+  engine?: SessionEngine;
   phase: SessionControl["phase"];
   goalStatus: GoalState["status"] | null;
   compacting: boolean;
@@ -126,13 +128,19 @@ export function computeAvailability(context: AvailabilityContext): SessionAction
       : // running/goal verifier 时命令进入 typed FIFO，completed 时立即执行或进入 held queue。
         ALLOWED;
   return {
-    fork: compacting
-      ? denied("compactOperationLock")
-      : phase === "draft"
-        ? denied("forkTargetNotStable")
-        : ALLOWED,
-    compact,
-    switchModelConfig: ALLOWED,
+    fork: isExternalSessionEngine(context.engine)
+      ? denied("external_engine_unsupported")
+      : compacting
+        ? denied("compactOperationLock")
+        : phase === "draft"
+          ? denied("forkTargetNotStable")
+          : ALLOWED,
+    compact: isExternalSessionEngine(context.engine)
+      ? denied("external_engine_unsupported")
+      : compact,
+    switchModelConfig: isExternalSessionEngine(context.engine)
+      ? denied("external_engine_unsupported")
+      : ALLOWED,
     setFollowupMode: ALLOWED,
     queueEdit: ALLOWED,
     sendQueuedNow: compacting

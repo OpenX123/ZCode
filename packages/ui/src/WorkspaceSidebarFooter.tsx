@@ -1,5 +1,3 @@
-import { ControlHintTooltip } from "@/ControlHintTooltip.js";
-/* oxlint-disable eslint(max-lines) -- footer 聚合账户、主题、模式和快捷键菜单。 */
 import type { Locale } from "@zcode/shared";
 import { memo, useCallback, useEffect, useState } from "react";
 import { DesktopCommandIds } from "@zcode/shared";
@@ -18,7 +16,17 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
-import { PencilRuler, Globe, Maximize, Palette, Settings, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  ArrowLeft,
+  PencilRuler,
+  Globe,
+  Maximize,
+  Palette,
+  Settings,
+  SlidersHorizontal,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
@@ -62,7 +70,8 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
     settingsButtonMode === "back"
       ? intl.formatMessage({ id: "workspace.backToWorkspace" })
       : intl.formatMessage({ id: "settings.title" });
-  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const preferencesLabel = intl.formatMessage({ id: "sidebar.settings.quickPreferences" });
+  const [preferencesMenuOpen, setPreferencesMenuOpen] = useState(false);
   const [desktopZoomLevel, setDesktopZoomLevel] = useState(0);
   const runDesktopZoomCommand = useCallback(
     (command: (typeof DesktopCommandIds)["ZoomIn" | "ZoomOut" | "ResetZoom"]) => {
@@ -104,25 +113,40 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
     // footer 被 Settings 复用，页面专属边距由调用方传入，避免修改共享默认样式。
     <footer className={cn("flex shrink-0 flex-col gap-2.5 px-4 pt-2 pb-4", className)}>
       <div className="flex min-w-0 gap-2">
-        <DropdownMenu open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
+        {/* 主入口直接导航，快捷偏好单独使用滑杆图标，避免两个齿轮都被理解为设置页。 */}
+        <Button
+          type="button"
+          variant="ghost"
+          size="lg"
+          className="min-w-0 flex-1 justify-start gap-2 overflow-hidden px-0"
+          data-testid={TID_TASK_SETTINGS_BUTTON}
+          aria-label={settingsButtonLabel}
+          disabled={!onSettingsButtonClick}
+          onClick={onSettingsButtonClick}
+        >
+          {settingsButtonMode === "back" ? (
+            <ArrowLeft className="size-5" />
+          ) : (
+            <Settings className="size-5" />
+          )}
+          <span className="truncate">{settingsButtonLabel}</span>
+        </Button>
+        <DropdownMenu open={preferencesMenuOpen} onOpenChange={setPreferencesMenuOpen}>
           <DropdownMenuTrigger asChild>
             <Button
               type="button"
               variant="ghost"
-              size={"lg"}
-              className="min-w-0 flex-1 justify-start gap-2 overflow-hidden rounded-tl-2xl rounded-bl-2xl border-0 pl-0"
+              size="icon-lg"
               data-testid="sidebar-preferences-trigger"
-              aria-label={intl.formatMessage({ id: "settings.title" })}
+              aria-label={preferencesLabel}
+              title={preferencesLabel}
             >
-              {/* Bugfix: Button 默认 shrink-0 且带 whitespace-nowrap，超长用户名会把 footer 撑出 sidebar。
-                这里让触发按钮和文本列都允许收缩，并只在用户名自身做单行截断。 */}
-              <Settings className="size-5" />
-              <span>{intl.formatMessage({ id: "settings.title" })}</span>
+              <SlidersHorizontal className="size-4" />
             </Button>
           </DropdownMenuTrigger>
           {/* Bugfix: 菜单内容保持挂载，避免每次点击头像菜单都重建 footer 内部状态。 */}
           <DropdownMenuContent
-            align="start"
+            align="end"
             className="w-max min-w-50 max-w-[calc(100vw-2rem)]"
             forceMount
           >
@@ -237,21 +261,6 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
             ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <ControlHintTooltip title={settingsButtonLabel}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-lg"
-              data-testid={TID_TASK_SETTINGS_BUTTON}
-              aria-label={settingsButtonLabel}
-              disabled={!onSettingsButtonClick}
-              onClick={onSettingsButtonClick}
-            >
-              <Settings className="size-4" />
-            </Button>
-          </ControlHintTooltip>
-        </div>
       </div>
     </footer>
   );

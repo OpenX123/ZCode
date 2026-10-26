@@ -19,6 +19,29 @@ afterEach(() => {
 });
 
 describe("settingsNavigation", () => {
+  it("Agent 引擎分区复用上次停留位置与一次性跳转意图", async () => {
+    const local = new Map<string, string>();
+    const session = new Map<string, string>();
+    const storage = (values: Map<string, string>) => ({
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    });
+    const events = new EventTarget();
+    vi.stubGlobal("window", {
+      localStorage: storage(local),
+      sessionStorage: storage(session),
+      dispatchEvent: events.dispatchEvent.bind(events),
+    });
+    const navigation = await loadSettingsNavigation("test");
+    navigation.writeLastSettingsSectionPreference("agentEngines");
+    expect(navigation.consumeInitialSettingsSection()).toBe("agentEngines");
+    navigation.setPendingSettingsSectionIntent("modelProvider");
+    expect(navigation.consumeInitialSettingsSection()).toBe("modelProvider");
+    navigation.setPendingSettingsSectionIntent("agentEngines");
+    expect(navigation.consumeInitialSettingsSection()).toBe("agentEngines");
+    expect(session.has("zcode-settings-section-intent")).toBe(false);
+  });
   it("保留 usage、hooks 和 memory 分区", async () => {
     const navigation = await loadSettingsNavigation("test");
 

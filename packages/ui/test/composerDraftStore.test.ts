@@ -27,6 +27,14 @@ const workspace = "/workspace";
 const read = (scope = "session-a") => readV4ComposerDraft(workspace, undefined, scope);
 
 describe("Composer Draft 持久选择", () => {
+  it("恢复外部引擎草稿时保留引擎与正文", () => {
+    persistV4ComposerDraft(workspace, undefined, "session-a", {
+      text: "未发送正文",
+      engine: "claude-code",
+    });
+    expect(read()).toMatchObject({ text: "未发送正文", engine: "claude-code" });
+  });
+
   it("关闭项目分组草稿只修改该项目，不影响同目录其他项目", () => {
     const p = { clientNamespace: "desktop", hostId: "local", projectId: "p" };
     const q = { ...p, projectId: "q" };

@@ -77,6 +77,7 @@ export function deriveSessionSummary(
       : undefined;
   return {
     sessionId: snapshot.sessionId,
+    ...(snapshot.config.engine ? { engine: snapshot.config.engine } : {}),
     workspaceId: extra.workspaceId,
     ...(extra.parentSessionId ? { parentSessionId: extra.parentSessionId } : {}),
     title: snapshot.meta.title,
@@ -108,6 +109,7 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
   return (
     a.sessionId === b.sessionId &&
     a.workspaceId === b.workspaceId &&
+    a.engine === b.engine &&
     a.parentSessionId === b.parentSessionId &&
     a.title === b.title &&
     a.titleSource === b.titleSource &&
@@ -154,6 +156,8 @@ export class SessionsIndexProjection {
     // meta 之前 title 为空、record 时间可能被 resume 重置——store 种子里的
     // 稳定字段不得被降级值覆盖（否则侧栏表现为"原会话消失、冒出新任务"）。
     if (prev) {
+      // engine 是会话创建时的身份；hydration 尚未注入时保留存储摘要，避免 Logo 短暂回退。
+      if (summary.engine === undefined && prev.engine !== undefined) summary.engine = prev.engine;
       // sessions-index 读侧要区分“存储/协议物理标题”和“用户显式重命名”。
       // 冷恢复 live 投影在 hydration 补齐前可能只有 default/generated 标题；旧 seed 若已是
       // custom，不得被这类自动标题降级，否则侧边栏会把用户手动标题闪回生成标题。

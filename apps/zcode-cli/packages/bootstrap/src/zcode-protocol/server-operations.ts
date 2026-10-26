@@ -154,7 +154,11 @@ type ZCodeSessionRecordParams = (
       // 共用 record 初始化函数；resume 兼容分支也必须声明该策略字段。
       titleGenerationEnabled?: ZCodeSessionCreateParams["titleGenerationEnabled"];
     })
-) & { taskType?: SessionTaskType };
+) & {
+  taskType?: SessionTaskType;
+  engine?: ZCodeSessionCreateParams["engine"];
+  externalSessionId?: string;
+};
 
 interface SessionStartupPreferences {
   additionalDirectories?: readonly string[];
@@ -1524,6 +1528,8 @@ export async function activateSessionForResume(
     context,
     {
       ...params,
+      engine: session.engine,
+      externalSessionId: session.externalSessionId,
       mode,
       // 模型只由 App 的单向迁移/当前 entry 恢复，不能先用消息或调用方 hint 构造一次选择。
       model: undefined,
@@ -1737,7 +1743,26 @@ export async function listSessions(context: ZCodeProtocolAgentServerContext, raw
         params.workspace ?? buildWorkspaceRef({ workspacePath: session.path ?? session.directory }),
     }),
   );
-  if (params.sessionIds) return { sessions };
+  if (params.sessionIds) {
+    // Host 执行门禁可精确读取当前草稿的 engine；普通索引查询仍排除 deferred 会话。
+    if (params.includeDrafts)
+      for (const id of params.sessionIds) {
+        if (storedIds.has(id)) continue;
+        const record = context.sessions.get(id);
+        if (!record || record.persistence !== "deferred") continue;
+        if (params.workspace && params.workspace.workspaceKey !== record.workspace.workspaceKey)
+          continue;
+        sessions.push(
+          mapSessionInfo({
+            app: record.app,
+            workspace: record.workspace,
+            taskType: record.taskType,
+            parentSessionId: record.parentSessionId,
+          }),
+        );
+      }
+    return { sessions };
+  }
   for (const record of context.sessions.values()) {
     if (record.persistence === "deferred") continue;
     if (!isTaskListSessionType(record.taskType)) continue;
@@ -3429,6 +3454,8 @@ async function createRecord(
     resume,
     additionalDirectories: params.additionalDirectories ?? startupPreferences.additionalDirectories,
     runtimeConfig: {
+      engine: params.engine,
+      externalSessionId: params.externalSessionId,
       mode: "mode" in params ? params.mode : undefined,
       modelSelection: "model" in params ? toRuntimeModelSelection(initialModel) : undefined,
       parentSessionId,

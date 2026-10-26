@@ -120,7 +120,10 @@ export function resolveSubmittedExecutionState(
     mode?: SubmissionMode;
     planEnabled?: boolean;
   },
-): { modelSelection: ModelSelection; mode: SubmissionMode; planEnabled: boolean } {
+): { modelSelection?: ModelSelection; mode?: SubmissionMode; planEnabled?: boolean } {
+  // 外部引擎的模型与模式属于 ACP，不得为了复用输入队列而制造 Registry 选型。
+  if (record.app.runtime?.getSessionEngine?.() && record.app.runtime.getSessionEngine() !== "zcode")
+    return {};
   let modelSelection = payload.modelSelection;
   if (!modelSelection) {
     const runtimeSelection = record.app.runtime?.getSessionModelSelection?.();

@@ -984,4 +984,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     `,
   },
   { ...SESSION_DATABASE_IDENTITY_MIGRATION, touchedTables: ["zcode_database_identity"] },
+  {
+    appVersion: "0.17.0",
+    id: "0025_external_engine",
+    touchedTables: ["session"],
+    sql: "alter table session add column engine text not null default 'zcode'; alter table session add column external_session_id text;",
+  },
 ];

@@ -559,6 +559,8 @@ describe("zcode-protocol-v4 command", () => {
         "sendQueuedNow",
         "setAssistantFeedback",
         "setAutoDrain",
+        "setEngineConfigOption",
+        "prepareExternalEngineSession",
         "setFollowupMode",
         "switchCollaborationMode",
         "switchModelConfig",

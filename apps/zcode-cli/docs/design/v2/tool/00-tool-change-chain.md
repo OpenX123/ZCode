@@ -1824,3 +1824,7 @@ MCP isError 和历史 hydration 不触发创建。工具执行、权限、原始
 ### 文档插件多窗口视图修复（2026-10-16）
 
 MCP app-only report_view 增加可选 viewId，release_view 释放指定窗口；模型 get_view 可选 viewId，缺省且存在多个上报窗口时返回歧义与清单。状态唯一归属 DocumentOwner，不由页面决定其他窗口的视图；旧客户端缺省 viewId 仍走 legacy 槽。show_in_viewer 保持专用 surface 路由并明确工具描述。导入仍为 app-only workspace 副作用；串行 admission、10 分钟未活动过期与部分文件清扫归 importer，完成副本不清理。覆盖 schema 到真实 MCP/AppBridge 的多窗口回归。
+
+## 外部引擎工具链（2026-10-25）
+
+外部引擎由 CommandInbox 准入，经 executeTurnCommand 的外部端口运行；ACP 工具事件转换为现有 SessionEvent 与 message/part，权限进入既有 PermissionBroker。工具执行只属于官方 CLI；YCode 不二次执行或套用自己的模式。权限结果按 kind 对应回原 optionId，缺少对应选项时取消，不猜测 id。外部工具失败保留工具终态，允许同轮后续工具继续。diff 内容进入 file_diff display，退出与取消关闭同一会话 adapter 进程树。

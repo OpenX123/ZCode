@@ -1,3 +1,4 @@
+import { isExternalSessionEngine } from "@zcode/shared";
 import { createChildTraceContext, createQueryId, createTurnId } from "../deps.js";
 import type { QueryId, TurnInputIntentMetadata } from "../deps.js";
 import type { PromptRuntimeCommand } from "../command-queue.js";
@@ -82,8 +83,13 @@ export async function admitPrompt(
       });
     }
 
+    // 外部引擎没有 steer 能力；guide 必须降为普通队列，避免队列投影宣称已发送引导。
     const delivery =
-      options?.queueDelivery === "guide" && attachments === undefined ? "guide" : "queue";
+      options?.queueDelivery === "guide" &&
+      attachments === undefined &&
+      !isExternalSessionEngine(this.config.engine)
+        ? "guide"
+        : "queue";
     return await this.enqueueDeferredInput({
       attachments,
       commandKind: options?.commandKind,

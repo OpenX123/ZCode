@@ -1208,3 +1208,26 @@ describe("useDraftSessionPrewarm workspace owner", () => {
     vi.useRealTimers();
   });
 });
+
+it("外部引擎握手失败向草稿反馈原因，不伪造就绪 binding", async () => {
+  const onError = vi.fn();
+  const onReady = vi.fn();
+  const { dispatch } = createDispatchRecorder({
+    onCreate: () => ({
+      commandId: "failed",
+      status: "rejected",
+      reasonCode: "engine_not_ready",
+      message: "连接引擎失败",
+      revisionAtDecision: 0,
+    }),
+  });
+  startDraftSessionPrewarm({
+    workspaceKey: "/external-failure",
+    dispatchCommand: dispatch as never,
+    onReady,
+    onError,
+  });
+  await flushMicrotasks();
+  expect(onReady).not.toHaveBeenCalled();
+  expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "连接引擎失败" }));
+});

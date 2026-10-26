@@ -976,6 +976,12 @@ export class TaskIndexRepo {
             deleted: existing?.deleted === 1,
             titleOverridden: existing?.title_overridden === 1,
           });
+        // 引擎身份由 CLI 提供，补齐已存在的旧镜像；旧版本摘要缺省时不擦除已知身份。
+        if (params.meta.engine !== undefined) {
+          db.prepare(
+            "UPDATE tasks SET meta_json=json_set(meta_json, '$.engine', ?) WHERE workspace_key=? AND task_id=?",
+          ).run(params.meta.engine, workspaceKey(params.meta), params.meta.taskId);
+        }
         const source = params.titleSource ?? "default";
         db.prepare(`UPDATE tasks SET
           cli_title=CASE WHEN cli_title_source='custom' AND ?<>'custom' THEN cli_title ELSE ? END,

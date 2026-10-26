@@ -1,0 +1,24 @@
+{
+  "openai.svg": {
+    "package": "@lobehub/icons",
+    "version": "6.11.0",
+    "component": "OpenAI",
+    "source": "es/OpenAI/components/Mono.mjs",
+    "registry": "https://www.npmjs.com/package/@lobehub/icons/v/6.11.0",
+    "processing": "保留原始 viewBox、路径、填色和填充规则，转换为独立 SVG",
+    "sha256": "ed635d6eb005c15b89e362bc90f4ae7865c8efb5ce3cb6cd2e471e7a4ba91f3e",
+    "license": "MIT",
+    "licenseFile": "LICENSE.lobehub-icons"
+  },
+  "claude-color.svg": {
+    "package": "@lobehub/icons",
+    "version": "6.11.0",
+    "component": "Claude.Color",
+    "source": "es/Claude/components/Color.mjs",
+    "registry": "https://www.npmjs.com/package/@lobehub/icons/v/6.11.0",
+    "processing": "保留原始 viewBox、路径、填色和填充规则，转换为独立 SVG",
+    "sha256": "61e2b02f6dfc00d1ec86a90465e3367f7b40aca43854fb9a0f4856c7aad893ef",
+    "license": "MIT",
+    "licenseFile": "LICENSE.lobehub-icons"
+  }
+}

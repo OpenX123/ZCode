@@ -130,6 +130,8 @@ describe("Todo121：只补 0020 回填后未动过的会话档位", () => {
       ...session,
       time_deleted: null,
       last_outcome: null,
+      engine: "zcode",
+      external_session_id: null,
     });
     expect(db.prepare("SELECT * FROM session_entry").get()).toEqual({
       ...entry,

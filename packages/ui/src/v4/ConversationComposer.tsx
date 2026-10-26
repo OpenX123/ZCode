@@ -34,7 +34,8 @@ import {
   type ReactNode,
 } from "react";
 import { cn } from "@/components/lib/utils.js";
-import { type ZCodeProvider } from "@zcode/shared";
+import { ZCODE_AGENT_PROVIDER, type ZCodeProvider } from "@zcode/shared";
+import { ChatContextUsage } from "@/chat-input-toolbar/display.js";
 import {
   TID_CHAT_ATTACHMENT_BUTTON,
   TID_CHAT_ATTACHMENT_MENU_ITEM,
@@ -385,6 +386,9 @@ function arePromptHistoryEntriesEqual(left: readonly string[], right: readonly s
 
 export interface ConversationComposerProps {
   snapshot: ConversationSnapshot | null;
+  externalEngine?: boolean;
+  engineControls?: ReactNode;
+  engineNotReadyContent?: ReactNode;
   /** 草稿 scope（sessionId；draft 态 null → "__draft__" scope）。 */
   sessionId?: string | null;
   /** Skill catalog authority；草稿预热完成后为 prewarmSessionId，不改变 task/draft 身份。 */
@@ -524,6 +528,9 @@ function formatAttachmentLineCount(attachment: ChatComposerAttachment, locale: s
 
 function ConversationComposerImpl({
   snapshot,
+  externalEngine = false,
+  engineControls,
+  engineNotReadyContent,
   sessionId = null,
   skillCatalogSessionId = sessionId,
   draftMode = false,
@@ -2172,6 +2179,10 @@ function ConversationComposerImpl({
   // useMemo：composer 随流式 snapshot 高频重渲染，控制簇只在语义依赖变化时重建，
   // 避免每个 token 批次都重建 Tooltip/Select 子树。
   const composerUsage = snapshot?.usage ?? null;
+  const externalContextUsage = useMemo(() => {
+    const context = composerUsage?.contextWindow;
+    return context ? { used: context.usedTokens, size: context.maxTokens } : null;
+  }, [composerUsage?.contextWindow]);
   const composerPhase = snapshot?.control.phase ?? null;
   const handleSelectModelTrace = useCallback(
     (
@@ -2198,30 +2209,39 @@ function ConversationComposerImpl({
         ) : null}
         {remoteAvailable ? (
           <span className="flex min-w-0 shrink items-center gap-1 overflow-hidden empty:hidden">
-            <V4ComposerModelControls
-              workspacePath={workspacePath}
-              workspaceIdentity={workspaceIdentity}
-              modelSelectionView={modelSelectionView}
-              modelSelectionState={modelSelectionState}
-              modelSelectionReload={modelSelectionReload}
-              modelSelectionRefresh={modelSelectionRefresh}
-              sessionId={sessionId ?? null}
-              phase={composerPhase}
-              provider={provider}
-              isWebRemoteControl={isWebRemoteControl}
-              isMobileViewport={isMobileTextInputViewport}
-              draftMode={draftMode}
-              draftConfig={draftConfig}
-              usage={composerUsage}
-              disabled={disabled || runtimeBlocked}
-              activeConfigPicker={activeConfigPicker}
-              onConfigPickerOpenChange={handleConfigPickerOpenChange}
-              onSelectModel={handleSelectModelTrace}
-              onSelectThought={onSelectThought}
-              onSwitchMode={onSwitchMode}
-              onRecoverCustomModelSelection={onRecoverCustomModelSelection}
-              onSendCompressionCommand={onSendCompressionCommand}
-            />
+            {externalEngine ? (
+              <ChatContextUsage
+                taskUsage={externalContextUsage}
+                selectedProvider={provider ?? ZCODE_AGENT_PROVIDER}
+                intl={intl}
+                locale={locale}
+              />
+            ) : (
+              <V4ComposerModelControls
+                workspacePath={workspacePath}
+                workspaceIdentity={workspaceIdentity}
+                modelSelectionView={modelSelectionView}
+                modelSelectionState={modelSelectionState}
+                modelSelectionReload={modelSelectionReload}
+                modelSelectionRefresh={modelSelectionRefresh}
+                sessionId={sessionId ?? null}
+                phase={composerPhase}
+                provider={provider}
+                isWebRemoteControl={isWebRemoteControl}
+                isMobileViewport={isMobileTextInputViewport}
+                draftMode={draftMode}
+                draftConfig={draftConfig}
+                usage={composerUsage}
+                disabled={disabled || runtimeBlocked}
+                activeConfigPicker={activeConfigPicker}
+                onConfigPickerOpenChange={handleConfigPickerOpenChange}
+                onSelectModel={handleSelectModelTrace}
+                onSelectThought={onSelectThought}
+                onSwitchMode={onSwitchMode}
+                onRecoverCustomModelSelection={onRecoverCustomModelSelection}
+                onSendCompressionCommand={onSendCompressionCommand}
+              />
+            )}
           </span>
         ) : null}
         {showStopControl ? (
@@ -2262,10 +2282,13 @@ function ConversationComposerImpl({
       </div>
     ),
     [
+      externalEngine,
       canSend,
       activeConfigPicker,
       composerPhase,
       composerUsage,
+      externalContextUsage,
+      locale,
       disabled,
       runtimeBlocked,
       draftConfig,
@@ -2306,25 +2329,34 @@ function ConversationComposerImpl({
   const leadingActionsNode = useMemo(
     () => (
       <>
-        <V4ComposerModeSwitch
-          workspacePath={workspacePath}
-          workspaceIdentity={workspaceIdentity}
-          provider={provider}
-          draftConfig={draftConfig}
-          disabled={disabled || runtimeBlocked}
-          activeConfigPicker={activeConfigPicker}
-          onConfigPickerOpenChange={handleConfigPickerOpenChange}
-          onSwitchMode={onSwitchMode}
-        />
+        {engineControls ? (
+          <fieldset disabled={pending} className="min-w-0">
+            {engineControls}
+          </fieldset>
+        ) : null}
+        {!externalEngine ? (
+          <V4ComposerModeSwitch
+            workspacePath={workspacePath}
+            workspaceIdentity={workspaceIdentity}
+            provider={provider}
+            draftConfig={draftConfig}
+            disabled={disabled || runtimeBlocked}
+            activeConfigPicker={activeConfigPicker}
+            onConfigPickerOpenChange={handleConfigPickerOpenChange}
+            onSwitchMode={onSwitchMode}
+          />
+        ) : null}
         {/* Bug 原因：附件画廊 rebase 曾整段覆盖 leadingActions，误删 staging 的 CUA 常驻入口。
             入口自身继续负责平台、远程与设置可见性，不在 composer 重复判定。 */}
-        <V4ComposerCuaEntry
-          workspacePath={workspacePath}
-          workspaceIdentity={workspaceIdentity}
-          remoteSessionId={remoteSessionId}
-          isWebRemoteControl={isWebRemoteControl}
-          currentSessionBusy={canStop}
-        />
+        {!externalEngine ? (
+          <V4ComposerCuaEntry
+            workspacePath={workspacePath}
+            workspaceIdentity={workspaceIdentity}
+            remoteSessionId={remoteSessionId}
+            isWebRemoteControl={isWebRemoteControl}
+            currentSessionBusy={canStop}
+          />
+        ) : null}
         <ConversationBackgroundWorkTrigger
           backgroundWorks={snapshot?.backgroundWorks ?? []}
           runningSubagentCount={runningSubagentCount}
@@ -2334,6 +2366,9 @@ function ConversationComposerImpl({
       </>
     ),
     [
+      engineControls,
+      pending,
+      externalEngine,
       activeConfigPicker,
       canStop,
       disabled,
@@ -2383,6 +2418,7 @@ function ConversationComposerImpl({
         className="hidden"
         onChange={attachmentsApi.handleAttachmentInputChange}
       />
+      {engineNotReadyContent}
       {visibleError ? (
         // 仅展示附件错误会漏掉会话级 lastError，任务失败后也应在输入框上方显示原因。
         // 这里复用旧 ChatErrorBanner 壳，只接收 SessionPane 已归一化后的当前错误。

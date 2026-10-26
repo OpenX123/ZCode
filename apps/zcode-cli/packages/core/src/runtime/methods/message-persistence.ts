@@ -1,3 +1,4 @@
+import { isExternalSessionEngine } from "@zcode/shared";
 import type { RuntimeInputPresentation } from "@zcode/contracts";
 import { createModelId, createModelProviderId } from "@zcode/contracts";
 import { SessionEventType, createPartId, traceContextToLogContext } from "../deps.js";
@@ -295,7 +296,9 @@ export async function persistAssistantMessage(
     this.latestAssistantTurnId = traceContext.turnId;
   }
   if (!this.sessionStore) return;
-  const selection = this.getSessionModelSelection();
+  const selection = isExternalSessionEngine(this.config.engine)
+    ? undefined
+    : this.getSessionModelSelection();
   const providerId =
     model?.providerId ?? (selection && createModelProviderId(selection.providerId));
   const modelId = model?.modelId ?? (selection && createModelId(selection.modelId));

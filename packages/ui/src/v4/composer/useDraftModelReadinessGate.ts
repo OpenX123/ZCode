@@ -44,12 +44,17 @@ export function useDraftModelReadinessGate(params: {
   workspaceIdentity?: string;
   provider?: ZCodeProvider;
   sessionId: string | null;
-  modelSelectionService: Pick<IModelSelectionService, "getView" | "onDidChange">;
+  enabled?: boolean;
+  modelSelectionService: Pick<IModelSelectionService, "getView" | "onDidChange"> | null;
 }): DraftModelReadinessGate {
   const { workspacePath, workspaceIdentity, provider, sessionId, modelSelectionService } = params;
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
-  const enabled = sessionId === null && isZCodeAgentProvider(displayProvider);
+  const enabled =
+    params.enabled !== false &&
+    Boolean(modelSelectionService) &&
+    sessionId === null &&
+    isZCodeAgentProvider(displayProvider);
   const gateKey = `${workspaceKey}\u0000${displayProvider}`;
   const scope = useMemo(() => ({ gateKey }), [enabled, gateKey, modelSelectionService]);
   const [state, setState] = useState<DraftModelReadinessState>(() => ({
@@ -88,7 +93,7 @@ export function useDraftModelReadinessGate(params: {
   );
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || !modelSelectionService) {
       commitStatus("ready");
       return;
     }
@@ -138,7 +143,7 @@ export function useDraftModelReadinessGate(params: {
   }, [commitStatus]);
 
   const ensureReadyForSend = useCallback(async (): Promise<boolean> => {
-    if (!enabled) return true;
+    if (!enabled || !modelSelectionService) return true;
     try {
       const view = await modelSelectionService.getView();
       const status = resolveModelSelectionReadinessStatus(view);

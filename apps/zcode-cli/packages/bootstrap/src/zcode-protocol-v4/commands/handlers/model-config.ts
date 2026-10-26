@@ -184,6 +184,8 @@ export async function applyRequestedSessionConfig(
   record: V4SessionRecordView,
   config: NonNullable<CommandPayloadMap["createSession"]["config"]>,
 ): Promise<void> {
+  // 外部引擎配置由 ACP 唯一管理，不能把上个内置草稿的模型或模式覆盖过去。
+  if ((record.app.runtime.getSessionEngine?.() ?? "zcode") !== "zcode") return;
   await runSessionModelConfigMutation(record.app, async () => {
     const previousSelection = record.app.runtime.getSessionModelSelection();
     const previousModelSelection =
@@ -264,4 +266,30 @@ export async function applyRequestedSessionConfig(
   }
 }
 
-export const modelConfigHandlers = { switchModelConfig, switchCollaborationMode };
+async function setEngineConfigOption(
+  host: V4CommandCoreHost,
+  envelope: CommandEnvelope,
+): Promise<CommandResult | undefined> {
+  const record = requireRecord(host, envelope.sessionId);
+  const payload = envelope.payload as CommandPayloadMap["setEngineConfigOption"];
+  await record.app.runtime.setEngineConfigOption(payload.configId, payload.value);
+  return undefined;
+}
+
+async function prepareExternalEngineSession(
+  host: V4CommandCoreHost,
+  envelope: CommandEnvelope,
+): Promise<undefined> {
+  const record = requireRecord(host, envelope.sessionId);
+  if (record.app.runtime.getSessionEngine() === "zcode")
+    throw new Error("External engine unavailable");
+  await record.app.runtime.prepareExternalEngineSession();
+  return undefined;
+}
+
+export const modelConfigHandlers = {
+  prepareExternalEngineSession,
+  switchModelConfig,
+  switchCollaborationMode,
+  setEngineConfigOption,
+};

@@ -10,6 +10,7 @@ import type { ICuaPermissionService } from "./cua-permission-broker/cuaPermissio
 import type { IFileService } from "./file/file.js";
 import type { IFileWatcherService } from "./fileWatcher/fileWatcher.js";
 import type { IGenUiService } from "./gen-ui/contract.js";
+import type { IExternalEngineService } from "./external-engine/contract.js";
 import type { IGitService } from "./git/git.js";
 import type { IGitCheckpointService } from "./git/gitCheckpoint.js";
 import type { IHooksService } from "./hooks/hooks.js";
@@ -85,6 +86,8 @@ export interface IServiceAccessor {
   readonly mcpSyncService: IMcpSyncService;
   /** 插件 UI 桥；web 或旧 host 可不提供，UI 据此回退普通 MCP 卡片。 */
   readonly genUiService?: IGenUiService;
+  /** 外部 Agent 引擎（Claude Code / Codex）安装与就绪检测；未装配的 host 可不提供。 */
+  readonly externalEngineService?: IExternalEngineService;
   readonly pluginUiBridgeService?: IPluginUiBridgeService;
   /** 页面 sampling；只有桌面本地任务开放。 */
   readonly pluginUiSamplingService?: IPluginUiSamplingService;

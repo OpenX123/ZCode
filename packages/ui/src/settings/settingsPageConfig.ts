@@ -20,6 +20,7 @@ import {
   HardDrive,
   Keyboard,
   FileSearch,
+  Cpu,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -73,6 +74,12 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "modelProvider",
     icon: Package,
     titleId: "settings.modelProviderTitle",
+    groupId: "basics",
+  },
+  {
+    id: "agentEngines",
+    icon: Cpu,
+    titleId: "engine.settings.title",
     groupId: "basics",
   },
   {
@@ -187,18 +194,21 @@ export const SETTINGS_SECTIONS = BASE_SETTINGS_SECTIONS.filter(
 );
 
 export interface SettingsPageConfigOptions {
+  externalEnginesAvailable?: boolean;
   isDesktop?: boolean;
   isMacDesktop?: boolean;
   isWindowsDesktop?: boolean;
 }
 
 export function createSettingsPageConfig({
+  externalEnginesAvailable = false,
   isDesktop = false,
   isMacDesktop = false,
   isWindowsDesktop = false,
 }: SettingsPageConfigOptions = {}) {
   const showComputerUse = isDesktop || isMacDesktop || isWindowsDesktop;
   const settingsSections = BASE_SETTINGS_SECTIONS.filter((section) => {
+    if (section.id === "agentEngines" && !externalEnginesAvailable) return false;
     if (section.id === "computerUse" && !showComputerUse) return false;
     return isSettingsSectionEnabled(section.id);
   });

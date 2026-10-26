@@ -61,72 +61,82 @@ describe("AgentToolCallBlock", () => {
     useSubagentsStore.setState({ agents: [] });
   });
 
-  it("keeps an Agent without a persisted child as a static one-line summary", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+  it.each([false, true])(
+    "外部 Agent 可就地展开，原生无子会话摘要保持原行为 external=%s",
+    (external) => {
+      const html = renderToStaticMarkup(
         createElement(
-          ServiceProvider,
-          { services: mockServices },
+          ZCodeIntlProvider,
+          { initialLocale: "zh-CN" },
           createElement(
-            StoreProvider,
-            { broadcastService: mockBroadcastService },
-            createElement(AgentToolCallBlock, {
-              toolCallNode: {
-                toolCall: {
-                  toolId: "tool-agent-running",
-                  kind: "think",
-                  title: "Inspect workspace",
-                  input: {
-                    prompt: "分析当前工作区并继续拆分任务",
-                    subagent_type: "Explore",
-                  },
-                  output: [],
-                  status: "running",
-                  raw: {
-                    _meta: {
-                      zcode: {
-                        toolName: "Agent",
+            ServiceProvider,
+            { services: mockServices },
+            createElement(
+              StoreProvider,
+              { broadcastService: mockBroadcastService },
+              createElement(AgentToolCallBlock, {
+                toolCallNode: {
+                  toolCall: {
+                    toolId: "tool-agent-running",
+                    kind: "think",
+                    title: "Inspect workspace",
+                    input: {
+                      prompt: "分析当前工作区并继续拆分任务",
+                      subagent_type: "Explore",
+                    },
+                    output: [],
+                    content: "外部 Agent 活动内容",
+                    status: "running",
+                    raw: {
+                      inlineAgentDetails: external,
+                      _meta: {
+                        zcode: {
+                          toolName: "Agent",
+                        },
                       },
                     },
                   },
+                  childToolCalls: [],
                 },
-                childToolCalls: [],
-              },
-              workspacePath: "/workspace",
-              displayModel: {
-                inlinePreview: { type: "none" },
-                planResult: null,
+                workspacePath: "/workspace",
+                displayModel: {
+                  inlinePreview: { type: "none" },
+                  planResult: null,
+                  viewerSource: null,
+                  viewerLabelId: "codeViewer.viewCode",
+                  showSummaryFileLink: false,
+                  showInput: false,
+                  showOutput: false,
+                  showKind: false,
+                },
                 viewerSource: null,
-                viewerLabelId: "codeViewer.viewCode",
-                showSummaryFileLink: false,
-                showInput: false,
-                showOutput: false,
-                showKind: false,
-              },
-              viewerSource: null,
-              rawFileSummaries: [],
-              isRunning: true,
-              statusLabel: "执行中",
-              errorText: undefined,
-              childToolList: null,
-              showIcon: true,
-              forceOpen: false,
-              onOpenCodeViewer: undefined,
-              onOpenBrowserUrl: undefined,
-            }),
+                rawFileSummaries: [],
+                isRunning: true,
+                statusLabel: "执行中",
+                errorText: undefined,
+                childToolList: null,
+                showIcon: true,
+                forceOpen: external,
+                onOpenCodeViewer: undefined,
+                onOpenBrowserUrl: undefined,
+              }),
+            ),
           ),
         ),
-      ),
-    );
-    expect(html).toContain(testId(TID_TOOL_SUMMARY_TRIGGER, "tool-agent-running"));
-    expect(html).toContain("Inspect workspace");
-    expect(html).not.toContain('role="button"');
-    expect(html).not.toContain("aria-expanded");
-    expect(html).not.toMatch(/提示词|Prompt/);
-    expect(html).not.toContain("分析当前工作区并继续拆分任务");
-  });
+      );
+      expect(html).toContain(testId(TID_TOOL_SUMMARY_TRIGGER, "tool-agent-running"));
+      expect(html).toContain("Inspect workspace");
+      if (external) {
+        expect(html).toContain("外部 Agent 活动内容");
+        expect(html).toContain("分析当前工作区并继续拆分任务");
+      } else {
+        expect(html).not.toContain('role="button"');
+        expect(html).not.toContain("aria-expanded");
+        expect(html).not.toMatch(/提示词|Prompt/);
+        expect(html).not.toContain("分析当前工作区并继续拆分任务");
+      }
+    },
+  );
 
   it("uses a side-pane summary action instead of expandable details", () => {
     const html = renderToStaticMarkup(

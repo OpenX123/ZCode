@@ -50,6 +50,16 @@ function projectionFor(sessionId: string, events: SessionEvent[]): ProductProjec
 }
 
 describe("SessionsIndexProjection 黄金测试（L1）", () => {
+  it.each(["zcode", "codex", "claude-code"] as const)("摘要保留 %s 引擎身份且身份变化不被合并", (engine) => {
+    const snapshot = projectionFor("s1", []).getSnapshot();
+    snapshot.config.engine = engine;
+    const projection = new SessionsIndexProjection("/repo", "epoch");
+    const extra = { createdAt: 1, lastActivityAt: 2 };
+    expect(deriveSessionSummary(snapshot, { workspaceId: "/repo", ...extra }).engine).toBe(engine);
+    projection.upsertFromConversation(snapshot, extra);
+    snapshot.config.engine = engine === "codex" ? "claude-code" : "codex";
+    expect(projection.upsertFromConversation(snapshot, extra)).toHaveLength(1);
+  });
   it("裁剪正文不改变持久化 lastOutcome，实时 phase 也不推导历史结果", () => {
     const snapshot = projectionFor("s1", []).getSnapshot();
     const summary = deriveSessionSummary(snapshot, {

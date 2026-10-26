@@ -159,10 +159,10 @@ describe("TaskList mobile active indicator", () => {
     expect(html).not.toContain('data-unread-indicator="true"');
   });
 
-  it("places the phone marker before the task title text", () => {
+  it("手机查看标记位于标题右侧，左侧保留客户端身份", () => {
     const html = renderTaskItem();
 
-    expect(html.indexOf('aria-label="手机正在操作此任务"')).toBeLessThan(
+    expect(html.indexOf('aria-label="手机正在操作此任务"')).toBeGreaterThan(
       html.indexOf('data-task-title-copy="original"'),
     );
     expect(html).not.toContain('title="手机正在查看的任务"');
@@ -178,12 +178,35 @@ describe("TaskList mobile active indicator", () => {
     expect(html).not.toContain('aria-label="taskList.pin"');
   });
 
-  it("does not mount unpin until interaction when the phone marker owns the leading slot", () => {
+  it("手机查看与右侧取消置顶入口共存", () => {
     const html = renderTaskItem({ isPinned: true });
 
     expect(html).toMatch(
       /<span data-mobile-active-task="true"[^>]*aria-label="手机正在操作此任务"[^>]*data-slot="tooltip-trigger">/,
     );
-    expect(html).not.toContain('aria-label="taskList.unpin"');
+    expect(html).toContain('aria-label="taskList.unpin"');
+    expect(html.indexOf('data-task-pin-action="true"')).toBeGreaterThan(
+      html.indexOf('data-task-title-copy="original"'),
+    );
   });
+
+  it.each([undefined, "zcode", "codex", "claude-code"] as const)(
+    "%s 客户端 Logo 与未读和置顶独立展示，旧 provider 不决定客户端",
+    (engine) => {
+      const html = renderTaskItem({
+        task: createTaskMeta({ engine, unreadAt: 100 }),
+        isPinned: true,
+        isMobileActive: false,
+      });
+      expect(html).toContain(`data-task-client-logo="${engine ?? "zcode"}"`);
+      expect(html).toContain('data-unread-indicator="true"');
+      expect(html).toContain('aria-label="taskList.unpin"');
+      expect(html.indexOf("data-task-client-logo=")).toBeLessThan(
+        html.indexOf('data-task-title-copy="original"'),
+      );
+      expect(html.indexOf('data-task-pin-action="true"')).toBeGreaterThan(
+        html.indexOf('data-task-title-copy="original"'),
+      );
+    },
+  );
 });

@@ -7,6 +7,8 @@ export function buildRemoteWorkspaceSessionServices(
 ): IServiceAccessor {
   return {
     ...baseServices,
+    // 一期只支持桌面本地；远端不可继承本机 adapter 的安装/就绪状态。
+    externalEngineService: undefined,
     fileService: remoteServices.fileService,
     // 根因：遗漏此覆盖会用本机输出根目录校验远端 HTML，合法文件也被判越界。
     // 文件读取走执行端；useGenUi 的状态与沙箱仍取 desktop base services。

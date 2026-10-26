@@ -203,7 +203,10 @@ it("SILENTDB-02/04: reports real migration kind and counts only committed SQL as
       .sort()
       .at(-1),
   });
-  db.exec("DELETE FROM schema_migration WHERE id >= '0020'");
+  // 模拟旧库时同时回退新增列，避免账本已回退、物理 schema 却仍是新版。
+  db.exec(
+    "ALTER TABLE session DROP COLUMN external_session_id; ALTER TABLE session DROP COLUMN engine; DELETE FROM schema_migration WHERE id >= '0020'",
+  );
   const failed: SqliteMigrationProgress[] = [];
   await expect(
     runSqliteSessionMigrationsAsync(db, ":memory:", {
@@ -227,7 +230,10 @@ it("SILENTDB-03: another writer can finish the observed migrations without this 
   const path = join(dir, "db.sqlite");
   const holder = open(path);
   await runSqliteSessionMigrations(holder, path);
-  holder.exec("DELETE FROM schema_migration WHERE id >= '0020'; BEGIN IMMEDIATE");
+  // 另一个 writer 必须从真实旧 schema 升级，不能只删除迁移账本留下新版列。
+  holder.exec(
+    "ALTER TABLE session DROP COLUMN external_session_id; ALTER TABLE session DROP COLUMN engine; DELETE FROM schema_migration WHERE id >= '0020'; BEGIN IMMEDIATE",
+  );
   const waiter = open(path);
   const states: SqliteMigrationProgress[] = [];
   const exec = vi.spyOn(waiter, "exec");

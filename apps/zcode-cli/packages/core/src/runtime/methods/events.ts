@@ -1,4 +1,5 @@
 import type { WorkspaceId } from "@zcode/contracts";
+import { persistExternalEngineConfig } from "../../external-engine/session.js";
 import { buildExecutionStateEntry, readRuntimeExecutionState } from "../execution-state.js";
 import {
   SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION,
@@ -624,6 +625,8 @@ async function persistSession(
       parentID: this.config.parentSessionId,
       traceID: traceContext.traceId,
       taskType: this.config.taskType,
+      engine: this.config.engine,
+      externalSessionId: this.config.externalSessionId,
       slug: slugify(this.sessionId),
       directory: persistedWorkspacePath,
       path: persistedWorkspacePath,
@@ -650,6 +653,7 @@ async function persistSession(
     // `/workflow` 作为首轮时激活先于落盘（launch.md「On demand: activation」），entry 在这里补写。
     await writeDynamicWorkflowActivationEntryIfActivated(this);
     this.sessionPersisted = true;
+    await persistExternalEngineConfig(this);
     this.logger?.debug("Session persisted", {
       ...traceContextToLogContext(traceContext),
       event: "session.persisted",

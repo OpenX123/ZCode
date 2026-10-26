@@ -6,6 +6,7 @@ import {
   ICredentialService,
   ICuaPermissionService,
   IFileService,
+  IExternalEngineService,
   IFileWatcherService,
   IGenUiService,
   IGitCheckpointService,
@@ -90,6 +91,7 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly skillsService: ISkillsService;
   readonly skillSyncService: ISkillSyncService;
   readonly mcpSyncService: IMcpSyncService;
+  readonly externalEngineService?: IExternalEngineService;
   readonly genUiService: IGenUiService;
   readonly pluginUiBridgeService: IPluginUiBridgeService;
   readonly pluginUiSamplingService: IPluginUiSamplingService;
@@ -107,7 +109,11 @@ export class RemoteServiceAccess implements IServiceAccessor {
 
   constructor(
     channelClient: IChannelClient,
-    options: { sourceServerManagementService?: boolean; windowProjectDirectory?: boolean } = {},
+    options: {
+      sourceServerManagementService?: boolean;
+      windowProjectDirectory?: boolean;
+      externalEngineService?: boolean;
+    } = {},
   ) {
     // 远端工作区的 project 必须保留 Source 语义；只有显式能力才创建完整窗口目录组。
     if (options.windowProjectDirectory) {
@@ -123,6 +129,12 @@ export class RemoteServiceAccess implements IServiceAccessor {
         ),
       };
     }
+    // 仅显式发布该能力的桌面本地 Host 创建代理，避免远端出现无服务的惰性对象。
+    this.externalEngineService = options.externalEngineService
+      ? ProxyChannel.toService<IExternalEngineService>(
+          channelClient.getChannel(IExternalEngineService.channelName),
+        )
+      : undefined;
     this.fileService = ProxyChannel.toService<IFileService>(
       channelClient.getChannel(IFileService.channelName),
     );

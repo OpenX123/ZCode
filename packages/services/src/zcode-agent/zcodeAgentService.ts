@@ -1,3 +1,11 @@
+import {
+  isExternalSessionEngine,
+  resolveSessionEngine,
+  ZCODE_AGENT_ENGINE_NOT_READY_CODE,
+  ZCODE_AGENT_ENGINE_NOT_READY_REASON,
+  type SessionEngine,
+} from "@zcode/shared/external-engine";
+import type { IExternalEngineService } from "../external-engine/contract.js";
 import { isAuxiliarySessionKind } from "@zcode/shared";
 import {
   pluginUiToolResultNotificationSchema,
@@ -659,6 +667,7 @@ function buildSessionCreateParams(
 ) {
   return {
     sessionId: params.sessionId,
+    ...(params.engine ? { engine: params.engine } : {}),
     additionalDirectories: params.additionalDirectories,
     workspace: buildWorkspaceRef(params),
     parentSessionId: params.parentSessionId,
@@ -943,6 +952,9 @@ interface CreateZCodeAgentServiceOptions extends Omit<
   ZCodeAgentProcessManagerOptions,
   "idleTimeoutMs"
 > {
+  /** 仅桌面本地装配；远端明确为 false，拒绝读取到的外部引擎会话。 */
+  externalEnginesSupported?: boolean;
+  externalEngineService?: IExternalEngineService;
   /** 仅供 MCP 状态探测进程使用，不能把空闲回收传给 chat。 */
   mcpStatusIdleTimeoutMs?: number;
   /** Desktop Host 请求 Main 登记 Agent 已授权的精确本地视频路径。 */
@@ -1167,7 +1179,11 @@ export function createZCodeAgentService(
   /** 每个 workspace 的策略同步链：后入队的步骤在前一步落地后才读取生效模式并发送。 */
   const dynamicWorkflowPolicySyncByWorkspaceKey = new Map<string, Promise<void>>();
   const waitingWorkspaceStartups = new Map<string, WaitingWorkspaceStartup>();
+  const pendingExternalReadiness = new Set<{ workspaceKey: string; cancelled: boolean }>();
   function cancelWaitingWorkspaceStartup(workspaceKey: string): void {
+    for (const pending of pendingExternalReadiness) {
+      if (pending.workspaceKey === workspaceKey) pending.cancelled = true;
+    }
     const waiting = waitingWorkspaceStartups.get(workspaceKey);
     if (waiting) {
       waiting.cancelled = true;
@@ -1175,6 +1191,7 @@ export function createZCodeAgentService(
     }
   }
   function cancelAllWaitingWorkspaceStartups(): void {
+    for (const pending of pendingExternalReadiness) pending.cancelled = true;
     for (const waiting of waitingWorkspaceStartups.values()) {
       waiting.cancelled = true;
     }
@@ -2996,6 +3013,76 @@ export function createZCodeAgentService(
     return envelope;
   }
 
+  async function sessionEngineForExecution(
+    params: ZCodeAgentSessionTarget,
+  ): Promise<SessionEngine> {
+    // 只读进程不需要 Registry；engine 从 CLI 持久化事实读取，冷恢复不能按 UI 缺省猜测。
+    if (options?.externalEnginesSupported === undefined && !options?.externalEngineService)
+      return "zcode";
+    const client = await getReadOnlyClient(params);
+    const { sessions } = await client.request(
+      zcodeProtocolMethods.sessionList,
+      {
+        workspace: buildWorkspaceRef(params),
+        sessionIds: [params.sessionId],
+        ...(options?.externalEngineService && options?.externalEnginesSupported !== false
+          ? { includeDrafts: true }
+          : {}),
+      },
+      zcodeSessionListResultSchema,
+    );
+    return resolveSessionEngine(sessions.find((session) => session.sessionId === params.sessionId));
+  }
+
+  async function clientForEngine(
+    params: ZCodeAgentWorkspaceTarget,
+    engine: SessionEngine,
+    requireReady = true,
+  ) {
+    if (!isExternalSessionEngine(engine)) return getClient(params);
+    const supported =
+      options?.externalEnginesSupported !== false &&
+      !params.remoteSessionId &&
+      !(params.workspaceIdentity && isRemoteWorkspaceIdentity(params.workspaceIdentity));
+    const pending = { workspaceKey: resolveWorkspaceKey(params), cancelled: false };
+    pendingExternalReadiness.add(pending);
+    let ready = false;
+    try {
+      ready =
+        supported && requireReady
+          ? (await options?.externalEngineService?.getStatus(engine))?.ready === true
+          : false;
+      // 登录检测可能晚于工作区释放返回；与内置 Provider 等待共用取消入口，防止旧请求复活 runtime。
+      if (pending.cancelled) throw createRuntimeUnavailableError(params);
+    } finally {
+      pendingExternalReadiness.delete(pending);
+    }
+    if (!supported || (requireReady && !ready)) {
+      const error = new Error(ZCODE_AGENT_ENGINE_NOT_READY_REASON) as Error & {
+        code: string;
+        reasonCode: string;
+        engine: SessionEngine;
+      };
+      error.code = ZCODE_AGENT_ENGINE_NOT_READY_CODE;
+      error.reasonCode = ZCODE_AGENT_ENGINE_NOT_READY_REASON;
+      error.engine = engine;
+      throw error;
+    }
+    return getReadOnlyClient(params);
+  }
+
+  async function sessionControlClient(params: ZCodeAgentSessionTarget) {
+    return clientForEngine(params, await sessionEngineForExecution(params), false);
+  }
+
+  async function builtinSessionClient(params: ZCodeAgentSessionTarget) {
+    if (isExternalSessionEngine(await sessionEngineForExecution(params)))
+      throw Object.assign(new Error("external_engine_unsupported"), {
+        code: "external_engine_unsupported",
+      });
+    return getClient(params);
+  }
+
   return {
     async prepareStorage(params) {
       const client = await processManager.getClient(params);
@@ -3099,6 +3186,11 @@ export function createZCodeAgentService(
     },
 
     async createSession(params: ZCodeAgentCreateSessionParams) {
+      const engine = resolveSessionEngine(params);
+      // 就绪检查必须早于项目预留，拒绝创建时不留下空 task 索引。
+      const externalClient = isExternalSessionEngine(engine)
+        ? await clientForEngine(params, engine)
+        : undefined;
       if (options?.prepareSessionCreation) {
         const sessionId = params.sessionId ?? `session_${randomUUID()}`;
         const directories = await options.prepareSessionCreation({
@@ -3115,12 +3207,13 @@ export function createZCodeAgentService(
         throw new Error("project.creation-unavailable");
       }
       const startedAt = Date.now();
-      const client = await getClient(params);
-      await client.request(
-        zcodeProtocolMethods.providerRefreshRegistry,
-        { reason: "session_create" },
-        zcodeProviderRefreshRegistryResultSchema,
-      );
+      const client = externalClient ?? (await getClient(params));
+      if (!isExternalSessionEngine(engine))
+        await client.request(
+          zcodeProtocolMethods.providerRefreshRegistry,
+          { reason: "session_create" },
+          zcodeProviderRefreshRegistryResultSchema,
+        );
       const sessionTraceId = params.sessionTraceId;
       logger.info(sessionTraceId, "开始请求 ZCode Protocol session/create", {
         hasInitialModel: params.model !== undefined,
@@ -3224,18 +3317,23 @@ export function createZCodeAgentService(
     },
 
     async resumeSession(params: ZCodeAgentResumeSessionParams) {
+      const engine = await sessionEngineForExecution(params);
+      const externalClient = isExternalSessionEngine(engine)
+        ? await clientForEngine(params, engine)
+        : undefined;
       params = {
         ...params,
         additionalDirectories:
           params.additionalDirectories ?? (await options?.resolveSessionDirectories?.(params)),
       };
       const startedAt = Date.now();
-      const client = await getClient(params);
-      await client.request(
-        zcodeProtocolMethods.providerRefreshRegistry,
-        { reason: "session_resume" },
-        zcodeProviderRefreshRegistryResultSchema,
-      );
+      const client = externalClient ?? (await getClient(params));
+      if (!isExternalSessionEngine(engine))
+        await client.request(
+          zcodeProtocolMethods.providerRefreshRegistry,
+          { reason: "session_resume" },
+          zcodeProviderRefreshRegistryResultSchema,
+        );
       const cachedTraceId = getSessionTraceId(params);
       // 冷恢复同样按 Host 的灰度判定下发，否则恢复出来的会话会丢掉工作流工具簇。
       const dynamicWorkflowFlags = await resolveDynamicWorkflowSessionFlags();
@@ -4457,12 +4555,14 @@ export function createZCodeAgentService(
 
     async sendPrompt(params: ZCodeAgentSendPromptParams) {
       const startedAt = Date.now();
-      const client = await getClient(params);
-      await client.request(
-        zcodeProtocolMethods.providerRefreshRegistry,
-        { reason: "session_send" },
-        zcodeProviderRefreshRegistryResultSchema,
-      );
+      const engine = await sessionEngineForExecution(params);
+      const client = await clientForEngine(params, engine);
+      if (!isExternalSessionEngine(engine))
+        await client.request(
+          zcodeProtocolMethods.providerRefreshRegistry,
+          { reason: "session_send" },
+          zcodeProviderRefreshRegistryResultSchema,
+        );
       const sessionTraceId = params.sessionTraceId?.trim() || getSessionTraceId(params);
       const logTraceId = sessionTraceId ?? params.inputId;
       const browserAmbientContext =
@@ -4538,7 +4638,7 @@ export function createZCodeAgentService(
 
     async compactSession(params: ZCodeAgentCompactParams) {
       const startedAt = Date.now();
-      const client = await getClient(params);
+      const client = await builtinSessionClient(params);
       const sessionTraceId = getSessionTraceId(params);
       logger.info(sessionTraceId ?? params.inputId, "ZCode Protocol session/compact 开始", {
         inputId: params.inputId,
@@ -4580,7 +4680,7 @@ export function createZCodeAgentService(
 
     async goalSession(params: ZCodeAgentGoalParams) {
       const startedAt = Date.now();
-      const client = await getClient(params);
+      const client = await builtinSessionClient(params);
       logger.info(params.inputId, "开始请求 ZCode Protocol session/goal", {
         action: params.action,
         hasObjective: Boolean(params.objective?.trim()),
@@ -4630,7 +4730,7 @@ export function createZCodeAgentService(
         expectedPersistence?: "deferred" | "immediate";
       },
     ): Promise<boolean> {
-      const client = await getClient(params);
+      const client = await sessionControlClient(params);
       const result = await client.request(
         zcodeProtocolMethods.sessionClose,
         {
@@ -4647,7 +4747,7 @@ export function createZCodeAgentService(
 
     async setModel(params: ZCodeAgentSetModelParams) {
       const startedAt = Date.now();
-      const client = await getClient(params);
+      const client = await builtinSessionClient(params);
       logger.info(undefined, "开始请求 ZCode Protocol session/setModel", {
         expectedRevision: params.expectedRevision ?? null,
         persistAsWorkspaceLastUsed: params.persistAsWorkspaceLastUsed ?? null,
@@ -4690,7 +4790,7 @@ export function createZCodeAgentService(
     },
 
     async setThoughtLevel(params: ZCodeAgentSetThoughtLevelParams) {
-      const client = await getClient(params);
+      const client = await builtinSessionClient(params);
       const snapshot = await client.request(
         zcodeProtocolMethods.sessionSetThoughtLevel,
         {
@@ -4705,7 +4805,7 @@ export function createZCodeAgentService(
     },
 
     async setMode(params: ZCodeAgentSetModeParams) {
-      const client = await getClient(params);
+      const client = await builtinSessionClient(params);
       return client.request(
         zcodeProtocolMethods.sessionSetMode,
         {
@@ -5203,7 +5303,20 @@ export function createZCodeAgentService(
     },
 
     async sendConversationCommandV4(params: ZCodeAgentConversationCommandParams) {
-      const client = await getClient(params);
+      const engine =
+        params.envelope.type === "createSession"
+          ? resolveSessionEngine(
+              commandPayloadSchemas.createSession.parse(params.envelope.payload).config,
+            )
+          : params.envelope.sessionId
+            ? await sessionEngineForExecution({ ...params, sessionId: params.envelope.sessionId })
+            : "zcode";
+      const client = await clientForEngine(
+        params,
+        engine,
+        requiresProviderRegistryRefresh(params.envelope.type) ||
+          params.envelope.type === "setEngineConfigOption",
+      );
       const planPayload = params.envelope.payload as {
         planEnabled?: boolean;
         config?: { planEnabled?: boolean };
@@ -5223,7 +5336,7 @@ export function createZCodeAgentService(
         params.clientMode ??
         "desktop-continuous";
       let envelope = await buildConversationCommandEnvelope(params);
-      if (requiresProviderRegistryRefresh(envelope.type)) {
+      if (!isExternalSessionEngine(engine) && requiresProviderRegistryRefresh(envelope.type)) {
         await client.request(
           zcodeProtocolMethods.providerRefreshRegistry,
           { reason: "v4_command" },
@@ -5290,7 +5403,7 @@ export function createZCodeAgentService(
     async attachmentBeginV4(params: ZCodeAgentAttachmentBeginParams) {
       const trusted = readTrustedZCodeAgentV4Connection(params);
       if (!trusted) throw new Error("fault.attachment.connectionUntrusted");
-      const client = await getClient(params);
+      const client = await sessionControlClient(params);
       const wireParams = {
         connectionId: trusted.connectionId,
         uploadId: params.uploadId,
@@ -5308,7 +5421,7 @@ export function createZCodeAgentService(
     async attachmentChunkV4(params: ZCodeAgentAttachmentChunkParams) {
       const trusted = readTrustedZCodeAgentV4Connection(params);
       if (!trusted) throw new Error("fault.attachment.connectionUntrusted");
-      const client = await getClient(params);
+      const client = await sessionControlClient(params);
       const wireParams = {
         connectionId: trusted.connectionId,
         uploadId: params.uploadId,
@@ -5323,7 +5436,7 @@ export function createZCodeAgentService(
     async attachmentCommitV4(params: ZCodeAgentAttachmentTerminalParams) {
       const trusted = readTrustedZCodeAgentV4Connection(params);
       if (!trusted) throw new Error("fault.attachment.connectionUntrusted");
-      const client = await getClient(params);
+      const client = await sessionControlClient(params);
       const wireParams = {
         connectionId: trusted.connectionId,
         uploadId: params.uploadId,
@@ -5340,7 +5453,7 @@ export function createZCodeAgentService(
     async attachmentAbortV4(params: ZCodeAgentAttachmentTerminalParams) {
       const trusted = readTrustedZCodeAgentV4Connection(params);
       if (!trusted) throw new Error("fault.attachment.connectionUntrusted");
-      const client = await getClient(params);
+      const client = await sessionControlClient(params);
       const wireParams = {
         connectionId: trusted.connectionId,
         uploadId: params.uploadId,
@@ -5829,6 +5942,7 @@ export function createZCodeAgentService(
     },
 
     async disposeAllAndWait(): Promise<void> {
+      cancelAllWaitingWorkspaceStartups();
       await Promise.all([
         processManager.disposeAllAndWait(),
         pluginProcessManager.disposeAllAndWait(),
