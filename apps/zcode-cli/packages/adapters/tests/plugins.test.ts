@@ -411,7 +411,7 @@ describe("NodePluginAdapter", () => {
     }
   });
 
-  it("seeds Claude official marketplace without overwriting an existing record", async () => {
+  it("补种自托管市场并保留用户已有来源，重复初始化不重复登记", async () => {
     const dir = await mkdtemp(join(tmpdir(), "zcode-plugin-default-marketplace-"));
     const storageRoot = join(dir, "storage");
 
@@ -430,8 +430,13 @@ describe("NodePluginAdapter", () => {
 
       const known = ensureDefaultPluginMarketplaces(storageRoot);
 
-      // 用户已登记的镜像保留；独立工具不再补种原厂默认市场。
-      expect(known).toHaveLength(1);
+      // 自托管源沿用插件身份，用户已登记的其他镜像保持不变。
+      expect(known).toHaveLength(2);
+      expect(known.find((record) => record.id === "zcode-plugins-official")).toMatchObject({
+        source: { source: "url", url: "https://skill.artai.top/marketplace.json" },
+        pluginCount: 51,
+      });
+      expect(ensureDefaultPluginMarketplaces(storageRoot)).toEqual(known);
       const claude = known.find((record) => record.id === "claude-plugins-official");
       expect(claude).toMatchObject({
         description: "Custom Claude mirror",
@@ -446,6 +451,10 @@ describe("NodePluginAdapter", () => {
           {
             description: "Custom Claude mirror",
             pluginCount: 123,
+          },
+          {
+            id: "zcode-plugins-official",
+            source: { source: "url", url: "https://skill.artai.top/marketplace.json" },
           },
         ],
       });

@@ -5,6 +5,7 @@ export type OpenTabLauncherItemId =
   | "files"
   | "review"
   | "terminal"
+  | "claude-code"
   | "browser"
   | "developer-tools";
 
@@ -25,7 +26,7 @@ export function resolveOpenTabLauncherItemIds({
     itemIds.push("browser");
   }
 
-  itemIds.push("terminal");
+  itemIds.push("terminal", "claude-code");
 
   if (!hasReviewTab) {
     itemIds.push("review");

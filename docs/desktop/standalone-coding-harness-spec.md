@@ -6,6 +6,8 @@
 
 保留桌面、CLI、SSH、会话、终端、编辑、Git、Skills、插件、MCP、Subagents、普通定时任务、动态工作流和本地 App Usage。GLM 只作为普通 API Provider，不需要产品账号。
 
+工作区终端可显式启动用户安装的原生 Claude Code，默认传入权限模式 `auto`；原生 TUI 和会话事实由 Claude Code 管理，不恢复已移除的第三方 Agent Provider。见 [Claude Code 原生终端接入](./claude-code-native-terminal-spec.md)。
+
 移除官方账号、套餐、额度、邀请、营销、推广、云分享、反馈上传、遥测、手机云端远控、官方更新检查、官方 Server MCP 凭证注入和闲时 ticket 调度。不新建替代商业服务或手机配对服务。
 
 安装架构不匹配时保留本地提示，用户自行安装原生架构构建，不提供原厂下载跳转。
@@ -24,7 +26,7 @@
 - 用户设置由既有 SettingService 写入；动态工作流保留明确设置，缺省 onDemand；桌面与 SSH 的生效优先级为用户设置 > 内置 onDemand 默认，不读取发行档位、环境灰度或远端配置。独立 CLI 的通用解析器可显式传入本地环境覆盖。兼容接口中的 remote 输入但不访问其内容，快照来源仅为 override/default。
 - CLI 拥有会话正文和执行事实，Host 拥有组织态和调度。workspaceIdentity 用于身份，workspacePath 用于文件操作。
 - 删除官方专用 Service、RPC/IPC、preload、WebView、轮询和构建装配；共享安全与执行接口按真实引用保留。
-- 内置目录和运行时随本仓库构建发布。Built-in Source 仅读取明确的随包文件并监听该本地文件，不读写旧 Active/LKG、Endpoint 缓存或刷新控制文件，不提供远端下载、应用 Release、周期检查或刷新接口。Host 向 Agent 传递同一随包路径；Personal 的锁、备份、轮询和原子更新保持原有所有者。默认不注册远端插件市场；本地插件与用户显式添加的来源保留。
+- 内置目录和运行时随本仓库构建发布。Built-in Source 仅读取明确的随包文件并监听该本地文件，不读写旧 Active/LKG、Endpoint 缓存或刷新控制文件，不提供远端下载、应用 Release、周期检查或刷新接口。Host 向 Agent 传递同一随包路径；Personal 的锁、备份、轮询和原子更新保持原有所有者。默认插件市场使用自托管地址 `https://skill.artai.top/marketplace.json`，沿用 `zcode-plugins-official` 身份与既有安装记录；仅在该身份尚未登记时补种，不覆盖用户已有来源。本地插件与用户显式添加的来源保留，插件分发不依赖原厂账号。
 - Agent 的默认、bootstrap 与 Turbo 源码构建都先清理目标 workspace 包的 dist，再按现有依赖顺序重建；防止已删除源文件的旧 JS 被 Server 整包暂存带入安装包。只清理构建输出，不触及用户数据。
 - 桌面资源准备先完成 Source Server 构建，最后由桌面 Agent 准备步骤统一重建 Agent、插件及原生依赖闭包；后续 Server 构建不得清空已经完成的桌面资源。Koffi 仅服务 Windows Agent 的 MCP Job Object，放在 Agent 可解析的 `glm/node_modules` 并单独映射进安装包；当前 CUA SDK 不要求或校验过时的 Koffi 副本，macOS/Linux 不携带该 Windows 依赖。
 - 安装包体积审计保留桌面基础预算 500 MiB。随包离线 Source Server 单独限每个平台 112 MiB、四个平台合计 400 MiB；使用安装目录中的实际资源，通过既有 descriptor schema、当前版本、完整四平台文件白名单及逐个 size/SHA-256 校验后，才按归档实际字节增加总产物额度。总预算为 500 MiB 加已验证的资源字节，不直接提高基础阈值。文件夹不得包含额外文件、子目录或符号链接，清单不超过 64 KiB。该预算按已经 gzip 的归档字节折算，外层安装器的再次压缩不计为桌面减重；报告基础额度、资源实测及总额度，不能称作精确的压缩后桌面体积。未提供资源目录的独立审计仍执行原 500 MiB 上限。

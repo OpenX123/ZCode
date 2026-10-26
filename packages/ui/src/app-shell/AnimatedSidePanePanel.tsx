@@ -430,7 +430,7 @@ export function AnimatedSidePanePanel({
   onNavigateFileManager: (tabId: string, source: CodeViewerSource) => void;
   onOpenPluginMarket?: () => void;
   onCreateTask?: (request?: CreateTaskRequest) => void;
-  onOpenTerminalTab: () => void;
+  onOpenTerminalTab: (program?: "claude-code") => void;
   onOpenReviewTab: () => void;
   onOpenSelectionSideConversation: () => void;
   onRevealGitFileInTree?: (path: string) => void;
@@ -805,7 +805,14 @@ export function AnimatedSidePanePanel({
       label: intl.formatMessage({ id: "terminal.title" }),
       description: intl.formatMessage({ id: "sidePane.launcher.terminal" }),
       icon: SquareTerminalIcon,
-      onOpen: onOpenTerminalTab,
+      onOpen: () => onOpenTerminalTab(),
+    },
+    "claude-code": {
+      id: "claude-code",
+      label: "Claude Code",
+      description: intl.formatMessage({ id: "terminal.claudeCode.description" }),
+      icon: SquareTerminalIcon,
+      onOpen: () => onOpenTerminalTab("claude-code"),
     },
     browser: {
       id: "browser",
@@ -828,7 +835,10 @@ export function AnimatedSidePanePanel({
     hasReviewTab,
     supportsEmbeddedBrowser,
   })
-    .filter((itemId) => !isOfficeMode || (itemId !== "terminal" && itemId !== "review"))
+    .filter(
+      (itemId) =>
+        !isOfficeMode || (itemId !== "terminal" && itemId !== "claude-code" && itemId !== "review"),
+    )
     .map((itemId) => openTabLauncherItemById[itemId]);
   const closeSidePaneButton =
     isVisible && !mobileOverlay && onCloseSidePane ? (
@@ -1422,6 +1432,7 @@ export function AnimatedSidePanePanel({
                             sessionId={tab.id}
                             workspaceKey={workspaceKey}
                             cwd={tab.cwd ?? workspaceAbsPath}
+                            program={tab.program}
                             isVisible={isVisible && tab.id === contentActiveTabId}
                             isWindowsDesktop={isWindowsDesktop}
                             onOpenBrowserUrl={onOpenBrowserUrl}

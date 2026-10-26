@@ -883,28 +883,35 @@ export function useAppPanels(options: {
     });
   }, [commitOpenedSidePaneState, revealSidePaneForCurrentOwner, workspaceAbsPath]);
 
-  const handleOpenTerminalTab = useCallback(() => {
-    if (isOfficeMode) return;
-    revealSidePaneForCurrentOwner();
-    commitOpenedSidePaneState((current) => {
-      const title = createTerminalSidePaneTitle(current, workspaceAbsPath);
-      const next = openTerminalSidePane(current, {
-        title,
-        cwd: workspaceAbsPath,
-        remoteSessionId: workspaceRemoteSessionId,
+  const handleOpenTerminalTab = useCallback(
+    (program?: "claude-code") => {
+      if (isOfficeMode) return;
+      revealSidePaneForCurrentOwner();
+      commitOpenedSidePaneState((current) => {
+        const title =
+          program === "claude-code"
+            ? "Claude Code"
+            : createTerminalSidePaneTitle(current, workspaceAbsPath);
+        const next = openTerminalSidePane(current, {
+          title,
+          program,
+          cwd: workspaceAbsPath,
+          remoteSessionId: workspaceRemoteSessionId,
+        });
+        logger.info(
+          `[App] 新建右侧终端 tab=${title} workspace=${workspaceAbsPath} tabs=${next.tabs.length}`,
+        );
+        return next;
       });
-      logger.info(
-        `[App] 新建右侧终端 tab=${title} workspace=${workspaceAbsPath} tabs=${next.tabs.length}`,
-      );
-      return next;
-    });
-  }, [
-    isOfficeMode,
-    commitOpenedSidePaneState,
-    revealSidePaneForCurrentOwner,
-    workspaceAbsPath,
-    workspaceRemoteSessionId,
-  ]);
+    },
+    [
+      isOfficeMode,
+      commitOpenedSidePaneState,
+      revealSidePaneForCurrentOwner,
+      workspaceAbsPath,
+      workspaceRemoteSessionId,
+    ],
+  );
 
   const handleOpenModelTrajectory = useCallback(
     (params: { taskId: string; title?: string | null }) => {

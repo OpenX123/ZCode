@@ -134,6 +134,7 @@ export interface TerminalSidePaneTab {
   openedAt?: number;
   title: string;
   cwd?: string;
+  program?: "claude-code";
   remoteSessionId?: string | null;
 }
 
@@ -740,6 +741,7 @@ function createDeveloperToolsSidePaneTab(): DeveloperToolsSidePaneTab {
 function createTerminalSidePaneTab(options: {
   title: string;
   cwd?: string;
+  program?: "claude-code";
   remoteSessionId?: string | null;
 }): TerminalSidePaneTab {
   return {
@@ -747,6 +749,7 @@ function createTerminalSidePaneTab(options: {
     type: "terminal",
     openedAt: Date.now(),
     title: options.title,
+    ...(options.program ? { program: options.program } : {}),
     ...(options.cwd ? { cwd: options.cwd } : {}),
     ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
   };
@@ -1838,7 +1841,12 @@ export function activateDeveloperToolsSidePane(
 
 export function openTerminalSidePane(
   current: WorkspaceSidePaneState | null,
-  options: { title: string; cwd?: string; remoteSessionId?: string | null },
+  options: {
+    title: string;
+    cwd?: string;
+    remoteSessionId?: string | null;
+    program?: "claude-code";
+  },
 ): WorkspaceSidePaneState {
   return activateSidePaneTab(current, createTerminalSidePaneTab(options));
 }

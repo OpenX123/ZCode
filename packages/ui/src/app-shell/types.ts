@@ -324,7 +324,7 @@ export interface WorkspaceShellLayoutProps extends AppProps {
   handleOpenFileManager: (target?: FileManagerTarget) => void;
   handleNavigateFileManager: (tabId: string, source: CodeViewerSource) => void;
   handleOpenPluginMarket: () => void;
-  handleOpenTerminalTab: () => void;
+  handleOpenTerminalTab: (program?: "claude-code") => void;
   handleToggleGit: () => void;
   handleOpenGitReview: (sourceId?: GitChangeSourceId) => void;
   handleToggleSidePane: () => void;

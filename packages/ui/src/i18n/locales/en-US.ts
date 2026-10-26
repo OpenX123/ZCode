@@ -2620,6 +2620,10 @@ const enUS: Record<string, string> = {
   // Terminal
   "terminal.exited": "[Process exited]",
   "terminal.title": "Terminal",
+  "terminal.claudeCode.open": "Open Claude Code",
+  "terminal.claudeCode.description": "Native CLI · auto permissions",
+  "terminal.claudeCode.unsupportedHost":
+    "This host's terminal service does not support Claude Code yet. Update it and try again.",
   "terminal.show": "Toggle terminal",
   "terminal.hide": "Toggle terminal",
   "terminal.toggle": "Toggle terminal",

@@ -14,11 +14,6 @@ function createHandlers() {
     openSkillsSettings: vi.fn(),
     openMcpSettings: vi.fn(),
     switchTheme: vi.fn(),
-    openFeedback: vi.fn(),
-    openCommunity: vi.fn(),
-    openProductDocs: vi.fn(),
-    login: vi.fn(),
-    logout: vi.fn(),
     toggleSidebar: vi.fn(),
     toggleTerminal: vi.fn(),
     togglePreview: vi.fn(),
@@ -36,12 +31,34 @@ const shortcuts = {
 };
 
 describe("createQuickPickCommands", () => {
+  it("原生 Claude Code 命令使用既有终端入口，并在办公模式隐藏", () => {
+    const handlers = createHandlers();
+    const options = {
+      allowOpenWorkspace: true,
+      isSidebarVisible: true,
+      themeTarget: "dark" as const,
+      shortcuts,
+      handlers,
+    };
+    const command = createQuickPickCommands(options).find((item) => item.id === "open-claude-code");
+    expect(command).toMatchObject({
+      sectionId: "panels",
+      titleId: "terminal.claudeCode.open",
+      icon: "terminal",
+    });
+    command!.run();
+    expect(handlers.openTerminalTab).toHaveBeenCalledWith("claude-code");
+    expect(
+      createQuickPickCommands({ ...options, supportsTerminal: false }).some(
+        (item) => item.id === "open-claude-code",
+      ),
+    ).toBe(false);
+  });
+
   it("通用模式过滤技术面板命令并保留浏览器和普通命令", () => {
     const commands = createQuickPickCommands({
       allowOpenWorkspace: true,
-      canOpenCommunity: true,
       isSidebarVisible: true,
-      isLoggedIn: false,
       supportsTerminal: false,
       supportsReview: false,
       themeTarget: "dark",
@@ -60,9 +77,7 @@ describe("createQuickPickCommands", () => {
   it("creates the starter command registry in stable sections", () => {
     const commands = createQuickPickCommands({
       allowOpenWorkspace: true,
-      canOpenCommunity: true,
       isSidebarVisible: true,
-      isLoggedIn: false,
       themeTarget: "dark",
       shortcuts,
       handlers: createHandlers(),
@@ -76,16 +91,13 @@ describe("createQuickPickCommands", () => {
       "toggle-terminal",
       "toggle-preview",
       "add-terminal-tab",
+      "open-claude-code",
       "add-browser-tab",
       "add-review-tab",
       "settings",
       "switch-theme",
       "skills-settings",
       "mcp-settings",
-      "feedback",
-      "community",
-      "product-docs",
-      "login",
     ]);
     expect(commands.find((command) => command.id === "open-workspace")).toMatchObject({
       sectionId: "suggested",
@@ -132,17 +144,12 @@ describe("createQuickPickCommands", () => {
     expect(commands.find((command) => command.id === "add-review-tab")).toMatchObject({
       sectionId: "panels",
     });
-    expect(commands.find((command) => command.id === "product-docs")).toMatchObject({
-      sectionId: "app",
-    });
   });
 
   it("keeps unavailable workspace opening visible but disabled", () => {
     const commands = createQuickPickCommands({
       allowOpenWorkspace: false,
-      canOpenCommunity: true,
       isSidebarVisible: true,
-      isLoggedIn: false,
       themeTarget: "dark",
       shortcuts,
       handlers: createHandlers(),
@@ -156,9 +163,7 @@ describe("createQuickPickCommands", () => {
   it("matches the sidebar toggle icon to the current sidebar state", () => {
     const closedSidebarCommands = createQuickPickCommands({
       allowOpenWorkspace: true,
-      canOpenCommunity: true,
       isSidebarVisible: false,
-      isLoggedIn: false,
       themeTarget: "dark",
       shortcuts,
       handlers: createHandlers(),
@@ -172,9 +177,7 @@ describe("createQuickPickCommands", () => {
   it("omits embedded browser commands when the shell does not support browser tabs", () => {
     const commands = createQuickPickCommands({
       allowOpenWorkspace: true,
-      canOpenCommunity: true,
       isSidebarVisible: true,
-      isLoggedIn: false,
       supportsEmbeddedBrowser: false,
       themeTarget: "dark",
       shortcuts,
@@ -189,9 +192,7 @@ describe("createQuickPickCommands", () => {
     const handlers = createHandlers();
     const command = createQuickPickCommands({
       allowOpenWorkspace: true,
-      canOpenCommunity: true,
       isSidebarVisible: true,
-      isLoggedIn: false,
       themeTarget: "dark",
       shortcuts,
       handlers,
@@ -202,31 +203,27 @@ describe("createQuickPickCommands", () => {
     expect(handlers.openBrowserTab).toHaveBeenCalledTimes(1);
   });
 
-  it("runs configure and app handlers", () => {
+  it("调用当前仍提供的配置命令", () => {
     const handlers = createHandlers();
     const commands = createQuickPickCommands({
       allowOpenWorkspace: true,
-      canOpenCommunity: true,
       isSidebarVisible: true,
-      isLoggedIn: false,
       themeTarget: "dark",
       shortcuts,
       handlers,
     });
 
     commands.find((item) => item.id === "skills-settings")?.run();
-    commands.find((item) => item.id === "product-docs")?.run();
+    commands.find((item) => item.id === "mcp-settings")?.run();
 
     expect(handlers.openSkillsSettings).toHaveBeenCalledTimes(1);
-    expect(handlers.openProductDocs).toHaveBeenCalledTimes(1);
+    expect(handlers.openMcpSettings).toHaveBeenCalledTimes(1);
   });
 
   it("has locale messages for every visible command label", () => {
     const commands = createQuickPickCommands({
       allowOpenWorkspace: true,
-      canOpenCommunity: true,
       isSidebarVisible: true,
-      isLoggedIn: false,
       themeTarget: "light",
       shortcuts,
       handlers: createHandlers(),
@@ -260,22 +257,16 @@ describe("createQuickPickCommands", () => {
     }
   });
 
-  it("uses logout instead of login for authenticated users", () => {
+  it("独立桌面命令目录不再提供已退役的官方账号与商业入口", () => {
     const commands = createQuickPickCommands({
       allowOpenWorkspace: true,
-      canOpenCommunity: false,
       isSidebarVisible: true,
-      isLoggedIn: true,
       themeTarget: "dark",
       shortcuts,
       handlers: createHandlers(),
     });
-
-    expect(commands.some((command) => command.id === "login")).toBe(false);
-    expect(commands.find((command) => command.id === "logout")).toMatchObject({
-      sectionId: "app",
-      titleId: "quickPick.command.logout",
-    });
-    expect(commands.some((command) => command.id === "community")).toBe(false);
+    for (const id of ["login", "logout", "feedback", "community", "product-docs"]) {
+      expect(commands.some((command) => command.id === id)).toBe(false);
+    }
   });
 });

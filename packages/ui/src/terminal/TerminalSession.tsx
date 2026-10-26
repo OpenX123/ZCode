@@ -3,7 +3,7 @@ import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { ClipboardPaste, Copy } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ILink, ILinkHandler, ITheme, IWindowsPty } from "@xterm/xterm";
 import type { IServiceAccessor } from "@zcode/services";
 import type { IDisposable } from "@zcode/rpc";
@@ -88,6 +88,7 @@ export function TerminalSession({
   sessionId,
   services,
   cwd,
+  program,
   isVisible,
   isPanelResizing = false,
   isWindowsDesktop = false,
@@ -100,6 +101,7 @@ export function TerminalSession({
   sessionId: string;
   services: IServiceAccessor;
   cwd?: string;
+  program?: "claude-code";
   isVisible: boolean;
   isPanelResizing?: boolean;
   isWindowsDesktop?: boolean;
@@ -122,6 +124,7 @@ export function TerminalSession({
   workspaceKey?: string;
 }) {
   const { intl } = useZCodeIntl();
+  const [startError, setStartError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -148,6 +151,23 @@ export function TerminalSession({
   exitedMessageRef.current = intl.formatMessage({ id: "terminal.exited" });
   exitHandlerRef.current = onExit;
   openBrowserUrlRef.current = onOpenBrowserUrl;
+
+  const createTerminal = useCallback(
+    async (size: TerminalSize) => {
+      const terminal = await services.terminalService.create({
+        ...size,
+        cwd,
+        ...(program ? { program } : {}),
+      });
+      // 旧远端会忽略新增字段；必须验证确认值，避免把普通 shell 误显示成已接入的 Claude Code。
+      if (program && terminal.program !== program) {
+        await services.terminalService.dispose({ id: terminal.id });
+        throw new Error(intl.formatMessage({ id: "terminal.claudeCode.unsupportedHost" }));
+      }
+      return terminal;
+    },
+    [cwd, intl, program, services.terminalService],
+  );
 
   const flushTerminalServiceResize = useCallback(() => {
     if (resizeInFlightRef.current) {
@@ -329,6 +349,7 @@ export function TerminalSession({
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    setStartError(null);
 
     // ===== persistentKey 路径：side pane terminal 跨 workspace 会话保活 =====
     // xterm 实例 + PTY 所有权上移到 sidePaneTerminalSessionRegistry 模块级单例，
@@ -544,8 +565,7 @@ export function TerminalSession({
 
       // 创建 PTY（异步）
       const initialCreateSize = initialTerminalSize ?? { cols: term.cols, rows: term.rows };
-      void services.terminalService
-        .create({ cols: initialCreateSize.cols, rows: initialCreateSize.rows, cwd })
+      void createTerminal(initialCreateSize)
         .then(({ id, shell, fontFamily, fontSize, theme, fontFamilySource, windowsPty }) => {
           if (ptyCancelled) {
             // cleanup 已发生：杀掉这个孤儿 PTY，不进 entry
@@ -699,21 +719,10 @@ export function TerminalSession({
           if (ptyCancelled) return;
           const message = error instanceof Error ? error.message : String(error);
           logger.error("[Terminal] persistent create failed:", error);
-          term.write(`\r\n[Terminal failed to start]\r\n${message}\r\n`);
-          // PTY 创建失败必须释放 registry 中本次占位的 entry。
-          // entry 在上方以 terminalId="" 占位先 register（line 541），再异步 terminalService.create()。
-          // 若失败不释放，terminalId="" 的僵尸 entry 会留在 registry，重挂/切 workspace 时命中
-          // 复用快路径（见上方 existingEntry 分支），直接复用已启动失败的 xterm，且永不重新
-          // terminalService.create()，该终端永久无法连接 PTY。
-          //
-          // ownership 校验（稳妥方案）：只有 registry 当前 entry 仍是本次创建的 entry 时才释放。
-          // 极端时序：create reject 触发前，组件可能已卸载（cleanup 已 release 半成品，见下方 !entry.terminalId
-          // 分支）并重挂、registry 已被新一次创建的 entry 覆盖。此时无脑 release 会误删新 entry。
-          // 闭包 entry 引用比较 registry 当前值：每次创建都是新 entry 对象，引用比较天然区分代际。
-          const currentEntry = sidePaneTerminalSessionRegistry.get(persistentKey);
-          if (currentEntry === entry) {
-            sidePaneTerminalSessionRegistry.release(persistentKey);
-          }
+          // 错误由组件展示；xterm 保留到标签卸载时再释放，避免初始化中的 viewport
+          // 异步回调访问已销毁的渲染器。PTY 不匹配时已在 createTerminal 中释放。
+          setStartError(message);
+          // terminalId 仍为空，下面 cleanup 会回收该占位；重挂会重新创建，不复用失败实例。
         });
 
       // 组件局部：resize observer
@@ -882,8 +891,7 @@ export function TerminalSession({
 
     // 优先使用 workspace 路径作为 terminal 工作目录，未设置时后端回退到 HOME
     const initialCreateSize = initialTerminalSize ?? { cols: term.cols, rows: term.rows };
-    terminalService
-      .create({ cols: initialCreateSize.cols, rows: initialCreateSize.rows, cwd })
+    createTerminal(initialCreateSize)
       .then(({ id, shell, fontFamily, fontSize, theme, fontFamilySource, windowsPty }) => {
         if (disposed) {
           terminalService.dispose({ id });
@@ -1073,6 +1081,7 @@ export function TerminalSession({
     };
   }, [
     clearResizeThrottleTimer,
+    createTerminal,
     cwd,
     isWindowsDesktop,
     onShellLabelChange,
@@ -1104,10 +1113,20 @@ export function TerminalSession({
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div
-          ref={containerRef}
-          className="terminal-xterm-shell h-full min-h-0 w-full overflow-hidden"
-        />
+        <div className="relative h-full min-h-0 w-full overflow-hidden">
+          <div
+            ref={containerRef}
+            className="terminal-xterm-shell h-full min-h-0 w-full overflow-hidden"
+          />
+          {startError ? (
+            <div
+              role="alert"
+              className="absolute inset-0 overflow-auto bg-background p-3 text-ui-base text-destructive"
+            >
+              {startError}
+            </div>
+          ) : null}
+        </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem onSelect={handleCopy}>

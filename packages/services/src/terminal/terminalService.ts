@@ -5,7 +5,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { Emitter, type Event } from "@zcode/rpc";
 import type { IPty } from "node-pty";
 import type { ISettingService } from "../setting/setting.js";
-import type { ITerminalService, TerminalWindowsPtyInfo } from "./terminal.js";
+import type { ITerminalService, TerminalProgram, TerminalWindowsPtyInfo } from "./terminal.js";
 import {
   resolveTerminalFontProfile,
   type TerminalFontFamilySource,
@@ -234,15 +234,16 @@ export function resolveTerminalEnv(env: NodeJS.ProcessEnv = process.env): NodeJS
 function spawnTerminalProcess(params: {
   nodePty: NodePtyModule;
   shell: string;
+  args?: string[];
   cols: number;
   rows: number;
   cwd: string;
   env: NodeJS.ProcessEnv;
 }): IPty {
-  const { nodePty, shell, cols, rows, cwd, env } = params;
+  const { nodePty, shell, args = [], cols, rows, cwd, env } = params;
 
   if (process.platform !== "win32") {
-    return nodePty.spawn(shell, [], {
+    return nodePty.spawn(shell, args, {
       name: "xterm-256color",
       cols,
       rows,
@@ -263,7 +264,7 @@ function spawnTerminalProcess(params: {
   } satisfies PtySpawnOptions;
 
   try {
-    return nodePty.spawn(shell, [], {
+    return nodePty.spawn(shell, args, {
       ...windowsBaseOptions,
       useConptyDll: true,
     });
@@ -275,7 +276,7 @@ function spawnTerminalProcess(params: {
     // Windows 下开启 node-pty 的实验性 useConptyDll 时，某些 Electron/安装包环境会在 shell 真正启动前
     // 就因为 conpty.node / conpty.dll 的原生模块定位失败直接报错，导致终端整个打不开。
     // 这里仅在命中这类 DLL 加载错误时回退到系统内置 ConPTY，既保留新版路径的优先级，也避免把普通启动失败误判成可重试。
-    return nodePty.spawn(shell, [], {
+    return nodePty.spawn(shell, args, {
       ...windowsBaseOptions,
       useConptyDll: false,
     });
@@ -404,25 +405,38 @@ export function createTerminalService(dependencies: {
       cols: number;
       rows: number;
       cwd?: string;
+      program?: TerminalProgram;
     }): Promise<{
       id: string;
       shell: string;
+      program?: TerminalProgram;
       fontFamily: string;
       fontSize?: number;
       theme?: TerminalThemeProfile;
       fontFamilySource: TerminalFontFamilySource;
       windowsPty?: TerminalWindowsPtyInfo;
     }> {
+      if (params.program !== undefined && params.program !== "claude-code") {
+        throw new Error("Unsupported terminal program");
+      }
       const id = String(nextId++);
       const shell = resolveTerminalShell();
       const cwd = resolveTerminalCwd(params.cwd);
       const env = resolveTerminalEnv();
-      const terminalProfileSettings = await dependencies.settingService
-        .get()
-        .catch(() => ({
-          terminalFontFamily: undefined,
-          terminalInheritSystemProfile: true,
-        }));
+      // 原生 CLI 自己管理权限和认证；固定传入 auto，不改全局配置、不拼接用户目录。
+      // POSIX 登录 shell 负责加载用户 PATH，exec 保证关闭 PTY 时直接释放 CLI。
+      const args =
+        params.program === "claude-code"
+          ? process.platform !== "win32"
+            ? ["-l", "-c", "exec claude --permission-mode auto"]
+            : /(?:^|[\\/])cmd(?:\.exe)?$/i.test(shell)
+              ? ["/d", "/s", "/c", "claude --permission-mode auto"]
+              : ["-NoLogo", "-Command", "claude --permission-mode auto"]
+          : [];
+      const terminalProfileSettings = await dependencies.settingService.get().catch(() => ({
+        terminalFontFamily: undefined,
+        terminalInheritSystemProfile: true,
+      }));
       const fontProfile = resolveTerminalFontProfile({
         settings: terminalProfileSettings,
         env: process.env,
@@ -438,13 +452,16 @@ export function createTerminalService(dependencies: {
         p = spawnTerminalProcess({
           nodePty,
           shell,
+          args,
           cols: params.cols,
           rows: params.rows,
           cwd,
           env,
         });
       } catch (error) {
-        throw new Error(`Failed to start terminal with shell '${shell}' in '${cwd}': ${getErrorMessage(error)}`);
+        throw new Error(
+          `Failed to start terminal with shell '${shell}' in '${cwd}': ${getErrorMessage(error)}`,
+        );
       }
 
       p.onData((data) => terminalOutput.push(data));
@@ -459,6 +476,7 @@ export function createTerminalService(dependencies: {
       return {
         id,
         shell,
+        ...(params.program ? { program: params.program } : {}),
         fontFamily: fontProfile.fontFamily,
         fontSize: fontProfile.fontSize,
         theme: fontProfile.theme,

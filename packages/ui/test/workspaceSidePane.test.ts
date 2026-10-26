@@ -52,6 +52,26 @@ import {
 } from "../src/lib/workspaceSidePane.js";
 
 describe("workspaceSidePane", () => {
+  it("原生 Claude Code 终端标签保留独立启动类型与真实工作目录", () => {
+    const state = openTerminalSidePane(null, {
+      title: "Claude Code",
+      cwd: "/work/a b",
+      remoteSessionId: "ssh-target",
+      program: "claude-code",
+    });
+    expect(state.tabs).toHaveLength(1);
+    expect(state.tabs[0]).toMatchObject({
+      type: "terminal",
+      title: "Claude Code",
+      cwd: "/work/a b",
+      remoteSessionId: "ssh-target",
+      program: "claude-code",
+    });
+    expect(normalizeWorkspaceSidePaneState(state)?.tabs[0]).toMatchObject({
+      program: "claude-code",
+    });
+  });
+
   it("keeps a navigated file tab when reopening its original path", () => {
     const original = { type: "file", title: "one.ts", path: "/workspace/one.ts" } as const;
     const first = openCodeViewerSidePane(null, original);

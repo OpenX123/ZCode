@@ -37,7 +37,15 @@ export const DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS: ReadonlySet<string> = new Set(
   // bootstrap 的「Settings 默认启用集合与 CLI 的官方插件声明一致」单测机械对照两者。
 ]);
 
-export const DEFAULT_PLUGIN_MARKETPLACES: DefaultPluginMarketplace[] = [];
+export const DEFAULT_PLUGIN_MARKETPLACES: DefaultPluginMarketplace[] = [
+  {
+    id: ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
+    source: "https://skill.artai.top/marketplace.json",
+    name: "YCode 插件市场",
+    description: "自托管的插件与技能分发源",
+    pluginCount: 51,
+  },
+];
 
 // 商店「公开」分段只有一个 ZCode 官方市场 id，内置与 CDN 不再拆分身份。
 export const PUBLIC_STORE_MARKETPLACE_IDS = [ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID] as const;

@@ -48,6 +48,18 @@ interface SummaryContentSnapshot {
   trailingText?: ReactNode;
 }
 
+// 原始字符串会成为匿名 flex item，无法设置 min-width；长命令因此挤压
+// 相邻状态并把摘要撑成多行。仅为纯文本加可收缩壳，保留已有文件/进度组件的布局。
+function renderSummaryText(text: ReactNode) {
+  return typeof text === "string" || typeof text === "number" ? (
+    <span className="min-w-0 truncate" title={String(text)}>
+      {text}
+    </span>
+  ) : (
+    text
+  );
+}
+
 export function shouldRefreshQueuedSummaryContent(
   current: Pick<SummaryContentSnapshot, "key" | "refreshVersion" | "trailingText">,
   next: Pick<SummaryContentSnapshot, "key" | "refreshVersion" | "trailingText">,
@@ -224,8 +236,8 @@ export function QueuedSummaryContent({
   if (!shouldAnimate) {
     return (
       <>
-        {primaryText}
-        {secondaryText}
+        {renderSummaryText(primaryText)}
+        {renderSummaryText(secondaryText)}
         {trailingText}
       </>
     );
@@ -242,8 +254,8 @@ export function QueuedSummaryContent({
           exit={{ y: "-0.8em", opacity: 0 }}
           transition={SUMMARY_ROLL_TRANSITION}
         >
-          {displayedContent.primaryText}
-          {displayedContent.secondaryText}
+          {renderSummaryText(displayedContent.primaryText)}
+          {renderSummaryText(displayedContent.secondaryText)}
         </motion.span>
       </AnimatePresence>
       {/* 修复原因：Changes 的 diff count 必须与文件摘要属于同一排队快照，

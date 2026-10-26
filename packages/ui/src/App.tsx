@@ -563,11 +563,14 @@ export function App({
       handleToggleTerminal();
     }
   }, [handleToggleTerminal, workspaceReadOnlyReason]);
-  const handleOpenTerminalTabIfWritable = useCallback(() => {
-    if (!workspaceReadOnlyReason) {
-      handleOpenTerminalTab();
-    }
-  }, [handleOpenTerminalTab, workspaceReadOnlyReason]);
+  const handleOpenTerminalTabIfWritable = useCallback(
+    (program?: "claude-code") => {
+      if (!workspaceReadOnlyReason) {
+        handleOpenTerminalTab(program);
+      }
+    },
+    [handleOpenTerminalTab, workspaceReadOnlyReason],
+  );
   const handleOpenGitIfWritable = useCallback(() => {
     if (!workspaceReadOnlyReason) {
       handleOpenGit();
@@ -980,7 +983,8 @@ export function App({
           toggleSidebar: () => runVisibleWorkspaceCommand(handleToggleSidebar),
           toggleTerminal: () => runVisibleWorkspaceCommand(handleToggleTerminalIfWritable),
           togglePreview: () => runVisibleWorkspaceCommand(handleToggleBrowser),
-          openTerminalTab: () => runVisibleWorkspaceCommand(handleOpenTerminalTabIfWritable),
+          openTerminalTab: (program) =>
+            runVisibleWorkspaceCommand(() => handleOpenTerminalTabIfWritable(program)),
           openBrowserTab: () => runVisibleWorkspaceCommand(handleOpenBrowserTab),
           openReviewTab: () => runVisibleWorkspaceCommand(handleOpenGitIfWritable),
         },

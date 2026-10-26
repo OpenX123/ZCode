@@ -357,10 +357,10 @@ function ConversationAssistantWorkItems({
     return null;
   }
 
-  // 连续工作项（工具/explore/reasoning）统一 gap-4 组容器（对齐旧版 tool-call-group），
-  // 取代继承父级 gap-5/gap-2 + 每行 py-2 的双重且不一致的间距。
+  // 连续工作项的间距由单一容器提供，摘要高度由 ToolSummaryRow 约束，
+  // 避免长命令与状态更新造成忽大忽小的留白。
   const content = (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       {items.map((item) =>
         item.kind === "row" ? (
           <ConversationTurnRow

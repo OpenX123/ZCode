@@ -8,10 +8,14 @@ export interface TerminalWindowsPtyInfo {
   buildNumber?: number;
 }
 
+/** 仅允许受控的原生程序；缺省仍打开普通终端。 */
+export type TerminalProgram = "claude-code";
+
 export interface ITerminalService {
-  create(params: { cols: number; rows: number; cwd?: string }): Promise<{
+  create(params: { cols: number; rows: number; cwd?: string; program?: TerminalProgram }): Promise<{
     id: string;
     shell: string;
+    program?: TerminalProgram;
     fontFamily: string;
     fontSize?: number;
     theme?: TerminalThemeProfile;

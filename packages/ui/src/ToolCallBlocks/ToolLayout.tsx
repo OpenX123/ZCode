@@ -142,8 +142,9 @@ function ToolLayoutComponent({
   // 运行态需要保留 kind 文案扫光，用来表达当前工具仍在进行中；
   // 非运行态仍保持最浅文本色，避免摘要信息喧宾夺主。
   const kindLabelClassName = cn(
-    "font-medium whitespace-nowrap shrink-0",
-    isRunning ? "animated-gradient-text" : "text-foreground-subtlest",
+    // 短类别保持完整；长名称按字号预留状态及展开控件的空间。
+    "max-w-[calc(100%-10em)] shrink-0 font-medium whitespace-nowrap",
+    isRunning ? "animated-gradient-text" : "text-foreground-subtle",
   );
 
   useEffect(() => {

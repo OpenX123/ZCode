@@ -55,7 +55,7 @@ interface QuickPickCommandHandlers {
   toggleSidebar: () => void;
   toggleTerminal: () => void;
   togglePreview: () => void;
-  openTerminalTab: () => void;
+  openTerminalTab: (program?: "claude-code") => void;
   openBrowserTab: () => void;
   openReviewTab: () => void;
 }
@@ -163,6 +163,14 @@ export function createQuickPickCommands({
       keywords: ["add", "terminal", "tab", "new terminal", "添加终端", "终端标签"],
       run: handlers.openTerminalTab,
     },
+    {
+      id: "open-claude-code",
+      sectionId: "panels",
+      titleId: "terminal.claudeCode.open",
+      icon: "terminal",
+      keywords: ["claude", "claude code", "anthropic", "auto", "原生终端"],
+      run: () => handlers.openTerminalTab("claude-code"),
+    },
     ...(supportsEmbeddedBrowser
       ? [
           {
@@ -223,7 +231,9 @@ export function createQuickPickCommands({
   return commands.filter(
     (command) =>
       (supportsTerminal ||
-        (command.id !== "toggle-terminal" && command.id !== "add-terminal-tab")) &&
+        (command.id !== "toggle-terminal" &&
+          command.id !== "add-terminal-tab" &&
+          command.id !== "open-claude-code")) &&
       (supportsReview || command.id !== "add-review-tab"),
   );
 }

@@ -2436,6 +2436,9 @@ const zhCN: Record<string, string> = {
   // 终端
   "terminal.exited": "[进程已退出]",
   "terminal.title": "终端",
+  "terminal.claudeCode.open": "打开 Claude Code",
+  "terminal.claudeCode.description": "原生终端 · 默认 auto 权限",
+  "terminal.claudeCode.unsupportedHost": "目标主机的终端服务尚不支持 Claude Code，请更新后重试。",
   "terminal.show": "打开终端",
   "terminal.hide": "收起终端",
   "terminal.toggle": "切换终端",

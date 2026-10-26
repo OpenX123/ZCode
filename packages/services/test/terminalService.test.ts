@@ -126,6 +126,58 @@ afterEach(() => {
 });
 
 describe("terminalService", () => {
+  it("原生 Claude Code 在工作区以 auto 权限启动，目录不拼入 shell 命令", async () => {
+    const cwd = makeTempDir("zcode-claude workspace-$-test-");
+    process.env.SHELL = "/bin/sh";
+    const service = createTestTerminalService();
+    const result = await service.create({ cols: 100, rows: 32, cwd, program: "claude-code" });
+
+    expect(result.program).toBe("claude-code");
+    expect(spawnMock).toHaveBeenCalledWith(
+      "/bin/sh",
+      ["-l", "-c", "exec claude --permission-mode auto"],
+      expect.objectContaining({ cwd, cols: 100, rows: 32 }),
+    );
+  });
+
+  it.each([
+    ["powershell.exe", ["-NoLogo", "-Command", "claude --permission-mode auto"]],
+    ["cmd.exe", ["/d", "/s", "/c", "claude --permission-mode auto"]],
+  ])("原生 Claude Code 使用 %s 的固定执行参数，ConPTY 回退不丢参数", async (shell, args) => {
+    setProcessPlatform("win32");
+    prependFakeWindowsShells([shell]);
+    const cwd = makeTempDir("zcode-claude-windows-");
+    spawnMock
+      .mockImplementationOnce(() => {
+        throw new Error("Failed to get conpty.node module handle, error code: 126");
+      })
+      .mockReturnValueOnce(createMockPty());
+    const service = createTestTerminalService();
+    await service.create({ cols: 80, rows: 24, cwd, program: "claude-code" });
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(spawnMock).toHaveBeenNthCalledWith(
+      1,
+      shell,
+      args,
+      expect.objectContaining({ cwd, useConptyDll: true }),
+    );
+    expect(spawnMock).toHaveBeenNthCalledWith(
+      2,
+      shell,
+      args,
+      expect.objectContaining({ cwd, useConptyDll: false }),
+    );
+  });
+
+  it("未知终端 program 明确拒绝，不退为普通 shell", async () => {
+    const service = createTestTerminalService();
+    await expect(service.create({ cols: 80, rows: 24, program: "unknown" as any })).rejects.toThrow(
+      "Unsupported terminal program",
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
   it("should fall back to a usable shell when SHELL points to a missing executable", () => {
     const invalidShell = join(tmpdir(), `zcode-missing-shell-${Date.now()}`);
     process.env.SHELL = invalidShell;

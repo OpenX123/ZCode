@@ -7,6 +7,7 @@ export function SidePaneTerminalPane({
   sessionId,
   workspaceKey,
   cwd,
+  program,
   isVisible,
   isWindowsDesktop = false,
   onOpenBrowserUrl,
@@ -24,6 +25,7 @@ export function SidePaneTerminalPane({
    */
   workspaceKey?: string;
   cwd?: string;
+  program?: "claude-code";
   isVisible: boolean;
   isWindowsDesktop?: boolean;
   onOpenBrowserUrl: (url: string) => void;
@@ -41,6 +43,7 @@ export function SidePaneTerminalPane({
         workspaceKey={workspaceKey}
         services={services}
         cwd={cwd}
+        program={program}
         isVisible={isVisible}
         isWindowsDesktop={isWindowsDesktop}
         onShellLabelChange={handleShellLabelChange}
