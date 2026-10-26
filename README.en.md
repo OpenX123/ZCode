@@ -23,6 +23,8 @@ Features include streaming conversations and tool output, project and task manag
 
 Get installers from [GitHub Releases](https://github.com/OpenX123/ZCode/releases/latest). Each main update builds macOS ARM64/x64 and Windows ARM64/x64; a release is published only after all four targets succeed, with SHA256SUMS included.
 
+Local coding runtimes are included. Remote runtimes are separate assets in the same release: the first SSH / WSL / Docker connection downloads only the matching platform and architecture, verifies it, and caches it. The default path downloads locally and uploads to the target, so the remote machine does not need GitHub access. For a first deployment without network access, see the [offline import guide](docs/desktop/offline-source-server-import-spec.md) (Chinese).
+
 | System  | Architecture          | Package  |
 | ------- | --------------------- | -------- |
 | macOS   | Apple Silicon / ARM64 | DMG, ZIP |

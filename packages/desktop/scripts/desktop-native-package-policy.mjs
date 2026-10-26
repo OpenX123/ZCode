@@ -1,3 +1,26 @@
+// 这些包只由 Vite renderer 或固定 Gen UI 浏览器快照消费；Main/Host/Scheduler 不解析其目录。
+// 仅裁剪 node_modules 副本，out 中的浏览器产物和集中第三方声明不受影响。
+const RENDERER_ONLY_PACKAGES = [
+  "echarts",
+  "mermaid",
+  "lucide-react",
+  "highlight.js",
+  "world-atlas",
+];
+
+export function createDesktopRendererPackagePrunePatterns() {
+  return RENDERER_ONLY_PACKAGES.map((name) => `!node_modules/${name}/**`);
+}
+
+export function findDesktopRendererPackageViolations(entries) {
+  return entries.flatMap(({ path }) => {
+    const packageName = RENDERER_ONLY_PACKAGES.find(
+      (name) => path === `/node_modules/${name}` || path.startsWith(`/node_modules/${name}/`),
+    );
+    return packageName ? [`不应重复打包已内联的 renderer 依赖 ${packageName}: ${path}`] : [];
+  });
+}
+
 const SUPPORTED_DESKTOP_PLATFORM_KEYS = [
   "darwin-arm64",
   "darwin-x64",

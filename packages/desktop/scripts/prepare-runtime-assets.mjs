@@ -53,10 +53,18 @@ function runTimedPnpmScript(scriptName) {
 
 // Server 构建也会重建并清空本机 Agent 暂存目录；必须先完成它，再由桌面准备步骤
 // 最终写入完整插件闭包，避免安装包只剩 Agent 和 dev CUA 资源。
-runCommand(pnpmCommand, ["prepare:remote-assets"], {
-  cwd: resolve(desktopRoot, "../.."),
-  env: process.env,
-});
+if (process.env.ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY === "1") {
+  // 发行资源由独立 job 生成，必须校验同轮固定 URL，不能重建成另一份同版本清单。
+  runCommand(process.execPath, ["scripts/github-release-assets.mjs", "verify-descriptor"], {
+    cwd: resolve(desktopRoot, "../.."),
+    env: process.env,
+  });
+} else {
+  runCommand(pnpmCommand, ["prepare:remote-assets"], {
+    cwd: resolve(desktopRoot, "../.."),
+    env: process.env,
+  });
+}
 
 for (const scriptName of localRuntimeScripts) {
   runTimedPnpmScript(scriptName);

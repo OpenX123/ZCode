@@ -725,7 +725,8 @@ async function main() {
   }
 
   if (!skipBuild) {
-    run(pnpmCommand, ["build"], buildEnv);
+    // prepare 已由 bundle 统一调度；再次调用 build 会重复生成四套远程资源和桌面 Agent。
+    run(pnpmCommand, ["build:no-runtime-assets"], buildEnv);
   }
 
   await runTimedAsync("bundle:electron-builder", () =>

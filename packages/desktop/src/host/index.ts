@@ -3430,7 +3430,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
         const resolveSourceServerRelease = async (
           probe: Parameters<typeof resolveSourceServerReleaseAsset>[0],
           target: Parameters<typeof resolveSourceServerReleaseAsset>[2],
-          options?: { metadataOnly?: boolean },
+          options?: { metadataOnly?: boolean; signal?: AbortSignal },
         ) =>
           await resolveSourceServerReleaseAsset(
             probe,

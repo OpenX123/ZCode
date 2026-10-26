@@ -18,12 +18,12 @@ const script = resolve(import.meta.dirname, "../scripts/audit-bundle-size.mjs");
 const roots: string[] = [];
 const targets = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"];
 
-function fixture() {
+function fixture(extension = ".zip") {
   const root = mkdtempSync(join(tmpdir(), "zcode-size-audit-"));
   roots.push(root);
-  const resources = join(root, "remote-assets");
-  mkdirSync(resources);
-  const artifact = join(root, "app.zip");
+  const resources = join(root, "Resources", "remote-assets", "releases", "1.2.3");
+  mkdirSync(resources, { recursive: true });
+  const artifact = join(root, `app${extension}`);
   writeFileSync(artifact, "");
   const archives = targets.map((target) => {
     const fileName = `zcode-server-${target}.tar.gz`;
@@ -42,7 +42,7 @@ function fixture() {
   const save = () =>
     writeFileSync(join(resources, "source-server-release.json"), JSON.stringify(descriptor));
   save();
-  const audit = (withResources = true) =>
+  const audit = (withResources = true, lightweight = false) =>
     spawnSync(
       process.execPath,
       [
@@ -51,9 +51,22 @@ function fixture() {
         artifact,
         ...(withResources ? ["--remote-assets-dir", resources, "--version", "1.2.3"] : []),
       ],
-      { encoding: "utf8", timeout: 10_000 },
+      {
+        encoding: "utf8",
+        timeout: 10_000,
+        env: { ...process.env, ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY: lightweight ? "1" : "0" },
+      },
     );
-  return { root, artifact, resources, descriptor, save, audit };
+  const makeLightweight = () => {
+    for (const archive of archives) {
+      rmSync(join(resources, archive.fileName));
+      archive.urls = [
+        `https://github.com/OpenX123/ZCode/releases/download/build-8-1/${archive.fileName}`,
+      ];
+    }
+    save();
+  };
+  return { root, artifact, resources, descriptor, save, audit, makeLightweight };
 }
 
 afterEach(() => {
@@ -120,5 +133,82 @@ describe("安装包基础与离线资源预算", () => {
     rmSync(archivePath);
     symlinkSync(outside, archivePath);
     expect(f.audit().status).toBe(1);
+  });
+});
+
+describe("轻量安装包直接预算和体积报告", () => {
+  it.each([
+    [".exe", 250_000_000],
+    [".dmg", 280_000_000],
+    [".zip", 280_000_000],
+  ] as const)("%s不因独立归档增加额度", (extension, limit) => {
+    const f = fixture(extension);
+    f.makeLightweight();
+    truncateSync(f.artifact, limit);
+    expect(f.audit(true, true).status).toBe(0);
+    truncateSync(f.artifact, limit + 1);
+    expect(f.audit(true, true).status).toBe(1);
+    const report = JSON.parse(readFileSync(`${f.artifact}.size-report.json`, "utf8"));
+    expect(report.artifact).toMatchObject({ bytes: limit + 1, limitBytes: limit });
+    expect(report.resourceMode).toBe("descriptor-only");
+  });
+
+  it.each([
+    "relative",
+    "latest",
+    "different-build",
+    "extra-archive",
+    "missing-target",
+    "duplicate-target",
+    "empty-urls",
+  ])("拒绝%s破坏轻量发布边界", (failure) => {
+    const f = fixture();
+    f.makeLightweight();
+    const first = f.descriptor.archives[0]!;
+    if (failure === "relative") first.urls = [first.fileName];
+    if (failure === "latest")
+      first.urls = [`https://github.com/OpenX123/ZCode/releases/latest/download/${first.fileName}`];
+    if (failure === "different-build")
+      first.urls = [
+        `https://github.com/OpenX123/ZCode/releases/download/build-9-1/${first.fileName}`,
+      ];
+    if (failure === "extra-archive") writeFileSync(join(f.resources, first.fileName), "unexpected");
+    if (failure === "missing-target") f.descriptor.archives.pop();
+    if (failure === "duplicate-target") f.descriptor.archives[1]!.target = first.target;
+    if (failure === "empty-urls") first.urls = [];
+    f.save();
+    expect(f.audit(true, true).status).toBe(1);
+  });
+
+  it("按ASAR真实头分组区分packed与unpacked，保留资源体积清单", async () => {
+    const f = fixture();
+    f.makeLightweight();
+    const staging = join(f.root, "staging");
+    mkdirSync(join(staging, "node_modules", "@example", "runtime"), { recursive: true });
+    mkdirSync(join(staging, "out", "renderer"), { recursive: true });
+    writeFileSync(join(staging, "node_modules", "@example", "runtime", "index.js"), "runtime");
+    writeFileSync(join(staging, "out", "renderer", "index.html"), "renderer");
+    const { createPackageWithOptions } = await import("@electron/asar");
+    await createPackageWithOptions(staging, join(f.root, "Resources", "app.asar"), {
+      unpack: "**/index.js",
+    });
+    const result = f.audit(true, true);
+    expect(result.status, result.stderr).toBe(0);
+    const report = JSON.parse(readFileSync(`${f.artifact}.size-report.json`, "utf8"));
+    expect(report.asarGroups).toEqual(
+      expect.arrayContaining([
+        { path: "node_modules/@example/runtime", packedBytes: 0, unpackedBytes: 7 },
+        { path: "out", packedBytes: 8, unpackedBytes: 0 },
+      ]),
+    );
+    expect(report.installedDirectory.groups).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: "Resources" })]),
+    );
+    expect(report.resources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "app.asar" }),
+        expect.objectContaining({ path: "app.asar.unpacked", bytes: 7 }),
+      ]),
+    );
   });
 });

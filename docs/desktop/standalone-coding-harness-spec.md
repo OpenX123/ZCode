@@ -30,7 +30,7 @@
 - 内置目录和运行时随本仓库构建发布。Built-in Source 仅读取明确的随包文件并监听该本地文件，不读写旧 Active/LKG、Endpoint 缓存或刷新控制文件，不提供远端下载、应用 Release、周期检查或刷新接口。Host 向 Agent 传递同一随包路径；Personal 的锁、备份、轮询和原子更新保持原有所有者。默认插件市场使用自托管地址 `https://skill.artai.top/marketplace.json`，沿用 `zcode-plugins-official` 身份与既有安装记录；仅在该身份尚未登记时补种，不覆盖用户已有来源。本地插件与用户显式添加的来源保留，插件分发不依赖原厂账号。
 - Agent 的默认、bootstrap 与 Turbo 源码构建都先清理目标 workspace 包的 dist，再按现有依赖顺序重建；防止已删除源文件的旧 JS 被 Server 整包暂存带入安装包。只清理构建输出，不触及用户数据。
 - 桌面资源准备先完成 Source Server 构建，最后由桌面 Agent 准备步骤统一重建 Agent、插件及原生依赖闭包；后续 Server 构建不得清空已经完成的桌面资源。Koffi 仅服务 Windows Agent 的 MCP Job Object，放在 Agent 可解析的 `glm/node_modules` 并单独映射进安装包；当前 CUA SDK 不要求或校验过时的 Koffi 副本，macOS/Linux 不携带该 Windows 依赖。
-- 安装包体积审计保留桌面基础预算 500 MiB。随包离线 Source Server 单独限每个平台 112 MiB、四个平台合计 400 MiB；使用安装目录中的实际资源，通过既有 descriptor schema、当前版本、完整四平台文件白名单及逐个 size/SHA-256 校验后，才按归档实际字节增加总产物额度。总预算为 500 MiB 加已验证的资源字节，不直接提高基础阈值。文件夹不得包含额外文件、子目录或符号链接，清单不超过 64 KiB。该预算按已经 gzip 的归档字节折算，外层安装器的再次压缩不计为桌面减重；报告基础额度、资源实测及总额度，不能称作精确的压缩后桌面体积。未提供资源目录的独立审计仍执行原 500 MiB 上限。
+- 正式安装包只携带 Source Server descriptor，四平台归档作为独立 Release 附件发布；descriptor 中的绝对 URL 固定本次不可变构建、size 与 SHA-256，不能运行时查询 latest。同一版本不同构建按 SHA 隔离。桌面安装器直接审计实际压缩体积，不再增加离线资源额度；四平台独立资源仍逐个校验 size/SHA 和完整性。
 - 运行时不捕获或转注入旧 Agent 遥测变量；环境清洗仍拒绝 OTEL、旧遥测身份及其 tool passthrough 恢复，CUA broker 定向捕获和用户网络配置保持原有边界。
 - 默认启动、空闲及普通 coding 不访问原厂业务服务；用户自配模型 API、MCP、插件及显式命令可以联网。按用途和路径验收，不封禁整个模型供应商域名。
 
@@ -59,7 +59,32 @@ flowchart TD
 
 插件目录不再声明或透传 `requiresPaidPlan`，卡片和详情不展示套餐徽标或套餐使用建议。旧目录携带该字段时忽略它，插件安装、配置、启停及普通 MCP OAuth 保持原有链路，不改写会话历史。
 
-SSH 默认只消费随包的本仓库 Source Server archive，旧的远程下载偏好也使用本地产物。未显式配置镜像时，不读取旧下载 descriptor/cache；随包资源缺失必须报错。显式镜像必须获取本次 descriptor，失败时不回退旧 descriptor 中的地址。
+SSH / WSL / Docker 资源由 Host 现有 resolver 唯一管理。正式版优先读取随包本仓库 descriptor；仍带归档的源码离线构建继续校验并使用本地归档。仅有 descriptor 时，默认按探测到的目标下载一份并上传；SSH 显式选择远端下载时只返回该 descriptor 的固定 URL 与校验信息。普通本地启动和编码不触发远程资源下载。显式镜像沿用现有网络注入，失败不得回退旧缓存 descriptor 或原厂地址。随包 descriptor 缺失且无显式镜像时必须报错。
+
+Host 下载缓存路径为 `<remoteCacheDir>/source-server/<version>/<target>/<sha256>/<fileName>`，每次复用必须验证 size/SHA；可信随包 descriptor 允许有效缓存完全离线复用。离线首次部署可预先导入独立 Release 的归档到此路径，导入过程同样校验 size/SHA。缓存文件不是版本/地址的权威，不能从旧缓存 descriptor 推导下载地址。不同根目录、目标和 SHA 不共用缓存或锁。
+
+同一缓存内容的跨 Host/进程请求由文件锁串行化，下载先写唯一临时文件，校验后原子提交；等待者校验缓存后复用。失败、取消和超时清理本次临时文件与持有锁，不删除其他 SHA 的资源。已退出进程的锁允许安全回收；若回收进程自身退出留下标记，确认后立即返回包含锁目录的清理提示，不争抢删除回收标记。锁等待和网络请求均有时限。连接取消的信号可传入 resolver，预览元数据不得下载归档。开发态 `development-content-addressed` 仍强制消费本轮本地 descriptor/archive，缺失或损坏不得回退正式版下载。
+
+```mermaid
+sequenceDiagram
+    participant C as 连接管理器
+    participant H as Host resolver
+    participant D as 随包 descriptor
+    participant K as 内容寻址缓存
+    participant R as 固定 Release
+    C->>H: 探测目标并请求资源
+    H->>D: 读取本次 size/SHA/URL
+    H->>K: 校验对应 SHA 的缓存
+    alt 缓存有效
+        K-->>H: 返回已验证归档
+    else 缓存缺失或损坏
+        H->>K: 独占文件锁
+        H->>R: 按目标下载唯一临时文件
+        R-->>H: 归档字节
+        H->>K: 校验后原子提交并释放锁
+    end
+    H-->>C: 归档路径或远端下载元数据
+```
 
 生产与测试随包模型目录都不声明账号套餐成员或产品网关能力；普通 GLM API 模板保留。旧 Agent 二进制下载脚本删除，开发和打包统一使用源码构建入口。
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   createDesktopNativePackagePrunePatterns,
+  createDesktopRendererPackagePrunePatterns,
+  findDesktopRendererPackageViolations,
   findDesktopNativePackageViolations,
   parseAsarListWithPackState,
 } from "../scripts/desktop-native-package-policy.mjs";
@@ -49,5 +51,41 @@ describe("desktop native package policy", () => {
       expect.stringContaining("非目标平台"),
       expect.stringContaining("packed payload"),
     ]);
+  });
+});
+
+describe("desktop renderer package policy", () => {
+  it("仅排除已内联浏览器包，保留Node外置依赖与浏览器静态资源", () => {
+    const patterns = createDesktopRendererPackagePrunePatterns();
+    expect(patterns).toHaveLength(5);
+    expect(patterns.every((pattern) => pattern.startsWith("!node_modules/"))).toBe(true);
+    const entries = parseAsarListWithPackState(
+      [
+        "pack : /out/renderer/assets/mermaid.js",
+        "pack : /out/plugin-sandbox/vendor/echarts.min.js",
+        "pack : /node_modules/ssh2/lib/client.js",
+        "pack : /node_modules/@larksuiteoapi/node-sdk/lib/index.js",
+        "pack : /node_modules/pdfjs-dist/build/pdf.mjs",
+        "pack : /node_modules/@extend-ai/react-xlsx/dist/duke_sheets_wasm_bg.wasm",
+        "pack : /THIRD-PARTY-NOTICES.md",
+        "pack : /licenses/electron/LICENSE",
+      ].join("\n"),
+    );
+    expect(findDesktopRendererPackageViolations(entries)).toEqual([]);
+  });
+
+  it("构建后拒绝重复renderer目录回流", () => {
+    const entries = parseAsarListWithPackState(
+      [
+        "pack : /node_modules/mermaid/dist/mermaid.js",
+        "pack : /node_modules/echarts/package.json",
+        "pack : /node_modules/lucide-react/dist/index.js",
+        "pack : /node_modules/highlight.js/lib/index.js",
+        "pack : /node_modules/world-atlas/countries-110m.json",
+      ].join("\n"),
+    );
+    const violations = findDesktopRendererPackageViolations(entries);
+    expect(violations).toHaveLength(5);
+    expect(violations.every((message) => message.includes("已内联的 renderer 依赖"))).toBe(true);
   });
 });

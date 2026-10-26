@@ -21,10 +21,35 @@ function temporaryRoot() {
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   runCommand.mockReset();
+  vi.unstubAllEnvs();
   vi.resetModules();
 });
 
 describe("桌面 Agent 资源闭包", () => {
+  it("轻量发行使用同轮清单而不重建远程资源，仍准备本地 Agent", async () => {
+    vi.stubEnv("ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY", "1");
+
+    await import("../scripts/prepare-runtime-assets.mjs");
+
+    const commands = runCommand.mock.calls.map((call) => call[1]);
+    expect(commands).toContainEqual(["scripts/github-release-assets.mjs", "verify-descriptor"]);
+    expect(commands).toContainEqual(["prepare:agent-bundle"]);
+    expect(commands).not.toContainEqual(["prepare:remote-assets"]);
+    expect(commands[0]).toEqual(["scripts/github-release-assets.mjs", "verify-descriptor"]);
+  });
+
+  it("发行清单校验失败时不能继续准备本地 Agent", async () => {
+    vi.stubEnv("ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY", "1");
+    runCommand.mockImplementation(() => {
+      throw new Error("invalid release descriptor");
+    });
+
+    await expect(import("../scripts/prepare-runtime-assets.mjs")).rejects.toThrow(
+      "invalid release descriptor",
+    );
+    expect(runCommand).toHaveBeenCalledTimes(1);
+  });
+
   it("Source Server 重建清空暂存后，最后准备的桌面插件仍完整", async () => {
     const root = temporaryRoot();
     const cliDist = join(root, "apps/zcode-cli/packages/cli/dist");

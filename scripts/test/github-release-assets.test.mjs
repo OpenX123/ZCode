@@ -1,0 +1,113 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, test } from "node:test";
+import {
+  pinReleaseDescriptor,
+  releaseBaseUrl,
+  verifyDescriptor,
+  verifyReleaseAssets,
+} from "../github-release-assets.mjs";
+
+const roots = [];
+const version = "1.2.3";
+const repository = "OpenX123/ZCode";
+const tag = "build-8-1";
+const targets = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"];
+
+async function fixture() {
+  const directory = await mkdtemp(join(tmpdir(), "ycode-github-release-"));
+  roots.push(directory);
+  const archives = [];
+  for (const target of targets) {
+    const content = Buffer.from(`resource-${target}`);
+    const fileName = `zcode-server-${target}.tar.gz`;
+    await writeFile(join(directory, fileName), content);
+    archives.push({
+      target,
+      version,
+      fileName,
+      sizeBytes: content.length,
+      sha256: createHash("sha256").update(content).digest("hex"),
+      urls: [fileName],
+    });
+  }
+  const descriptor = { schemaVersion: 1, version, archives };
+  const save = () =>
+    writeFile(join(directory, "source-server-release.json"), JSON.stringify(descriptor));
+  await save();
+  const options = { directory, version, repository, tag };
+  const installers = [
+    ...["arm64", "x64"].flatMap((arch) =>
+      ["dmg", "zip"].map((extension) => `YCode-${version}-mac-${arch}.${extension}`),
+    ),
+    ...["arm64", "x64"].map((arch) => `YCode-${version}-win-${arch}.exe`),
+  ];
+  return { options, descriptor, save, installers };
+}
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+test("固定每轮 URL，保持相同版本不同 attempt 的内容身份", async () => {
+  const f = await fixture();
+  const first = await pinReleaseDescriptor(f.options);
+  assert.equal(
+    first.archives[0].urls[0],
+    `https://github.com/${repository}/releases/download/build-8-1/zcode-server-linux-x64.tar.gz`,
+  );
+  const second = await pinReleaseDescriptor({ ...f.options, tag: "build-8-2" });
+  assert.notDeepEqual(first.archives[0].urls, second.archives[0].urls);
+  await assert.rejects(verifyDescriptor(f.options), /not pinned/);
+});
+
+test("归档篡改或缺少目标时不能生成可发布清单", async () => {
+  const f = await fixture();
+  await writeFile(join(f.options.directory, f.descriptor.archives[0].fileName), "corrupted");
+  await assert.rejects(pinReleaseDescriptor(f.options), /size\/SHA mismatch/);
+  f.descriptor.archives.pop();
+  await f.save();
+  await assert.rejects(pinReleaseDescriptor(f.options), /all four targets/);
+});
+
+test("版本不匹配、重复目标和不安全发布身份均被拒绝", async () => {
+  const f = await fixture();
+  await assert.rejects(pinReleaseDescriptor({ ...f.options, version: "old" }), /current version/);
+  f.descriptor.archives[1] = f.descriptor.archives[0];
+  await f.save();
+  await assert.rejects(pinReleaseDescriptor(f.options), /Duplicate/);
+  assert.throws(() => releaseBaseUrl(repository, "latest"));
+  assert.throws(() => releaseBaseUrl("../../other", tag));
+});
+
+test("六种安装文件和四归档齐全后才输出逐文件 SHA256SUMS", async () => {
+  const f = await fixture();
+  await pinReleaseDescriptor(f.options);
+  await assert.rejects(verifyReleaseAssets(f.options), /exactly six installers/);
+  for (const name of f.installers)
+    await writeFile(join(f.options.directory, name), `installer-${name}`);
+  const names = await verifyReleaseAssets(f.options);
+  assert.equal(names.length, 11);
+  const checksums = await readFile(join(f.options.directory, "SHA256SUMS"), "utf8");
+  assert.equal(checksums.trim().split("\n").length, 11);
+  assert.match(checksums, /^[a-f0-9]{64}  YCode-/);
+});
+
+test("相同应用版本的其他构建 URL 不能混入最终 Release", async () => {
+  const f = await fixture();
+  await pinReleaseDescriptor({ ...f.options, tag: "build-9-1" });
+  await assert.rejects(verifyReleaseAssets(f.options), /not pinned/);
+});
+
+test("独立远程附件仍执行平台与总量预算", async () => {
+  const f = await fixture();
+  f.descriptor.archives[0].sizeBytes = 113 * 1024 * 1024;
+  await f.save();
+  await assert.rejects(pinReleaseDescriptor(f.options), /per-platform resource budget/);
+  for (const archive of f.descriptor.archives) archive.sizeBytes = 101 * 1024 * 1024;
+  await f.save();
+  await assert.rejects(pinReleaseDescriptor(f.options), /total resource budget/);
+});

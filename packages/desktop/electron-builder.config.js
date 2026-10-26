@@ -35,6 +35,8 @@ import {
 import {
   findDesktopNativePackageViolations,
   createDesktopNativePackagePrunePatterns,
+  createDesktopRendererPackagePrunePatterns,
+  findDesktopRendererPackageViolations,
   parseAsarListWithPackState,
 } from "./scripts/desktop-native-package-policy.mjs";
 import { replaceAppAsarFromStaging } from "./scripts/app-asar-repack.mjs";
@@ -423,7 +425,10 @@ function assertPackagedNativeResourcePolicy(context) {
   const entries = parseAsarListWithPackState(
     runAsarCommandAndReadStdout(["list", "--is-pack", appAsarPath]),
   );
-  const violations = findDesktopNativePackageViolations(entries, targetPlatform.key);
+  const violations = [
+    ...findDesktopNativePackageViolations(entries, targetPlatform.key),
+    ...findDesktopRendererPackageViolations(entries),
+  ];
   if (violations.length > 0) {
     // supportedArchitectures 允许工作区准备多平台依赖，但安装包只能携带目标平台资源。
     // 之前 Canvas 和 node-pty 的其他平台 native 被同时写进 asar/unpacked，包体被放大数百 MiB。
@@ -583,6 +588,7 @@ export default {
     // 默认也会原样进入安装包。这里统一在主包层做一次裁剪，只移除非运行时文件，LICENSE 继续保留。
     ...PACKAGING_PRUNE_PATTERNS,
     ...createDesktopNativePackagePrunePatterns(targetPlatform.key),
+    ...createDesktopRendererPackagePrunePatterns(),
     "!node_modules/@zcode/**",
     "!node_modules/react/**",
     "!node_modules/react-dom/**",
@@ -686,7 +692,10 @@ export default {
     {
       from: "mock-cdn",
       to: "remote-assets",
-      filter: [`releases/${buildMetadata.appVersion}/**/*`],
+      filter:
+        process.env.ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY === "1"
+          ? [`releases/${buildMetadata.appVersion}/source-server-release.json`]
+          : [`releases/${buildMetadata.appVersion}/**/*`],
     },
     { from: resolve(workspaceRoot, noticesFileName), to: noticesFileName },
     ...(targetPlatform.os === "darwin"

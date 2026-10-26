@@ -157,7 +157,7 @@ export interface SourceServerConnectionManagerOptions {
   resolveRelease?: (
     probe: Awaited<ReturnType<SourceServerTransportAdapter["probe"]>>,
     target: Exclude<RemoteTarget, { kind: "server" }>,
-    options?: { metadataOnly?: boolean },
+    options?: { metadataOnly?: boolean; signal?: AbortSignal },
   ) => Promise<ServerReleaseAsset>;
 }
 
@@ -574,7 +574,10 @@ export class SourceServerConnectionManager {
       context.signal?.throwIfAborted();
       const releaseResolver = options.resolveRelease ?? this.options.resolveRelease;
       const release =
-        options.release ?? (releaseResolver ? await releaseResolver(probe, options.target) : null);
+        options.release ??
+        (releaseResolver
+          ? await releaseResolver(probe, options.target, { signal: context.signal })
+          : null);
       context.signal?.throwIfAborted();
       if (!release) throw new Error("Source Server update release is unavailable");
       await adapter.installOrUpdate(options.target, release, context, {
@@ -816,6 +819,12 @@ export class SourceServerConnectionManager {
       );
     }
     const signal = options.context?.signal;
+    // 下载与连接共享取消边界；只取消 SSH 传输曾让 Host 下载继续占用缓存锁。
+    const resourceSignal =
+      signal && explicitDisconnectSignal
+        ? AbortSignal.any([signal, explicitDisconnectSignal])
+        : (signal ?? explicitDisconnectSignal);
+    const releaseOptions = resourceSignal ? { signal: resourceSignal } : undefined;
     let unpublishedConnection: ServerRemoteConnection | undefined;
     const throwIfAborted = () => {
       explicitDisconnectSignal?.throwIfAborted();
@@ -925,7 +934,7 @@ export class SourceServerConnectionManager {
           if (!releaseResolver) {
             throw new Error("Development Source Server release is unavailable");
           }
-          const release = await releaseResolver(probe, target);
+          const release = await releaseResolver(probe, target, releaseOptions);
           throwIfAborted();
           if (
             release.version === installedVersion &&
@@ -965,13 +974,15 @@ export class SourceServerConnectionManager {
         const release =
           options.release ??
           (options.allowInstall && releaseResolver
-            ? await releaseResolver(probe, target)
+            ? await releaseResolver(probe, target, releaseOptions)
             : undefined);
         throwIfAborted();
         if (!release) {
           // 预览是附加信息；CDN/缓存元数据不可用时仍保留安装等待点。实际安装解析继续严格失败。
           const previewRelease = releaseResolver
-            ? await releaseResolver(probe, target, { metadataOnly: true }).catch(() => undefined)
+            ? await releaseResolver(probe, target, { metadataOnly: true, ...releaseOptions }).catch(
+                () => undefined,
+              )
             : undefined;
           throwIfAborted();
           this.setState(profile.profileId, {

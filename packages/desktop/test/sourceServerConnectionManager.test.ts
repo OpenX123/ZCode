@@ -1192,6 +1192,39 @@ describe("SourceServerConnectionManager", () => {
     expect(manager.getStateByProfile(profileId)).toMatchObject({ state: "online", sourceServerId });
   });
 
+  it("移除连接 Profile 会取消正在获取的资源，不再继续安装", async () => {
+    const adapter = createAdapter(false);
+    let resourceSignal: AbortSignal | undefined;
+    let started!: () => void;
+    const resourceStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const resolveRelease: NonNullable<
+      ConstructorParameters<typeof SourceServerConnectionManager>[0]["resolveRelease"]
+    > = async (_probe, _target, options) =>
+      await new Promise((_resolve, reject) => {
+        resourceSignal = options?.signal;
+        resourceSignal?.addEventListener("abort", () => reject(resourceSignal!.reason), {
+          once: true,
+        });
+        started();
+      });
+    const manager = new SourceServerConnectionManager({
+      directory: { recordHandshake: vi.fn() },
+      createAdapter: () => adapter,
+      resolveRelease,
+    });
+    const connecting = manager.connect({ profile, target, allowInstall: true });
+    const rejected = expect(connecting).rejects.toThrow("Connection Profile removed");
+    await resourceStarted;
+    manager.removeProfile(profileId);
+    await rejected;
+    expect(resourceSignal?.aborted).toBe(true);
+    expect(adapter.installOrUpdate).not.toHaveBeenCalled();
+    expect(manager.getStateByProfile(profileId)).toMatchObject({ state: "absent" });
+    manager.dispose();
+  });
+
   it("publishes real installation preview without installing before confirmation", async () => {
     const adapter = createAdapter(false);
     vi.mocked(adapter.probe).mockResolvedValue({
@@ -1217,7 +1250,10 @@ describe("SourceServerConnectionManager", () => {
         sizeBytes: 1024,
       },
     });
-    expect(resolveRelease).toHaveBeenCalledWith(expect.any(Object), target, { metadataOnly: true });
+    expect(resolveRelease).toHaveBeenCalledWith(expect.any(Object), target, {
+      metadataOnly: true,
+      signal: expect.any(AbortSignal),
+    });
     expect(adapter.installOrUpdate).not.toHaveBeenCalled();
   });
 
@@ -1238,6 +1274,7 @@ describe("SourceServerConnectionManager", () => {
       expect(manager.getStateByProfile(profileId)).toMatchObject({ state: "needs-install" });
       expect(resolveRelease).toHaveBeenCalledWith(expect.any(Object), target, {
         metadataOnly: true,
+        signal: expect.any(AbortSignal),
       });
       expect(adapter.installOrUpdate).not.toHaveBeenCalled();
       await expect(manager.connect({ profile, target, allowInstall: true })).rejects.toThrow(

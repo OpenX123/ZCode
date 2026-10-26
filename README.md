@@ -32,6 +32,8 @@ API 凭据由用户配置，模型费用遵循所选供应商规则；外部 CLI
 
 在 [GitHub Releases](https://github.com/OpenX123/ZCode/releases/latest) 下载对应架构的安装包。每次 `main` 更新，GitHub Actions 会自动构建以下四个目标；四项全部成功后发布 Release，并附 `SHA256SUMS`。
 
+安装包内置本机编码运行时；远程运行资源作为同一 Release 的独立附件发布，首次连接 SSH / WSL / Docker 时仅下载对应系统与架构，校验后缓存复用。默认由本机下载后上传，远端无需访问 GitHub。完全离线首次部署需提前准备资源，见[离线导入说明](docs/desktop/offline-source-server-import-spec.md)。
+
 | 系统    | 设备                    | 安装包                                   |
 | ------- | ----------------------- | ---------------------------------------- |
 | macOS   | Apple Silicon（M 系列） | `YCode-<version>-mac-arm64.dmg` / `.zip` |

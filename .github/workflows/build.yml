@@ -14,9 +14,72 @@ concurrency:
   group: build-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ZCODE_ENV: production
+
 jobs:
+  resources:
+    name: Build shared Source Server resources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      tag: ${{ steps.identity.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.33.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.14.0
+          cache: pnpm
+
+      - name: Record immutable release identity
+        id: identity
+        env:
+          RELEASE_TAG: build-${{ github.run_number }}-${{ github.run_attempt }}
+        run: |
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+
+      - name: Generate all four remote targets once
+        run: pnpm prepare:remote-assets
+
+      - name: Verify archives and pin release URLs
+        run: node scripts/github-release-assets.mjs pin --output release-resources
+        env:
+          RELEASE_TAG: ${{ steps.identity.outputs.tag }}
+
+      - name: Upload remote release resources
+        uses: actions/upload-artifact@v7
+        with:
+          name: source-server-resources-${{ steps.identity.outputs.tag }}
+          path: release-resources/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload shared desktop descriptor
+        uses: actions/upload-artifact@v7
+        with:
+          name: source-server-descriptor-${{ steps.identity.outputs.tag }}
+          path: release-resources/source-server-release.json
+          if-no-files-found: error
+          retention-days: 14
+
   package:
     name: Package ${{ matrix.os }} ${{ matrix.arch }}
+    needs: resources
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -37,8 +100,9 @@ jobs:
             runner: windows-11-arm
 
     env:
-      ZCODE_ENV: production
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY: "1"
+      RELEASE_TAG: ${{ needs.resources.outputs.tag }}
 
     steps:
       - name: Checkout
@@ -60,6 +124,12 @@ jobs:
         env:
           ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
 
+      - name: Download exact shared release descriptor
+        uses: actions/download-artifact@v8
+        with:
+          name: source-server-descriptor-${{ needs.resources.outputs.tag }}
+          path: packages/desktop/mock-cdn/releases/${{ needs.resources.outputs.version }}
+
       - name: Build installer
         run: pnpm bundle:desktop -- --os ${{ matrix.os }} --arch ${{ matrix.arch }}
         env:
@@ -68,7 +138,7 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ycode-${{ matrix.os }}-${{ matrix.arch }}
+          name: ycode-${{ matrix.os }}-${{ matrix.arch }}-${{ needs.resources.outputs.tag }}
           path: |
             packages/desktop/dist/*.dmg
             packages/desktop/dist/*.zip
@@ -76,36 +146,73 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Upload package size audit
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-size-report-${{ matrix.os }}-${{ matrix.arch }}-${{ needs.resources.outputs.tag }}
+          path: packages/desktop/dist/*.size-report.json
+          if-no-files-found: error
+          retention-days: 14
+
   publish:
     name: Publish GitHub Release
     if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-    needs: package
+    needs: [resources, package]
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ needs.resources.outputs.tag }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.33.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.14.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+
       - name: Download installer artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: ycode-*
+          pattern: ycode-*-${{ needs.resources.outputs.tag }}
           path: release-assets
           merge-multiple: true
 
-      - name: Create or update GitHub Release
+      - name: Download matching remote resources
+        uses: actions/download-artifact@v8
+        with:
+          name: source-server-resources-${{ needs.resources.outputs.tag }}
+          path: release-assets
+
+      - name: Verify release completeness and write SHA256SUMS
+        run: node scripts/github-release-assets.mjs verify-release --directory release-assets
+
+      - name: Publish complete immutable GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: build-${{ github.run_number }}
         run: |
           set -euo pipefail
-          (cd release-assets && sha256sum -- *.dmg *.zip *.exe > SHA256SUMS)
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$RELEASE_TAG" release-assets/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "YCode build $GITHUB_RUN_NUMBER" \
-              --notes "由 GitHub Actions 从提交 $GITHUB_SHA 自动构建。包含 macOS / Windows 的 ARM64 与 x64 安装包。安装说明见仓库 README。" \
-              --target "$GITHUB_SHA"
+            echo "Release $RELEASE_TAG already exists; rerun all jobs for a new build identity." >&2
+            exit 1
           fi
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" --draft \
+            --title "YCode $RELEASE_TAG" \
+            --notes "由 GitHub Actions 从提交 $GITHUB_SHA 自动构建。包含 macOS / Windows 的 ARM64 与 x64 安装包，以及按需下载的四平台远程资源。安装说明见仓库 README。" \
+            --target "$GITHUB_SHA"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
