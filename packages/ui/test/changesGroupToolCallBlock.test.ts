@@ -201,7 +201,9 @@ describe("ChangesGroupToolCallBlock", () => {
     });
     const content = html.slice(html.indexOf('data-slot="collapsible-content"'));
 
-    expect(content.match(/Writing/gu)).toHaveLength(3);
+    // 只计可见文字，避免把摘要 title 属性里的同名操作重复计数。
+    const visibleText = content.replace(/<[^>]*>/gu, "");
+    expect(visibleText.match(/Writing/gu)).toHaveLength(3);
   });
 
   it.each([true, false])(

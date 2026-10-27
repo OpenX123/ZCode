@@ -79,8 +79,8 @@ describe("ConfirmDialogHost required acknowledgement", () => {
     expect(screen.getByTestId("source-server-boundary-dialog")).toBeTruthy();
 
     expect(screen.getByText("本地离线，任务照常运行")).toBeTruthy();
-    expect(screen.getByText("关闭 ZCode 或休眠本机， 远程任务继续运行。").textContent).toBe(
-      "关闭 ZCode 或休眠本机，\n远程任务继续运行。",
+    expect(screen.getByText("关闭 YCode 或休眠本机， 远程任务继续运行。").textContent).toBe(
+      "关闭 YCode 或休眠本机，\n远程任务继续运行。",
     );
     expect(screen.getByTestId("source-server-boundary-local").textContent).toContain(
       "remote.sourceServerBoundaryLocalDevice",

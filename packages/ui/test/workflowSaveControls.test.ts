@@ -125,11 +125,11 @@ function renderPopover(host: WorkflowSavePopoverHost, locale: "en-US" | "zh-CN" 
 }
 
 describe("WorkflowSavePopover", () => {
-  it("zh：先是整条宽的 ZCode 主路，细线之下才是三个字段；名字按 run 名预填、名字框拿到焦点", () => {
+  it("zh：先是整条宽的 YCode 主路，细线之下才是三个字段；名字按 run 名预填、名字框拿到焦点", () => {
     renderPopover(popoverHost(), "zh-CN");
     expect(screen.getByText("保存工作流")).toBeTruthy();
-    expect(screen.getByTestId("workflow-save-lead").textContent).toBe("让 ZCode 帮我提炼保存");
-    expect(screen.getByText("ZCode 会帮你提炼出可复用的工作流，再交你确认。")).toBeTruthy();
+    expect(screen.getByTestId("workflow-save-lead").textContent).toBe("让 YCode 帮我提炼保存");
+    expect(screen.getByText("YCode 会帮你提炼出可复用的工作流，再交你确认。")).toBeTruthy();
     expect(screen.getByText("或按原样直接保存")).toBeTruthy();
     const name = screen.getByTestId<HTMLInputElement>("workflow-save-name");
     expect(name.value).toBe("pr-review");
@@ -140,7 +140,7 @@ describe("WorkflowSavePopover", () => {
     expect(screen.getByTestId("workflow-save-submit").textContent).toBe("直接保存");
   });
 
-  it("ZCode 主路：把填好的字段交出去，然后关掉", async () => {
+  it("YCode 主路：把填好的字段交出去，然后关掉", async () => {
     const host = popoverHost();
     const { onOpenChange } = renderPopover(host);
     fireEvent.change(screen.getByTestId("workflow-save-description"), {
@@ -155,7 +155,7 @@ describe("WorkflowSavePopover", () => {
     });
   });
 
-  it("⌘↩ 从任何字段触发 ZCode 主路", async () => {
+  it("⌘↩ 从任何字段触发 YCode 主路", async () => {
     const host = popoverHost();
     renderPopover(host);
     fireEvent.keyDown(screen.getByTestId("workflow-save-name"), { key: "Enter", metaKey: true });
@@ -228,7 +228,7 @@ describe("WorkflowSavePopover", () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
-  it("老 agent 没有 workflows/save：只留 ZCode 那条路，提示里说清楚", () => {
+  it("老 agent 没有 workflows/save：只留 YCode 那条路，提示里说清楚", () => {
     renderPopover(popoverHost({ directSaveUnsupported: true }));
     expect(screen.getByTestId("workflow-save-lead")).toBeTruthy();
     expect(screen.queryByTestId("workflow-save-name")).toBeNull();
@@ -236,7 +236,7 @@ describe("WorkflowSavePopover", () => {
     expect(screen.getByText(/This agent cannot save directly\./u)).toBeTruthy();
   });
 
-  it("宿主没有发送路径：没有 ZCode 那一枚、也没有分隔线，只剩字段", () => {
+  it("宿主没有发送路径：没有 YCode 那一枚、也没有分隔线，只剩字段", () => {
     const host = popoverHost();
     delete host.sendLead;
     renderPopover(host);

@@ -272,7 +272,7 @@ it("keeps five-row pagination and renders pinned tasks with title/all/less", () 
   expect(screen.getAllByTestId("row")).toHaveLength(20);
 });
 
-it("scopes selection and mobile marker, omits task file shortcuts, and closes only an archived task", async () => {
+it("scopes selection, ignores the retired mobile marker, omits task file shortcuts, and closes only an archived task", async () => {
   const onOpenFileTree = vi.fn();
   const presentation = {
     activeWorkspaceKey: "/two",
@@ -292,7 +292,7 @@ it("scopes selection and mobile marker, omits task file shortcuts, and closes on
     ),
   );
   expect(screen.getAllByTestId("row").map((row) => row.dataset.active)).toEqual(["false", "true"]);
-  expect(mocks.rowProps.find((row) => row.task.taskId === "one")?.isMobileActive).toBe(true);
+  expect(mocks.rowProps.find((row) => row.task.taskId === "one")?.isMobileActive).toBe(false);
   expect(screen.queryByText("Files")).toBeNull();
   expect(onOpenFileTree).not.toHaveBeenCalled();
   await act(async () => {

@@ -89,7 +89,7 @@ describe("skills mention provider", () => {
       "Plugin · Run pure GUI black-box tests",
     );
     expect(mapSkillsToMentionItemsForTest([skill], "zh-CN")[0]?.description).toContain(
-      "插件 · 使用 ZCode Browser Use 对网页和本地 Web 前端执行纯 GUI 黑盒测试",
+      "插件 · 使用 YCode Browser Use 对网页和本地 Web 前端执行纯 GUI 黑盒测试",
     );
   });
 });
