@@ -6,7 +6,7 @@ import { sessionEngineSchema, type SessionEngine } from "@zcode/shared/external-
 // 旧键清理仍归 chatComposerDraftStorage 的 janitor。
 // 语义：scope = sessionId（draft 态 = "__draft__"）；保存 text + editorStateJson，外部预填在
 // Lexical 尚未挂载时额外保存 mention（保证重挂载不降级为纯文本）。
-// 仅有非空白正文才持久化；mode/modelSelection 随正文保存，删空后删除整个 scope。
+// 普通会话只保存非空正文；独立 Tab 草稿另保留空正文配置，刷新后仍保持各自引擎。
 // 附件不入草稿（objectUrl/File 不可序列化，localPath 附件重启后归属难校验——
 // 与「v4 composer 不做附件草稿持久化」的裁决一致）。
 import { logger } from "@/logger.js";
@@ -44,6 +44,8 @@ export interface ComposerScope {
   clientNamespace: string;
   hostId: string;
   projectId: string | null;
+  /** 工作台未提交草稿的稳定身份；不改变正式任务的项目归属。 */
+  draftId?: string;
 }
 
 export function composerScopeKey(scope: ComposerScope): string {
@@ -58,7 +60,7 @@ export interface PendingTaskDraft {
 }
 
 function pendingTaskKey(scope: ComposerScope): string {
-  return `zcode-pending-task-draft:v1:${composerScopeKey(scope)}`;
+  return `zcode-pending-task-draft:v1:${composerScopeKey(scope)}${scope.draftId ? `:tab:${scope.draftId}` : ""}`;
 }
 export function readPendingTaskDraft(scope: ComposerScope): PendingTaskDraft | null {
   try {
@@ -96,6 +98,16 @@ export function bindPendingTaskDraft(
   workspacePath: string,
 ): void {
   const current = readPendingTaskDraft(scope);
+  if (!current && scope.draftId) {
+    const { draftId: _tabId, ...legacyScope } = scope;
+    const legacy = readPendingTaskDraft(legacyScope);
+    // 工作区选择器先分配的临时身份只能由指定 Tab 认领，连同已发送命令一次迁移。
+    if (legacy?.draftId === draftId) {
+      writePendingTaskDraft(scope, { ...legacy, workspacePath });
+      writePendingTaskDraft(legacyScope, null);
+      return;
+    }
+  }
   if (current?.draftId === draftId && current.workspacePath !== workspacePath)
     writePendingTaskDraft(scope, { ...current, workspacePath });
 }
@@ -191,6 +203,12 @@ function draftStorageKey(
     : getV4ComposerDraftStorageKey(path, identity);
 }
 export const V4_DRAFT_SCOPE_ROOT = "__draft__";
+export function getV4TabDraftScopeId(draftId: string): string {
+  return `${V4_DRAFT_SCOPE_ROOT}:tab:${draftId}`;
+}
+export function isV4TabDraftScope(scopeId: string): boolean {
+  return scopeId.startsWith(`${V4_DRAFT_SCOPE_ROOT}:tab:`);
+}
 const warnedStorageKeys = new Set<string>();
 
 function warnStorageFailure(key: string, error: unknown) {
@@ -232,7 +250,7 @@ function readDraftFile(key: string): V4DraftFile {
     }
     const scopes = Object.fromEntries(
       Object.entries(parsed.scopes).flatMap(([scopeId, value]) => {
-        const draft = readDraft(value);
+        const draft = readDraft(value, isV4TabDraftScope(scopeId));
         return draft ? [[scopeId, draft]] : [];
       }),
     );
@@ -253,8 +271,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readDraft(value: unknown): V4ComposerDraft | null {
-  if (!isRecord(value) || typeof value.text !== "string" || !value.text.trim()) return null;
+function readDraft(value: unknown, allowEmpty = false): V4ComposerDraft | null {
+  // 独立 Tab 的空正文仍承载引擎和模型选择，重启读取不能套用旧会话草稿的空值过滤。
+  if (!isRecord(value) || typeof value.text !== "string" || (!allowEmpty && !value.text.trim()))
+    return null;
   const mode = submissionModeSchema.safeParse(value.mode);
   const selection = modelSelectionSchema.safeParse(value.modelSelection);
   // 坏 options 不应连带丢掉可确定的模型身份；不读取旧 provider/model/thought 别名。
@@ -369,12 +389,12 @@ export function persistV4ComposerDraft(
       : {}),
   };
   // promotion 以后任务归属由 Host 查询；浏览器 Session 草稿不保留组织态副本。
-  if (scopeId !== V4_DRAFT_SCOPE_ROOT) {
+  if (scopeId !== V4_DRAFT_SCOPE_ROOT && !isV4TabDraftScope(scopeId)) {
     delete next.projectId;
     delete next.taskGroupId;
   }
   // 空白页配置只留在 Composer 内存；不存在记录时也不执行无意义写盘。
-  if (!next.text.trim()) {
+  if (!next.text.trim() && !isV4TabDraftScope(scopeId)) {
     delete file.scopes[scopeId];
   } else {
     file.scopes[scopeId] = { ...next, updatedAt: Date.now() };

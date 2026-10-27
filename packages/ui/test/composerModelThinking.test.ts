@@ -227,6 +227,16 @@ describe("composer combined model and thinking picker", () => {
       expect(screen.queryByRole("switch")).toBeNull();
     },
   );
+  it("窄布局保留档位文字，不显示强度竖条", () => {
+    render(createElement(Harness));
+    fireEvent.keyDown(screen.getByRole("slider"), { key: "Escape" });
+    const trigger = screen.getByTestId("chat-model-select-trigger");
+    trigger.setAttribute("data-composer-compact", "true");
+    const label = trigger.querySelector("[data-composer-thought-label]");
+    expect(label?.textContent).toBe("High");
+    expect(label?.className).not.toContain("hidden");
+    expect(screen.queryByTestId("composer-thought-meter")).toBeNull();
+  });
   it("keeps an empty selection secondary without a phantom effort or effort placeholder", () => {
     render(createElement(Harness, { empty: true }));
     const trigger = screen.getByTestId("chat-model-select-trigger");
@@ -343,7 +353,7 @@ describe("composer combined model and thinking picker", () => {
     expect(screen.queryByRole("slider")).toBeNull();
     expect(screen.getByText("Effort")).toBeTruthy();
 
-    expect(screen.getByTestId("composer-thought-meter").getAttribute("data-progress")).toBe("0");
+    expect(screen.queryByTestId("composer-thought-meter")).toBeNull();
     fireEvent.keyDown(screen.getByTestId("composer-provider-trigger"), { key: "ArrowRight" });
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Provider A Individual" }));
     expect(screen.getByRole("slider")).toBeTruthy();
@@ -387,7 +397,7 @@ describe("composer combined model and thinking picker", () => {
   it("does not project an invalid effort as a selected first level", () => {
     render(createElement(Harness, { invalid: true }));
     expect(screen.getByRole("slider").getAttribute("aria-valuetext")).toBe("—");
-    expect(screen.getByTestId("composer-thought-meter").getAttribute("data-progress")).toBe("0");
+    expect(screen.queryByTestId("composer-thought-meter")).toBeNull();
     fireEvent.change(screen.getByRole("slider"), { target: { value: "2" } });
     expect(screen.getByRole("slider").getAttribute("aria-valuetext")).toBe("High");
   });

@@ -4,9 +4,11 @@ import {
   ContextMenuSeparator,
 } from "@/components/ui/context-menu.js";
 import { TaskActionMenuContent } from "@/TaskActionMenuContent.js";
+import type { WorkbenchSessionBinding } from "@/v4/workbench-tabs/index.js";
 
 export function TaskListItemContextMenu({
   organizationActions,
+  workbenchSession,
   intl,
   isPinned,
   isArchived = false,
@@ -30,6 +32,7 @@ export function TaskListItemContextMenu({
   disabledReason,
 }: {
   organizationActions?: React.ReactNode;
+  workbenchSession?: WorkbenchSessionBinding;
   intl: {
     formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
   };
@@ -62,6 +65,7 @@ export function TaskListItemContextMenu({
     <ContextMenuContent className="w-52">
       {organizationActions}
       <TaskActionMenuContent
+        workbenchSession={workbenchSession}
         intl={intl}
         isPinned={isPinned}
         isArchived={isArchived}

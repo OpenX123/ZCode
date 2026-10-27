@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select.js";
 import { ENGINE_LABELS, type EngineControlsProps } from "./contract.js";
+import { TaskClientLogo } from "./TaskClientLogo.js";
 import {
   EngineConfigMenu,
   EngineEffortPicker,
@@ -90,11 +91,10 @@ export function EngineControls({
         </Select>
       ) : (
         <span
-          className="px-2 text-ui-sm text-foreground-subtle data-[composer-compact=true]:hidden"
-          data-testid="session-engine-label"
-          data-composer-collapse-priority="3"
+          className="inline-flex size-7 shrink-0 items-center justify-center grayscale opacity-60"
+          data-testid="session-engine-indicator"
         >
-          {ENGINE_LABELS[engine]}
+          <TaskClientLogo engine={engine} />
         </span>
       )}
       {loading ? (

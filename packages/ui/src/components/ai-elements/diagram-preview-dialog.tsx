@@ -4,6 +4,7 @@ import { ChevronDownIcon, CircleMinusIcon, CirclePlusIcon, XIcon } from "lucide-
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -31,6 +32,7 @@ import {
   type DiagramViewportTransform,
 } from "@/lib/diagramViewport.js";
 import { logger } from "@/logger.js";
+import { namespaceMermaidSvg } from "@/components/ai-elements/mermaid-rendering/index.js";
 
 type DiagramPreviewDialogProps = {
   open: boolean;
@@ -318,6 +320,8 @@ export function DiagramPreviewDialog({
   title,
 }: DiagramPreviewDialogProps) {
   const { intl } = useZCodeIntl();
+  const svgNamespace = `diagram-preview-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const previewSvg = useMemo(() => namespaceMermaidSvg(svg, svgNamespace), [svg, svgNamespace]);
   const dialogContentRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -673,7 +677,7 @@ export function DiagramPreviewDialog({
             ref={contentRef}
             aria-label={title}
             className="absolute top-0 left-0 origin-top-left select-none [&_svg]:block [&_svg]:h-auto [&_svg]:max-w-none"
-            dangerouslySetInnerHTML={{ __html: svg }}
+            dangerouslySetInnerHTML={{ __html: previewSvg }}
             role="img"
             style={transformStyle}
           />

@@ -472,10 +472,13 @@ export function PermissionDialog({
   isWebRemoteControl = false,
   responding = false,
   responseError,
+  autoFocus = true,
 }: {
   request: ZCodePermissionRequest;
   responding?: boolean;
   responseError?: string;
+  /** 非焦点会话仍展示权限内容，但不能抢走另一栏输入焦点。 */
+  autoFocus?: boolean;
   /**
    * `content` 只在工作流确认窗的放行应答上出现：用户在窗里改过的设置（docs/dynamic-workflow/launch.md
    * 「Adjusting the settings in the window」）。没改过即不传。
@@ -592,7 +595,7 @@ export function PermissionDialog({
   }, [request.requestId]);
 
   useEffect(() => {
-    if (orderedOptions.length === 0) {
+    if (!autoFocus || orderedOptions.length === 0) {
       return;
     }
     if (feedbackInputFocusedRef.current) {
@@ -611,7 +614,7 @@ export function PermissionDialog({
     return () => {
       cancelAnimationFrame(frameId);
     };
-  }, [isFeedbackSelected, orderedOptions.length, request.requestId, selectedIndex]);
+  }, [autoFocus, isFeedbackSelected, orderedOptions.length, request.requestId, selectedIndex]);
 
   const moveSelection = useCallback(
     (direction: 1 | -1) => {

@@ -1,4 +1,4 @@
-import { useCallback, useContext, useMemo } from "react";
+import { useCallback, useContext, useMemo, useRef } from "react";
 import { mutateProjectTask, type ProjectTaskMutation } from "@/project-sidebar/task-mutation.js";
 import type { ProjectTask } from "@/project-sidebar/contract.js";
 import { ProjectTaskListContext } from "@/project-sidebar/ProjectTaskListContext.js";
@@ -69,18 +69,37 @@ export function useProjectTaskActions(task: ProjectTask, refresh: () => Promise<
     },
     [mutate, refresh, onPin, task, report],
   );
+  const archivePending = useRef(false);
   const archive = useCallback(async () => {
+    if (archivePending.current) return null;
+    archivePending.current = true;
     try {
       const result = await mutate({ kind: "archive", archived: !task.archived });
       // 重构漏掉了归档后的 UI 清理，导致侧栏消失而主区继续显示；与 Header 保持同一语义。
-      if (!task.archived) removeTaskState(task.workspacePath, task.taskId, task.workspaceIdentity);
+      if (!task.archived) {
+        removeTaskState(task.workspacePath, task.taskId, task.workspaceIdentity);
+        // 行会随权威树更新卸载；撤销闭包固定原目标，不能再切换旧的 archived 值。
+        toast(intl.formatMessage({ id: "taskList.archivedNotice" }), {
+          position: "top-center",
+          variant: "info",
+          durationMs: 5000,
+          actionLabel: intl.formatMessage({ id: "taskList.undoArchive" }),
+          onAction: () => {
+            void mutate({ kind: "archive", archived: false })
+              .then(() => refresh())
+              .catch((error) => report("unarchive", error));
+          },
+        });
+      }
       await refresh();
       return result ?? null;
     } catch (error) {
       report("archive", error);
       return null;
+    } finally {
+      archivePending.current = false;
     }
-  }, [mutate, refresh, task, removeTaskState, report]);
+  }, [mutate, refresh, task, removeTaskState, report, intl]);
   const unread = useCallback(
     async (_id: string, value: boolean) => {
       try {

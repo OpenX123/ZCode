@@ -42,6 +42,7 @@ import {
   type PaneWorkspaceScope,
 } from "@/v4/paneLayoutStore.js";
 import type { WorkbenchSessionBinding } from "@/v4/workbenchGroupStore.js";
+import type { WorkbenchTab } from "@/v4/workbench-tabs/index.js";
 import {
   acquireSessionsIndex,
   releaseSessionsIndex,
@@ -56,8 +57,11 @@ import type {
 
 interface ChatPaneShellProps {
   paneId: string;
+  groupId?: string;
+  groupActive?: boolean;
+  groupIndex?: number;
   focused: boolean;
-  /** 单 pane 布局时不画焦点框（无歧义，避免视觉噪音）。 */
+  /** 多栏时仅淡化后台栏，不绘制选中边框。 */
   showFocusIndicator: boolean;
   onFocusRequest: (paneId: string) => void;
   /** 绝对定位 rect（布局层计算的 calc 表达式）。 */
@@ -68,16 +72,18 @@ interface ChatPaneShellProps {
 }
 
 const INACTIVE_PANE_OVERLAY_STYLE: CSSProperties = {
-  backgroundColor: "color-mix(in oklab, var(--color-background) 34%, transparent)",
-  backdropFilter: "brightness(0.94) saturate(0.94)",
+  backgroundColor: "color-mix(in oklab, var(--color-background) 8%, transparent)",
 };
 
 /**
  * Focus 层外壳：点击/聚焦 pane 内任意处 → focus 该 pane（capture，不干扰子树交互）。
- * memo + 稳定回调：焦点切换只翻转 data-focused/边框类名，不牵动 pane 内容子树。
+ * memo + 稳定回调：焦点切换只翻转 data-focused 和后台淡化，不牵动 pane 内容子树。
  */
 const ChatPaneShell = memo(function ChatPaneShell({
   paneId,
+  groupId,
+  groupActive,
+  groupIndex,
   focused,
   showFocusIndicator,
   onFocusRequest,
@@ -92,25 +98,26 @@ const ChatPaneShell = memo(function ChatPaneShell({
 
   return (
     <div
+      id={`workbench-panel-${paneId}`}
+      role="tabpanel"
       data-testid={testId(TID_V4_PANE_SHELL, paneId)}
       data-pane-id={paneId}
+      data-group-id={groupId}
+      data-group-active={groupActive}
+      data-group-index={groupIndex}
       data-focused={focused ? "true" : "false"}
       data-restored-unvalidated={restoredUnvalidated ? "true" : "false"}
       onPointerDownCapture={handleFocusRequest}
       onFocusCapture={handleFocusRequest}
       style={style}
-      className={cn(
-        "absolute flex min-h-0 min-w-0 flex-col",
-        hidden && "hidden",
-        showFocusIndicator && focused && "ring-1 ring-inset ring-[var(--color-brand)]",
-      )}
+      className={cn("absolute flex min-h-0 min-w-0 flex-col", hidden && "hidden")}
     >
       {showFocusIndicator && !focused ? (
         <div
           aria-hidden="true"
           data-v4-pane-inactive-overlay="true"
           style={INACTIVE_PANE_OVERLAY_STYLE}
-          className="pointer-events-none absolute inset-0 z-30 rounded-md transition-[background-color,backdrop-filter]"
+          className="pointer-events-none absolute inset-0 z-30 rounded-md transition-[background-color]"
         />
       ) : null}
       {children}
@@ -252,6 +259,9 @@ export interface WorkbenchShellBinding {
 
 export interface WorkbenchLeafPaneProps {
   paneId: string;
+  groupId?: string;
+  groupActive?: boolean;
+  groupIndex?: number;
   rect: RectExpr;
   /** 完整视图浮窗只显示焦点 pane；其余 pane 隐藏但不卸载。 */
   hidden?: boolean;
@@ -262,6 +272,8 @@ export interface WorkbenchLeafPaneProps {
   binding: PaneBinding | null;
   /** session workbench group 中 primary pane 的显式绑定；无 group 时为 null。 */
   primaryBinding?: WorkbenchSessionBinding | null;
+  /** 新工作台 Tab 始终显式绑定；其身份与左右位置无关。 */
+  tabBinding?: WorkbenchTab;
   shell: WorkbenchShellBinding;
   onFocusRequest: (paneId: string) => void;
   onClosePane: (paneId: string) => void;
@@ -281,6 +293,9 @@ function workspaceBadgeFor(scope: PaneWorkspaceScope): PaneWorkspaceBadge {
 
 export function WorkbenchLeafPane({
   paneId,
+  groupId,
+  groupActive,
+  groupIndex,
   rect,
   hidden = false,
   focused,
@@ -288,6 +303,7 @@ export function WorkbenchLeafPane({
   shellWorkspaceKey,
   binding,
   primaryBinding,
+  tabBinding,
   shell,
   onFocusRequest,
   onClosePane,
@@ -295,7 +311,7 @@ export function WorkbenchLeafPane({
   onBindSession,
   onPaneActiveSessionChange,
 }: WorkbenchLeafPaneProps) {
-  const isPrimary = paneId === V4_PRIMARY_PANE_ID;
+  const isPrimary = !tabBinding && paneId === V4_PRIMARY_PANE_ID;
   const isGroupPrimary = isPrimary && Boolean(primaryBinding);
   const scope = useMemo<PaneWorkspaceScope>(() => {
     if (!isPrimary && binding) {
@@ -374,7 +390,7 @@ export function WorkbenchLeafPane({
     (isPrimary ? primaryBinding?.readOnly : binding?.readOnly) ||
     (isShellWorkspace && shell.readOnly),
   );
-  const shouldUseShellStatusPanel = isShellWorkspace;
+  const shouldUseShellStatusPanel = isShellWorkspace && focused;
   const paneSearchResultHighlightRequest =
     sessionId === shell.searchResultHighlightRequest?.taskId
       ? shell.searchResultHighlightRequest
@@ -383,6 +399,9 @@ export function WorkbenchLeafPane({
   return (
     <ChatPaneShell
       paneId={paneId}
+      groupId={groupId}
+      groupActive={groupActive}
+      groupIndex={groupIndex}
       focused={focused}
       showFocusIndicator={showFocusIndicator}
       onFocusRequest={onFocusRequest}
@@ -407,6 +426,10 @@ export function WorkbenchLeafPane({
         ) : null}
         <SessionPane
           paneId={paneId}
+          draftTabId={sessionId === null ? tabBinding?.draftId : undefined}
+          draftProjectId={tabBinding?.projectId}
+          draftTaskGroupId={tabBinding?.taskGroupId}
+          inheritRootDraft={tabBinding?.inheritRootDraft}
           readOnly={readOnly}
           sessionId={sessionId}
           openTrigger={isPrimary ? "sidebar" : "split"}
@@ -425,13 +448,19 @@ export function WorkbenchLeafPane({
           onSessionDeleted={handleSessionDeleted}
           focused={focused}
           allowEscapeStopOutsidePane={shell.allowEscapeStopOutsidePane}
-          onClosePane={isPrimary ? undefined : handleClosePane}
+          onClosePane={isPrimary || tabBinding ? undefined : handleClosePane}
           workspaceBadge={!isPrimary && !isShellWorkspace ? workspaceBadgeFor(scope) : undefined}
-          draftComposerHeader={isPrimary && !primaryBinding ? shell.draftComposerHeader : undefined}
+          draftComposerHeader={
+            (isPrimary && !primaryBinding) ||
+            (tabBinding && focused && isShellWorkspace && sessionId === null)
+              ? shell.draftComposerHeader
+              : undefined
+          }
           // 草稿页头才需要上行拖拽控制器。普通会话上传它会把 Composer 的闭包送回壳层，
           // 再经壳层回调连回旧 SessionPane，形成跨会话的 snapshot / store 保留链。
           onDropTargetControllerChange={
-            isPrimary && !primaryBinding && sessionId === null
+            ((isPrimary && !primaryBinding) || (tabBinding && focused && isShellWorkspace)) &&
+            sessionId === null
               ? shell.onPrimaryDraftDropTargetControllerChange
               : undefined
           }
@@ -443,7 +472,11 @@ export function WorkbenchLeafPane({
           gitWorktreeChangeSummary={
             shouldUseShellStatusPanel ? shell.gitWorktreeChangeSummary : undefined
           }
-          activeTaskChangeSummary={isPrimary ? shell.activeTaskChangeSummary : undefined}
+          activeTaskChangeSummary={
+            isPrimary || (focused && sessionId === shell.activeSessionId)
+              ? shell.activeTaskChangeSummary
+              : undefined
+          }
           summaryPanelVariantOverride={
             shouldUseShellStatusPanel ? shell.summaryPanelVariantOverride : undefined
           }

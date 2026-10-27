@@ -225,6 +225,19 @@ export function TaskGroupedView({
       useZCodeSessionStore
         .getState()
         .removeTaskState(task.workspacePath, task.taskId, task.workspaceIdentity);
+    if (mutation.kind === "archive" && mutation.archived) {
+      toast(intl.formatMessage({ id: "taskList.archivedNotice" }), {
+        position: "top-center",
+        variant: "info",
+        durationMs: 5000,
+        actionLabel: intl.formatMessage({ id: "taskList.undoArchive" }),
+        onAction: () =>
+          action(
+            () => mutate(task, { kind: "archive", archived: false }),
+            "taskList.unarchiveFailed",
+          ),
+      });
+    }
     await refresh();
     return result;
   };

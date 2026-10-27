@@ -3,24 +3,24 @@
 import { createMermaidPlugin, type MermaidConfig } from "@streamdown/mermaid";
 import { Loader2Icon } from "lucide-react";
 import type { HTMLAttributes } from "react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import type { Theme } from "@/useTheme.js";
 import { resolveTheme } from "@/useTheme.js";
+import {
+  completeMermaidSourceLines,
+  createMermaidLiveRenderer,
+  createMermaidRenderCoordinator,
+  namespaceMermaidSvg,
+} from "@/components/ai-elements/mermaid-rendering/index.js";
+import type { MermaidLiveRenderer } from "@/components/ai-elements/mermaid-rendering/contract.js";
 
-type MermaidRenderState =
-  | {
-      status: "loading";
-    }
-  | {
-      status: "ready";
-      svg: string;
-    }
-  | {
-      status: "plaintext";
-    };
+interface MermaidRenderState {
+  svg: string | null;
+  errorKey: string | null;
+}
 
 export interface MermaidBlockProps extends HTMLAttributes<HTMLDivElement> {
   code: string;
@@ -29,12 +29,22 @@ export interface MermaidBlockProps extends HTMLAttributes<HTMLDivElement> {
    * 默认 "system" 跟随操作系统，供旧调用点/待删代码兜底。
    */
   theme?: Theme;
+  streaming?: boolean;
+  renderEnabled?: boolean;
+  fontSizePx?: number;
   onOpenPreview?: () => void;
   onPreviewSvgChange?: (svg: string | null) => void;
 }
 
 const mermaidPlugin = createMermaidPlugin();
-let mermaidRenderQueue = Promise.resolve();
+const mermaidCoordinator = createMermaidRenderCoordinator(async (id, source, config) => {
+  // 排队后页面可能已隐藏；在创建 Mermaid DOM 前再次检查，恢复后会用最新候选重试。
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+    throw new Error("Mermaid rendering paused while document is hidden");
+  }
+  const renderer = mermaidPlugin.getMermaid(config);
+  return (await renderer.render(id, source)).svg;
+});
 const MERMAID_COLOR_CANVAS_SENTINEL = "#010203";
 
 // Mermaid 底层的 khroma 解析器不支持 Tailwind v4 常见的 oklab/color-mix 结果。
@@ -60,25 +70,6 @@ const mermaidColorNormalizeCtx: CanvasRenderingContext2D | null = (() => {
   }
   return ctx;
 })();
-
-function enqueueMermaidRender<T>(task: () => Promise<T>): Promise<T> {
-  const run = mermaidRenderQueue.then(task, task);
-  mermaidRenderQueue = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
-
-function hashMermaidCode(code: string): string {
-  let hash = 2166136261;
-  for (let index = 0; index < code.length; index += 1) {
-    hash ^= code.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return (hash >>> 0).toString(36);
-}
 
 function normalizeCssColorForMermaid(raw: string, fallback: string): string {
   if (!raw || !mermaidColorResolverEl || !mermaidColorNormalizeCtx || !document.body) {
@@ -220,14 +211,13 @@ function useSystemThemeRevision(theme: Theme): number {
   return revision;
 }
 
-function normalizeMermaidRenderError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 export function MermaidBlock({
   code,
   className,
   theme = "system",
+  streaming = false,
+  renderEnabled = true,
+  fontSizePx = 14,
   onOpenPreview,
   onPreviewSvgChange,
   ...props
@@ -235,65 +225,63 @@ export function MermaidBlock({
   const { intl } = useZCodeIntl();
   const systemThemeRevision = useSystemThemeRevision(theme);
   const renderIdPrefix = useId().replace(/[^a-zA-Z0-9_-]/g, "");
-  const trimmedCode = code.trim();
+  const source = streaming ? completeMermaidSourceLines(code) : code.trim();
   const resolvedTheme = resolveBrowserTheme(theme);
   const themeKey = `${theme}:${resolvedTheme}:${systemThemeRevision}`;
   const mermaidConfig = useMemo(
-    () => createMermaidConfig(resolvedTheme),
-    [resolvedTheme, themeKey],
+    () => ({ ...createMermaidConfig(resolvedTheme), fontSize: fontSizePx }),
+    [fontSizePx, resolvedTheme, themeKey],
   );
-  const renderKey = useMemo(
-    () => `${themeKey}:${hashMermaidCode(trimmedCode)}`,
-    [themeKey, trimmedCode],
+  const request = useMemo(() => ({ source, config: mermaidConfig }), [source, mermaidConfig]);
+  const renderKey = JSON.stringify(request);
+  const cachedSvg = mermaidCoordinator.peek(request);
+  const [renderState, setRenderState] = useState<MermaidRenderState>(() => ({
+    svg: cachedSvg ?? null,
+    errorKey: null,
+  }));
+  const liveRef = useRef<MermaidLiveRenderer | null>(null);
+  const displayTemplate = cachedSvg ?? renderState.svg;
+  const displaySvg = useMemo(
+    () =>
+      displayTemplate
+        ? namespaceMermaidSvg(displayTemplate, `zcode-mermaid-${renderIdPrefix}`)
+        : null,
+    [displayTemplate, renderIdPrefix],
   );
-  const [renderState, setRenderState] = useState<MermaidRenderState>({
-    status: "loading",
-  });
+  const hasFinalError = !streaming && renderState.errorKey === renderKey && cachedSvg === undefined;
 
   useEffect(() => {
-    let cancelled = false;
-
-    if (!trimmedCode) {
-      setRenderState({
-        status: "plaintext",
-      });
-      onPreviewSvgChange?.(null);
-      return;
-    }
-
-    setRenderState({ status: "loading" });
-    onPreviewSvgChange?.(null);
-    const renderId = `zcode-mermaid-${renderIdPrefix}-${hashMermaidCode(renderKey)}`;
-
-    void enqueueMermaidRender(async () => {
-      const renderer = mermaidPlugin.getMermaid(mermaidConfig);
-      return renderer.render(renderId, trimmedCode);
-    })
-      .then(({ svg }) => {
-        if (!cancelled) {
-          setRenderState({ status: "ready", svg });
-          onPreviewSvgChange?.(svg);
-        }
-      })
-      .catch((error: unknown) => {
-        const message = normalizeMermaidRenderError(error);
+    const live = createMermaidLiveRenderer(mermaidCoordinator, {
+      onSuccess(svg) {
+        setRenderState({ svg, errorKey: null });
+      },
+      onError(error, candidate) {
         logger.debug("[MermaidBlock] Mermaid 渲染失败", {
-          error: message,
-          codeLength: trimmedCode.length,
+          // Mermaid 的错误 message 可能包含用户源码，只记录错误类型与规模。
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          codeLength: candidate.source.length,
         });
-        if (!cancelled) {
-          // Mermaid 解析失败常见于模型流式输出未完成或用户粘贴了非标准语法。
-          // 退回纯文本能保留内容可读，避免用错误面板打断聊天阅读。
-          setRenderState({ status: "plaintext" });
-          onPreviewSvgChange?.(null);
-        }
-      });
-
+        // 半截源码失败由 controller 静默保留旧图；最终失败才提供明确提示与源码入口。
+        const key = JSON.stringify({ source: candidate.source, config: candidate.config });
+        setRenderState((current) => ({ ...current, errorKey: key }));
+      },
+    });
+    liveRef.current = live;
     return () => {
-      cancelled = true;
-      onPreviewSvgChange?.(null);
+      live.dispose();
+      liveRef.current = null;
     };
-  }, [intl, mermaidConfig, onPreviewSvgChange, renderIdPrefix, renderKey, trimmedCode]);
+  }, []);
+
+  useEffect(() => {
+    liveRef.current?.setEnabled(renderEnabled);
+    liveRef.current?.update({ ...request, complete: !streaming });
+  }, [renderEnabled, request, streaming]);
+
+  useEffect(() => {
+    onPreviewSvgChange?.(displaySvg);
+    return () => onPreviewSvgChange?.(null);
+  }, [displaySvg, onPreviewSvgChange]);
 
   return (
     <div
@@ -302,25 +290,34 @@ export function MermaidBlock({
       {...props}
     >
       <div className="max-h-[420px] overflow-auto p-3 text-foreground">
-        {renderState.status === "loading" ? (
-          <div className="flex min-h-28 items-center justify-center gap-2 text-foreground-subtle text-ui-base">
+        {!displaySvg && !hasFinalError ? (
+          <div
+            role="status"
+            className="flex min-h-28 items-center justify-center gap-2 text-foreground-subtle text-ui-base"
+          >
             <Loader2Icon className="size-4 animate-spin" />
             <span>{intl.formatMessage({ id: "codeBlock.mermaid.loading" })}</span>
           </div>
         ) : null}
-        {renderState.status === "plaintext" ? (
-          <pre className="m-0 min-h-28 min-w-max bg-transparent font-mono text-foreground text-ui-base leading-relaxed">
-            {code}
-          </pre>
-        ) : null}
-        {renderState.status === "ready" ? (
+        {displaySvg ? (
           <div
             aria-label={intl.formatMessage({ id: "codeBlock.mermaid.ariaLabel" })}
-            className="flex min-h-28 min-w-max items-center justify-center [&_svg]:h-auto [&_svg]:max-w-none"
-            dangerouslySetInnerHTML={{ __html: renderState.svg }}
+            className="flex min-h-28 items-center justify-center [&_svg]:h-auto [&_svg]:max-w-full"
+            dangerouslySetInnerHTML={{ __html: displaySvg }}
             onDoubleClick={onOpenPreview}
             role="img"
           />
+        ) : null}
+        {hasFinalError ? (
+          <div className="text-ui-sm text-foreground-subtle" role="alert">
+            <p>{intl.formatMessage({ id: "codeBlock.mermaid.failed" })}</p>
+            <details>
+              <summary className="cursor-pointer py-1">
+                {intl.formatMessage({ id: "codeBlock.mermaid.viewSource" })}
+              </summary>
+              <pre className="whitespace-pre-wrap break-words font-mono text-ui-base">{code}</pre>
+            </details>
+          </div>
         ) : null}
       </div>
     </div>

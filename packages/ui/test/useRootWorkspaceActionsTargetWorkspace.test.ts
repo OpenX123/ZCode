@@ -4,12 +4,26 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { resolveNewTaskTargetFromRequest } from "@/root/useRootWorkspaceActions.js";
 import type { WorkbenchNewTaskTarget } from "@/conversation-workspace-target/workbenchTarget.js";
+import { resolveWorkbenchNewTaskTarget } from "@/conversation-workspace-target/workbenchTarget.js";
+import { INITIAL_PANE_LAYOUT } from "@/v4/paneLayoutStore.js";
 
 function source(relative: string): string {
   return readFileSync(new URL(relative, import.meta.url), "utf8").replaceAll("\r\n", "\n");
 }
 
 describe("resolveNewTaskTargetFromRequest", () => {
+  it("新工作台焦点目录优先于滞后的 shell 导航目录", () => {
+    expect(
+      resolveWorkbenchNewTaskTarget({
+        activeWorkspacePath: "/previous",
+        activeWorkspaceIdentity: null,
+        activeGroup: null,
+        paneLayout: INITIAL_PANE_LAYOUT,
+        workbenchScope: { workspacePath: "/focused", workspaceIdentity: "ssh:focused" },
+      }),
+    ).toEqual({ workspacePath: "/focused", workspaceIdentity: "ssh:focused" });
+  });
+
   it("request 带 targetWorkspace 时采用它，且不询问 workbench 焦点解析", () => {
     const fallback = vi.fn<[], WorkbenchNewTaskTarget | null>(() => ({
       workspacePath: "/active",
@@ -97,13 +111,13 @@ describe("startNewTaskFromActiveWorkspace 接线契约", () => {
     );
   });
 
-  it("handleCreateTaskInChat 仅在无 targetWorkspace 时应用活动 workspace 只读守卫，带 target 时仍到达 onCreateTask", () => {
+  it("handleCreateTaskInChat 仅在无明确目标时应用活动 workspace 只读守卫，指定草稿同样到达 onCreateTask", () => {
     // WorkspaceShellLayout 组件体量大且依赖繁多，直接挂载不实际；此处用源码契约（正则）
     // 检查守卫的源码形状，不替代执行级权限验证：先算 hasTargetWorkspace，再 `!hasTargetWorkspace &&
     // workspaceReadOnlyReason` 才 return，随后 showChatMainView() + onCreateTask(request)。
     const shell = source("../src/app-shell/WorkspaceShellLayout.tsx");
     expect(shell).toMatch(
-      /const hasTargetWorkspace\s*=\s*typeof request === "object" && request !== null && Boolean\(request\.targetWorkspace\);/,
+      /const hasTargetWorkspace\s*=\s*typeof request === "object" &&\s*request !== null &&\s*Boolean\(request\.targetWorkspace \|\| request\.replaceDraftTabId\);/,
     );
     expect(shell).toMatch(
       /if \(!hasTargetWorkspace && workspaceReadOnlyReason\) \{\s*return;\s*\}\s*showChatMainView\(\);\s*onCreateTask\(request\);/,

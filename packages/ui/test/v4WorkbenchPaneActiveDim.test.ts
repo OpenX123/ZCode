@@ -95,6 +95,8 @@ describe("WorkbenchLeafPane inactive visual state", () => {
     expect(inactiveMarkup).toContain("pointer-events-none");
     expect(inactiveMarkup).toContain("z-30");
     expect(activeMarkup).not.toContain('data-v4-pane-inactive-overlay="true"');
+    expect(activeMarkup).not.toContain("ring-1");
+    expect(activeMarkup).not.toContain("ring-inset");
     expect(singlePaneMarkup).not.toContain('data-v4-pane-inactive-overlay="true"');
   });
 });

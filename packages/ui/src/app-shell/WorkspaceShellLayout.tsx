@@ -38,6 +38,7 @@ import {
   useRemotePaneSessionLookup,
 } from "@/v4/usePaneSessionPersistence.js";
 import { requestV4ComposerDraftWorkspaceTransfer } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
+import { WorkbenchPaneHeaders } from "@/project-sidebar/WorkbenchPaneHeaders.js";
 import { ProjectComposerMenu, ProjectDirectoryProvider } from "@/project-sidebar/index.js";
 import { DesktopTopOverlay } from "@/DesktopTopOverlay.js";
 import { DesktopWindowFrame } from "@/DesktopWindowFrame.js";
@@ -861,7 +862,9 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       // 目标另属他项目（跨项目发起已保存工作流，docs/dynamic-workflow/launch.md「The detail page」），
       // 活动 workspace 的只读性不适用，真正的守卫是 root 动作对 target 的 isWorkspaceReadOnly。
       const hasTargetWorkspace =
-        typeof request === "object" && request !== null && Boolean(request.targetWorkspace);
+        typeof request === "object" &&
+        request !== null &&
+        Boolean(request.targetWorkspace || request.replaceDraftTabId);
       if (!hasTargetWorkspace && workspaceReadOnlyReason) {
         return;
       }
@@ -1101,16 +1104,25 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
         workspaceIdentity?: string;
         remoteSessionId?: string;
       },
-      sessionId: string,
+      sessionId: string | null,
     ) => {
-      handleSelectTaskInChat(
-        scope.workspacePath,
-        sessionId,
-        scope.workspaceIdentity,
-        scope.remoteSessionId,
-      );
+      // 工作台已先提交焦点；此处只同步 shell 投影，不再走侧栏 openSession 回路。
+      const result = ensureTaskNavigationWorkspace({
+        workspacePath: scope.workspacePath,
+        workspaceIdentity: scope.workspaceIdentity,
+        activateTabByPath: tabStoreApi.getState().activateTabByPath,
+        addLocalWorkspaceTab: (path) => {
+          tabStoreApi.getState().addTab(path);
+        },
+      });
+      if (!result.accepted) return;
+      if (sessionId) handleSelectTask(scope.workspacePath, sessionId, scope.workspaceIdentity);
+      else
+        useZCodeSessionStore
+          .getState()
+          .setActiveTaskId(scope.workspacePath, null, scope.workspaceIdentity);
     },
-    [handleSelectTaskInChat],
+    [handleSelectTask, tabStoreApi],
   );
   const handleStartDraftInWorkspaceInChat = useCallback(
     (
@@ -1754,6 +1766,18 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
                           className="border-b"
                         >
                           <WorkspaceHeader
+                            workbenchTitles={
+                              workspaceMainView === "chat"
+                                ? (leadingPaddingClassName) => (
+                                    <WorkbenchPaneHeaders
+                                      leadingPaddingClassName={leadingPaddingClassName}
+                                      onCreateTask={handleCreateTaskInChat}
+                                      allowRemoteWorkspace={allowRemoteWorkspace}
+                                      onOpenRemoteWorkspace={onOpenRemoteWorkspace}
+                                    />
+                                  )
+                                : undefined
+                            }
                             reserveWindowControls={!isSidePaneVisible}
                             variant={activeTaskId === null ? "draft" : "task"}
                             draftDropTargetController={

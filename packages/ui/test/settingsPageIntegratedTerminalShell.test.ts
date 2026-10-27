@@ -112,7 +112,7 @@ vi.mock("@/DesktopWindowFrame.js", () => ({
 }));
 
 vi.mock("@/WorkspaceSidebarFooter.js", () => ({
-  WorkspaceSidebarFooter: () => null,
+  WorkspaceSidebarFooter: () => createElement("footer", { "data-testid": "workspace-footer" }),
 }));
 
 vi.mock("@/ControlHintTooltip.js", () => ({
@@ -307,6 +307,14 @@ function flushPendingEffects() {
 }
 
 describe("SettingsPage integrated terminal shell", () => {
+  it("设置侧栏只保留顶部返回工作区，不再挂载重复的底部导航", async () => {
+    const { SettingsPage } = await import("../src/SettingsPage.js");
+    const html = renderToStaticMarkup(
+      createElement(SettingsPage, { isDesktop: true, onBack: vi.fn() }),
+    );
+    expect(html.match(/aria-label="workspace.backToWorkspace"/g)).toHaveLength(1);
+    expect(html).not.toContain('data-testid="workspace-footer"');
+  }, 20000);
   beforeEach(() => {
     pendingEffects.length = 0;
     selectedSection.value = "general";
@@ -360,6 +368,8 @@ describe("SettingsPage integrated terminal shell", () => {
     expect(html).toContain('role="group"');
     expect(html).toContain('aria-labelledby="settings-sidebar-group-basics"');
     expect(html).toContain('id="settings-sidebar-group-basics"');
+    // 职业引导组件已退役，设置不能继续提供只写状态的空入口。
+    expect(html).not.toContain("settings.onboarding");
   }, 90_000);
 
   it("defaults ToolSearch off and saves the selected mode through shared settings", async () => {

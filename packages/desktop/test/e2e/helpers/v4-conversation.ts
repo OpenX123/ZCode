@@ -89,6 +89,12 @@ interface PrepareV4ConversationE2EOptions {
 /** 单 pane 竖切固定 paneId（V4ChatPane 写死 workspace-main）。 */
 export const V4_MAIN_PANE_ID = "workspace-main";
 
+/** 双栏以 Tab 稳定身份渲染；历史默认主栏定位转为当前焦点，显式 paneId 保持精确。 */
+async function resolveV4PaneId(paneId: string = V4_MAIN_PANE_ID): Promise<string> {
+  if (paneId !== V4_MAIN_PANE_ID) return paneId;
+  return (await getV4FocusedPaneId()) ?? V4_MAIN_PANE_ID;
+}
+
 export interface V4PaneSnapshot {
   /** data-session-id；draft 表示未绑定 CLI session。 */
   sessionId: string | null;
@@ -179,7 +185,7 @@ async function ensureV4PreparationDraft(options: PrepareV4ConversationE2EOptions
       );
     },
     TID_V4_COMPOSER_INPUT,
-    testId(TID_V4_SESSION_PANE, V4_MAIN_PANE_ID),
+    testId(TID_V4_SESSION_PANE, await resolveV4PaneId()),
     TID_V4_STOP,
     options.skipShellReady ? null : DEFAULT_WORKSPACE,
   );
@@ -203,7 +209,7 @@ export async function startNewV4Draft() {
   );
 }
 
-export function getV4PaneSnapshot(paneId: string = V4_MAIN_PANE_ID): Promise<V4PaneSnapshot> {
+export async function getV4PaneSnapshot(paneId: string = V4_MAIN_PANE_ID): Promise<V4PaneSnapshot> {
   return browser.execute(
     (paneTestId, stopTestId, timelineTestId, rowPrefix) => {
       const pane = document.querySelector<HTMLElement>(`[data-testid="${paneTestId}"]`);
@@ -217,7 +223,7 @@ export function getV4PaneSnapshot(paneId: string = V4_MAIN_PANE_ID): Promise<V4P
         rowCount: pane?.querySelectorAll(`[data-testid^="${rowPrefix}-"]`).length ?? 0,
       };
     },
-    testId(TID_V4_SESSION_PANE, paneId),
+    testId(TID_V4_SESSION_PANE, await resolveV4PaneId(paneId)),
     TID_V4_STOP,
     TID_V4_TIMELINE,
     TID_V4_ROW,
@@ -278,7 +284,7 @@ export async function waitForV4ConversationState(
 export async function getV4ConversationState(): Promise<V4ConversationStateSnapshot> {
   const browserSnapshot = await browser.execute(
     readV4ChatRootSnapshotInBrowser,
-    testId(TID_V4_SESSION_PANE, V4_MAIN_PANE_ID),
+    testId(TID_V4_SESSION_PANE, await resolveV4PaneId()),
     TID_V4_QUEUE_ITEM,
     TID_V4_STOP,
   );
@@ -326,7 +332,7 @@ export async function getV4ConversationState(): Promise<V4ConversationStateSnaps
         status: panel.getAttribute("data-goal-status"),
       };
     },
-    testId(TID_V4_SESSION_PANE, V4_MAIN_PANE_ID),
+    testId(TID_V4_SESSION_PANE, await resolveV4PaneId()),
     TID_CHAT_SUMMARY_PANEL,
   );
   const hasBlockingGoalWork =
@@ -355,7 +361,7 @@ export async function getV4ConversationState(): Promise<V4ConversationStateSnaps
  */
 export async function sendV4Prompt(prompt: string) {
   await setV4ComposerText(prompt);
-  const mainPaneTestId = testId(TID_V4_SESSION_PANE, V4_MAIN_PANE_ID);
+  const mainPaneTestId = testId(TID_V4_SESSION_PANE, await resolveV4PaneId());
   try {
     await browser.waitUntil(
       async () =>
@@ -461,7 +467,7 @@ export async function sendV4PromptAndWaitAccepted(
     sessionId: string | null;
     userMessageSeen: boolean;
   } | null = null;
-  const readAcceptance = () =>
+  const readAcceptance = async () =>
     browser.execute(
       (paneTestId, inputTestId, sendTestId, timelineTestId, marker) => {
         const pane = document.querySelector<HTMLElement>(`[data-testid="${paneTestId}"]`);
@@ -485,7 +491,7 @@ export async function sendV4PromptAndWaitAccepted(
           userMessageSeen,
         };
       },
-      testId(TID_V4_SESSION_PANE, V4_MAIN_PANE_ID),
+      testId(TID_V4_SESSION_PANE, await resolveV4PaneId()),
       TID_V4_COMPOSER_INPUT,
       TID_V4_COMPOSER_SEND,
       TID_V4_TIMELINE,
@@ -566,7 +572,7 @@ export async function waitForV4AssistantMessageContaining(
   paneId: string = V4_MAIN_PANE_ID,
 ) {
   let latestAssistantMessages: string[] = [];
-  const readAssistantMessages = () =>
+  const readAssistantMessages = async () =>
     browser.execute(
       (paneTestId, timelineTestId) => {
         const pane = document.querySelector<HTMLElement>(`[data-testid="${paneTestId}"]`);
@@ -575,7 +581,7 @@ export async function waitForV4AssistantMessageContaining(
           .filter((row) => row.classList.contains("group/assistant-row"))
           .map((row) => row.innerText.replace(/\u00a0/g, " ").trim());
       },
-      testId(TID_V4_SESSION_PANE, paneId),
+      testId(TID_V4_SESSION_PANE, await resolveV4PaneId(paneId)),
       TID_V4_TIMELINE,
     );
 
@@ -599,7 +605,7 @@ export async function waitForV4AssistantMessageContaining(
   }
 }
 
-export function getV4Messages(role?: "assistant" | "user"): Promise<V4MessageSnapshot[]> {
+export async function getV4Messages(role?: "assistant" | "user"): Promise<V4MessageSnapshot[]> {
   return browser.execute(
     (paneTestId, timelineTestId, selectedRole) => {
       const pane = document.querySelector<HTMLElement>(`[data-testid="${paneTestId}"]`);
@@ -622,7 +628,7 @@ export function getV4Messages(role?: "assistant" | "user"): Promise<V4MessageSna
             message.role !== null && (!selectedRole || message.role === selectedRole),
         );
     },
-    testId(TID_V4_SESSION_PANE, V4_MAIN_PANE_ID),
+    testId(TID_V4_SESSION_PANE, await resolveV4PaneId()),
     TID_V4_TIMELINE,
     role,
   );
@@ -1309,7 +1315,7 @@ async function selectRadixOption(triggerTestId: string, itemTestId: string, time
 }
 
 /** 读取 goal 横幅（data-goal-status / data-goal-objective 投影属性）；无目标返回 null。 */
-export function getV4GoalProjection(): Promise<{
+export async function getV4GoalProjection(): Promise<{
   status: string | null;
   objective: string | null;
 } | null> {
@@ -1324,7 +1330,7 @@ export function getV4GoalProjection(): Promise<{
       };
     },
     TID_V4_SESSION_PANE,
-    V4_MAIN_PANE_ID,
+    await resolveV4PaneId(),
     TID_CHAT_SUMMARY_PANEL,
   );
 }
@@ -1434,7 +1440,7 @@ export async function clickV4EditConflictConversationOnly() {
 }
 
 /** 读取结构化 compact marker；状态与来源只读 data-*，不依赖本地化 label。 */
-export function getV4CompactMarkers(
+export async function getV4CompactMarkers(
   paneId: string = V4_MAIN_PANE_ID,
 ): Promise<V4CompactMarkerSnapshot[]> {
   return browser.execute(
@@ -1454,7 +1460,7 @@ export function getV4CompactMarkers(
         };
       });
     },
-    testId(TID_V4_SESSION_PANE, paneId),
+    testId(TID_V4_SESSION_PANE, await resolveV4PaneId(paneId)),
     TID_V4_ROW,
   );
 }
@@ -1748,7 +1754,7 @@ export interface V4TurnNavigatorState {
   }>;
 }
 
-export function getV4TurnNavigatorState(): Promise<V4TurnNavigatorState> {
+export async function getV4TurnNavigatorState(): Promise<V4TurnNavigatorState> {
   return browser.execute(
     (navigatorTestId, itemPrefix, timelineTestId, composerTestId, sessionPaneTestId) => {
       const pane = document.querySelector<HTMLElement>(`[data-testid="${sessionPaneTestId}"]`);
@@ -1815,7 +1821,7 @@ export function getV4TurnNavigatorState(): Promise<V4TurnNavigatorState> {
     TID_V4_TURN_NAVIGATOR_ITEM,
     TID_V4_TIMELINE,
     TID_V4_COMPOSER,
-    testId(TID_V4_SESSION_PANE, V4_MAIN_PANE_ID),
+    testId(TID_V4_SESSION_PANE, await resolveV4PaneId()),
   );
 }
 
@@ -1932,7 +1938,7 @@ export async function selectV4TaskById(sessionId: string, taskListTimeout = 1500
     (snapshot) => snapshot.sessionId === sessionId,
     `点击侧栏 task 后 primary pane 没有切到 ${sessionId}`,
     30000,
-    V4_MAIN_PANE_ID,
+    await resolveV4PaneId(),
   );
 }
 

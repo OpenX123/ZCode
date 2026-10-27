@@ -9,10 +9,49 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
 afterEach(() => {
   cleanup();
+  document.querySelectorAll("[data-test-other-composer]").forEach((element) => element.remove());
   vi.unstubAllGlobals();
 });
 
 describe("ElicitationDialog custom answer focus", () => {
+  it("非焦点栏的问答不自动聚焦，激活后恢复键盘操作", async () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+      window.setTimeout(() => callback(performance.now()), 0),
+    );
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
+    const otherComposer = document.createElement("textarea");
+    otherComposer.dataset.testOtherComposer = "true";
+    document.body.append(otherComposer);
+    otherComposer.focus();
+    const request: ZCodeElicitationRequest = {
+      type: "elicitation_request",
+      taskId: "background-task",
+      traceId: "background-trace",
+      requestId: "background-question",
+      message: "请选择方案",
+      options: [],
+      questions: [{ question: "请选择方案", options: [{ value: "one", label: "方案一" }] }],
+    };
+    const content = (autoFocus: boolean) =>
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "zh-CN" },
+        createElement(ElicitationDialog, { request, autoFocus, onRespond: vi.fn() }),
+      );
+    const view = render(content(false));
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    expect(document.activeElement).toBe(otherComposer);
+    view.rerender(content(true));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        view.container.querySelector('[data-elicitation-dialog-card="true"]'),
+      ),
+    );
+    otherComposer.remove();
+  });
+
   it.each(["single", "multi", "plan"])(
     "%s: 上下键可进入及离开自定义输入框，保留草稿且不隐式提交",
     async (kind) => {

@@ -882,8 +882,6 @@ const zhCN: Record<string, string> = {
     "以下项目暂时无法处理：{projects}。连接恢复后可再次操作。",
   "taskList.deleteAllArchivedResult": "已删除 {deleted} 个，跳过 {skipped} 个，失败 {failed} 个。",
   "taskList.deleteAllArchivedError": "操作或列表刷新失败，请刷新后检查剩余任务。",
-  "confirmDialog.taskArchiveTitle": "归档这个任务？",
-  "confirmDialog.taskArchiveDescription": "任务“{taskTitle}”会移入归档列表，之后仍可恢复。",
   "bots.title": "机器人",
   "bots.description": "把外部聊天工具和 Webhook 接入 YCode 机器人。",
   "bots.listTitle": "机器人",
@@ -1166,10 +1164,6 @@ const zhCN: Record<string, string> = {
   // 登录
   "login.oauth.regionTag.zai": "全球",
   "login.oauth.regionTag.bigmodel": "中国",
-  "settings.onboarding": "引导",
-  "settings.onboardingDescription":
-    "重新选择职业、界面模式和使用偏好。数据迁移可在迁移设置中操作。",
-  "settings.onboardingOpen": "打开引导",
 
   // 应用头部
   "app.currentTheme": "当前: {theme}",
@@ -1787,6 +1781,8 @@ const zhCN: Record<string, string> = {
   "codeBlock.mermaid.reset": "重置缩放",
   "codeBlock.mermaid.close": "关闭预览",
   "codeBlock.mermaid.loading": "正在渲染图表...",
+  "codeBlock.mermaid.failed": "图表语法无法解析，可查看源码。",
+  "codeBlock.mermaid.viewSource": "查看源码",
   "codeBlock.mermaid.source": "源码",
   "markdownTable.copyMarkdown": "复制 Markdown",
   "markdownTable.downloadCsv": "下载 CSV",
@@ -2525,6 +2521,9 @@ const zhCN: Record<string, string> = {
   "taskList.unpin": "取消置顶任务",
   "taskList.rename": "重命名任务",
   "taskList.archive": "归档任务",
+  "taskList.archivedNotice": "会话已归档",
+  "taskList.undoArchive": "撤销",
+  "taskList.unarchiveFailed": "取消归档失败",
   "taskList.archiveFailed": "归档任务失败",
   "taskList.unarchive": "取消归档任务",
   "taskList.renamePlaceholder": "任务名称",
@@ -6370,6 +6369,20 @@ const zhCN: Record<string, string> = {
   "scheduledPreview.toast.running": "正在运行“{title}”…",
   "scheduledPreview.toast.view": "查看",
   "scheduledPreview.addSchedule": "添加计划",
+  "workbench.newConversation": "新会话",
+  "workbench.splitRight": "向右分屏",
+  "workbench.layoutMenu": "分栏",
+  "workbench.openViews": "已打开的会话",
+  "workbench.closeView": "关闭会话视图",
+  "workbench.closePane": "关闭分栏",
+  "workbench.mergeGroups": "合并为单栏",
+  "workbench.openInLeft": "在左栏打开",
+  "workbench.openInRight": "在右栏打开",
+  "workbench.moveToOtherGroup": "移到另一栏",
+  "workbench.swapGroups": "交换左右栏",
+  "workbench.leftGroup": "左栏",
+  "workbench.rightGroup": "右栏",
+  "workbench.placementNotReady": "会话归属尚未就绪，请稍后重试",
 };
 
 export default zhCN;

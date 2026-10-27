@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TID_V4_USER_INPUT_DIALOG } from "@zcode/shared/test-ids";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
+import { V4UserInputDialog } from "../src/v4/V4UserInputDialog.js";
 import {
   buildV4ElicitationProgressKey,
   createInteractionAutoResolutionIntentTracker,
@@ -19,6 +20,18 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
 }));
 
 describe("V4InteractionDialogs", () => {
+  it("通用用户输入停靠在所属会话，不绘制覆盖另一栏的全窗遮罩", () => {
+    const html = renderToStaticMarkup(
+      createElement(V4UserInputDialog, {
+        model: { prompt: "需要输入", options: [], freeText: true, sensitive: false },
+        onSubmit: vi.fn(),
+      }),
+    );
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain("需要输入");
+    expect(html).not.toContain("fixed");
+    expect(html).not.toContain("inset-0");
+  });
   it("ignores a stale snapshot while switching back to another task", () => {
     const staleSnapshot = {
       sessionId: "task-b",

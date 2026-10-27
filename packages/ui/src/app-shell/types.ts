@@ -54,6 +54,8 @@ export interface WorkspaceShellZCodeState {
   taskError: string | null;
 }
 export interface CreateTaskOptions {
+  /** 仅改选此未发送草稿的项目，保留栏位和稳定身份。 */
+  replaceDraftTabId?: string;
   /** Renderer 发起方租约；异步准备期间取消或换草稿后不得导航。 */
   isCurrent?: () => boolean;
   remoteProjectMembershipId?: string;

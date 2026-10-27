@@ -3,6 +3,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   readV4ComposerDraft,
+  readPendingTaskDraft,
   readComposerWorkspaceScope,
   rememberComposerWorkspaceScope,
   resolveComposerScope,
@@ -11,13 +12,13 @@ import { selectRemoteWorkspaceProjectFromDialog } from "@/root/useRemoteWorkspac
 import { useRootWorkspaceActions } from "@/root/useRootWorkspaceActions.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { onTaskNavigationCommitted } from "@/store/zcodeSessionStoreNavigation.js";
-import {
-  INITIAL_PANE_LAYOUT,
-  V4_PRIMARY_PANE_ID,
-  countPanes,
-  usePaneLayoutStore,
-} from "@/v4/paneLayoutStore.js";
+import { INITIAL_PANE_LAYOUT, usePaneLayoutStore } from "@/v4/paneLayoutStore.js";
 import { useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
+import {
+  getFocusedWorkbenchTab,
+  getWorkbenchDraftScopeId,
+  useWorkbenchTabsStore,
+} from "@/v4/workbench-tabs/index.js";
 
 function fixture(
   clientMode: "desktop-continuous" = "desktop-continuous",
@@ -86,6 +87,8 @@ beforeEach(() => {
   useZCodeSessionStore.setState({ workspaces: {} });
   usePaneLayoutStore.setState(INITIAL_PANE_LAYOUT);
   useWorkbenchGroupStore.getState().resetWorkbenchGroups();
+  // 工作台是当前焦点的所有者，避免前一个远端用例的导航身份泄漏到本地用例。
+  useWorkbenchTabsStore.setState({ groups: [], tabs: {}, focusedGroupId: "", ratio: 0.5 });
 });
 it.each([null, "other-project", "retained-project"])(
   "恢复原项目时显式初始化草稿归属，不沿用缓存 %s",
@@ -232,17 +235,40 @@ describe("project-aware new task creation", () => {
     expect(useZCodeSessionStore.getState().workspaces["/remote"]).toBeUndefined();
   });
   it.each(["desktop-continuous"] as const)(
-    "PD01 连续新建复用未发送目录，显式 local Host 也保持同一身份（%s）",
+    "PD01 显式 local Host 连续新建产生独立草稿，每份草稿保留自己的预热目录（%s）",
     async (mode) => {
       useZCodeSessionStore.getState().setActiveTaskId("/old", "old-session");
       const { result, prepareSession, addTab } = fixture(mode);
       await act(async () => {
         await result.current.handleCreateTask({ projectId: null, hostId: "local" });
+      });
+      const first = getFocusedWorkbenchTab(useWorkbenchTabsStore.getState())!;
+      await act(async () => {
         await result.current.handleCreateTask({ projectId: null, hostId: "local" });
+      });
+      const second = getFocusedWorkbenchTab(useWorkbenchTabsStore.getState())!;
+      expect(second.id).not.toBe(first.id);
+      expect(first.workspaceScope.workspacePath).toBe("/managed/1");
+      expect(second.workspaceScope.workspacePath).toBe("/managed/2");
+      const scope = resolveComposerScope(null, undefined, "desktop");
+      const firstPending = readPendingTaskDraft({ ...scope, draftId: first.id });
+      const secondPending = readPendingTaskDraft({ ...scope, draftId: second.id });
+      expect(firstPending).toMatchObject({ workspacePath: "/managed/1" });
+      expect(secondPending).toMatchObject({ workspacePath: "/managed/2" });
+      expect(firstPending!.draftId).not.toBe(secondPending!.draftId);
+      expect(prepareSession).toHaveBeenNthCalledWith(1, {
+        hostId: "local",
+        draftId: firstPending!.draftId,
+        reuseDraft: false,
+      });
+      expect(prepareSession).toHaveBeenNthCalledWith(2, {
+        hostId: "local",
+        draftId: secondPending!.draftId,
+        reuseDraft: false,
       });
       expect(prepareSession).toHaveBeenCalledTimes(2);
       expect(addTab).toHaveBeenNthCalledWith(1, "/managed/1", { workspacePurpose: "conversation" });
-      expect(addTab).toHaveBeenNthCalledWith(2, "/managed/1", { workspacePurpose: "conversation" });
+      expect(addTab).toHaveBeenNthCalledWith(2, "/managed/2", { workspacePurpose: "conversation" });
       expect(
         useZCodeSessionStore.getState().getWorkspaceState("/managed/1").draftProjectId,
       ).toBeNull();
@@ -251,12 +277,11 @@ describe("project-aware new task creation", () => {
       );
     },
   );
-  it("uses the selected project primary directory, exits split view and preserves mention spacing", async () => {
+  it("所选项目在当前栏新增独立草稿，保留另一栏和 mention 尾空格", async () => {
     const { result, prepareSession } = fixture();
-    usePaneLayoutStore.getState().splitPaneWithBinding(V4_PRIMARY_PANE_ID, "right", {
-      workspaceScope: { workspacePath: "/unrelated" },
-      sessionId: "another",
-    });
+    useWorkbenchTabsStore.getState().initialize({ workspacePath: "/old" }, "left");
+    useWorkbenchTabsStore.getState().splitRight({ workspacePath: "/unrelated" });
+    const original = useWorkbenchTabsStore.getState();
     const mention = {
       id: "skill:creator",
       category: "skills" as const,
@@ -274,9 +299,21 @@ describe("project-aware new task creation", () => {
     expect(prepareSession).toHaveBeenCalledWith({ projectId: "project-a" });
     const draft = useZCodeSessionStore.getState().getWorkspaceState("/project-primary");
     expect(draft.draftProjectId).toBe("project-a");
-    expect(draft.composerTextInsertRequest).toMatchObject({ text: "$creator ", mention });
-    expect(countPanes(usePaneLayoutStore.getState())).toBe(1);
-    expect(useWorkbenchGroupStore.getState().activeGroupId).toBeNull();
+    const tab = getFocusedWorkbenchTab(useWorkbenchTabsStore.getState())!;
+    expect(
+      readV4ComposerDraft(
+        "/project-primary",
+        undefined,
+        getWorkbenchDraftScopeId(tab.id),
+        resolveComposerScope("project-a", undefined, "desktop"),
+      ),
+    ).toMatchObject({ text: "$creator ", mention });
+    expect(draft.composerTextInsertRequest).toBeNull();
+    expect(useWorkbenchTabsStore.getState().groups).toHaveLength(2);
+    expect(useWorkbenchTabsStore.getState().groups[0]).toBe(original.groups[0]);
+    expect(useWorkbenchTabsStore.getState().tabs[original.groups[1]!.activeTabId]).toBe(
+      original.tabs[original.groups[1]!.activeTabId],
+    );
   });
   it("leaves the current session intact when directory preparation fails", async () => {
     useZCodeSessionStore.getState().setActiveTaskId("/old", "old-session");
@@ -312,12 +349,21 @@ it("本地控制端在远程工作区身份下初始化项目草稿并保留精�
   );
   const draft = useZCodeSessionStore.getState().getWorkspaceState("/new", "remote:server:s:/new");
   expect(draft.draftProjectId).toBe("p");
-  expect(draft.composerTextInsertRequest).toMatchObject({ text: "$creator ", mention });
+  const tab = getFocusedWorkbenchTab(useWorkbenchTabsStore.getState())!;
+  expect(
+    readV4ComposerDraft(
+      "/new",
+      "remote:server:s:/new",
+      getWorkbenchDraftScopeId(tab.id),
+      resolveComposerScope("p", "remote:server:s:/new", "desktop"),
+    ),
+  ).toMatchObject({ text: "$creator ", mention });
+  expect(draft.composerTextInsertRequest).toBeNull();
   expect(useZCodeSessionStore.getState().workspaces["/new"]).toBeUndefined();
 });
 
 it.each(["desktop-continuous"] as const)(
-  "TD07 %s 空白创建意图只留在内存，文字出现时才保存项目和分组",
+  "TD07 %s 独立Tab草稿从空白起保存项目和分组，输入后保留归属",
   (mode) => {
     const { result } = fixture(mode);
     act(() =>
@@ -330,12 +376,17 @@ it.each(["desktop-continuous"] as const)(
       useZCodeSessionStore.getState().getWorkspaceState("/metadata", "remote:server:s:/metadata"),
     ).toMatchObject({ draftProjectId: "p", draftTaskGroupId: "g" });
     expect(
-      readV4ComposerDraft("/metadata", "remote:server:s:/metadata", "__draft__", {
-        clientNamespace: "desktop",
-        hostId: "remote:server:s",
-        projectId: "p",
-      }),
-    ).toBeNull();
+      readV4ComposerDraft(
+        "/metadata",
+        "remote:server:s:/metadata",
+        getWorkbenchDraftScopeId(getFocusedWorkbenchTab(useWorkbenchTabsStore.getState())!.id),
+        {
+          clientNamespace: "desktop",
+          hostId: "remote:server:s",
+          projectId: "p",
+        },
+      ),
+    ).toMatchObject({ text: "", projectId: "p", taskGroupId: "g" });
     act(() =>
       result.current.startDraftInWorkspace("/metadata", "remote:server:s:/metadata", {
         projectId: "p",
@@ -344,11 +395,16 @@ it.each(["desktop-continuous"] as const)(
       }),
     );
     expect(
-      readV4ComposerDraft("/metadata", "remote:server:s:/metadata", "__draft__", {
-        clientNamespace: "desktop",
-        hostId: "remote:server:s",
-        projectId: "p",
-      }),
+      readV4ComposerDraft(
+        "/metadata",
+        "remote:server:s:/metadata",
+        getWorkbenchDraftScopeId(getFocusedWorkbenchTab(useWorkbenchTabsStore.getState())!.id),
+        {
+          clientNamespace: "desktop",
+          hostId: "remote:server:s",
+          projectId: "p",
+        },
+      ),
     ).toMatchObject({ text: "draft", projectId: "p", taskGroupId: "g" });
   },
 );
@@ -411,4 +467,96 @@ it("D3 discards project lookup after the user selects another session", async ()
   });
   expect(prepareSession).not.toHaveBeenCalled();
   expect(addTab).not.toHaveBeenCalled();
+});
+
+it("分栏草稿改选项目只替换指定 Tab，保留最新输入和另一栏会话", async () => {
+  const { useWorkbenchTabsStore, getWorkbenchDraftScopeId } =
+    await import("@/v4/workbench-tabs/index.js");
+  const { registerV4ComposerDraftReader } =
+    await import("@/v4/composer/composerDraftWorkspaceTransfer.js");
+  const store = useWorkbenchTabsStore;
+  store.setState({ groups: [], tabs: {}, focusedGroupId: "", ratio: 0.5 });
+  store.getState().initialize({ workspacePath: "/old" }, "left-session");
+  const right = store
+    .getState()
+    .splitRight({ workspacePath: "/old" }, { projectId: "old-project" });
+  const original = store.getState();
+  const unregister = registerV4ComposerDraftReader(
+    "/old",
+    () => ({
+      draft: { text: "改选期间的最新输入", engine: "codex" },
+      attachments: [],
+    }),
+    getWorkbenchDraftScopeId(right),
+  );
+  useZCodeSessionStore.getState().setActiveTaskId("/project-primary", "target-existing-session");
+  const { result } = fixture();
+  try {
+    await act(async () =>
+      result.current.handleCreateTask({
+        projectId: "new-project",
+        replaceDraftTabId: right,
+      }),
+    );
+    const state = store.getState();
+    expect(state.groups).toBe(original.groups);
+    expect(Object.keys(state.tabs)).toHaveLength(2);
+    expect(state.tabs[original.groups[0]!.activeTabId]).toBe(
+      original.tabs[original.groups[0]!.activeTabId],
+    );
+    expect(state.tabs[right]).toMatchObject({
+      id: right,
+      draftId: right,
+      sessionId: null,
+      projectId: "new-project",
+      workspaceScope: { workspacePath: "/project-primary" },
+    });
+    expect(
+      readV4ComposerDraft(
+        "/project-primary",
+        undefined,
+        getWorkbenchDraftScopeId(right),
+        resolveComposerScope("new-project", undefined, "desktop"),
+      ),
+    ).toMatchObject({
+      text: "改选期间的最新输入",
+      engine: "codex",
+      projectId: "new-project",
+    });
+    expect(useZCodeSessionStore.getState().getWorkspaceState("/project-primary").activeTaskId).toBe(
+      "target-existing-session",
+    );
+  } finally {
+    unregister();
+    store.setState({ groups: [], tabs: {}, focusedGroupId: "", ratio: 0.5 });
+  }
+});
+
+it("项目准备期间草稿已发送时拒绝迟到改选，不创建额外草稿", async () => {
+  const { useWorkbenchTabsStore } = await import("@/v4/workbench-tabs/index.js");
+  const store = useWorkbenchTabsStore;
+  store.setState({ groups: [], tabs: {}, focusedGroupId: "", ratio: 0.5 });
+  store.getState().initialize({ workspacePath: "/old" });
+  const id = store.getState().groups[0]!.activeTabId;
+  const { result, prepareSession, addTab } = fixture();
+  let finish!: (value: Awaited<ReturnType<typeof prepareSession>>) => void;
+  prepareSession.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  let pending!: Promise<void>;
+  await act(async () => {
+    pending = result.current.handleCreateTask({ projectId: "p", replaceDraftTabId: id });
+  });
+  act(() => store.getState().bindSession(id, "sent-session"));
+  await act(async () => {
+    finish({ workspacePath: "/project-primary", projectId: "p", additionalDirectories: [] });
+    await pending;
+  });
+  expect(addTab).not.toHaveBeenCalled();
+  expect(Object.keys(store.getState().tabs)).toEqual([id]);
+  expect(store.getState().tabs[id]?.sessionId).toBe("sent-session");
+  store.setState({ groups: [], tabs: {}, focusedGroupId: "", ratio: 0.5 });
 });

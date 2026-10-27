@@ -8,7 +8,10 @@ import { ProjectEditor } from "@/project-sidebar/ProjectEditor.js";
 import zhCN from "@/i18n/locales/zh-CN.js";
 import enUS from "@/i18n/locales/en-US.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { getWorkbenchDraftScopeId, useWorkbenchTabsStore } from "@/v4/workbench-tabs/index.js";
+import { registerV4ComposerDraftReader } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
 
+// 本文件只验证导航契约，工作台的会话渲染由独立交互测试覆盖。
 Element.prototype.scrollIntoView = vi.fn();
 const state = vi.hoisted(() => ({
   hasManagement: true,
@@ -102,6 +105,7 @@ vi.mock("@/DirectoryBrowser.js", () => ({
     createElement("button", { onClick: () => onSelect("/source/selected") }, "choose-root"),
 }));
 beforeEach(() => {
+  useWorkbenchTabsStore.setState({ groups: [], tabs: {}, focusedGroupId: "", ratio: 0.5 });
   useZCodeSessionStore.setState({ workspaces: {} });
   useZCodeSessionStore.getState().startDraft("/draft", undefined, undefined, {
     projectId: "original",
@@ -121,7 +125,7 @@ afterEach(() => {
   state.select = undefined;
   state.devices[0]!.aggregatedStatus = "online";
 });
-async function setup(defaultDeviceId?: string) {
+async function setup(defaultDeviceId?: string, draftTabId?: string) {
   const saved = { id: "project", hostId: defaultDeviceId ?? "local", name: "Draft", roots: [] };
   const service = {
     readTree: vi.fn<IProjectService["readTree"]>(async () => ({ projects: [], tasks: [] })),
@@ -138,6 +142,7 @@ async function setup(defaultDeviceId?: string) {
   };
   const props = {
     workspacePath: "/draft",
+    draftTabId,
     onCreateTask: vi.fn(),
     allowDeviceManagement: true,
     projects: [],
@@ -196,6 +201,129 @@ it("selects the saved project only after directory refresh and preserves the dra
     initialComposerDraft: { sourceWorkspaceKey: "/draft", draft: { text: "" }, attachments: [] },
   });
 });
+it("双栏创建项目只接续发起 Tab 的实时正文、附件和分组", async () => {
+  const workbench = useWorkbenchTabsStore.getState();
+  workbench.initialize({ workspacePath: "/draft" }, null, {
+    projectId: "left",
+    taskGroupId: "left-group",
+  });
+  const left = Object.values(useWorkbenchTabsStore.getState().tabs)[0]!;
+  const right = workbench.splitRight(
+    { workspacePath: "/draft" },
+    { projectId: "right", taskGroupId: "right-group" },
+  );
+  useWorkbenchTabsStore.getState().activateTab(left.id);
+  const attachment = {
+    id: "left-file",
+    file: new File(["left"], "left.txt"),
+    filename: "left.txt",
+    mimeType: "text/plain",
+    sizeBytes: 4,
+  };
+  const disposeLeft = registerV4ComposerDraftReader(
+    "/draft",
+    () => ({ draft: { text: "左栏尚未落盘", engine: "codex" }, attachments: [attachment] }),
+    getWorkbenchDraftScopeId(left.draftId!),
+  );
+  const disposeRight = registerV4ComposerDraftReader(
+    "/draft",
+    () => ({ draft: { text: "右栏正文" }, attachments: [] }),
+    getWorkbenchDraftScopeId(right),
+  );
+  try {
+    const { props } = await setup();
+    fireEvent.click(screen.getByTestId("virtual-project-save"));
+    await waitFor(() =>
+      expect(props.onCreateTask).toHaveBeenCalledExactlyOnceWith({
+        projectId: "project",
+        hostId: "local",
+        taskGroupId: "left-group",
+        initialComposerDraft: {
+          sourceWorkspaceKey: "/draft",
+          draft: { text: "左栏尚未落盘", engine: "codex" },
+          attachments: [attachment],
+        },
+      }),
+    );
+  } finally {
+    disposeLeft();
+    disposeRight();
+  }
+});
+it.each(["focus", "closed", "promoted"])(
+  "双栏项目保存期间 %s 使原草稿接续失效",
+  async (boundary) => {
+    const workbench = useWorkbenchTabsStore.getState();
+    workbench.initialize({ workspacePath: "/draft" }, null);
+    const left = Object.values(useWorkbenchTabsStore.getState().tabs)[0]!;
+    const right = workbench.splitRight({ workspacePath: "/draft" });
+    useWorkbenchTabsStore.getState().activateTab(left.id);
+    const { props } = await setup();
+    let finish!: () => void;
+    props.onSaved.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    fireEvent.click(screen.getByTestId("virtual-project-save"));
+    await waitFor(() => expect(props.onSaved).toHaveBeenCalledOnce());
+    act(() => {
+      if (boundary === "focus") useWorkbenchTabsStore.getState().activateTab(right);
+      if (boundary === "closed") useWorkbenchTabsStore.getState().closeTab(left.id);
+      if (boundary === "promoted")
+        useWorkbenchTabsStore.getState().bindSession(left.id, "accepted");
+    });
+    await act(async () => finish());
+    await waitFor(() => expect(props.onClose).toHaveBeenCalled());
+    expect(props.onCreateTask).not.toHaveBeenCalled();
+  },
+);
+it.each(["focus", "replaced", "closed", "promoted"])(
+  "标题定向创建项目只依据原草稿资格处理 %s，不认领另一栏",
+  async (boundary) => {
+    useWorkbenchTabsStore.getState().initialize({ workspacePath: "/draft" }, null, {
+      projectId: "left",
+      taskGroupId: "left-group",
+    });
+    const left = useWorkbenchTabsStore.getState().groups[0]!.activeTabId;
+    const right = useWorkbenchTabsStore.getState().splitRight({ workspacePath: "/draft" });
+    const { props } = await setup(undefined, left);
+    let finish!: () => void;
+    props.onSaved.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    fireEvent.click(screen.getByTestId("virtual-project-save"));
+    await waitFor(() => expect(props.onSaved).toHaveBeenCalledOnce());
+    act(() => {
+      if (boundary === "focus") useWorkbenchTabsStore.getState().activateTab(right);
+      if (boundary === "replaced")
+        useWorkbenchTabsStore
+          .getState()
+          .newDraft(
+            { workspacePath: "/replacement" },
+            { replaceDraftTabId: left, projectId: "left" },
+          );
+      if (boundary === "closed") useWorkbenchTabsStore.getState().closeTab(left);
+      if (boundary === "promoted") useWorkbenchTabsStore.getState().bindSession(left, "accepted");
+    });
+    await act(async () => finish());
+    await waitFor(() => expect(props.onClose).toHaveBeenCalled());
+    if (boundary === "focus")
+      expect(props.onCreateTask).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          replaceDraftTabId: left,
+          projectId: "project",
+          taskGroupId: "left-group",
+        }),
+      );
+    else expect(props.onCreateTask).not.toHaveBeenCalled();
+    expect(useWorkbenchTabsStore.getState().tabs[right]?.sessionId).toBeNull();
+  },
+);
 it.each(["existing", "save", "refresh", "draft", "workspace", "failure"])(
   "does not select a created project after %s invalidates the draft",
   async (boundary) => {

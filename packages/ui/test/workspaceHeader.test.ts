@@ -74,6 +74,21 @@ describe("WorkspaceHeader", () => {
     expect(html).toContain('data-summary-panel-variant-prop="absent"');
   });
 
+  it("分栏标题替换原标题且保留一份全局工具及原有顶栏高度", async () => {
+    const html = await renderWorkspaceHeader({
+      workbenchTitles: (leadingPaddingClassName) =>
+        createElement("div", {
+          "data-testid": "pane-titles",
+          "data-leading-padding": leadingPaddingClassName || "",
+        }),
+    });
+    expect(html).toContain('data-testid="pane-titles"');
+    expect(html).not.toContain('data-testid="workspace-header-title"');
+    expect(html.match(/data-header-variant=/g)).toHaveLength(1);
+    expect(html).toContain("h-12");
+    expect(html).not.toContain('role="tablist"');
+  });
+
   it("uses the task variant by default and forwards it to the title section", async () => {
     const html = await renderWorkspaceHeader({});
 

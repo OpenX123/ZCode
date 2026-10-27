@@ -1,5 +1,8 @@
 import { readProjectSidebarView } from "@/project-sidebar/index.js";
-import { stageV4ComposerDraftAttachments } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
+import {
+  captureV4ComposerDraftHandoff,
+  stageV4ComposerDraftAttachments,
+} from "@/v4/composer/composerDraftWorkspaceTransfer.js";
 /* eslint-disable max-lines -- Root workspace action hook 集中编排项目、远程和 conversation 入口；合并期保持动作边界完整，后续按领域拆分。 */
 import type {
   CreateTaskOptions,
@@ -10,7 +13,6 @@ import type { WorkbenchNewTaskTarget } from "@/conversation-workspace-target/wor
 import { resolveWorkbenchNewTaskTarget } from "@/conversation-workspace-target/workbenchTarget.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useComposerClientNamespace } from "@/hooks/useServices.js";
-import { isRendererReloadNavigation } from "@/lib/rendererNavigation.js";
 import { parseWslUncWorkspacePath } from "@/lib/wslUncWorkspace.js";
 import { logger } from "@/logger.js";
 import { openFolderFromWorkspaceEntry } from "@/root/openWorkspaceFolderEntry.js";
@@ -29,8 +31,13 @@ import {
   resolveComposerScope,
   V4_DRAFT_SCOPE_ROOT,
 } from "@/v4/composer/composerDraftStore.js";
-import { hadPersistedPaneLayoutAtModuleLoad, usePaneLayoutStore } from "@/v4/paneLayoutStore.js";
 import { useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
+import {
+  getFocusedWorkbenchTab,
+  getWorkbenchDraftScopeId,
+  useWorkbenchTabsStore,
+} from "@/v4/workbench-tabs/index.js";
+import { usePaneLayoutStore } from "@/v4/paneLayoutStore.js";
 import type { IServiceAccessor } from "@zcode/services";
 import {
   remoteHostIdFromWorkspaceIdentity,
@@ -117,31 +124,60 @@ export function useRootWorkspaceActions({
   });
   useEffect(() => {
     useWorkbenchGroupStore.getState().configureClientMode(workbenchGroupClientMode);
-    if (workbenchGroupClientMode === "desktop-continuous" && !isRendererReloadNavigation()) {
-      // group/pane 是 renderer-local 持久化 UI 状态。app 冷启动如果直接
-      // 激活它们，即使 activeTaskId=null 也会把历史 session 显示出来，违背启动草稿语义。
-      // renderer reload 则保留恢复资格，用于输出中刷新续流。
-      const workbenchState = useWorkbenchGroupStore.getState();
-      const activeGroup = workbenchState.activeGroupId
-        ? workbenchState.groups[workbenchState.activeGroupId]
-        : null;
-      const activeGroupWasRestored = Boolean(
-        activeGroup &&
-        [activeGroup.primaryBinding, ...Object.values(activeGroup.panes)].some(
-          (binding) => binding.restoredUnvalidated,
-        ),
-      );
-      if (activeGroupWasRestored) {
-        workbenchState.deactivateActiveGroup();
-      }
-      if (hadPersistedPaneLayoutAtModuleLoad()) {
-        usePaneLayoutStore.getState().resetToPrimaryPane();
-      }
-    }
+    // 冷启动恢复布局是显式产品规则；旧布局由工作台一次性消费迁移，不能在这里提前清空。
   }, [workbenchGroupClientMode]);
   const composerClientNamespace = useComposerClientNamespace();
   const startDraftInWorkspace = useCallback(
     (workspacePath: string, workspaceIdentity?: string, options?: CreateTaskOptions) => {
+      const replaceId = options?.replaceDraftTabId;
+      if (replaceId) {
+        const workbench = useWorkbenchTabsStore.getState();
+        const source = workbench.tabs[replaceId];
+        if (!source || source.sessionId !== null) return;
+        const handoff =
+          options.initialComposerDraft ??
+          captureV4ComposerDraftHandoff(
+            source.workspaceScope.workspacePath,
+            source.workspaceScope.workspaceIdentity,
+            composerClientNamespace,
+            getWorkbenchDraftScopeId(source.draftId ?? source.id),
+          );
+        const projectId = options.projectId ?? null;
+        const taskGroupId =
+          options.taskGroupId !== undefined ? options.taskGroupId : source.taskGroupId;
+        const scope = resolveComposerScope(projectId, workspaceIdentity, composerClientNamespace);
+        const draftScopeId = getWorkbenchDraftScopeId(source.draftId ?? source.id);
+        // 先暂存精确草稿，再原子换目录；不重置同目录其他会话的 workspace 级导航。
+        persistV4ComposerDraft(
+          workspacePath,
+          workspaceIdentity,
+          draftScopeId,
+          { ...handoff.draft, projectId, taskGroupId },
+          scope,
+        );
+        stageV4ComposerDraftAttachments(workspacePath, workspaceIdentity, 0, handoff, draftScopeId);
+        if (options.draftId)
+          bindPendingTaskDraft({ ...scope, draftId: replaceId }, options.draftId, workspacePath);
+        const workspaceTab = tabStoreApi
+          .getState()
+          .tabs.find(
+            (tab) =>
+              tab.kind === "workspace" &&
+              (tab.workspaceIdentity?.trim() || tab.workspacePath) ===
+                (workspaceIdentity?.trim() || workspacePath),
+          );
+        workbench.newDraft(
+          {
+            workspacePath,
+            ...(workspaceIdentity ? { workspaceIdentity } : {}),
+            ...(workspaceTab?.kind === "workspace" && workspaceTab.remoteSessionId
+              ? { remoteSessionId: workspaceTab.remoteSessionId }
+              : {}),
+          },
+          { replaceDraftTabId: replaceId, projectId, taskGroupId },
+        );
+        return;
+      }
       const projectId =
         options?.projectId !== undefined
           ? options.projectId
@@ -159,6 +195,68 @@ export function useRootWorkspaceActions({
           ? options.taskGroupId
           : (savedDraft?.taskGroupId ?? null);
       rememberComposerWorkspaceScope(workspacePath, workspaceIdentity, scope);
+      if (workbenchGroupClientMode === "desktop-continuous") {
+        const workspaceKey = workspaceIdentity?.trim() || workspacePath;
+        const workspaceTab = tabStoreApi
+          .getState()
+          .tabs.find(
+            (tab) =>
+              tab.kind === "workspace" &&
+              (tab.workspaceIdentity?.trim() || tab.workspacePath) === workspaceKey,
+          );
+        const tabId = useWorkbenchTabsStore.getState().newDraft(
+          {
+            workspacePath,
+            ...(workspaceIdentity ? { workspaceIdentity } : {}),
+            ...(workspaceTab?.kind === "workspace" && workspaceTab.remoteSessionId
+              ? { remoteSessionId: workspaceTab.remoteSessionId }
+              : {}),
+          },
+          { projectId, taskGroupId },
+        );
+        const draftScopeId = getWorkbenchDraftScopeId(tabId);
+        const initialPrompt = options?.initialPrompt;
+        // 同目录双栏不能通过 workspace 级插入命令广播；只初始化这一个 Tab 的草稿。
+        persistV4ComposerDraft(
+          workspacePath,
+          workspaceIdentity,
+          draftScopeId,
+          {
+            text: "",
+            ...options?.initialComposerDraft?.draft,
+            projectId,
+            taskGroupId,
+            ...(initialPrompt?.trim()
+              ? {
+                  text: initialPrompt,
+                  ...(options?.initialPromptMention
+                    ? { mention: options.initialPromptMention }
+                    : {}),
+                }
+              : {}),
+          },
+          scope,
+        );
+        if (options?.draftId)
+          bindPendingTaskDraft({ ...scope, draftId: tabId }, options.draftId, workspacePath);
+        useZCodeSessionStore
+          .getState()
+          .startDraft(workspacePath, options?.provider, workspaceIdentity, {
+            projectId,
+            taskGroupId,
+          });
+        if (options?.initialComposerDraft) {
+          stageV4ComposerDraftAttachments(
+            workspacePath,
+            workspaceIdentity,
+            useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
+              .draftFocusVersion,
+            options.initialComposerDraft,
+            draftScopeId,
+          );
+        }
+        return;
+      }
       if (options?.draftId) bindPendingTaskDraft(scope, options.draftId, workspacePath);
       persistV4ComposerDraft(
         workspacePath,
@@ -172,10 +270,6 @@ export function useRootWorkspaceActions({
         },
         scope,
       );
-      if (workbenchGroupClientMode === "desktop-continuous") {
-        useWorkbenchGroupStore.getState().deactivateActiveGroup();
-        usePaneLayoutStore.getState().resetToPrimaryPane();
-      }
       useZCodeSessionStore
         .getState()
         .startDraft(workspacePath, options?.provider, workspaceIdentity, {
@@ -212,7 +306,7 @@ export function useRootWorkspaceActions({
           .requestComposerTextInsert(workspacePath, initialPrompt, workspaceIdentity, mention);
       }
     },
-    [workbenchGroupClientMode, composerClientNamespace],
+    [workbenchGroupClientMode, composerClientNamespace, tabStoreApi],
   );
   const startNewTaskFromActiveWorkspace = useCallback(
     async (source: string, request?: CreateTaskRequest) => {
@@ -224,11 +318,21 @@ export function useRootWorkspaceActions({
             .getState()
             .getWorkspaceState(activeWorkspacePath, activeWorkspaceIdentity ?? undefined)
         : null;
+      const replacementId = typeof request === "object" ? request.replaceDraftTabId : undefined;
+      const replacement = replacementId
+        ? useWorkbenchTabsStore.getState().tabs[replacementId]
+        : undefined;
+      if (replacementId && (!replacement || replacement.sessionId !== null)) return;
       const isCurrent = () =>
         (typeof request !== "object" || request.isCurrent?.() !== false) &&
+        (replacementId
+          ? useWorkbenchTabsStore.getState().tabs[replacementId] === replacement &&
+            replacement?.sessionId === null
+          : true) &&
         sequence === navigationSequence.current &&
-        tabStoreApi.getState().activeTabId === originTab &&
-        (!activeWorkspacePath ||
+        (Boolean(replacementId) || tabStoreApi.getState().activeTabId === originTab) &&
+        (Boolean(replacementId) ||
+          !activeWorkspacePath ||
           (() => {
             const state = useZCodeSessionStore
               .getState()
@@ -276,6 +380,10 @@ export function useRootWorkspaceActions({
           resolveWorkbenchNewTaskTarget({
             activeWorkspacePath,
             activeWorkspaceIdentity,
+            workbenchScope:
+              workbenchGroupClientMode === "desktop-continuous"
+                ? getFocusedWorkbenchTab(useWorkbenchTabsStore.getState())?.workspaceScope
+                : undefined,
             activeGroup: useWorkbenchGroupStore.getState().activeGroupId
               ? (useWorkbenchGroupStore.getState().groups[
                   useWorkbenchGroupStore.getState().activeGroupId!
@@ -315,7 +423,10 @@ export function useRootWorkspaceActions({
         if (!services.projectService) throw new Error("project.service-unavailable");
         const pendingDraft =
           !projectId && (!hostId || hostId === "local")
-            ? ensurePendingTaskDraft(resolveComposerScope(null, undefined, composerClientNamespace))
+            ? ensurePendingTaskDraft({
+                ...resolveComposerScope(null, undefined, composerClientNamespace),
+                ...(replacementId ? { draftId: replacementId } : {}),
+              })
             : null;
         const target = await services.projectService.prepareSession({
           ...(projectId ? { projectId } : {}),
@@ -338,6 +449,15 @@ export function useRootWorkspaceActions({
               : {}),
           });
         }
+        if (!isCurrent()) return;
+        const replacementHandoff = replacement
+          ? captureV4ComposerDraftHandoff(
+              replacement.workspaceScope.workspacePath,
+              replacement.workspaceScope.workspaceIdentity,
+              composerClientNamespace,
+              getWorkbenchDraftScopeId(replacement.draftId ?? replacement.id),
+            )
+          : undefined;
         // 目录准备成功才提交导航；失败保留当前会话和分屏。
         if (!hostId || hostId === "local")
           addTab(target.workspacePath, {
@@ -347,6 +467,7 @@ export function useRootWorkspaceActions({
         startDraftInWorkspace(target.workspacePath, target.workspaceIdentity, {
           ...(typeof request === "string" ? { provider: request } : request),
           ...(pendingDraft ? { draftId: pendingDraft.draftId } : {}),
+          ...(replacementHandoff ? { initialComposerDraft: replacementHandoff } : {}),
           projectId: target.projectId,
         });
         if (typeof request === "object") request.onComplete?.();

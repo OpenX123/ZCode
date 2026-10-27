@@ -29,6 +29,7 @@ import { useV4Conversation } from "@/v4/V4ConversationContext.js";
 
 export interface V4InteractionDialogsProps {
   sessionId: string;
+  focused?: boolean;
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
@@ -93,6 +94,7 @@ export function createInteractionAutoResolutionIntentTracker(): InteractionAutoR
  */
 export function V4InteractionDialogs({
   sessionId,
+  focused = true,
   workspacePath,
   workspaceIdentity,
   remoteSessionId,
@@ -333,6 +335,7 @@ export function V4InteractionDialogs({
       // 连续 permission 会复用输入框焦点状态，按 interaction 重建。
       <PermissionDialog
         key={pending.interactionId}
+        autoFocus={focused}
         request={request}
         workspacePath={workspacePath}
         {...(workspaceIdentity === undefined ? {} : { workspaceIdentity })}
@@ -385,6 +388,7 @@ export function V4InteractionDialogs({
     return (
       <ElicitationDialog
         key={buildV4ElicitationProgressKey(elicitationRequest)}
+        autoFocus={focused}
         request={elicitationRequest}
         initialFormDraft={
           botElicitationProgress?.requestId === elicitationRequest.requestId

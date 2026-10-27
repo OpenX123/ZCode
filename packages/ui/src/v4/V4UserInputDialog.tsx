@@ -14,7 +14,7 @@ export interface V4UserInputDialogProps {
   onSubmit: (answer: { optionId?: string; freeText?: string }) => void;
 }
 
-/** v4 userInput 交互最小弹窗（竖切）。 */
+/** userInput 停靠在所属会话内，避免双栏时全窗遮罩挡住另一会话。 */
 export function V4UserInputDialog({ model, onSubmit }: V4UserInputDialogProps) {
   const [freeText, setFreeText] = useState("");
 
@@ -33,7 +33,9 @@ export function V4UserInputDialog({ model, onSubmit }: V4UserInputDialogProps) {
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+      className="relative z-10 flex w-full items-center justify-center p-4"
+      role="dialog"
+      aria-label={model.prompt}
       data-testid={TID_V4_USER_INPUT_DIALOG}
     >
       <div className="w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-lg">

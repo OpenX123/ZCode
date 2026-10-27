@@ -79,6 +79,7 @@ describe("PermissionDialog focus", () => {
   });
   afterEach(() => {
     cleanup();
+    document.querySelectorAll("[data-test-other-composer]").forEach((element) => element.remove());
     vi.unstubAllGlobals();
   });
 
@@ -108,7 +109,7 @@ describe("PermissionDialog focus", () => {
     raw: { command: "ls" },
   };
 
-  function renderPermission(freeText = true, fullAccess = false) {
+  function renderPermission(freeText = true, fullAccess = false, autoFocus = true) {
     const animationFrame = installAnimationFrameController();
     const onRespond = vi.fn();
     const view = render(
@@ -139,6 +140,7 @@ describe("PermissionDialog focus", () => {
           },
           onRespond,
           workspacePath: "/tmp/workspace",
+          autoFocus,
         }),
       ),
     );
@@ -149,10 +151,22 @@ describe("PermissionDialog focus", () => {
       onRespond,
       flush,
       options: view.getAllByRole("option"),
-      input: view.queryByRole("textbox") as HTMLTextAreaElement | null,
+      input: view.container.querySelector("textarea"),
       confirm: view.getByRole("button", { name: "确认" }) as HTMLButtonElement,
     };
   }
+
+  it("非焦点栏收到权限请求时保留另一栏的输入焦点", () => {
+    const otherComposer = document.createElement("textarea");
+    otherComposer.dataset.testOtherComposer = "true";
+    document.body.append(otherComposer);
+    otherComposer.focus();
+    const { flush, options } = renderPermission(true, false, false);
+    flush();
+    expect(document.activeElement).toBe(otherComposer);
+    expect(options).toHaveLength(3);
+    otherComposer.remove();
+  });
 
   it("完全访问为第三项，数字 5 只聚焦反馈，第三项按原 optionId 提交", () => {
     const { input, options, flush, onRespond, confirm } = renderPermission(true, true);

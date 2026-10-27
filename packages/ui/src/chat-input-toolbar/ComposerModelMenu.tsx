@@ -38,38 +38,13 @@ export interface ComposerModelOptions {
   onValueChange: (value: string) => void;
 }
 
-export function getComposerThoughtDisplay(options: ComposerModelOptions) {
-  const current = options.levels.find((level) => level.value === options.value);
-  const thinking = options.levels.filter((level) => !isNoThoughtLevel(level));
-  const progress =
-    current && !isNoThoughtLevel(current)
-      ? ((thinking.findIndex((level) => level.value === current.value) + 1) / thinking.length) * 100
-      : 0;
-  return { label: current?.label ?? "—", progress };
-}
-
 export function ComposerThoughtIndicator({ options }: { options: ComposerModelOptions }) {
-  const { label, progress } = getComposerThoughtDisplay(options);
+  const label = options.levels.find((level) => level.value === options.value)?.label ?? "—";
   return (
-    <>
-      <span
-        className="shrink-0 text-foreground-subtle group-data-[composer-compact=true]/combined:hidden"
-        data-composer-thought-label
-      >
-        {label}
-      </span>
-      <span
-        aria-hidden="true"
-        data-testid="composer-thought-meter"
-        data-progress={progress}
-        className="relative hidden h-4 w-1 shrink-0 overflow-hidden rounded-full bg-foreground/10 group-data-[composer-compact=true]/combined:block"
-      >
-        <span
-          className="composer-thought-meter-fill absolute bottom-0 left-0 w-full rounded-full bg-success"
-          style={{ height: `${progress}%` }}
-        />
-      </span>
-    </>
+    // 窄布局也保留档位文字，避免强度竖条被误认为运行状态。
+    <span className="shrink-0 text-foreground-subtle" data-composer-thought-label>
+      {label}
+    </span>
   );
 }
 
@@ -106,7 +81,7 @@ export function ComposerModelMenu({
     menuGroups[0];
   const currentGroupSelected = group?.key === selected?.key && Boolean(selected);
   const currentIndex = options.levels.findIndex((level) => level.value === options.value);
-  const { label } = getComposerThoughtDisplay(options);
+  const label = options.levels[currentIndex]?.label ?? "—";
   const sliderRef = useRef<HTMLInputElement>(null);
   const catalogPending = groups.length === 0 && Boolean(normalizedValue);
   const showEffort = options.levels.length > 0 || catalogPending;

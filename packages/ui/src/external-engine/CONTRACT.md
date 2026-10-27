@@ -1,6 +1,7 @@
 # 外部引擎 UI
 
 会话创建前由已有 Composer 草稿保存 engine 选择；创建后只读 snapshot.config.engine。
+创建后的输入框仅用固定小尺寸灰色 Logo 标识引擎，复用 TaskClientLogo 的可访问名称和悬停标题，不提供切换动作；草稿继续使用引擎选择器。
 历史会话行经公开 TaskClientLogo 消费 CLI 镜像的 task.engine，缺省使用应用自有 Logo；图标为本地资源，无网络请求或状态写入。
 引擎配置来自 snapshot.config.engineConfigOptions，选择原样回传 setEngineConfigOption。
 组件经 hooks/external-engine 访问可选 Host 服务，服务缺失或远程 workspace 隐藏入口。

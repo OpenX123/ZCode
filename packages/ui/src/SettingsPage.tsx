@@ -4,7 +4,7 @@ import { getWorkspaceSourceServerId } from "@/conversation-workspace-target/sour
 import { RemoteConnectionNavigationDot } from "@/remote-connection/RemoteConnectionNavigationDot.js";
 import { resolveRemoteConnectionNavigationPresentation } from "@/lib/remoteConnectionPresentation.js";
 /* oxlint-disable eslint(max-lines) */
-import { ArrowLeft, Rocket, type LucideIcon } from "lucide-react";
+import { ArrowLeft, type LucideIcon } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -78,7 +78,6 @@ import { WindowsTopLeftLogo } from "@/WindowsTopLeftLogo.js";
 
 import { DesktopWindowControls } from "@/DesktopWindowControls.js";
 import { WorkspaceHelpMenuButton } from "@/WorkspaceHelpMenuButton.js";
-import { WorkspaceSidebarFooter } from "@/WorkspaceSidebarFooter.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { cn } from "@/components/lib/utils.js";
 import { useSelectDirectory } from "@/hooks/usePlatform.js";
@@ -265,8 +264,6 @@ export function SettingsPage({
   const [pendingModelProviderTarget, setPendingModelProviderTarget] = useState<
     SettingsModelProviderTarget | undefined
   >(() => initialModelProviderTarget);
-  const setNewUserOnboardingOpen = useZCodeStore((state) => state.setNewUserOnboardingOpen);
-  const requestOnboardingDialog = () => setNewUserOnboardingOpen(true);
   const setActiveSettingsSection = useCallback(
     (section: SettingsSectionId, fallbackSection: SettingsSectionId = activeSection) => {
       // 能力隐藏的分区也可能收到历史或外部跳转意图；按可见分区解析，避免渲染空页。
@@ -716,7 +713,7 @@ export function SettingsPage({
     },
     [updateSharedSettings],
   );
-  const handleFooterLocaleChange = useCallback(
+  const handleLocaleChange = useCallback(
     (value: string) => {
       if (value === "system") {
         setLocalePreference("system");
@@ -728,7 +725,7 @@ export function SettingsPage({
     },
     [setLocalePreference],
   );
-  const handleFooterThemeChange = useCallback(
+  const handleThemeChange = useCallback(
     (value: string) => {
       if (
         value === "light" ||
@@ -809,6 +806,7 @@ export function SettingsPage({
           <aside className="min-w-0">
             <div className="flex h-full flex-col">
               <div className="h-12 [app-region:drag]"></div>
+              {/* 设置侧栏只保留顶部返回入口，避免复用工作区 footer 后重复显示返回按钮。 */}
               <div className="px-2 pb-3 pt-3">
                 {onBack ? (
                   <ControlHintTooltip
@@ -915,34 +913,7 @@ export function SettingsPage({
                     );
                   })}
                 </div>
-
-                <SettingsSidebarButton
-                  icon={Rocket}
-                  label={intl.formatMessage({ id: "settings.onboarding" })}
-                  className="mt-4 border border-dashed border-border hover:border-border-hover"
-                  onClick={() => {
-                    requestOnboardingDialog();
-                  }}
-                >
-                  <span className="text-ui-base text-foreground">
-                    {intl.formatMessage({ id: "settings.onboarding" })}
-                  </span>
-                </SettingsSidebarButton>
               </nav>
-
-              <div className="max-lg:hidden">
-                <WorkspaceSidebarFooter
-                  theme={theme}
-                  localeMenuValue={localePreference}
-                  onLocaleChange={handleFooterLocaleChange}
-                  onThemeChange={handleFooterThemeChange}
-                  onSettingsButtonClick={onBack}
-                  settingsButtonMode="back"
-                  // 头像菜单是 WorkspaceSidebarFooter 的共享菜单，Settings 场景不能丢失桌面平台能力。
-                  // 之前这里没透传 isDesktop，导致同一个头像菜单在设置页缺少界面缩放入口。
-                  isDesktop={isDesktop}
-                />
-              </div>
             </div>
           </aside>
 
@@ -1077,7 +1048,7 @@ export function SettingsPage({
                               httpProxyCaCertPath={httpProxyCaCertPath}
                               defaultHomeDir={defaultHomeDir}
                               showIntegratedTerminalShell={hostPlatform === "win32"}
-                              setLocalePreference={handleFooterLocaleChange}
+                              setLocalePreference={handleLocaleChange}
                               setNotificationEnabled={(enabled) => setNotificationEnabled(enabled)}
                               setNotificationSoundEnabled={(enabled) =>
                                 setNotificationSoundEnabled(enabled)
@@ -1132,7 +1103,6 @@ export function SettingsPage({
                               onAskUserQuestionAutoResolutionEnabledChange={
                                 handleAskUserQuestionAutoResolutionEnabledChange
                               }
-                              onOpenOnboardingDialog={() => requestOnboardingDialog()}
                             />
                           ) : activeSection === "remoteDevices" ? (
                             sharedSettings && isDesktop && sourceManagement ? (
@@ -1254,7 +1224,7 @@ export function SettingsPage({
                               codePreviewSettings={codePreviewSettings}
                               setCodePreviewSettings={handleCodePreviewSettingsChange}
                               theme={theme}
-                              setTheme={(nextTheme) => handleFooterThemeChange(nextTheme)}
+                              setTheme={(nextTheme) => handleThemeChange(nextTheme)}
                               uiFontSizePx={uiFontSizePx}
                               setUiFontSizePx={(fontSizePx) => setUiFontSizePx(fontSizePx)}
                             />

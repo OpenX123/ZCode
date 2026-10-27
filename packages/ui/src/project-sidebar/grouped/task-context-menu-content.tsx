@@ -11,9 +11,11 @@ import {
 } from "@/components/ui/context-menu.js";
 import { TaskGroupColorDot } from "@/project-sidebar/grouped/colors.js";
 import type { TaskGroupMenuItem } from "@/project-sidebar/grouped/types.js";
+import { WorkbenchSessionMenuItems } from "@/v4/workbench-tabs/index.js";
 
 export function GroupedTaskContextMenuContent({
   task,
+  remoteSessionId,
   currentGroupId,
   groups,
   intl,
@@ -32,6 +34,7 @@ export function GroupedTaskContextMenuContent({
   disabledReason,
 }: {
   task: ZCodeTaskMeta;
+  remoteSessionId?: string;
   currentGroupId?: string;
   groups: TaskGroupMenuItem[];
   intl: {
@@ -53,6 +56,21 @@ export function GroupedTaskContextMenuContent({
 }) {
   return (
     <ContextMenuContent className="w-56">
+      <WorkbenchSessionMenuItems
+        binding={{
+          workspaceScope: {
+            workspacePath: task.workspacePath,
+            workspaceIdentity: task.workspaceIdentity,
+            remoteSessionId,
+          },
+          sessionId: task.taskId,
+        }}
+        intl={intl}
+        Item={ContextMenuItem}
+        Separator={ContextMenuSeparator}
+        disabled={Boolean(disabledReason)}
+        disabledReason={disabledReason}
+      />
       <ContextMenuSub>
         <SidebarNativeTooltip>
           <ContextMenuSubTrigger

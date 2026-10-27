@@ -118,8 +118,6 @@ function renderTaskItem({
       isMobileActive,
       onSelectTask: () => {},
       onArchiveTaskInline: () => {},
-      onCancelArchiveConfirm: () => {},
-      isArchiveConfirming: false,
       intl: createIntl(),
     }),
   );

@@ -1,9 +1,10 @@
+import { join } from "node:path";
 import {
   TID_VIRTUAL_PROJECT_NEW_TASK,
   TID_CONVERSATION_SECTION,
   TID_TASK_ARCHIVE,
   TID_TASK_ITEM,
-  TID_V4_SESSION_PANE,
+  TID_WORKSPACE_MORE_BUTTON,
   testId,
 } from "@zcode/shared/test-ids";
 import { clearAppData } from "./helpers/desktop-app.js";
@@ -14,21 +15,21 @@ import {
 } from "./helpers/conversation-session.js";
 import { sel } from "./helpers/selectors.js";
 import {
-  V4_MAIN_PANE_ID,
   getV4PaneSnapshot,
   prepareV4ConversationE2E,
-  sendV4Prompt,
+  getV4FocusedPaneId,
+  sendV4PromptInPane,
   waitForV4Pane,
   waitForV4TimelineContaining,
 } from "./helpers/v4-conversation.js";
 
-describe("任务列表归档二次确认 E2E", () => {
+describe("任务列表直接归档与撤销 E2E", () => {
   after(async () => {
     await browser.electron.restoreAllMocks();
     await clearAppData();
   });
 
-  it("项目视图的任务区归档确认不会在按下时消失，完整点击后任务离开任务区", async function () {
+  it("单击归档后顶部可撤销，顶部菜单同样直接归档且通知约 5 秒消失", async function () {
     this.timeout(150000);
 
     await ensureReadonlyToolFixtureFile();
@@ -37,8 +38,10 @@ describe("任务列表归档二次确认 E2E", () => {
     await browser.refresh();
     await startConversationTaskDraft();
 
-    const marker = `E2E_FIRST_SEND_TASK_ARCHIVE_CONFIRM_${Date.now()}`;
-    await sendV4Prompt(buildReadonlyToolPrompt(marker));
+    const marker = `E2E_FIRST_SEND_TASK_ARCHIVE_UNDO_${Date.now()}`;
+    const paneId = await getV4FocusedPaneId();
+    expect(paneId).toBeTruthy();
+    await sendV4PromptInPane(paneId!, buildReadonlyToolPrompt(marker));
     await waitForV4TimelineContaining(marker);
     await waitForV4TimelineContaining(E2E_REPLY_TOKEN, 90000);
     const completed = await waitForV4Pane(
@@ -52,30 +55,48 @@ describe("任务列表归档二次确认 E2E", () => {
     const taskId = completed.sessionId ?? (await getV4PaneSnapshot()).sessionId;
     expect(taskId).toBeTruthy();
 
-    await hoverConversationTaskRow(taskId as string);
-    await waitForArchiveButtonState(taskId as string, (state) => state.visible);
+    const id = taskId as string;
+    await hoverConversationTaskRow(id);
+    await $(sel(testId(TID_TASK_ARCHIVE, id))).click();
+    await waitForConversationTaskRowAbsent(id);
+    const undo = await $("#zcode-toast-host button");
+    await undo.waitForDisplayed({ timeout: 5000 });
+    expect(await undo.getText()).toMatch(/撤销|Undo/);
+    expect(await $("[data-archive-confirming-task-id]").isExisting()).toBe(false);
+    const top = await browser.execute(() => {
+      const button = document.querySelector("#zcode-toast-host button");
+      const stack = button?.closest(".fixed");
+      return stack ? getComputedStyle(stack).top : null;
+    });
+    expect(top).toBe("64px");
+    if (process.env.ZCODE_E2E_ARTIFACT_DIR) {
+      await browser.saveScreenshot(
+        join(process.env.ZCODE_E2E_ARTIFACT_DIR, "archive-undo-toast.png"),
+      );
+    }
+    await undo.click();
+    await hoverConversationTaskRow(id);
 
-    await $(sel(testId(TID_TASK_ARCHIVE, taskId as string))).click();
-    await waitForArchiveButtonState(taskId as string, (state) => state.confirming && state.visible);
-
-    await pointerDownArchiveConfirmButton(taskId as string);
-    await waitForArchiveButtonState(taskId as string, (state) => state.confirming && state.visible);
-
-    await movePointerAwayFromTaskRow();
-    await waitForArchiveButtonState(taskId as string, (state) => state.confirming && state.visible);
-
-    await clickBlankArea();
-    await waitForArchiveButtonState(
-      taskId as string,
-      (state) => !state.confirming && !state.exists,
-    );
-
-    await hoverConversationTaskRow(taskId as string);
-    await waitForArchiveButtonState(taskId as string, (state) => state.visible);
-    await $(sel(testId(TID_TASK_ARCHIVE, taskId as string))).click();
-    await waitForArchiveButtonState(taskId as string, (state) => state.confirming && state.visible);
-    await $(sel(testId(TID_TASK_ARCHIVE, taskId as string))).click();
-    await waitForConversationTaskRowAbsent(taskId as string);
+    // 归档已退出详情；显式选择恢复的任务再从 Header 操作，撤销本身不负责导航。
+    await $(`${sel(TID_CONVERSATION_SECTION)} ${sel(testId(TID_TASK_ITEM, id))}`).click();
+    await waitForV4Pane((snapshot) => snapshot.sessionId === id, "撤销后未能打开原会话");
+    await $(sel(TID_WORKSPACE_MORE_BUTTON)).click();
+    const archiveMenuItem = (await $('[role="menuitem"]*=归档').isExisting())
+      ? await $('[role="menuitem"]*=归档')
+      : await $('[role="menuitem"]*=Archive');
+    await archiveMenuItem.click();
+    await waitForConversationTaskRowAbsent(id);
+    expect(await $('[role="alertdialog"]').isExisting()).toBe(false);
+    const started = Date.now();
+    await $("#zcode-toast-host button").waitForDisplayed({ timeout: 2000 });
+    await browser.waitUntil(async () => !(await $("#zcode-toast-host button").isExisting()), {
+      timeout: 7500,
+      interval: 100,
+      timeoutMsg: "归档撤销通知没有在约 5 秒后消失",
+    });
+    expect(Date.now() - started).toBeGreaterThan(3500);
+    await browser.refresh();
+    await waitForConversationTaskRowAbsent(id);
   });
 });
 
@@ -126,15 +147,6 @@ async function startConversationTaskDraft() {
   );
 }
 
-interface ArchiveButtonState {
-  ariaLabel: string | null;
-  confirming: boolean;
-  display: string | null;
-  exists: boolean;
-  text: string;
-  visible: boolean;
-}
-
 async function hoverConversationTaskRow(taskId: string) {
   const row = await $(`${sel(TID_CONVERSATION_SECTION)} ${sel(testId(TID_TASK_ITEM, taskId))}`);
   await row.waitForDisplayed({
@@ -149,103 +161,6 @@ async function waitForConversationTaskRowAbsent(taskId: string) {
   await row.waitForExist({
     reverse: true,
     timeout: 15000,
-    timeoutMsg: `确认归档后 task 仍留在项目视图的“任务”分区: ${taskId}`,
+    timeoutMsg: `直接归档后 task 仍留在项目视图的“任务”分区: ${taskId}`,
   });
-}
-
-async function movePointerAwayFromTaskRow() {
-  const sessionPane = await $(sel(testId(TID_V4_SESSION_PANE, V4_MAIN_PANE_ID)));
-  await sessionPane.waitForDisplayed({
-    timeout: 15000,
-    timeoutMsg: "v4 会话主区域没有显示，无法移动鼠标离开任务行",
-  });
-  await sessionPane.moveTo({ xOffset: 20, yOffset: 20 });
-}
-
-async function pointerDownArchiveConfirmButton(taskId: string) {
-  const dispatched = await browser.execute(
-    (archiveTestId) => {
-      const button = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
-        (element) =>
-          element.dataset.testid === archiveTestId &&
-          element.closest("[data-archive-confirming-task-id]"),
-      );
-      if (!button) {
-        return false;
-      }
-
-      // 回归 Windows 按住确认按钮的真实时序：pointerdown 发生时按钮必须继续存在，
-      // 直到后续 click 才能提交归档，不能被外部点击退出逻辑抢先清掉确认态。
-      button.dispatchEvent(
-        new PointerEvent("pointerdown", {
-          bubbles: true,
-          composed: true,
-          pointerId: 1,
-          pointerType: "mouse",
-        }),
-      );
-      return true;
-    },
-    testId(TID_TASK_ARCHIVE, taskId),
-  );
-  expect(dispatched).toBe(true);
-}
-
-async function clickBlankArea() {
-  await browser.execute(() => {
-    // 修复原因：归档确认态由 window capture pointerdown 退出。
-    // 这里向 body 派发真实 PointerEvent，目标明确在任务行外，避免坐标点击误落到输入框或其他控件。
-    document.body.dispatchEvent(
-      new PointerEvent("pointerdown", {
-        bubbles: true,
-        pointerId: 1,
-        pointerType: "mouse",
-      }),
-    );
-    document.body.click();
-  });
-}
-
-async function waitForArchiveButtonState(
-  taskId: string,
-  predicate: (state: ArchiveButtonState) => boolean,
-) {
-  await browser.waitUntil(async () => predicate(await getArchiveButtonState(taskId)), {
-    timeout: 10000,
-    timeoutMsg: `归档按钮状态没有达到预期: ${JSON.stringify(await getArchiveButtonState(taskId))}`,
-  });
-}
-
-async function getArchiveButtonState(taskId: string): Promise<ArchiveButtonState> {
-  return browser.execute(
-    (archiveTestId) => {
-      const button = document.querySelector<HTMLElement>(`[data-testid="${archiveTestId}"]`);
-      if (!button) {
-        return {
-          ariaLabel: null,
-          confirming: Boolean(document.querySelector("[data-archive-confirming-task-id]")),
-          display: null,
-          exists: false,
-          text: "",
-          visible: false,
-        };
-      }
-
-      const style = window.getComputedStyle(button);
-      const rect = button.getBoundingClientRect();
-      return {
-        ariaLabel: button.getAttribute("aria-label"),
-        confirming: Boolean(button.closest("[data-archive-confirming-task-id]")),
-        display: style.display,
-        exists: true,
-        text: button.textContent?.trim() ?? "",
-        visible:
-          style.display !== "none" &&
-          style.visibility !== "hidden" &&
-          rect.width > 0 &&
-          rect.height > 0,
-      };
-    },
-    testId(TID_TASK_ARCHIVE, taskId),
-  );
 }

@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   INITIAL_PANE_LAYOUT,
@@ -10,6 +11,14 @@ import {
 import { useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
 import type { WorkbenchLeafPaneProps } from "@/v4/WorkbenchPane.js";
 import { V4WorkspaceChatArea } from "@/v4/V4WorkspaceChatArea.js";
+import { useWorkbenchTabsStore } from "@/v4/workbench-tabs/index.js";
+
+vi.mock("@/i18n/IntlProvider.js", () => ({
+  useZCodeIntl: () => ({
+    intl: { formatMessage: ({ id }: { id: string }) => id },
+  }),
+}));
+vi.mock("@/external-engine/index.js", () => ({ TaskClientLogo: () => null }));
 
 const leafPaneCapture = vi.hoisted(() => ({
   props: [] as WorkbenchLeafPaneProps[],
@@ -35,12 +44,19 @@ vi.mock("@/v4/WorkbenchSplitDivider.js", async () => {
 });
 
 function resetWorkbenchState(): void {
+  cleanup();
   usePaneLayoutStore.setState({
     root: INITIAL_PANE_LAYOUT.root,
     panes: INITIAL_PANE_LAYOUT.panes,
     focusedPaneId: INITIAL_PANE_LAYOUT.focusedPaneId,
   });
   useWorkbenchGroupStore.getState().resetWorkbenchGroups();
+  useWorkbenchTabsStore.setState({
+    groups: [],
+    tabs: {},
+    focusedGroupId: "",
+    ratio: 0.5,
+  });
   leafPaneCapture.props = [];
 }
 
@@ -48,10 +64,11 @@ describe("V4WorkspaceChatArea split entries", () => {
   beforeEach(resetWorkbenchState);
   afterEach(resetWorkbenchState);
 
-  // 拆分入口已整体下线（docs/v4-split-pane-workbench.md）：pane 不再接收拖放分屏与拆分回调，
-  // 既有布局仍只负责渲染、聚焦与关闭。
-  it("does not hand split or drop callbacks to leaf panes", () => {
-    renderToStaticMarkup(
+  // 对话区不再提供额外 Tab 栏；布局操作经侧栏右键与壳层工具栏进入。
+  it("leaves layout controls to the sidebar and header without reserving a tab row", () => {
+    useWorkbenchTabsStore.getState().initialize({ workspacePath: "/workspace" }, null);
+    const tabId = useWorkbenchTabsStore.getState().groups[0]!.activeTabId;
+    const view = render(
       createElement(V4WorkspaceChatArea, {
         sessionId: null,
         workspacePath: "/workspace",
@@ -60,7 +77,10 @@ describe("V4WorkspaceChatArea split entries", () => {
     );
 
     const primaryPane = leafPaneCapture.props[0];
-    expect(primaryPane?.paneId).toBe(V4_PRIMARY_PANE_ID);
+    expect(primaryPane?.paneId).toBe(tabId);
+    expect(view.queryByRole("tablist")).toBeNull();
+    expect(view.queryByTestId("workbench-split-right")).toBeNull();
+    expect(primaryPane?.rect).toEqual({ left: "0%", top: "0%", width: "100%", height: "100%" });
     expect("canDropSession" in primaryPane!).toBe(false);
     expect("onDropSession" in primaryPane!).toBe(false);
     expect("onSplit" in primaryPane!).toBe(false);

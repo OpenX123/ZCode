@@ -134,8 +134,12 @@ modules:
       - external-engine-ui
       - conversation-workspace-target
       - remote-connection-flow
+      - conversation-workbench
+      - side-pane-full-view
     publicEntrypoints:
       - packages/ui/src/project-sidebar/index.tsx
+      - packages/ui/src/project-sidebar/WorkbenchLayoutButton.tsx
+      - packages/ui/src/project-sidebar/WorkbenchPaneHeaders.tsx
       - packages/ui/src/project-sidebar/contract.ts
       - packages/ui/src/project-sidebar/remote-project-connection.ts
       - packages/ui/src/project-sidebar/useSavedWorkflowProjectOptions.ts
@@ -721,6 +725,31 @@ modules:
     layers:
       ui: .
     owner: desktop
+
+  # conversation-workbench：由 architecture:adopt 登记
+  - id: conversation-workbench
+    roots:
+      - packages/ui/src/v4/workbench-tabs
+    managed: true
+    requires: [ui, shared, external-engine-ui]
+    publicEntrypoints:
+      - packages/ui/src/v4/workbench-tabs/index.ts
+      - packages/ui/src/v4/workbench-tabs/contract.ts
+    layers:
+      ui: .
+    owner: conversation
+  # mermaid-rendering：由 architecture:adopt 登记
+  - id: mermaid-rendering
+    roots:
+      - packages/ui/src/components/ai-elements/mermaid-rendering
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/ui/src/components/ai-elements/mermaid-rendering/index.ts
+      - packages/ui/src/components/ai-elements/mermaid-rendering/contract.ts
+    layers:
+      ui: .
+    owner: conversation
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。

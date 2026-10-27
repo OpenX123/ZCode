@@ -10,7 +10,13 @@ Host projectService 的 readTree 决定行集合、项目归属和 CLI 事实镜
 
 桌面和手机共用组件；沿用现有 task 行操作、shared-host attachment、continuous/replayable 传输。CLI 不接收项目 ID。
 
-composer 的“创建项目”复用侧栏 ProjectCreation：当前为远程会话时默认该设备，其余默认本地。项目服务可用即可创建，不能沿用打开原生文件夹的能力门禁。保存只刷新目录，取消不写入，两者不切换项目/工作区或改写聊天草稿。独立设备连接后的创建继续受当前聊天返回资格约束，普通创建不继承该设备。
+会话行的工作台右键操作只经 conversation-workbench 的公开入口更改视图位置、焦点及关闭状态；任务区、项目区、置顶和分组视图复用相同菜单项。匹配使用完整 workspace identity 与 sessionId，关闭视图不提交停止、删除或归档。普通点击已打开会话仍只聚焦原位置，明确在左/右栏打开才移动绑定。
+
+公开的 `WorkbenchLayoutButton.tsx` 将同一布局命令投影到右上工具栏；分栏草稿按共享项目目录的完整会话身份继承归属，菜单保留后台草稿的访问入口，不建立另一份布局状态。
+
+公开的 `WorkbenchPaneHeaders.tsx` 在同一既有标题高度内投影每栏当前项目、会话和原会话菜单；项目归属来自共享目录，标题来自完整 workspace scope 的会话事实。标题项目入口只可修改指定的未发送草稿，复用 ProjectComposerMenu 和 Root prepareSession；`replaceDraftTabId` 固定来源资格，焦点变化不改目标，原草稿关闭、首发或换绑后拒绝迟到交接。双栏 × 经同一原子 moveTab 合入另一栏并保留目标当前会话；单栏不显示 ×，窄屏只投影焦点栏，不复制布局状态。
+
+composer 的“创建项目”复用侧栏 ProjectCreation：当前为远程会话时默认该设备，其余默认本地。项目服务可用即可创建，不能沿用打开原生文件夹的能力门禁。取消不写入；保存先刷新目录，再由原新建入口选择项目并交接仍有效的草稿。双栏桌面在弹框打开时固定同 workspace 的焦点草稿 Tab，保存后复验原 Tab 仍聚焦且未发送、未关闭，正文和附件只从该 Tab 的精确 scope 读取；失效时仅保存项目。独立设备连接后的创建继续受当前聊天返回资格约束，普通创建不继承该设备。
 
 远控模式的自动未读由 desktop base 目录 owner 唯一提交。Main 验证后的 Web 实际查看逐事件进入该 owner，同一任务的完成写与查看读/CAS 串行；精确读取所属 Source 当前 marker，不使用列表缓存。重复查看不清手动未读，旧 attachment 回包不再写入，Web 共享组件不成为第二个自动写者。详见 [任务列表刷新语义](../../../../docs/task-list-refresh-semantics.md)。
 
@@ -39,6 +45,8 @@ UI 纠偏：分区复用 WorkspacePurposeSection 和原折叠/顺序偏好；项
 项目折叠复用共享 Collapsible 的 300ms 高度与淡入淡出，单一 open 值仍来自偏好 owner；不能条件卸载跳过收起动效。普通任务行不传递文件树回调；置顶区任务复用同一文件树 owner 和请求序号，手机沿用可信切换，晚到结果不得覆盖关闭或新选择。项目文件入口与原右键/归档/置顶保留。
 
 ## 当前任务与归档
+
+归档入口单击提交，成功后复用顶部居中 5000ms Toast 提供撤销。通知闭包固定原目标及命令路由，撤销只发原 Host 的 archive=false，不依赖行继续挂载、不重开详情；归档状态仍由 Host 唯一持有。详见 [任务归档交互](../../../../docs/ui/task-list-context-menu.md)。
 
 项目树读取 owner 接受新快照后，仅对同 Host + workspaceKey + taskId 的未归档到已归档转换调用既有 removeTaskState。归档后的当前详情退出到原工作区草稿，不自动选择下一条同名任务；首次已归档、离线缺行、不同 attachment、失败/迟到结果不触发清理。标题由 active-task hook 经已有 scoped TaskService.getTaskMeta 读取同一 Host 索引，正文冷恢复不参与标题 authority。
 

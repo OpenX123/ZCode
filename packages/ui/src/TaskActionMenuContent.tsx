@@ -1,3 +1,8 @@
+import {
+  WorkbenchSessionMenuItems,
+  type WorkbenchSessionBinding,
+} from "@/v4/workbench-tabs/index.js";
+
 interface TaskActionMenuItemProps {
   children: React.ReactNode;
   "data-testid"?: string;
@@ -12,6 +17,7 @@ interface TaskActionMenuSeparatorProps {
 
 export function TaskActionMenuContent({
   intl,
+  workbenchSession,
   isPinned,
   isArchived = false,
   fileManagerLabel,
@@ -41,6 +47,7 @@ export function TaskActionMenuContent({
   intl: {
     formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
   };
+  workbenchSession?: WorkbenchSessionBinding;
   isPinned: boolean;
   isArchived?: boolean;
   fileManagerLabel: string;
@@ -75,6 +82,16 @@ export function TaskActionMenuContent({
 
   return (
     <>
+      {workbenchSession ? (
+        <WorkbenchSessionMenuItems
+          binding={workbenchSession}
+          intl={intl}
+          Item={Item}
+          Separator={Separator}
+          disabled={disableTaskActions}
+          disabledReason={disabledReason}
+        />
+      ) : null}
       <Item
         disabled={taskTargetActionsDisabled || disablePinTaskAction}
         title={taskTargetActionsDisabled ? disabledReason : undefined}

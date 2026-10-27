@@ -126,8 +126,6 @@ export interface ZCodeState {
   setNotificationSoundEnabled: (enabled: boolean) => void;
 
   /** 手动请求打开 onboarding 弹窗 */
-  newUserOnboardingOpen: boolean;
-  setNewUserOnboardingOpen: (open: boolean) => void;
   onboardingDialogRequested: boolean | "migration";
   requestOnboardingDialog: (entry?: "migration") => void;
   clearOnboardingDialogRequest: () => void;
@@ -261,8 +259,6 @@ export function createZCodeStore(broadcastService: IBroadcastService) {
       set({ notificationSoundEnabled: enabled });
     },
 
-    newUserOnboardingOpen: false,
-    setNewUserOnboardingOpen: (open) => set({ newUserOnboardingOpen: open }),
     onboardingDialogRequested: false,
     requestOnboardingDialog: (entry) => set({ onboardingDialogRequested: entry ?? true }),
     clearOnboardingDialogRequest: () => set({ onboardingDialogRequested: false }),

@@ -1,4 +1,9 @@
 import { captureV4ComposerDraftHandoff } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
+import {
+  getFocusedWorkbenchTab,
+  getWorkbenchDraftScopeId,
+  useWorkbenchTabsStore,
+} from "@/v4/workbench-tabs/index.js";
 import { useComposerClientNamespace } from "@/hooks/useServices.js";
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
@@ -26,6 +31,7 @@ import { useOptionalProjectDirectory } from "@/project-sidebar/ProjectDirectoryP
 export function ProjectCreation({
   workspacePath,
   workspaceIdentity,
+  draftTabId,
   onCreateTask,
   projects,
   directory,
@@ -39,6 +45,7 @@ export function ProjectCreation({
 }: {
   workspacePath: string;
   workspaceIdentity?: string;
+  draftTabId?: string;
   onCreateTask: ProjectSidebarProps["onCreateTask"];
   projects: VirtualProject[];
   directory: RemoteProjectDirectory;
@@ -74,7 +81,23 @@ export function ProjectCreation({
     const { activeTaskId, draftFocusVersion, draftProjectId } = useZCodeSessionStore
       .getState()
       .getWorkspaceState(workspacePath, workspaceIdentity);
-    return { workspaceKey, activeTaskId, draftFocusVersion, draftProjectId };
+    const workbench = useWorkbenchTabsStore.getState();
+    const tab = draftTabId ? workbench.tabs[draftTabId] : getFocusedWorkbenchTab(workbench);
+    const draftTab =
+      tab?.sessionId === null &&
+      tab.draftId &&
+      (tab.workspaceScope.workspaceIdentity?.trim() || tab.workspaceScope.workspacePath) ===
+        workspaceKey
+        ? tab
+        : null;
+    return {
+      workspaceKey,
+      activeTaskId,
+      draftFocusVersion,
+      draftProjectId,
+      workbenchActive: workbench.groups.length > 0,
+      draftTab,
+    };
   });
   const active = useRef(true);
   const admittedHosts = useRef(new Map(directory.hosts.map((host) => [host.id, host])));
@@ -157,15 +180,31 @@ export function ProjectCreation({
     const draft = useZCodeSessionStore
       .getState()
       .getWorkspaceState(workspacePath, workspaceIdentity);
+    const currentTab = draftTabId
+      ? useWorkbenchTabsStore.getState().tabs[draftTabId]
+      : getFocusedWorkbenchTab(useWorkbenchTabsStore.getState());
+    const sourceTab = originDraft.draftTab;
+    // 同目录双栏不能沿 workspace 草稿推断来源；迟到保存只认领弹框打开时的稳定 Tab。
+    const sourceDraftValid = originDraft.workbenchActive
+      ? Boolean(
+          sourceTab &&
+          (!draftTabId || currentTab === sourceTab) &&
+          currentTab?.id === sourceTab.id &&
+          currentTab.sessionId === null &&
+          currentTab.draftId === sourceTab.draftId &&
+          currentTab.projectId === sourceTab.projectId,
+        )
+      : !originDraft.activeTaskId &&
+        !draft.activeTaskId &&
+        draft.draftFocusVersion === originDraft.draftFocusVersion &&
+        draft.draftProjectId === originDraft.draftProjectId;
     // 创建原来只刷新列表，草稿仍绑定旧项目；复用项目选择入口，并拒绝保存期间已失效的草稿。
     if (
       active.current &&
-      currentScope.current.activeTabId === originTabId.current &&
-      currentScope.current.workspaceKey === originDraft.workspaceKey &&
-      !originDraft.activeTaskId &&
-      !draft.activeTaskId &&
-      draft.draftFocusVersion === originDraft.draftFocusVersion &&
-      draft.draftProjectId === originDraft.draftProjectId
+      (draftTabId ||
+        (currentScope.current.activeTabId === originTabId.current &&
+          currentScope.current.workspaceKey === originDraft.workspaceKey)) &&
+      sourceDraftValid
     ) {
       logger.debug("[ProjectCreation] select created project for draft", {
         projectId: project.id,
@@ -174,11 +213,13 @@ export function ProjectCreation({
       onCreateTask({
         projectId: project.id,
         hostId: project.hostId,
-        taskGroupId: draft.draftTaskGroupId ?? null,
+        ...(draftTabId ? { replaceDraftTabId: draftTabId } : {}),
+        taskGroupId: (sourceTab ? sourceTab.taskGroupId : draft.draftTaskGroupId) ?? null,
         initialComposerDraft: captureV4ComposerDraftHandoff(
           workspacePath,
           workspaceIdentity,
           composerClientNamespace,
+          sourceTab?.draftId ? getWorkbenchDraftScopeId(sourceTab.draftId) : undefined,
         ),
       });
     }

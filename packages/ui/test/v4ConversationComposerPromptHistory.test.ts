@@ -376,6 +376,44 @@ afterEach(() => {
 });
 
 describe("ConversationComposer prompt history", () => {
+  it("编辑器先就绪并收到输入时，迟到的初始草稿恢复不得覆盖新正文", async () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    const requestFrame = (callback: FrameRequestCallback) => {
+      const id = ++nextFrame;
+      frames.set(id, callback);
+      return id;
+    };
+    Object.defineProperty(globalThis, "requestAnimationFrame", {
+      configurable: true,
+      value: requestFrame,
+    });
+    Object.defineProperty(globalThis, "cancelAnimationFrame", {
+      configurable: true,
+      value: (id: number) => frames.delete(id),
+    });
+    const { root } = renderComposer(vi.fn(async () => {}));
+    try {
+      await act(async () => {
+        (chatPromptEditorProps.at(-1)!.onChange as (value: string) => void)("右栏刚输入的正文");
+      });
+      await act(async () => {
+        const pending = [...frames.values()];
+        frames.clear();
+        for (const callback of pending) callback(0);
+      });
+      expect(inputClear).not.toHaveBeenCalled();
+      expect(inputSetText).not.toHaveBeenCalled();
+      expect(readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT)?.text).toBe(
+        "右栏刚输入的正文",
+      );
+    } finally {
+      await act(async () => root.unmount());
+      delete (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame;
+      delete (globalThis as { cancelAnimationFrame?: unknown }).cancelAnimationFrame;
+    }
+  });
+
   it("真实编辑器文本变更会推进草稿 revision，保护迟到的推荐 Prompt", async () => {
     const { root } = renderComposer(vi.fn(async () => {}));
     const revisionBefore = getComposerDraftRevision("/workspace");

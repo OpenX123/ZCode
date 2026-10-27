@@ -38,6 +38,7 @@ import {
   persistV4ComposerDraft,
   readV4ComposerDraft,
   V4_DRAFT_SCOPE_ROOT,
+  getV4TabDraftScopeId,
   type V4ComposerDraft,
 } from "@/v4/composer/composerDraftStore.js";
 import { resolveAppFollowupMode } from "@/v4/composer/followupModeSettings.js";
@@ -124,6 +125,7 @@ interface ComposerState {
   initialization: "new-task" | "session" | "promotion";
   observedConfig?: { permissionGrantId?: string; planTransitionId?: string };
   promotedSessionId?: string;
+  inheritedRootDraft?: boolean;
 }
 
 export function useDraftConfigControl(params: {
@@ -132,6 +134,10 @@ export function useDraftConfigControl(params: {
   provider?: ZCodeProvider;
   /** 会话切换恢复文字/模型，权限和 Plan 使用当前快照。 */
   sessionId: string | null;
+  draftTabId?: string;
+  draftProjectId?: string | null;
+  draftTaskGroupId?: string | null;
+  inheritRootDraft?: boolean;
   /** 仅匹配当前 Session 的首份投影可用作初始化；null 表示还没恢复完成。 */
   sessionConfig?: Partial<SessionConfigState> | null;
   /** provider registry 已通过 renderer readiness 门禁后才允许拉起 Agent。 */
@@ -143,6 +149,10 @@ export function useDraftConfigControl(params: {
     workspaceIdentity,
     provider,
     sessionId,
+    draftTabId,
+    draftProjectId: tabProjectId,
+    draftTaskGroupId: tabTaskGroupId,
+    inheritRootDraft = false,
     sessionConfig,
     agentStartupAllowed = true,
     modelSelectionService,
@@ -152,17 +162,20 @@ export function useDraftConfigControl(params: {
   const zcodeSessionService = useZCodeSessionService(workspacePath, null, workspaceIdentity);
   const { settings: sharedSettings } = useSettings();
   const appFollowupMode = resolveAppFollowupMode(sharedSettings);
-  const scopeId = sessionId ?? V4_DRAFT_SCOPE_ROOT;
+  const scopeId =
+    sessionId ?? (draftTabId ? getV4TabDraftScopeId(draftTabId) : V4_DRAFT_SCOPE_ROOT);
   const clientNamespace = useComposerClientNamespace();
-  const draftProjectId = useZCodeSessionStore(
-    (state) => state.workspaces[workspaceKey]?.draftProjectId,
+  const draftProjectId = useZCodeSessionStore((state) =>
+    draftTabId ? tabProjectId : state.workspaces[workspaceKey]?.draftProjectId,
   );
   const rootScope = useMemo(
     () => resolveComposerScope(draftProjectId, workspaceIdentity, clientNamespace),
     [draftProjectId, workspaceIdentity, clientNamespace],
   );
   const draftFocusVersion = useZCodeSessionStore((state) =>
-    sessionId === null ? (state.workspaces[workspaceKey]?.draftFocusVersion ?? 0) : 0,
+    sessionId === null && !draftTabId
+      ? (state.workspaces[workspaceKey]?.draftFocusVersion ?? 0)
+      : 0,
   );
   // New Task 可以复用同一个 pane；无文字时必须重新取 Recent，不能只清磁盘留旧内存。
   const scopeKey = JSON.stringify([
@@ -172,6 +185,7 @@ export function useDraftConfigControl(params: {
     sessionId === null ? composerScopeKey(rootScope) : null,
   ]);
   const navigationInitialization = useZCodeSessionStore((state) => {
+    if (draftTabId && sessionId === null) return undefined;
     const workspace = state.workspaces[workspaceKey];
     return workspace?.activeTaskId === sessionId &&
       workspace?.composerInitialization?.taskId === sessionId
@@ -179,11 +193,17 @@ export function useDraftConfigControl(params: {
       : undefined;
   });
   const loadedScope = useMemo<ComposerState>(() => {
-    const saved = readV4ComposerDraft(workspacePath, workspaceIdentity, scopeId, rootScope);
+    const ownDraft = readV4ComposerDraft(workspacePath, workspaceIdentity, scopeId, rootScope);
+    const inherited =
+      !ownDraft && draftTabId && inheritRootDraft
+        ? readV4ComposerDraft(workspacePath, workspaceIdentity, V4_DRAFT_SCOPE_ROOT, rootScope)
+        : null;
+    const saved = ownDraft ?? inherited;
     return {
       scopeKey,
       workspaceKey,
       draft: saved ?? { text: "", updatedAt: 0, ...navigationInitialization?.config },
+      ...(inherited ? { inheritedRootDraft: true } : {}),
       initialization:
         sessionId === null || (!saved && navigationInitialization) ? "new-task" : "session",
     };
@@ -323,13 +343,17 @@ export function useDraftConfigControl(params: {
         workspaceIdentity,
         // 首发已绑定但 React 尚未切换地址时，新输入也属于已创建的会话。
         stateRef.current.promotedSessionId ?? scopeId,
-        scopeId === V4_DRAFT_SCOPE_ROOT
+        sessionId === null
           ? {
               ...value,
-              projectId:
-                workspace.draftProjectId !== undefined ? workspace.draftProjectId : value.projectId,
-              taskGroupId:
-                workspace.draftTaskGroupId !== undefined
+              projectId: draftTabId
+                ? tabProjectId
+                : workspace.draftProjectId !== undefined
+                  ? workspace.draftProjectId
+                  : value.projectId,
+              taskGroupId: draftTabId
+                ? tabTaskGroupId
+                : workspace.draftTaskGroupId !== undefined
                   ? workspace.draftTaskGroupId
                   : value.taskGroupId,
             }
@@ -337,7 +361,16 @@ export function useDraftConfigControl(params: {
         rootScope,
       );
     },
-    [workspacePath, workspaceIdentity, scopeId, rootScope],
+    [
+      workspacePath,
+      workspaceIdentity,
+      scopeId,
+      rootScope,
+      sessionId,
+      draftTabId,
+      tabProjectId,
+      tabTaskGroupId,
+    ],
   );
   const mountedRef = useRef(false);
   useEffect(() => {
@@ -357,22 +390,39 @@ export function useDraftConfigControl(params: {
       mountedRef.current &&
       stateRef.current.scopeKey === scopeKey &&
       (sessionId !== null ||
+        Boolean(draftTabId) ||
         (useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
           .draftFocusVersion ?? 0) === draftFocusVersion),
-    [scopeKey, sessionId, workspacePath, workspaceIdentity, draftFocusVersion],
+    [scopeKey, sessionId, workspacePath, workspaceIdentity, draftFocusVersion, draftTabId],
   );
   const lastPersistedDraftRef = useRef<V4ComposerDraft | null>(null);
   useEffect(() => {
     if (
-      draft.mode &&
+      (draft.mode || draftTabId) &&
       draft !== lastPersistedDraftRef.current &&
       stateRef.current.draft === draft &&
       stateRef.current.scopeKey === scopeKey
     ) {
-      persistDraft(draft);
+      const persisted = persistDraft(draft);
+      // 仅明确的新建交接消费旧根草稿；其它 Tab 从不读取或清理共享入口。
+      if (persisted && stateRef.current.inheritedRootDraft && sessionId === null) {
+        clearV4ComposerDraft(workspacePath, workspaceIdentity, V4_DRAFT_SCOPE_ROOT, rootScope);
+        stateRef.current = { ...stateRef.current, inheritedRootDraft: false };
+        setStoredState(stateRef.current);
+      }
       lastPersistedDraftRef.current = draft;
     }
-  }, [draft, scopeKey, persistDraft]);
+  }, [
+    draft,
+    scopeKey,
+    persistDraft,
+    draftTabId,
+    inheritRootDraft,
+    sessionId,
+    workspacePath,
+    workspaceIdentity,
+    rootScope,
+  ]);
   const updateComposerDraft = useCallback(
     (update: (current: V4ComposerDraft) => V4ComposerDraft) => {
       // 旧 scope 的延迟编辑器回调不能写入刚切换到的会话。
@@ -466,7 +516,7 @@ export function useDraftConfigControl(params: {
 
   const promoteComposerDraft = useCallback(
     (createdSessionId: string) => {
-      if (!isCurrentScope() || scopeId !== V4_DRAFT_SCOPE_ROOT) return;
+      if (!isCurrentScope() || sessionId !== null) return;
       const targetSessionId = createdSessionId.trim();
       if (!targetSessionId) return;
       // 首发 Snapshot 可能迟到：空正文只在内存交接配置，有新文字则先写目标再删来源。
@@ -480,9 +530,9 @@ export function useDraftConfigControl(params: {
       const next = { ...stateRef.current, promotedSessionId: targetSessionId };
       stateRef.current = next;
       setStoredState(next);
-      clearV4ComposerDraft(workspacePath, workspaceIdentity, V4_DRAFT_SCOPE_ROOT, rootScope);
+      clearV4ComposerDraft(workspacePath, workspaceIdentity, scopeId, rootScope);
     },
-    [scopeId, isCurrentScope, workspaceIdentity, workspacePath, rootScope],
+    [scopeId, isCurrentScope, workspaceIdentity, workspacePath, rootScope, sessionId],
   );
 
   // Host 同步策略后才发布可用性投影，目录仍由 CLI 唯一装配，Renderer 只使旧投影失效。

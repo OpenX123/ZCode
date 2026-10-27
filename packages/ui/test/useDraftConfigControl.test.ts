@@ -256,6 +256,80 @@ function installMinimalDom() {
 }
 
 describe("useDraftConfigControl slash command hydration", () => {
+  it("同项目双草稿的引擎、正文和首发交接独立，不随全局新建重置", async () => {
+    const workspacePath = "/two-tabs";
+    const root = createRoot(installMinimalDom());
+    const controls: Record<string, ReturnType<typeof useActualDraftConfigControl>> = {};
+    function Probe({ tabId }: { tabId: string }) {
+      controls[tabId] = useActualDraftConfigControl({
+        workspacePath,
+        sessionId: null,
+        draftTabId: tabId,
+        draftProjectId: "p",
+        agentStartupAllowed: false,
+        modelSelectionService: null,
+      });
+      return null;
+    }
+    await act(async () =>
+      root.render(
+        createElement(
+          StrictMode,
+          null,
+          createElement(Probe, { key: "left", tabId: "left" }),
+          createElement(Probe, { key: "right", tabId: "right" }),
+        ),
+      ),
+    );
+    act(() => {
+      controls.left!.replaceComposerDraft({ text: "L", engine: "codex" });
+      controls.right!.replaceComposerDraft({ text: "R", engine: "claude-code" });
+    });
+    act(() =>
+      useZCodeSessionStore
+        .getState()
+        .startDraft(workspacePath, undefined, undefined, { projectId: "q" }),
+    );
+    expect(controls.left!.composerDraft).toMatchObject({ text: "L", engine: "codex" });
+    expect(controls.right!.composerDraft).toMatchObject({ text: "R", engine: "claude-code" });
+    act(() => controls.left!.promoteComposerDraft("accepted-left"));
+    expect(readV4ComposerDraft(workspacePath, undefined, "accepted-left")).toMatchObject({
+      text: "L",
+      engine: "codex",
+    });
+    expect(controls.right!.composerDraft).toMatchObject({ text: "R", engine: "claude-code" });
+    act(() => root.unmount());
+  });
+  it("旧根草稿仅迁移一次，后续 Tab 编辑不清除新根草稿", async () => {
+    const workspacePath = "/legacy-tab-migration";
+    const root = createRoot(installMinimalDom());
+    persistV4ComposerDraft(workspacePath, undefined, "__draft__", {
+      text: "旧草稿",
+      engine: "codex",
+    });
+    let control: ReturnType<typeof useActualDraftConfigControl>;
+    function Probe() {
+      control = useActualDraftConfigControl({
+        workspacePath,
+        sessionId: null,
+        draftTabId: "legacy-tab",
+        inheritRootDraft: true,
+        agentStartupAllowed: false,
+        modelSelectionService: null,
+      });
+      return null;
+    }
+    try {
+      await act(async () => root.render(createElement(Probe)));
+      expect(control!.composerDraft.text).toBe("旧草稿");
+      expect(readV4ComposerDraft(workspacePath, undefined, "__draft__")).toBeNull();
+      persistV4ComposerDraft(workspacePath, undefined, "__draft__", { text: "新根草稿" });
+      act(() => control!.updateComposerContent({ text: "Tab 继续编辑" }));
+      expect(readV4ComposerDraft(workspacePath, undefined, "__draft__")?.text).toBe("新根草稿");
+    } finally {
+      act(() => root.unmount());
+    }
+  });
   it("外部引擎恢复草稿不读取 Registry，也不加载 ZCode workspace命令", async () => {
     const workspacePath = "/external-engine-draft";
     const root = createRoot(installMinimalDom());

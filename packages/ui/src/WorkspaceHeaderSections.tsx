@@ -26,7 +26,6 @@ import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import { Ellipsis, Folder, GitBranch, LoaderIcon } from "lucide-react";
-import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
 import { useBaseWorkspaceServices, useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useTaskListItemContextActions } from "@/useTaskListItemContextActions.js";
@@ -117,9 +116,11 @@ export function WorkspaceHeaderTitleSection({
   selectedEditor: _selectedEditor,
   simplifyForNarrowRemote = false,
   compact = false,
+  leadingContent,
+  hideWorkspaceContext = false,
+  showDraftTitle = false,
 }: WorkspaceHeaderTitleSectionProps) {
   const { intl } = useZCodeIntl();
-  const confirmDialog = useConfirmDialog();
   const services = useWorkspaceServices(workspaceAbsPath, remoteSessionId, workspaceIdentity);
   const baseServices = useBaseWorkspaceServices();
   const removeTaskState = useZCodeSessionStore((state) => state.removeTaskState);
@@ -235,7 +236,7 @@ export function WorkspaceHeaderTitleSection({
     formatRemoteDeviceName(remoteTarget ?? directoryTarget ?? undefined, sourceServerDisplayName) ??
     intl.formatMessage({ id: "workspaceSidebar.remoteProject" });
   const workspaceContextLabel = workspaceDisplayLabel;
-  const workspaceBranchLabel = gitSummary.isRepository
+  const workspaceBranchLabel = gitSummary?.isRepository
     ? resolveGitBranchTriggerLabel({
         headRefType: gitSummary.headRefType,
         currentBranchName: gitSummary.branchName,
@@ -329,49 +330,50 @@ export function WorkspaceHeaderTitleSection({
     }
   };
 
+  const archivePending = useRef(false);
   const handleArchiveTask = async () => {
-    if (!resolvedTaskActionTaskId) {
-      return;
-    }
-
-    // Header 更多菜单之前点击“归档任务”会直接执行，
-    // 和 Sidebar 的二次确认心智不一致，用户容易在查看菜单时误触归档。
-    // 这里统一先走现成 ConfirmDialog，再复用原有归档链路。
-    const confirmed = await confirmDialog({
-      title: intl.formatMessage({ id: "confirmDialog.taskArchiveTitle" }),
-      description: intl.formatMessage(
-        { id: "confirmDialog.taskArchiveDescription" },
-        {
-          taskTitle:
-            activeTaskMeta?.title?.trim() ||
-            activeTaskTitle?.trim() ||
-            intl.formatMessage({ id: "taskList.untitled" }),
-        },
-      ),
-      confirmLabel: intl.formatMessage({ id: "taskList.archive" }),
-    });
-    if (!confirmed) {
-      return;
-    }
-
+    if (!resolvedTaskActionTaskId || archivePending.current) return;
+    archivePending.current = true;
+    // 通知可能在切换会话后才被点击，固定原服务与完整身份，不能读取新的活动任务。
+    const target = {
+      taskId: resolvedTaskActionTaskId,
+      workspacePath: workspaceAbsPath,
+      ...(workspaceIdentity ? { workspaceIdentity } : {}),
+    };
     handleCancelRenameTask();
-    void services.zcodeTaskService
-      .archiveTask({
-        taskId: resolvedTaskActionTaskId,
-        workspacePath: workspaceAbsPath,
-        ...(workspaceIdentity ? { workspaceIdentity } : {}),
-      })
-      .then((meta) => {
-        // Header 更多菜单不能只依赖 zcodeTaskMetaMerge：归档后只有旧列表状态被更新。
-        // 这里改成和 Sidebar 一样同步清理运行态与 sqlite cache，避免 Header 操作后列表不刷新。
-        removeTaskState(workspaceAbsPath, resolvedTaskActionTaskId, workspaceIdentity);
-        applyTaskQueryCacheMutation({
-          previousTask: buildHeaderTaskSnapshot(meta),
-          nextTask: meta,
-          previousState: { pinned: isPinned, archived: false },
-          nextState: { pinned: false, archived: true },
-        });
+    try {
+      const meta = await services.zcodeTaskService.archiveTask(target);
+      removeTaskState(target.workspacePath, target.taskId, target.workspaceIdentity);
+      applyTaskQueryCacheMutation({
+        previousTask: buildHeaderTaskSnapshot(meta),
+        nextTask: meta,
+        previousState: { pinned: isPinned, archived: false },
+        nextState: { pinned: false, archived: true },
       });
+      toast(intl.formatMessage({ id: "taskList.archivedNotice" }), {
+        position: "top-center",
+        variant: "info",
+        durationMs: 5000,
+        actionLabel: intl.formatMessage({ id: "taskList.undoArchive" }),
+        onAction: () => {
+          void services.zcodeTaskService
+            .unarchiveTask(target)
+            .then((restored) => {
+              applyTaskQueryCacheMutation({
+                previousTask: meta,
+                nextTask: restored,
+                previousState: { pinned: false, archived: true },
+                nextState: { pinned: false, archived: false },
+              });
+            })
+            .catch(() => toast(intl.formatMessage({ id: "taskList.unarchiveFailed" })));
+        },
+      });
+    } catch {
+      toast(intl.formatMessage({ id: "taskList.archiveFailed" }));
+    } finally {
+      archivePending.current = false;
+    }
   };
 
   return (
@@ -399,7 +401,8 @@ export function WorkspaceHeaderTitleSection({
           void handleSubmitRenameTask();
         }}
       />
-      {!isDraftNewTask || isRemoteWorkspace ? (
+      {leadingContent}
+      {(!isDraftNewTask || isRemoteWorkspace) && !hideWorkspaceContext ? (
         <ControlHintTooltip
           open={workspaceContextOpen}
           onOpenChange={setWorkspaceContextOpen}
@@ -500,13 +503,13 @@ export function WorkspaceHeaderTitleSection({
           </Button>
         </ControlHintTooltip>
       ) : null}
-      {!isDraftNewTask ? (
+      {!isDraftNewTask || showDraftTitle ? (
         <h1
           data-testid={TID_WORKSPACE_TITLE}
           className={cn(
             "flex min-w-12 max-w-100 shrink items-center gap-2 truncate font-semibold text-foreground @max-[560px]/workspace-header:max-w-[30vw] @max-[420px]/workspace-header:max-w-[22vw]",
             simplifyForNarrowRemote && "max-md:max-w-[42vw]",
-            compact ? "text-[0.92rem]" : "text-ui-base",
+            "text-ui-base",
           )}
           title={activeTaskTitle}
         >

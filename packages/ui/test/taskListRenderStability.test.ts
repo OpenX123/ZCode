@@ -300,7 +300,7 @@ describe("TaskList render stability", () => {
     });
   });
 
-  it("keeps unchanged row action props stable when archive confirmation state changes", async () => {
+  it("单击归档即提交且不制造列表确认态或额外行渲染", async () => {
     const { TaskList } = await import("@/TaskList.js");
     const root: Root = createRoot(installMinimalDom());
     const tasks = [
@@ -347,24 +347,9 @@ describe("TaskList render stability", () => {
       await archiveInline?.({ stopPropagation: vi.fn() }, "task-1");
     });
 
-    const untouchedRowUpdatedProps = memoTaskItemCalls
-      .slice(2)
-      .find((props) => (props.task as ZCodeTaskMeta).taskId === "task-2");
-    expect(untouchedRowUpdatedProps).toBeDefined();
-    expect(untouchedRowUpdatedProps?.onSelectTask).toBe(untouchedRowInitialProps?.onSelectTask);
-    expect(untouchedRowUpdatedProps?.onArchiveTaskInline).toBe(
-      untouchedRowInitialProps?.onArchiveTaskInline,
-    );
-    expect(untouchedRowUpdatedProps?.onTogglePinTask).toBe(
-      untouchedRowInitialProps?.onTogglePinTask,
-    );
-    expect(untouchedRowUpdatedProps?.onStartRenameTask).toBe(
-      untouchedRowInitialProps?.onStartRenameTask,
-    );
-    expect(untouchedRowUpdatedProps?.onArchiveTask).toBe(untouchedRowInitialProps?.onArchiveTask);
-    expect(untouchedRowUpdatedProps?.onMarkTaskAsUnread).toBe(
-      untouchedRowInitialProps?.onMarkTaskAsUnread,
-    );
+    expect(onArchiveTask).toHaveBeenCalledExactlyOnceWith("task-1");
+    expect(memoTaskItemCalls).toHaveLength(2);
+    expect(untouchedRowInitialProps).not.toHaveProperty("isArchiveConfirming");
 
     act(() => {
       root.unmount();

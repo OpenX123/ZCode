@@ -43,11 +43,14 @@ import { ProjectCreation } from "@/project-sidebar/ProjectCreation.js";
 import { ProjectFolderIcon } from "@/project-sidebar/ProjectFolderIcon.js";
 import { projectKey, projectSourceServerId } from "@/project-sidebar/view.js";
 import { useProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
+import { useWorkbenchTabsStore } from "@/v4/workbench-tabs/index.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 
 export function ProjectComposerMenu({
   workspacePath,
   workspaceIdentity,
+  draftTabId,
+  menuSide = "top",
   compactForRemoteControl = false,
   allowConversationWorkspaceSelection = true,
   allowConversationWorkspaceDetach = allowConversationWorkspaceSelection,
@@ -63,6 +66,9 @@ export function ProjectComposerMenu({
 }: {
   workspacePath: string;
   workspaceIdentity?: string;
+  /** 分栏入口固定草稿身份，不读取同目录另一栏的共享选择态。 */
+  draftTabId?: string;
+  menuSide?: "top" | "bottom";
   compactForRemoteControl?: boolean;
   allowConversationWorkspaceSelection?: boolean;
   /** 是否显示项目 chip 的快捷脱离按钮；默认跟随非项目工作区选择能力。 */
@@ -103,16 +109,35 @@ export function ProjectComposerMenu({
     refresh,
   } = useProjectDirectory();
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
-  const projectId = useZCodeSessionStore((state) => state.workspaces[workspaceKey]?.draftProjectId);
-  const activeTaskId = useZCodeSessionStore(
-    (state) => state.workspaces[workspaceKey]?.activeTaskId,
+  const targetTab = useWorkbenchTabsStore((state) =>
+    draftTabId ? state.tabs[draftTabId] : undefined,
   );
-  const createProjectTask: ProjectSidebarProps["onCreateTask"] = (request) =>
+  const projectId = useZCodeSessionStore((state) =>
+    draftTabId ? targetTab?.projectId : state.workspaces[workspaceKey]?.draftProjectId,
+  );
+  const activeTaskId = useZCodeSessionStore((state) =>
+    draftTabId ? targetTab?.sessionId : state.workspaces[workspaceKey]?.activeTaskId,
+  );
+  const createProjectTask: ProjectSidebarProps["onCreateTask"] = (request) => {
+    if (draftTabId) {
+      const source = useWorkbenchTabsStore.getState().tabs[draftTabId];
+      if (!source || source.sessionId !== null || source !== targetTab) return;
+      const options = typeof request === "object" ? request : {};
+      onCreateTask({
+        ...options,
+        replaceDraftTabId: draftTabId,
+        taskGroupId: source.taskGroupId,
+        isCurrent: () =>
+          useWorkbenchTabsStore.getState().tabs[draftTabId] === source &&
+          options.isCurrent?.() !== false,
+      });
+      return;
+    }
     onCreateTask(
       typeof request === "object"
         ? {
             ...request,
-            // 远程目录确认曾遗漏草稿分组；两个项目入口必须从同一草稿 owner 读取组织意图。
+            // 远程目录确认曾遗漏草稿分组；两个项目入口从同一草稿 owner 读取组织意图。
             taskGroupId: !activeTaskId
               ? useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
                   .draftTaskGroupId
@@ -120,11 +145,12 @@ export function ProjectComposerMenu({
           }
         : request,
     );
-  const draftVersion = useZCodeSessionStore(
-    (state) => state.workspaces[workspaceKey]?.draftFocusVersion,
+  };
+  const draftVersion = useZCodeSessionStore((state) =>
+    draftTabId ? 0 : state.workspaces[workspaceKey]?.draftFocusVersion,
   );
   // 草稿重建和聊天切换都会使旧返回意图失效，即使后来又回到同一路径也不能复活旧操作。
-  const chatKey = JSON.stringify([workspaceKey, activeTaskId, projectId, draftVersion]);
+  const chatKey = JSON.stringify([workspaceKey, draftTabId, activeTaskId, projectId, draftVersion]);
   const currentChat = useRef({ key: chatKey });
   if (currentChat.current.key !== chatKey) currentChat.current = { key: chatKey };
   const chat = currentChat.current;
@@ -184,14 +210,18 @@ export function ProjectComposerMenu({
     setSubmissionPending?.(true);
     const isCurrent = () => {
       const draft = useZCodeSessionStore.getState().workspaces[workspaceKey];
+      const validTarget = draftTabId
+        ? useWorkbenchTabsStore.getState().tabs[draftTabId] === targetTab &&
+          targetTab?.sessionId === null
+        : draft?.activeTaskId === activeTaskId &&
+          draft?.draftProjectId === projectId &&
+          draft?.draftFocusVersion === draftVersion;
       // Store 先提交、React 后渲染；迟到结果不能利用这一间隙复活旧草稿意图。
       return (
         mounted.current &&
         currentChat.current === chat &&
         operation.current === request &&
-        draft?.activeTaskId === activeTaskId &&
-        draft?.draftProjectId === projectId &&
-        draft?.draftFocusVersion === draftVersion
+        validTarget
       );
     };
     const accepted = onOpenRemoteWorkspace?.({
@@ -351,7 +381,7 @@ export function ProjectComposerMenu({
       <DropdownMenuContent
         data-testid="composer-project-menu"
         align="start"
-        side="top"
+        side={menuSide}
         className="flex w-72 max-w-[calc(100vw-2rem)] flex-col p-0"
       >
         <div
@@ -534,12 +564,13 @@ export function ProjectComposerMenu({
         <ProjectCreation
           workspacePath={workspacePath}
           workspaceIdentity={workspaceIdentity}
+          draftTabId={draftTabId}
           onCreateTask={createProjectTask}
           projects={tree.projects}
           directory={directory}
           service={service}
           remoteService={remoteService}
-          defaultDeviceId={activeTaskId && hostId ? hostId : "local"}
+          defaultDeviceId={(draftTabId || activeTaskId) && hostId ? hostId : "local"}
           allowDeviceManagement={canUseRemoteWorkspace}
           onOpenRemoteWorkspace={onOpenRemoteWorkspace}
           onClose={() => setCreating(false)}

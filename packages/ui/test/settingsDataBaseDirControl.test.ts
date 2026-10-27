@@ -200,7 +200,6 @@ async function renderGeneralSection(
       onAskUserQuestionAutoResolutionEnabledChange: vi.fn(async () => {}),
       onModelIoFullRetentionEnabledChange: vi.fn(async () => {}),
       onOptimizeAgentExperienceEnabledChange: vi.fn(async () => {}),
-      onOpenOnboardingDialog: vi.fn(),
       ...overrides,
     }),
   );
@@ -218,9 +217,10 @@ describe("GeneralSectionContent data directory control", () => {
   });
 
   it("数据目录改为只读展示，避免继续手输路径", async () => {
-    await renderGeneralSection();
+    const markup = await renderGeneralSection();
 
     expect(capturedInputs.some((input) => input.readOnly === true)).toBe(true);
+    expect(markup).not.toContain("settings.onboarding");
   });
 
   it("桌面常规设置移除官方更新开关，保留硬件加速与任务通知", async () => {

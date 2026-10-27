@@ -21,6 +21,8 @@ import { useZCodeIntl } from "./i18n/IntlProvider.js";
 
 interface ElicitationDialogProps {
   request: ZCodeElicitationRequest;
+  /** 背景栏的问答不得自动聚焦；用户激活该栏后再启用键盘导航。 */
+  autoFocus?: boolean;
   autoResolution?: InteractionAutoResolution;
   onRespond: (
     requestId: string,
@@ -342,6 +344,7 @@ export function ElicitationDialog(props: ElicitationDialogProps) {
 
 function ElicitationDialogContent({
   request,
+  autoFocus = true,
   autoResolution,
   onRespond,
   onFirstInteraction,
@@ -405,7 +408,7 @@ function ElicitationDialogContent({
   const isPlanApproval = isPlanApprovalElicitationRequest(request);
 
   useEffect(() => {
-    if (getQuestionOptionCount(currentQuestion) === 0 || activeOptionIndex < 0) {
+    if (!autoFocus || getQuestionOptionCount(currentQuestion) === 0 || activeOptionIndex < 0) {
       return;
     }
     const frameId = requestAnimationFrame(() => {
@@ -416,18 +419,18 @@ function ElicitationDialogContent({
       customInputRef.current?.focus();
     });
     return () => cancelAnimationFrame(frameId);
-  }, [activeOptionIndex, currentQuestion]);
+  }, [autoFocus, activeOptionIndex, currentQuestion]);
 
   // 初始 activeOptionIndex=-1 时无按钮有焦点。卡片容器自动聚焦后
   // 可接收键盘事件，在容器层捕获 Tab/↓/↑/Enter 启动导航或推进。
   useEffect(() => {
-    if (activeOptionIndex < 0) {
+    if (autoFocus && activeOptionIndex < 0) {
       const frameId = requestAnimationFrame(() => {
         cardRef.current?.focus();
       });
       return () => cancelAnimationFrame(frameId);
     }
-  }, [activeOptionIndex]);
+  }, [autoFocus, activeOptionIndex]);
 
   const updateDraft = useCallback(
     (question: NormalizedElicitationQuestion, updater: (draft: AnswerDraft) => AnswerDraft) => {

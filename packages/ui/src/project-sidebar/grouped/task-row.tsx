@@ -471,6 +471,7 @@ function GroupedTaskRowComponent({
       {contextMenuOpen ? (
         // 右键菜单内容带 Radix Presence/Portal，拖拽重排时常驻挂载会触发嵌套更新循环；仅在菜单打开时挂载内容，配合路径懒加载避免拖拽过程刷 task path RPC。
         <GroupedTaskContextMenuContent
+          remoteSessionId={remoteSessionId}
           task={task}
           currentGroupId={currentGroupId}
           groups={groups}

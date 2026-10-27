@@ -11,6 +11,7 @@ import { projectKey } from "@/project-sidebar/view.js";
 import { ComposerSubmissionPendingContext } from "@/project-sidebar/ComposerSubmissionPendingContext.js";
 import { ProjectComposerMenu } from "@/project-sidebar/ProjectComposerMenu.js";
 import { clearV4ComposerDraft, V4_DRAFT_SCOPE_ROOT } from "@/v4/composer/composerDraftStore.js";
+import { useWorkbenchTabsStore } from "@/v4/workbench-tabs/index.js";
 
 const fixture = vi.hoisted(() => ({
   readDirectory: vi.fn(),
@@ -156,6 +157,7 @@ const project = (id: string, hostId = "local"): VirtualProject => ({
   updatedAt: 1,
 });
 beforeEach(() => {
+  useWorkbenchTabsStore.setState({ groups: [], tabs: {}, focusedGroupId: "", ratio: 0.5 });
   clearV4ComposerDraft("/same", undefined, V4_DRAFT_SCOPE_ROOT);
   fixture.refresh.mockClear();
   fixture.deviceNames = new Map();
@@ -183,6 +185,52 @@ const entries = () =>
   screen.getAllByRole("menuitemcheckbox").filter((e) => e.hasAttribute("data-project-id"));
 
 describe("输入框的虚拟项目目录", () => {
+  it("标题项目选择只指定原草稿，跨栏焦点改变仍有效，首发后失效", () => {
+    const scope = { workspacePath: "/same" };
+    useWorkbenchTabsStore.getState().initialize(scope, null, {
+      projectId: "1",
+      taskGroupId: "left-group",
+    });
+    const left = useWorkbenchTabsStore.getState().groups[0]!.activeTabId;
+    const right = useWorkbenchTabsStore.getState().splitRight(scope, { projectId: "2" });
+    fixture.projectId = "6";
+    fixture.activeTaskId = "unrelated-session";
+    const p = props();
+    render(createElement(ProjectComposerMenu, { ...p, draftTabId: left }));
+    expect(screen.getByTestId("composer-workspace-trigger").textContent).toContain("Project 1");
+    open();
+    fireEvent.click(entries().find((entry) => entry.getAttribute("data-project-id") === "0")!);
+    const request = p.onCreateTask.mock
+      .calls[0]![0] as import("@/project-sidebar/contract.js").CreateTaskOptions;
+    expect(request).toEqual({
+      projectId: "0",
+      taskGroupId: "left-group",
+      replaceDraftTabId: left,
+      isCurrent: expect.any(Function),
+    });
+    expect(request.isCurrent?.()).toBe(true);
+    act(() => useWorkbenchTabsStore.getState().activateTab(right));
+    expect(request.isCurrent?.()).toBe(true);
+    expect(useWorkbenchTabsStore.getState().tabs[right]?.projectId).toBe("2");
+    act(() => useWorkbenchTabsStore.getState().bindSession(left, "accepted"));
+    expect(request.isCurrent?.()).toBe(false);
+  });
+
+  it("远端栏草稿创建项目默认使用该栏设备", () => {
+    const remoteScope = {
+      workspacePath: "/same",
+      workspaceIdentity: "remote:server:host:/same",
+    };
+    useWorkbenchTabsStore.getState().initialize(remoteScope);
+    const draftTabId = useWorkbenchTabsStore.getState().groups[0]!.activeTabId;
+    render(createElement(ProjectComposerMenu, { ...props(), ...remoteScope, draftTabId }));
+    open();
+    fireEvent.click(screen.getByText("project.create"));
+    expect(screen.getByLabelText("project.create").getAttribute("value")).toBe(
+      "remote:server:host",
+    );
+  });
+
   it("TD07 无文字草稿切项目时沿用内存分组，不依赖持久草稿", () => {
     fixture.taskGroupId = "group-a";
     const p = props();

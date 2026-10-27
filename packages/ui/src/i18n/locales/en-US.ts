@@ -979,9 +979,6 @@ const enUS: Record<string, string> = {
   "taskList.deleteAllArchivedResult": "Deleted {deleted}, skipped {skipped}, failed {failed}.",
   "taskList.deleteAllArchivedError":
     "The operation or list refresh failed. Refresh to check the remaining tasks.",
-  "confirmDialog.taskArchiveTitle": "Archive this task?",
-  "confirmDialog.taskArchiveDescription":
-    "Task “{taskTitle}” will move to the archive list and can still be restored later.",
   "bots.title": "Bots",
   "bots.description": "Connect external chats and webhooks to YCode bots.",
   "bots.listTitle": "Bots",
@@ -1291,10 +1288,6 @@ const enUS: Record<string, string> = {
   // Welcome / Login
   "login.oauth.regionTag.zai": "Global",
   "login.oauth.regionTag.bigmodel": "CN",
-  "settings.onboarding": "Onboard",
-  "settings.onboardingDescription":
-    "Choose your role, interface mode, and preferences again. Use Migration settings to import data.",
-  "settings.onboardingOpen": "Open onboarding",
 
   // App header
   "app.currentTheme": "Current: {theme}",
@@ -1944,6 +1937,8 @@ const enUS: Record<string, string> = {
   "codeBlock.mermaid.reset": "Reset zoom",
   "codeBlock.mermaid.close": "Close preview",
   "codeBlock.mermaid.loading": "Rendering diagram...",
+  "codeBlock.mermaid.failed": "The diagram could not be parsed. You can view its source.",
+  "codeBlock.mermaid.viewSource": "View source",
   "codeBlock.mermaid.source": "Source",
   "markdownTable.copyMarkdown": "Copy Markdown",
   "markdownTable.downloadCsv": "Download CSV",
@@ -2714,6 +2709,9 @@ const enUS: Record<string, string> = {
   "taskList.unpin": "Unpin task",
   "taskList.rename": "Rename task",
   "taskList.archive": "Archive task",
+  "taskList.archivedNotice": "Session archived",
+  "taskList.undoArchive": "Undo",
+  "taskList.unarchiveFailed": "Failed to unarchive session",
   "taskList.archiveFailed": "Could not archive task",
   "taskList.unarchive": "Unarchive task",
   "taskList.renamePlaceholder": "Task name",
@@ -6672,6 +6670,20 @@ const enUS: Record<string, string> = {
   "scheduledPreview.toast.running": "Running “{title}”…",
   "scheduledPreview.toast.view": "View",
   "scheduledPreview.addSchedule": "Add schedule",
+  "workbench.newConversation": "New conversation",
+  "workbench.splitRight": "Split right",
+  "workbench.layoutMenu": "Conversation layout",
+  "workbench.openViews": "Open conversations",
+  "workbench.closeView": "Close conversation view",
+  "workbench.closePane": "Close column",
+  "workbench.mergeGroups": "Merge into one column",
+  "workbench.openInLeft": "Open in left column",
+  "workbench.openInRight": "Open in right column",
+  "workbench.moveToOtherGroup": "Move to other column",
+  "workbench.swapGroups": "Swap columns",
+  "workbench.leftGroup": "Left column",
+  "workbench.rightGroup": "Right column",
+  "workbench.placementNotReady": "Conversation placement is not ready. Try again shortly.",
 };
 
 export default enUS;

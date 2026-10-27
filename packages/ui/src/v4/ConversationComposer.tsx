@@ -139,7 +139,11 @@ import {
   resolveComposerAutoFocus,
   type ComposerAutoFocusOptions,
 } from "@/v4/composer/composerAutoFocus.js";
-import { V4_DRAFT_SCOPE_ROOT, type V4ComposerDraft } from "@/v4/composer/composerDraftStore.js";
+import {
+  getV4TabDraftScopeId,
+  V4_DRAFT_SCOPE_ROOT,
+  type V4ComposerDraft,
+} from "@/v4/composer/composerDraftStore.js";
 import {
   resolveOppositeFollowupDelivery,
   resolveFollowupModifierTooltip,
@@ -400,6 +404,7 @@ export interface ConversationComposerProps {
   /** SessionPane 注入的完整 Draft owner；生产路径不再由编辑器直接覆盖持久记录。 */
   composerDraft: V4ComposerDraft;
   rootDraftScopeKey?: string;
+  draftTabId?: string;
   updateComposerContent: (
     content: Pick<V4ComposerDraft, "text" | "editorStateJson" | "mention">,
   ) => void;
@@ -537,6 +542,7 @@ function ConversationComposerImpl({
   draftConfig,
   composerDraft,
   rootDraftScopeKey,
+  draftTabId,
   updateComposerContent,
   replaceComposerDraft,
   submissionReady = true,
@@ -611,7 +617,11 @@ function ConversationComposerImpl({
   const services = useOptionalServices();
   const draftScopeId =
     sessionId ??
-    (rootDraftScopeKey ? `${V4_DRAFT_SCOPE_ROOT}:${rootDraftScopeKey}` : V4_DRAFT_SCOPE_ROOT);
+    (draftTabId
+      ? getV4TabDraftScopeId(draftTabId)
+      : rootDraftScopeKey
+        ? `${V4_DRAFT_SCOPE_ROOT}:${rootDraftScopeKey}`
+        : V4_DRAFT_SCOPE_ROOT);
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const configPickerScopeKey = `${workspaceKey}\0${draftScopeId}`;
   const [text, setText] = useState("");
@@ -841,7 +851,7 @@ function ConversationComposerImpl({
   } = useConversationSelectionReferences({
     sessionId,
     workspaceKey,
-    draftScopeKey: rootDraftScopeKey,
+    draftScopeKey: draftTabId ?? rootDraftScopeKey,
   });
   const hasConversationSelectionReferences = conversationSelectionReferences.length > 0;
 
@@ -881,11 +891,15 @@ function ConversationComposerImpl({
   useEffect(() => {
     // 新建 scope 已包含项目身份；不能只匹配旧的裸 __draft__ 而漏掉当前编辑器。
     if (!draftScopeId.startsWith(V4_DRAFT_SCOPE_ROOT)) return;
-    return registerV4ComposerDraftReader(workspaceKey, () => ({
-      draft: { ...ownerDraftRef.current.draft, ...snapshotDraftOfEditor() },
-      attachments: attachmentsApi.attachments,
-    }));
-  }, [draftScopeId, workspaceKey, snapshotDraftOfEditor, attachmentsApi.attachments]);
+    return registerV4ComposerDraftReader(
+      workspaceKey,
+      () => ({
+        draft: { ...ownerDraftRef.current.draft, ...snapshotDraftOfEditor() },
+        attachments: attachmentsApi.attachments,
+      }),
+      draftTabId ? draftScopeId : undefined,
+    );
+  }, [draftScopeId, draftTabId, workspaceKey, snapshotDraftOfEditor, attachmentsApi.attachments]);
 
   const persistDraftNow = useCallback(
     (scopeId: string) => {
@@ -914,14 +928,24 @@ function ConversationComposerImpl({
   // 触发源：startDraft 递增的 draftFocusVersion（覆盖 Cmd/Ctrl+N 与所有「新建任务」入口）、
   // sessionId→draftScopeId 变化（切会话/切草稿）、以及挂载。三者置位聚焦意图；因切到需
   // 连接的会话时 composer 短暂 disabled，聚焦意图暂存，待可编辑时兑现一次。
-  const draftFocusVersion = useZCodeSessionStore(
-    (state) => state.getWorkspaceState(workspacePath, workspaceIdentity).draftFocusVersion,
+  const draftFocusVersion = useZCodeSessionStore((state) =>
+    draftTabId ? 0 : state.getWorkspaceState(workspacePath, workspaceIdentity).draftFocusVersion,
   );
   useEffect(() => {
     if (!draftScopeId.startsWith(V4_DRAFT_SCOPE_ROOT)) return;
-    const attachments = consumeV4ComposerDraftAttachments(workspaceKey, draftFocusVersion);
+    const attachments = consumeV4ComposerDraftAttachments(
+      workspaceKey,
+      draftFocusVersion,
+      draftTabId ? draftScopeId : undefined,
+    );
     if (attachments) attachmentsApi.restoreDraftAttachments(attachments);
-  }, [draftFocusVersion, draftScopeId, workspaceKey, attachmentsApi.restoreDraftAttachments]);
+  }, [
+    draftFocusVersion,
+    draftScopeId,
+    draftTabId,
+    workspaceKey,
+    attachmentsApi.restoreDraftAttachments,
+  ]);
   const pendingFocusRef = useRef(false);
   // 本次 focus 是否由程序触发（见 flushPendingFocus），供 send_input_focus 过滤非用户动作。
   const programmaticFocusRef = useRef(false);
@@ -1101,9 +1125,12 @@ function ConversationComposerImpl({
       );
     };
     let unsubscribeSettled: (() => void) | null = null;
+    const scheduledRevision = contentRevisionRef.current;
     const applyDraft = () => {
       const api = inputApiRef.current;
       if (!api) return;
+      // 编辑器 root 可先于下一帧恢复就绪；期间的新输入已归草稿 owner，旧闭包不能再回填空稿。
+      if (contentRevisionRef.current !== scheduledRevision) return;
       restoreDraftInto(api);
       // Bug 根因（R3A-B-07）：ACK 丢失时传输先 reject，提交正文被恢复回草稿；随即断连让
       // SessionPane 连同本组件卸载，闭包里的结算订阅一起消失。重连重挂后正文从草稿回填，

@@ -84,8 +84,6 @@ function renderTaskItem(
       isActive: false,
       onSelectTask: () => {},
       onArchiveTaskInline: () => {},
-      onCancelArchiveConfirm: () => {},
-      isArchiveConfirming: false,
       variant: params.variant,
       onTogglePinTask: () => {},
       onStartRenameTask: () => {},

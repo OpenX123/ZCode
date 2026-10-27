@@ -89,27 +89,20 @@ export const TaskList = memo(function TaskList({
   const taskLookup = useMemo(() => [...tasks, ...pinnedTasks], [pinnedTasks, tasks]);
   const startDraft = useZCodeSessionStore((state) => state.startDraft);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
-  const [pendingArchiveTaskId, setPendingArchiveTaskId] = useState<string | null>(null);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
   const [contextMenuTaskId, setContextMenuTaskId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const renameInputRef = useRef<HTMLInputElement | null>(null);
-  const pendingArchiveTaskIdRef = useRef<string | null>(pendingArchiveTaskId);
   const renamingTaskIdRef = useRef<string | null>(renamingTaskId);
   const onSelectTaskRef = useRef(onSelectTask);
   const onSetTaskPinnedRef = useRef(onSetTaskPinned);
   const onArchiveTaskRef = useRef(onArchiveTask);
   const onSetTaskUnreadRef = useRef(onSetTaskUnread);
-  pendingArchiveTaskIdRef.current = pendingArchiveTaskId;
   renamingTaskIdRef.current = renamingTaskId;
   onSelectTaskRef.current = onSelectTask;
   onSetTaskPinnedRef.current = onSetTaskPinned;
   onArchiveTaskRef.current = onArchiveTask;
   onSetTaskUnreadRef.current = onSetTaskUnread;
-  const handleCancelArchiveConfirm = useCallback(() => {
-    setPendingArchiveTaskId(null);
-  }, []);
-
   const handleCancelRenameTask = useCallback(() => {
     setRenamingTaskId(null);
     setRenameDraft("");
@@ -121,9 +114,6 @@ export const TaskList = memo(function TaskList({
   const handleOpenTaskContextMenu = useCallback((taskId: string) => {
     // 以前每个 task row 都常驻一个 Radix ContextMenu root/trigger。
     // 现在 row 只上报目标 task，真正的菜单树由列表级单例挂载，避免大会话里按行放大 Popper/MenuProvider 成本。
-    if (pendingArchiveTaskIdRef.current === taskId) {
-      setPendingArchiveTaskId(null);
-    }
     setContextMenuTaskId(taskId);
   }, []);
 
@@ -137,30 +127,6 @@ export const TaskList = memo(function TaskList({
     startDraft(workspacePath, undefined, workspaceIdentity, {});
   }, [readOnlyReason, startDraft, workspaceIdentity, workspacePath]);
 
-  const handleArchiveTaskFromInline = useCallback(
-    async (e: React.MouseEvent, taskId: string) => {
-      e.stopPropagation();
-      if (readOnlyReason) {
-        return;
-      }
-      if (renamingTaskIdRef.current) {
-        handleCancelRenameTask();
-      }
-
-      if (pendingArchiveTaskIdRef.current !== taskId) {
-        // 侧边栏 hover 操作现在改成“归档任务”，但它依旧会让任务从当前列表立刻消失，
-        // 如果首击就直接执行，用户很容易把“临时收起”误触成“怎么整条任务没了”。
-        // 这里改成“首次点击进入待确认态，二次点击原位确认”，既保留保护，也不离开当前上下文。
-        setPendingArchiveTaskId(taskId);
-        return;
-      }
-
-      setPendingArchiveTaskId(null);
-      await onArchiveTaskRef.current(taskId);
-    },
-    [handleCancelRenameTask, readOnlyReason],
-  );
-
   const handleStartRenameTask = useCallback(
     (taskId: string, currentTitle: string) => {
       if (readOnlyReason) {
@@ -172,7 +138,6 @@ export const TaskList = memo(function TaskList({
         workspaceIdentity,
         titleLength: currentTitle.length,
       });
-      setPendingArchiveTaskId(null);
       setRenamingTaskId(taskId);
       setRenameDraft(currentTitle ?? "");
     },
@@ -197,11 +162,19 @@ export const TaskList = memo(function TaskList({
       if (readOnlyReason) {
         return;
       }
-      setPendingArchiveTaskId(null);
       handleCancelRenameTask();
       await onArchiveTaskRef.current(taskId);
     },
     [handleCancelRenameTask, readOnlyReason],
+  );
+
+  const handleArchiveTaskFromInline = useCallback(
+    (event: React.MouseEvent, taskId: string) => {
+      event.stopPropagation();
+      // 归档可由成功通知撤销，行内入口与菜单共用同一条直接提交路径。
+      void handleArchiveTask(taskId);
+    },
+    [handleArchiveTask],
   );
 
   const handleSubmitRenameTask = useCallback(
@@ -324,17 +297,6 @@ export const TaskList = memo(function TaskList({
     return orderedTasks;
   }, [sortBy, tasks]);
   useEffect(() => {
-    if (!pendingArchiveTaskId) {
-      return;
-    }
-
-    const stillExists = visibleSourceTasks.some((task) => task.taskId === pendingArchiveTaskId);
-    if (!stillExists) {
-      setPendingArchiveTaskId(null);
-    }
-  }, [pendingArchiveTaskId, visibleSourceTasks]);
-
-  useEffect(() => {
     if (!renamingTaskId) {
       return;
     }
@@ -383,8 +345,6 @@ export const TaskList = memo(function TaskList({
         }
         onSelectTask={handleSelectTaskItem}
         onArchiveTaskInline={handleArchiveTaskFromInline}
-        onCancelArchiveConfirm={handleCancelArchiveConfirm}
-        isArchiveConfirming={pendingArchiveTaskId === task.taskId}
         onTogglePinTask={handleTogglePinTask}
         onStartRenameTask={handleStartRenameTask}
         onArchiveTask={handleArchiveTask}

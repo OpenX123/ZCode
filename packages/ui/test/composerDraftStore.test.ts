@@ -10,6 +10,8 @@ import {
   readPendingTaskDraft,
   completePendingTaskDraft,
   bindPendingTaskDraft,
+  markPendingTaskDraftCommand,
+  getV4TabDraftScopeId,
 } from "@/v4/composer/composerDraftStore.js";
 
 const selection = {
@@ -27,6 +29,46 @@ const workspace = "/workspace";
 const read = (scope = "session-a") => readV4ComposerDraft(workspace, undefined, scope);
 
 describe("Composer Draft 持久选择", () => {
+  it("同目录 Tab 草稿分别保存空正文引擎配置和项目意图", () => {
+    const left = getV4TabDraftScopeId("left");
+    const right = getV4TabDraftScopeId("right");
+    persistV4ComposerDraft(workspace, undefined, left, {
+      text: "",
+      engine: "codex",
+      projectId: "p",
+      modelSelection: selection,
+    });
+    persistV4ComposerDraft(workspace, undefined, right, {
+      text: "",
+      engine: "claude-code",
+      projectId: "p",
+    });
+    expect(read(left)).toMatchObject({
+      text: "",
+      engine: "codex",
+      projectId: "p",
+      modelSelection: selection,
+    });
+    expect(read(right)).toMatchObject({ text: "", engine: "claude-code", projectId: "p" });
+    clearV4ComposerDraft(workspace, undefined, left);
+    expect(read(right)?.engine).toBe("claude-code");
+  });
+  it("Tab 认领旧临时身份时一次迁移待提交命令，另一 Tab 不可再认领", () => {
+    const scope = { clientNamespace: "desktop", hostId: "local", projectId: null };
+    const pending = ensurePendingTaskDraft(scope);
+    markPendingTaskDraftCommand(scope, pending.draftId, "command-a", "session-a");
+    const owner = { ...scope, draftId: "left" };
+    bindPendingTaskDraft(owner, pending.draftId, workspace);
+    expect(readPendingTaskDraft(owner)).toEqual({
+      ...pending,
+      commandId: "command-a",
+      sessionId: "session-a",
+      workspacePath: workspace,
+    });
+    expect(readPendingTaskDraft(scope)).toBeNull();
+    bindPendingTaskDraft({ ...scope, draftId: "right" }, pending.draftId, workspace);
+    expect(readPendingTaskDraft({ ...scope, draftId: "right" })).toBeNull();
+  });
   it("恢复外部引擎草稿时保留引擎与正文", () => {
     persistV4ComposerDraft(workspace, undefined, "session-a", {
       text: "未发送正文",

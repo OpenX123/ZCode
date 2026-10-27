@@ -688,9 +688,7 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
     expect(await $(".composer-thought-slider-fill").getAttribute("data-highspeed")).toBe(
       String(highspeed),
     );
-    expect(await $('[data-testid="composer-thought-meter"]').getAttribute("data-highspeed")).toBe(
-      String(highspeed),
-    );
+    expect(await $('[data-testid="composer-thought-meter"]').isExisting()).toBe(false);
     const filledOpacity = await browser.execute(
       () =>
         getComputedStyle(
@@ -1131,21 +1129,23 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
           await browser.waitUntil(
             async () =>
               (await getV4ModelConfig()).thought === levels.at(-1) &&
-              (await $('[data-testid="composer-thought-meter"]').getAttribute("data-progress")) ===
-                "100",
+              (await $('[data-testid="composer-thought-slider"]').getAttribute(
+                "aria-valuetext",
+              )) !== "—",
             { timeout: 15000, timeoutMsg: "compact picker lost keyboard effort updates" },
           );
-          expect(await $('[data-testid="composer-thought-meter"]').isDisplayed()).toBe(true);
+          expect(await $('[data-testid="composer-thought-meter"]').isExisting()).toBe(false);
           expectedConfig = { ...expectedConfig, thought: levels.at(-1)! };
           expect(await getV4ModelConfig()).toEqual(expectedConfig);
         }
       }
       await resizeToolbar("240px");
       await closeComposerPicker();
+      expect(await $("[data-composer-thought-label]").isDisplayed()).toBe(true);
       await openComposerPicker("model");
       await waitForOnlyComposerPickerOpen("model", "reopen at compact width");
       expect(await $("[data-composer-open-icon]").isDisplayed()).toBe(true);
-      expect(await $('[data-testid="composer-thought-meter"]').isDisplayed()).toBe(true);
+      expect(await $('[data-testid="composer-thought-meter"]').isExisting()).toBe(false);
       expect(await $("[data-composer-open-chevron]").isExisting()).toBe(false);
       expect(await $("[data-composer-open-label]").isDisplayed()).toBe(false);
       expect((await trigger.getSize()).width).toBeLessThan(128);

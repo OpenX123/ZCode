@@ -246,6 +246,11 @@ import {
 export interface SessionPaneProps {
   paneId: string;
   sessionId: string | null;
+  /** 工作台草稿以 Tab 身份隔离，同项目的新建输入不共享配置或预热。 */
+  draftTabId?: string;
+  draftProjectId?: string | null;
+  draftTaskGroupId?: string | null;
+  inheritRootDraft?: boolean;
   /** 低基数打开入口，由 pane 宿主提供；缺省仅用于兼容旧调用。 */
   openTrigger?: SessionOpenTrigger;
   rootSessionId?: string;
@@ -483,6 +488,10 @@ export function useSessionPaneLease(sessionId: string | null, layer: object) {
 export function SessionPane({
   paneId,
   sessionId,
+  draftTabId,
+  draftProjectId,
+  draftTaskGroupId,
+  inheritRootDraft,
   rootSessionId,
   readOnly = false,
   allowWorkspaceFileRewind = false,
@@ -551,15 +560,20 @@ export function SessionPane({
   const slashCommands = useSlashCommands(workspacePath, workspaceIdentity);
   const baseWorkspaceServices = useBaseWorkspaceServices();
   const composerClientNamespace = useComposerClientNamespace();
-  const composerProjectId = useZCodeSessionStore(
-    (store) => store.getWorkspaceState(workspacePath, workspaceIdentity).draftProjectId,
+  const composerProjectId = useZCodeSessionStore((store) =>
+    draftTabId
+      ? draftProjectId
+      : store.getWorkspaceState(workspacePath, workspaceIdentity).draftProjectId,
   );
   const newTaskComposerScope = useMemo(
-    () => resolveComposerScope(composerProjectId, workspaceIdentity, composerClientNamespace),
-    [composerProjectId, workspaceIdentity, composerClientNamespace],
+    () => ({
+      ...resolveComposerScope(composerProjectId, workspaceIdentity, composerClientNamespace),
+      ...(draftTabId ? { draftId: draftTabId } : {}),
+    }),
+    [composerProjectId, workspaceIdentity, composerClientNamespace, draftTabId],
   );
-  const composerDraftGeneration = useZCodeSessionStore(
-    (store) => store.getWorkspaceState(workspacePath, workspaceIdentity).draftFocusVersion,
+  const composerDraftGeneration = useZCodeSessionStore((store) =>
+    draftTabId ? 0 : store.getWorkspaceState(workspacePath, workspaceIdentity).draftFocusVersion,
   );
   const pendingAtEntry = useMemo(() => {
     if (sessionId !== null || newTaskComposerScope.projectId !== null) return null;
@@ -791,10 +805,20 @@ export function SessionPane({
   const timelineBottomRequest = useZCodeSessionStore(
     (store) => store.getWorkspaceState(workspacePath, workspaceIdentity).timelineBottomRequest,
   );
-  const draftRuntimeInvalidationVersion = useZCodeSessionStore(
-    (store) =>
-      store.getWorkspaceState(workspacePath, workspaceIdentity).draftRuntimeInvalidationVersion,
+  const workspaceDraftRuntimeInvalidationVersion = useZCodeSessionStore((store) =>
+    draftTabId
+      ? 0
+      : store.getWorkspaceState(workspacePath, workspaceIdentity).draftRuntimeInvalidationVersion,
   );
+  const [tabDraftRuntimeInvalidationVersion, setTabDraftRuntimeInvalidationVersion] = useState(0);
+  const draftRuntimeInvalidationVersion = draftTabId
+    ? tabDraftRuntimeInvalidationVersion
+    : workspaceDraftRuntimeInvalidationVersion;
+  const invalidateOwnedDraftRuntime = useCallback(() => {
+    // 切换某一 Tab 的引擎只重建它自己的预热，避免中断同项目另一栏的草稿。
+    if (draftTabId) setTabDraftRuntimeInvalidationVersion((version) => version + 1);
+    else useZCodeSessionStore.getState().invalidateDraftRuntime(workspacePath, workspaceIdentity);
+  }, [draftTabId, workspacePath, workspaceIdentity]);
   const handleExternalTextInsertApplied = useCallback(
     (requestId: number) => {
       useZCodeSessionStore
@@ -896,6 +920,10 @@ export function SessionPane({
     workspaceIdentity,
     provider,
     sessionId,
+    draftTabId,
+    draftProjectId,
+    draftTaskGroupId,
+    inheritRootDraft,
     sessionConfig: runtimeReady && snapshot?.sessionId === sessionId ? snapshot.config : null,
     agentStartupAllowed: remoteAvailable,
     modelSelectionService,
@@ -928,7 +956,7 @@ export function SessionPane({
       replaceComposerDraft({ ...composerDraft, engine });
       setEngineNotReady(false);
       // 引擎创建后不可切换；切换草稿选择必须回收旧预热载体，由同一 owner 串行重建。
-      useZCodeSessionStore.getState().invalidateDraftRuntime(workspacePath, workspaceIdentity);
+      invalidateOwnedDraftRuntime();
     },
     [
       setEngineNotReady,
@@ -936,8 +964,7 @@ export function SessionPane({
       externalEngineService,
       replaceComposerDraft,
       composerDraft,
-      workspacePath,
-      workspaceIdentity,
+      invalidateOwnedDraftRuntime,
     ],
   );
   const resolveDraftEngineConfig = useCallback(
@@ -967,8 +994,8 @@ export function SessionPane({
     // Selection View。旧预热会话冻结了早期 fallback，即使最新 View 已包含当前账号连接，
     // Renderer 也会永久停在旧模型。未发送且无显式选择的草稿不是执行事实；View 更新时
     // 回收并按最新选择事实重建，已显式选择和正式会话仍保持冻结。
-    useZCodeSessionStore.getState().invalidateDraftRuntime(workspacePath, workspaceIdentity);
-  }, [draftConfigRef, modelSelectionView?.revision, sessionId, workspaceIdentity, workspacePath]);
+    invalidateOwnedDraftRuntime();
+  }, [draftConfigRef, modelSelectionView?.revision, sessionId, invalidateOwnedDraftRuntime]);
   const createSubmissionFromComposer = useCallback(
     () => createComposerSubmissionConfig(draftConfigRef.current, modelSelectionView),
     [draftConfigRef, modelSelectionView],
@@ -1159,8 +1186,10 @@ export function SessionPane({
         type === "createSession"
           ? creationProjectId !== undefined
             ? creationProjectId
-            : useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
-                .draftProjectId
+            : draftTabId
+              ? draftProjectId
+              : useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
+                  .draftProjectId
           : undefined;
       // 必须早于第一次上行：transport error/renderer refresh 后仍有可查询线索。
       pendingCommandRegistry.record(
@@ -1186,9 +1215,11 @@ export function SessionPane({
               taskGroupId:
                 creationTaskGroupId !== undefined
                   ? creationTaskGroupId
-                  : useZCodeSessionStore
-                      .getState()
-                      .getWorkspaceState(workspacePath, workspaceIdentity).draftTaskGroupId,
+                  : draftTabId
+                    ? draftTaskGroupId
+                    : useZCodeSessionStore
+                        .getState()
+                        .getWorkspaceState(workspacePath, workspaceIdentity).draftTaskGroupId,
             }
           : recentReceipt
             ? {
@@ -1198,9 +1229,12 @@ export function SessionPane({
                       projectId: recentScope.projectId,
                       taskGroupId:
                         creationTaskGroupId ??
-                        useZCodeSessionStore
-                          .getState()
-                          .getWorkspaceState(workspacePath, workspaceIdentity).draftTaskGroupId,
+                        (draftTabId
+                          ? draftTaskGroupId
+                          : useZCodeSessionStore
+                              .getState()
+                              .getWorkspaceState(workspacePath, workspaceIdentity)
+                              .draftTaskGroupId),
                     }
                   : {}),
                 composer: {
@@ -1299,6 +1333,9 @@ export function SessionPane({
     [
       captureAcceptedModelSelection,
       newTaskComposerScope,
+      draftTabId,
+      draftProjectId,
+      draftTaskGroupId,
       baseWorkspaceServices.projectService,
       lease,
       provider,
@@ -2617,8 +2654,10 @@ export function SessionPane({
       };
       const taskGroupId =
         sessionId === null
-          ? useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
-              .draftTaskGroupId
+          ? draftTabId
+            ? draftTaskGroupId
+            : useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
+                .draftTaskGroupId
           : undefined;
       // followupMode 仍通过 Session CAS 同步；模型和模式已封装进 Submission，不再
       // 依赖“配置命令先到、sendText 后到”的跨命令时序。
@@ -2645,6 +2684,8 @@ export function SessionPane({
       configCommandBarrier,
       createSubmissionFromComposer,
       dispatchSendTextAfterConfig,
+      draftTabId,
+      draftTaskGroupId,
       markDraftProviderNotReady,
       sessionId,
       workspacePath,
@@ -3815,6 +3856,7 @@ export function SessionPane({
         }
         composerDraft={composerDraft}
         rootDraftScopeKey={composerScopeKey(newTaskComposerScope)}
+        draftTabId={draftTabId}
         replaceComposerDraft={replaceComposerDraft}
         submissionReady={
           (externalEngine
@@ -3927,6 +3969,7 @@ export function SessionPane({
       {sessionId && snapshot ? (
         <V4InteractionDialogs
           key="conversation-interactions"
+          focused={focused}
           sessionId={sessionId}
           workspacePath={workspacePath}
           workspaceIdentity={workspaceIdentity}

@@ -6,7 +6,7 @@ import type {
   GitRepositorySummary,
   RemoteTarget,
 } from "@zcode/shared";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { TID_WORKSPACE_HEADER } from "@zcode/shared/test-ids";
 import type { ConversationDropTargetController } from "@/v4/composer/conversationDropTarget.js";
 import { cn } from "@/components/lib/utils.js";
@@ -87,7 +87,9 @@ export function WorkspaceHeader({
   onReloadSession,
   reloadSessionDisabled,
   reloadSessionPending,
+  workbenchTitles,
 }: {
+  workbenchTitles?: (leadingPaddingClassName: string | false) => ReactNode;
   variant?: WorkspaceHeaderVariant;
   draftDropTargetController?: ConversationDropTargetController | null;
   readOnlyReason?: string;
@@ -142,6 +144,22 @@ export function WorkspaceHeader({
   onOpenWorkspace: () => void;
   allowOpenWorkspace?: boolean;
 }) {
+  const headerRef = useRef<HTMLElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!workbenchTitles || !actionsRef.current) return;
+    const element = actionsRef.current;
+    const update = () =>
+      headerRef.current?.style.setProperty(
+        "--workbench-header-actions-width",
+        `${element.getBoundingClientRect().width + 12}px`,
+      );
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [workbenchTitles]);
   const [selectedEditor, setSelectedEditor] = useState<EditorInfo | null>(null);
   // Linux 与 Windows 共用内联窗控，不再预留旧悬浮窗控的标题栏区域。
   const usesInlineWindowControls = Boolean(isWindowsDesktop || (isDesktop && !isMacDesktop));
@@ -154,6 +172,7 @@ export function WorkspaceHeader({
 
   return (
     <header
+      ref={headerRef}
       data-testid={TID_WORKSPACE_HEADER}
       data-workspace-header-variant={variant}
       className={cn(
@@ -179,7 +198,11 @@ export function WorkspaceHeader({
           headerWindowControlsPaddingClass,
         )}
       >
-        {variant === "task" || remoteTarget || workspaceIdentity || remoteSessionId ? (
+        {workbenchTitles ? (
+          <div className="absolute inset-0">
+            {workbenchTitles(headerWindowControlsPaddingClass)}
+          </div>
+        ) : variant === "task" || remoteTarget || workspaceIdentity || remoteSessionId ? (
           <WorkspaceHeaderTitleSection
             variant={variant}
             readOnlyReason={readOnlyReason}
@@ -221,25 +244,27 @@ export function WorkspaceHeader({
         ) : (
           <div className="min-w-0 flex-1" aria-hidden="true" />
         )}
-        <WorkspaceHeaderActionSection
-          variant={variant}
-          readOnlyReason={readOnlyReason}
-          workspaceAbsPath={workspaceAbsPath}
-          workspaceIdentity={workspaceIdentity}
-          remoteSessionId={remoteSessionId}
-          remoteTarget={remoteTarget}
-          isDesktop={isDesktop}
-          isTerminalOpen={isTerminalOpen}
-          isSidePaneOpen={isSidePaneOpen}
-          onToggleTerminal={onToggleTerminal}
-          onToggleSidePane={onToggleSidePane}
-          toggleSidePaneShortcutLabel={toggleSidePaneShortcutLabel}
-          simplifyForNarrowRemote={simplifyForNarrowRemote}
-          hideHelpMenu={false}
-          showWindowControls={usesInlineWindowControls}
-          // 面板操作按钮沿用 macOS 紧凑样式，Windows/Linux 窗控跟随最右侧 Header。
-          onSelectedEditorChange={setSelectedEditor}
-        />
+        <div ref={actionsRef} className="relative ml-auto shrink-0">
+          <WorkspaceHeaderActionSection
+            variant={variant}
+            readOnlyReason={readOnlyReason}
+            workspaceAbsPath={workspaceAbsPath}
+            workspaceIdentity={workspaceIdentity}
+            remoteSessionId={remoteSessionId}
+            remoteTarget={remoteTarget}
+            isDesktop={isDesktop}
+            isTerminalOpen={isTerminalOpen}
+            isSidePaneOpen={isSidePaneOpen}
+            onToggleTerminal={onToggleTerminal}
+            onToggleSidePane={onToggleSidePane}
+            toggleSidePaneShortcutLabel={toggleSidePaneShortcutLabel}
+            simplifyForNarrowRemote={simplifyForNarrowRemote}
+            hideHelpMenu={false}
+            showWindowControls={usesInlineWindowControls}
+            // 面板操作按钮沿用 macOS 紧凑样式，Windows/Linux 窗控跟随最右侧 Header。
+            onSelectedEditorChange={setSelectedEditor}
+          />
+        </div>
       </div>
     </header>
   );

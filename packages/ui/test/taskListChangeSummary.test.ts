@@ -131,8 +131,6 @@ function renderTaskItem(
       isActive: false,
       onSelectTask: () => {},
       onArchiveTaskInline: () => {},
-      onCancelArchiveConfirm: () => {},
-      isArchiveConfirming: false,
       intl: createIntl(),
       ...props,
     }),

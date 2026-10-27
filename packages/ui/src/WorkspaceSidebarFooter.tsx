@@ -17,7 +17,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
 import {
-  ArrowLeft,
   PencilRuler,
   Globe,
   Maximize,
@@ -43,7 +42,6 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   onLocaleChange,
   onThemeChange,
   onSettingsButtonClick,
-  settingsButtonMode = "settings",
   isDesktop = false,
   className,
 }: {
@@ -52,7 +50,6 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   onLocaleChange: (value: string) => void;
   onThemeChange: (value: string) => void;
   onSettingsButtonClick?: () => void;
-  settingsButtonMode?: "settings" | "back";
   workspacePath?: string;
   workspaceIdentity?: string;
   workspaceRemoteSessionId?: string;
@@ -67,10 +64,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   const zoomInShortcutLabel = useShortcutCommandLabel("zoomIn");
   const zoomOutShortcutLabel = useShortcutCommandLabel("zoomOut");
   const resetZoomShortcutLabel = useShortcutCommandLabel("resetZoom");
-  const settingsButtonLabel =
-    settingsButtonMode === "back"
-      ? intl.formatMessage({ id: "workspace.backToWorkspace" })
-      : intl.formatMessage({ id: "settings.title" });
+  const settingsButtonLabel = intl.formatMessage({ id: "settings.title" });
   const preferencesLabel = intl.formatMessage({ id: "sidebar.settings.quickPreferences" });
   const [preferencesMenuOpen, setPreferencesMenuOpen] = useState(false);
   const [desktopZoomLevel, setDesktopZoomLevel] = useState(0);
@@ -111,7 +105,6 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   const canZoomOut = desktopZoomLevel > DESKTOP_ZOOM_MIN_LEVEL;
 
   return (
-    // footer 被 Settings 复用，页面专属边距由调用方传入，避免修改共享默认样式。
     <footer className={cn("flex shrink-0 flex-col gap-2.5 px-4 pt-2 pb-4", className)}>
       {isDesktop ? <DesktopUpdateButton /> : null}
       <div className="flex min-w-0 gap-2">
@@ -126,11 +119,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
           disabled={!onSettingsButtonClick}
           onClick={onSettingsButtonClick}
         >
-          {settingsButtonMode === "back" ? (
-            <ArrowLeft className="size-5" />
-          ) : (
-            <Settings className="size-5" />
-          )}
+          <Settings className="size-5" />
           <span className="truncate">{settingsButtonLabel}</span>
         </Button>
         <DropdownMenu open={preferencesMenuOpen} onOpenChange={setPreferencesMenuOpen}>

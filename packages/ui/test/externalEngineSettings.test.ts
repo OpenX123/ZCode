@@ -106,7 +106,11 @@ it("会话创建后引擎只读，原生配置值原样回传", async () => {
     }),
   );
   expect(screen.queryByTestId("session-engine-select")).toBeNull();
-  expect(screen.getByTestId("session-engine-label").textContent).toBe("Codex");
+  const indicator = screen.getByTestId("session-engine-indicator");
+  expect(indicator.textContent).toBe("");
+  expect(indicator.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("Codex");
+  expect(indicator.querySelector('[role="img"]')?.getAttribute("title")).toBe("Codex");
+  expect(indicator.closest("button")).toBeNull();
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),

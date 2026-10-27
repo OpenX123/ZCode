@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type {
   ZCodeTaskMeta,
   ZCodeProvider,
@@ -34,7 +35,7 @@ export interface WorkspaceHeaderTitleSectionProps {
   activeSessionId: string | null;
   activeTaskProvider: ZCodeProvider | null;
   resolvedActiveTaskMeta?: ZCodeTaskMeta | null;
-  gitSummary: GitRepositorySummary;
+  gitSummary?: GitRepositorySummary;
   gitDirtyFileCount: number;
   sessionLogPath: string | null;
   nativeSessionLogProvider: ZCodeProvider | null;
@@ -56,6 +57,10 @@ export interface WorkspaceHeaderTitleSectionProps {
   simplifyForNarrowRemote?: boolean;
   selectedEditor: EditorInfo | null;
   compact?: boolean;
+  /** 分栏标题复用同一会话菜单，项目入口由该栏草稿身份提供。 */
+  leadingContent?: ReactNode;
+  hideWorkspaceContext?: boolean;
+  showDraftTitle?: boolean;
 }
 
 export interface WorkspaceHeaderActionSectionProps {

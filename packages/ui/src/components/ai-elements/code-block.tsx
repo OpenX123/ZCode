@@ -50,6 +50,8 @@ type CodeBlockProps = HTMLAttributes<HTMLDivElement> & {
   wrapLongLines?: boolean;
   fontSizePx?: number;
   renderMermaid?: boolean;
+  /** 当前 Mermaid 围栏仍在增长；闭合围栏不再等待整条消息结束。 */
+  mermaidStreaming?: boolean;
   /** 正文独立限高，避免滚动时把 Header 的复制/换行按钮一起卷走。 */
   contentClassName?: string;
   /**
@@ -252,6 +254,7 @@ export const CodeBlock = ({
   wrapLongLines = false,
   fontSizePx = 14,
   renderMermaid = true,
+  mermaidStreaming = false,
   focusedRange = null,
   focusRequestId,
   markedLines,
@@ -272,7 +275,8 @@ export const CodeBlock = ({
     }
 
     return resolveMermaidAutoRenderDecision(code, {
-      documentVisibilityState: getCurrentMermaidDocumentVisibility(),
+      // 页面隐藏仅暂停新工作，不把已显示图切回源码或卸载。
+      documentVisibilityState: "visible",
     });
   }, [canRenderMermaidCode, code, documentVisibilityRevision]);
   const shouldRenderMermaid =
@@ -328,6 +332,9 @@ export const CodeBlock = ({
             <MermaidBlock
               code={code}
               theme={appTheme}
+              streaming={mermaidStreaming}
+              renderEnabled={getCurrentMermaidDocumentVisibility() !== "hidden"}
+              fontSizePx={fontSizePx}
               onOpenPreview={openMermaidPreview}
               onPreviewSvgChange={setMermaidPreviewSvg}
               // className={cn(children ? "border-t border-border" : null)}

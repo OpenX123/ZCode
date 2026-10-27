@@ -16,6 +16,30 @@ import {
 } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
 
 describe("composer draft workspace transfer", () => {
+  it("同项目多 Tab 的实时读取和附件交接分别命中准确草稿", () => {
+    const left = "__draft__:tab:left";
+    const right = "__draft__:tab:right";
+    const disposeLeft = registerV4ComposerDraftReader(
+      "/same",
+      () => ({ draft: { text: "L" }, attachments: [] }),
+      left,
+    );
+    const disposeRight = registerV4ComposerDraftReader(
+      "/same",
+      () => ({ draft: { text: "R" }, attachments: [] }),
+      right,
+    );
+    const leftHandoff = captureV4ComposerDraftHandoff("/same", undefined, "desktop", left);
+    const rightHandoff = captureV4ComposerDraftHandoff("/same", undefined, "desktop", right);
+    expect(leftHandoff.draft.text).toBe("L");
+    expect(rightHandoff.draft.text).toBe("R");
+    stageV4ComposerDraftAttachments("/same", undefined, 1, leftHandoff, left);
+    expect(consumeV4ComposerDraftAttachments("/same", 1, right)).toBeNull();
+    expect(consumeV4ComposerDraftAttachments("/same", 999, left)).toEqual([]);
+    expect(consumeV4ComposerDraftAttachments("/same", 999, left)).toBeNull();
+    disposeRight();
+    disposeLeft();
+  });
   it("编辑器未挂载时按当前客户端及项目读取交接正文", () => {
     localStorage.clear();
     for (const clientNamespace of ["desktop", "mobile:test"]) {

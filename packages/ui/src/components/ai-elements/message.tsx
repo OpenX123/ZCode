@@ -35,12 +35,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type { BundledTheme } from "shiki";
 import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown";
 import type { Pluggable, PluggableList } from "unified";
 import { CodeBlock, CodeBlockHeader } from "@/components/ai-elements/code-block.js";
+import { collectClosedMarkdownFences } from "@/components/ai-elements/mermaid-rendering/index.js";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -1333,6 +1335,12 @@ export const MessageResponse = memo(
     const wrapLongLines = forceCodeWrap || codePreviewSettings.wrapLongLines;
     const rawMarkdown = useMemo(() => extractCodeText(children), [children]);
     const renderStreaming = streaming;
+    const closedMarkdownFences = useMemo(
+      () => collectClosedMarkdownFences(rawMarkdown),
+      [rawMarkdown],
+    );
+    const closedMarkdownFencesRef = useRef(closedMarkdownFences);
+    closedMarkdownFencesRef.current = closedMarkdownFences;
     const projectedCitationMarkdown = useMemo(
       () =>
         renderZCodeFileCitations
@@ -1567,7 +1575,9 @@ export const MessageResponse = memo(
               enableSyntaxHighlighting={!renderStreaming}
               fontSizePx={codePreviewSettings.fontSizePx}
               language={language}
-              renderMermaid={!renderStreaming}
+              mermaidStreaming={
+                renderStreaming && !closedMarkdownFencesRef.current.has(codeText.trim())
+              }
               theme={codeBlockTheme}
               appTheme={theme}
               wrapLongLines={wrapLongLines}
