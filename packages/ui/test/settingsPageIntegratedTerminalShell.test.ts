@@ -13,6 +13,7 @@ const generalSectionCapture = vi.hoisted(
 const settingsPageConfigCalls = vi.hoisted(
   () =>
     [] as Array<{
+      externalEnginesAvailable?: boolean;
       isDesktop?: boolean;
       isMacDesktop?: boolean;
       isWindowsDesktop?: boolean;
@@ -51,9 +52,6 @@ const localSystemInfo = vi.fn(async () => ({
 const localListIntegratedTerminalShells = vi.fn(async () => []);
 
 const remoteServices = {
-  codingPlanSubscriptionService: {
-    getEnterprisePricing: vi.fn(async () => ({ productList: [] })),
-  },
   settingService: {
     get: vi.fn(async () => ({})),
     update: vi.fn(async () => {}),
@@ -137,7 +135,6 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 
 const mockPlatform = {
   syncAppSettings: vi.fn(),
-  canOpenCommunity: vi.fn(async () => false),
   getZCodeStdioTapDevState: vi.fn(async () => ({
     enabled: false,
     visible: false,
@@ -181,14 +178,6 @@ vi.mock("@/hooks/useModelProviders.js", () => ({
   useModelProviders: () => ({ loading: false, modelProviders: [] }),
 }));
 
-vi.mock("@/hooks/useUsageEntitlement.js", () => ({
-  useUsageEntitlement: () => ({
-    loading: false,
-    snapshot: undefined,
-    error: undefined,
-  }),
-}));
-
 vi.mock("@/store/StoreProvider.js", () => ({
   useZCodeStoreWithDefault: (_selector: unknown, fallback: unknown) => fallback,
   useZCodeStore: (selector: (state: Record<string, unknown>) => unknown) =>
@@ -224,27 +213,11 @@ vi.mock("@/lib/settingsNavigation.js", () => ({
   clearPendingSettingsPluginOrigin: () => undefined,
   clearPendingSettingsPluginScopeKey: () => undefined,
   consumePendingSettingsModelProviderTarget: () => undefined,
-  consumePendingSettingsUsageTab: () => undefined,
   consumePendingSettingsSourceServerId: () => undefined,
   consumePendingSettingsSourceServerDetails: () => false,
   resolveSettingsSection: (section: string) => section,
-  shouldFallbackSettingsUsageTabToApp: () => false,
   writeLastSettingsSectionPreference: vi.fn(),
 }));
-
-vi.mock("@/settings/CodingPlanUpgradeDialogProvider.js", () => ({
-  useCodingPlanUpgradeDialog: () => ({
-    openCodingPlanUpgrade: vi.fn(),
-  }),
-}));
-
-vi.mock("@/lib/sidebarUsageCodingPlanProviderPreference.js", () => ({
-  readSidebarUsageCodingPlanProviderPreference: () => undefined,
-  readSidebarUsageCodingPlanSourcePreference: () => undefined,
-  writeSidebarUsageCodingPlanProviderPreference: vi.fn(),
-}));
-
-vi.mock("@/lib/codingPlanProvider.js", () => ({}));
 
 vi.mock("@/settings/ModelProviderSection.js", () => ({
   ModelProviderSection: () => null,
@@ -283,6 +256,7 @@ vi.mock("../src/settingsCodePreview.js", () => ({
 
 vi.mock("../src/settingsPageHelpers.js", () => ({
   createSettingsPageConfig: (options: {
+    externalEnginesAvailable?: boolean;
     isDesktop?: boolean;
     isMacDesktop?: boolean;
     isWindowsDesktop?: boolean;
@@ -373,8 +347,10 @@ describe("SettingsPage integrated terminal shell", () => {
 
     const html = renderToStaticMarkup(createElement(SettingsPage, { isWindowsDesktop: true }));
 
+    // Agent 引擎入口依据本机 externalEngineService 能力决定，平台外观标志不代表可安装。
     expect(settingsPageConfigCalls).toEqual([
       {
+        externalEnginesAvailable: false,
         isDesktop: false,
         isMacDesktop: false,
         isWindowsDesktop: true,

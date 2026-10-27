@@ -39,20 +39,12 @@ const { attachmentState, chatPromptEditorProps, dialogOpenStates, inputClear, in
     inputSetText: vi.fn(),
   }));
 
-function expectedTelemetrySendOptions() {
+function expectedLocalTimingSendOptions() {
   return expect.objectContaining({
+    // 独立客户端仅保留本地计时，不能恢复模型、套餐或消息来源的遥测上报维度。
     telemetrySeed: {
       sendTime: expect.any(Number),
-      extraDetail: {
-        ask_mode: "",
-        model_name: "",
-        model_provider: "glm",
-        agent: "glm",
-        plan_status: "unknown",
-        plan_product_id: "",
-        message_source: "chat",
-        task_trigger: "",
-      },
+      localTtft: undefined,
     },
   });
 }
@@ -418,7 +410,7 @@ describe("ConversationComposer prompt history", () => {
     await act(async () => root.unmount());
   });
 
-  it("prewarm snapshot 未到时仍用冻结草稿 config 建立 send telemetry seed", async () => {
+  it("prewarm snapshot 未到时仍建立本地计时，不恢复模型和套餐上报维度", async () => {
     const onSendText = vi.fn(async () => {});
     const { root } = renderComposer(onSendText, {
       mode: "build",
@@ -432,18 +424,7 @@ describe("ConversationComposer prompt history", () => {
       await flushAsyncWork();
     });
 
-    expect(onSendText).toHaveBeenCalledWith(
-      "立即发送草稿",
-      expect.objectContaining({
-        telemetrySeed: expect.objectContaining({
-          extraDetail: expect.objectContaining({
-            ask_mode: "build",
-            model_name: "custom:e2e-deepseek:deepseek-v4-flash",
-            model_provider: "e2e-deepseek",
-          }),
-        }),
-      }),
-    );
+    expect(onSendText).toHaveBeenCalledWith("立即发送草稿", expectedLocalTimingSendOptions());
 
     await act(async () => root.unmount());
   });
@@ -666,7 +647,7 @@ describe("ConversationComposer prompt history", () => {
       await flushAsyncWork();
     });
 
-    expect(onSendText).toHaveBeenCalledWith("你回答 1", expectedTelemetrySendOptions());
+    expect(onSendText).toHaveBeenCalledWith("你回答 1", expectedLocalTimingSendOptions());
     expect(readPromptHistoryEntries("/workspace")).toEqual(["你回答 1"]);
 
     await act(async () => {
@@ -691,7 +672,7 @@ describe("ConversationComposer prompt history", () => {
       await flushAsyncWork();
     });
 
-    expect(onSendText).toHaveBeenCalledWith("失败的消息", expectedTelemetrySendOptions());
+    expect(onSendText).toHaveBeenCalledWith("失败的消息", expectedLocalTimingSendOptions());
     expect(readPromptHistoryEntries("/workspace")).toEqual(["上一条"]);
 
     await act(async () => {
@@ -709,7 +690,7 @@ describe("ConversationComposer prompt history", () => {
       await flushAsyncWork();
     });
 
-    expect(onSendText).toHaveBeenCalledWith("/goal 保留这段输入", expectedTelemetrySendOptions());
+    expect(onSendText).toHaveBeenCalledWith("/goal 保留这段输入", expectedLocalTimingSendOptions());
     expect(inputClear).not.toHaveBeenCalled();
     expect(attachmentState.adoptSentAttachments).not.toHaveBeenCalled();
     expect(readPromptHistoryEntries("/workspace")).toEqual([]);
@@ -762,7 +743,7 @@ describe("ConversationComposer prompt history", () => {
       await flushAsyncWork();
     });
 
-    expect(onSendText).toHaveBeenNthCalledWith(2, "重复消息", expectedTelemetrySendOptions());
+    expect(onSendText).toHaveBeenNthCalledWith(2, "重复消息", expectedLocalTimingSendOptions());
     expect(readPromptHistoryEntries("/workspace")).toEqual(["重复消息"]);
     expect(setItem).not.toHaveBeenCalled();
 

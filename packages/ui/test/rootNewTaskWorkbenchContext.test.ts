@@ -8,7 +8,6 @@ import {
   resolveComposerScope,
 } from "@/v4/composer/composerDraftStore.js";
 import { selectRemoteWorkspaceProjectFromDialog } from "@/root/useRemoteWorkspaceHistory.js";
-import type { CreateTaskOptions } from "@/app-shell/types.js";
 import { useRootWorkspaceActions } from "@/root/useRootWorkspaceActions.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { onTaskNavigationCommitted } from "@/store/zcodeSessionStoreNavigation.js";
@@ -21,13 +20,12 @@ import {
 import { useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
 
 function fixture(
-  clientMode: "desktop-continuous" | "web-remote-replayable" = "desktop-continuous",
+  clientMode: "desktop-continuous" = "desktop-continuous",
   openRemoteProjectWorkspace?: (target: {
     workspacePath: string;
     workspaceIdentity?: string;
     hostId: string;
   }) => Promise<void>,
-  openMobileProjectDraft?: (request: CreateTaskOptions) => Promise<void>,
 ) {
   let next = 0;
   const prepared = new Map<string, string>();
@@ -75,12 +73,7 @@ function fixture(
     supportsSettings: true,
     allowOpenWorkspace: true,
     preferDirectoryBrowser: false,
-    refreshProviderState: vi.fn(),
-    updateAppSettings: vi.fn(),
-    setOAuthError: vi.fn(),
-    setUser: vi.fn(),
     workbenchGroupClientMode: clientMode,
-    openMobileProjectDraft,
   };
   const { result, rerender } = renderHook(
     ({ opener }) => useRootWorkspaceActions({ ...options, openRemoteProjectWorkspace: opener }),
@@ -300,45 +293,8 @@ describe("project-aware new task creation", () => {
   });
 });
 
-it("hands mobile project intent to the bridge owner without preparing or mutating the old Root", async () => {
-  let finish!: () => void;
-  const openMobileProjectDraft = vi.fn(
-    () =>
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
-  );
-  const { result, prepareSession, addTab } = fixture(
-    "web-remote-replayable",
-    undefined,
-    openMobileProjectDraft,
-  );
-  useZCodeSessionStore.getState().setActiveTaskId("/old", "old-session");
-  const request = { projectId: "p", hostId: "remote:server:s", initialPrompt: "$creator " };
-  let pending!: Promise<void>;
-  await act(async () => {
-    pending = result.current.handleCreateTask(request);
-  });
-  expect(openMobileProjectDraft).toHaveBeenCalledWith(request);
-  expect(prepareSession).not.toHaveBeenCalled();
-  useZCodeSessionStore
-    .getState()
-    .startDraft("/new", undefined, "remote:server:s:/new", { projectId: "p" });
-  await act(async () => {
-    finish();
-    await pending;
-  });
-  expect(addTab).not.toHaveBeenCalled();
-  expect(useZCodeSessionStore.getState().getWorkspaceState("/old").activeTaskId).toBe(
-    "old-session",
-  );
-  expect(
-    useZCodeSessionStore.getState().getWorkspaceState("/new", "remote:server:s:/new")
-      .draftProjectId,
-  ).toBe("p");
-});
-it("initializes a handed off draft with its project and exact input under the new identity", () => {
-  const { result } = fixture("web-remote-replayable");
+it("本地控制端在远程工作区身份下初始化项目草稿并保留精确输入", () => {
+  const { result } = fixture();
   const mention = {
     id: "skill:creator",
     category: "skills" as const,
@@ -360,17 +316,7 @@ it("initializes a handed off draft with its project and exact input under the ne
   expect(useZCodeSessionStore.getState().workspaces["/new"]).toBeUndefined();
 });
 
-it("does not allocate a directory when the mobile peer lacks project admission", async () => {
-  const { result, prepareSession, addTab } = fixture("web-remote-replayable");
-  await act(async () => {
-    await result.current.handleCreateTask();
-  });
-  expect(prepareSession).not.toHaveBeenCalled();
-  expect(addTab).not.toHaveBeenCalled();
-  expect(result.current.workspaceActionError).toBe("project.remote-navigation-unavailable");
-});
-
-it.each(["desktop-continuous", "web-remote-replayable"] as const)(
+it.each(["desktop-continuous"] as const)(
   "TD07 %s 空白创建意图只留在内存，文字出现时才保存项目和分组",
   (mode) => {
     const { result } = fixture(mode);
@@ -407,12 +353,11 @@ it.each(["desktop-continuous", "web-remote-replayable"] as const)(
   },
 );
 
-it.each(["desktop-continuous", "web-remote-replayable"] as const)(
+it.each(["desktop-continuous"] as const)(
   "D3 %s inherits the current session project by exact task identity",
   async (mode) => {
     useZCodeSessionStore.getState().setActiveTaskId("/old", "session");
-    const open = vi.fn(async () => {});
-    const { result, prepareSession, readTree } = fixture(mode, undefined, open);
+    const { result, prepareSession, readTree } = fixture(mode);
     readTree.mockResolvedValueOnce({
       tasks: [
         { taskId: "session", workspacePath: "/other", projectId: "wrong" },
@@ -422,12 +367,7 @@ it.each(["desktop-continuous", "web-remote-replayable"] as const)(
     await act(async () => {
       await result.current.handleCreateTask();
     });
-    if (mode === "desktop-continuous") {
-      expect(prepareSession).toHaveBeenCalledWith({ projectId: "current" });
-    } else {
-      expect(open).toHaveBeenCalledWith({ projectId: "current" });
-      expect(prepareSession).not.toHaveBeenCalled();
-    }
+    expect(prepareSession).toHaveBeenCalledWith({ projectId: "current" });
   },
 );
 

@@ -1,10 +1,14 @@
 // @vitest-environment jsdom
-// @vitest-environment-options {"url":"https://zcode.z.ai/"}
-import { act } from "react";
+// @vitest-environment-options {"url":"https://ycode.example/"}
+import { act, type ReactNode } from "react";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const roots = vi.hoisted(() => [] as Root[]);
+const { roots, connectViaWebSocket, renderWorkspace } = vi.hoisted(() => ({
+  roots: [] as Root[],
+  connectViaWebSocket: vi.fn(),
+  renderWorkspace: vi.fn((_props: Record<string, unknown>) => "web-server-workspace"),
+}));
 
 vi.mock("react-dom/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-dom/client")>();
@@ -18,29 +22,31 @@ vi.mock("react-dom/client", async (importOriginal) => {
   };
 });
 
+vi.mock("@zcode/client", () => ({ connectViaWebSocket }));
 vi.mock("@zcode/ui", () => ({
-  AppErrorBoundary: () => null,
-  Root: () => null,
-  ZCodeIntlProvider: () => null,
-  Button: () => null,
-  generateMobileDeviceFingerprint: () => "oauth-entry-test",
+  AppErrorBoundary: ({ children }: { children: ReactNode }) => children,
+  Root: renderWorkspace,
+  ZCodeIntlProvider: ({ children }: { children: ReactNode }) => children,
   installDocumentHiddenMotionPause: vi.fn(),
   playTaskNotificationSound: vi.fn(),
   setStreamClientId: vi.fn(),
-  setWebRemoteControlTerminalTransportState: vi.fn(),
 }));
 
-vi.mock("@web/share/ConversationShareLandingPage.js", () => ({
-  ConversationShareLandingLoader: () => "share-preview",
-  ConversationShareLandingStatus: () => "invalid-share",
-}));
+const services = { settingService: {}, broadcastService: {} };
+const fetchMock = vi.fn();
 
 beforeEach(() => {
   vi.resetModules();
+  vi.clearAllMocks();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  localStorage.clear();
-  sessionStorage.clear();
-  document.documentElement.lang = "en";
+  vi.stubGlobal("fetch", fetchMock);
+  fetchMock.mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      workspaces: [{ path: "/server/workspace", workspaceIdentity: "server-workspace" }],
+    }),
+  });
+  connectViaWebSocket.mockResolvedValue(services);
   document.body.innerHTML = '<div id="root"></div>';
 });
 
@@ -52,45 +58,49 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function bootstrap(path: string, query: string) {
-  window.history.replaceState(null, "", `${path}?${query}`);
-  const { WebAuthService } = await import("@web/auth/webAuthService.js");
-  // 保留真实入口和回调组件 effect；服务内部的 nonce/token 契约由 webAuthService.test 覆盖。
-  const handleCallback = vi
-    .spyOn(WebAuthService.prototype, "handleCallback")
-    .mockResolvedValue(null);
+async function bootstrap(path: string) {
+  window.history.replaceState(
+    null,
+    "",
+    `${path}?state=legacy-state&authCode=legacy-code&code=legacy-code&error=access_denied`,
+  );
   await act(async () => {
     await import("@web/main.js");
   });
-  return handleCallback;
 }
 
-describe("Web OAuth callback entry", () => {
-  for (const path of ["/share/callback", "/cn/share/callback", "/remote/v4", "/remote/v4/"]) {
-    it.each(["authCode=bigmodel-code", "code=zai-code", "error=access_denied"])(
-      `${path} 的 %s 渲染回调页并交给认证服务`,
-      async (result) => {
-        const handleCallback = await bootstrap(path, `state=entry-state&${result}`);
-        expect(document.body.textContent).toContain("Finishing Sign-In");
-        expect(handleCallback).toHaveBeenCalledExactlyOnceWith(window.location.href);
-      },
-    );
-  }
+// 官方账号回调与云分享已退役；保留真实入口断言，防止旧链接重新启用账号服务。
+describe("独立 Web 入口忽略退役的 OAuth 回调", () => {
+  it.each(["/", "/share/callback", "/cn/share/callback", "/remote/v4", "/remote/v4/"])(
+    "%s 携带旧认证参数仍只连接同源 Web + Server",
+    async (path) => {
+      await bootstrap(path);
 
-  for (const path of ["/share/callback", "/cn/share/callback"]) {
-    it.each(["authCode=code", "code=code", "error=access_denied", "state=entry-state"])(
-      `${path} 缺少 state 或结果参数时不进入回调页：%s`,
-      async (query) => {
-        const handleCallback = await bootstrap(path, query);
-        expect(handleCallback).not.toHaveBeenCalled();
-        expect(document.body.textContent).toBe("share-preview");
-      },
-    );
-  }
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith("/api/server-info", { cache: "no-store" });
+      expect(connectViaWebSocket).toHaveBeenCalledTimes(1);
+      expect(connectViaWebSocket).toHaveBeenCalledWith("wss://ycode.example/ws", {
+        onClose: expect.any(Function),
+      });
+      expect(document.body.textContent).toBe("web-server-workspace");
+      expect(document.title).toBe("YCode - Web + Server");
+      expect(renderWorkspace.mock.calls[0]?.[0]).toMatchObject({
+        services,
+        initialWorkspaceAbsPath: "/server/workspace",
+        initialWorkspaceIdentity: "server-workspace",
+        allowRemoteWorkspace: false,
+      });
+    },
+  );
 
-  it("普通分享路径即使携带 OAuth 参数也保持预览路由", async () => {
-    const handleCallback = await bootstrap("/share/example", "state=entry-state&authCode=code");
-    expect(handleCallback).not.toHaveBeenCalled();
-    expect(document.body.textContent).toBe("share-preview");
+  it("同源服务连接失败时展示重试入口，不转入已退役认证页", async () => {
+    connectViaWebSocket.mockRejectedValueOnce(new Error("server unavailable"));
+
+    await bootstrap("/share/callback");
+
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("server unavailable");
+    expect(document.querySelector("button")?.textContent).toBe("重新连接");
+    expect(renderWorkspace).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

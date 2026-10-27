@@ -1,11 +1,7 @@
 // @vitest-environment jsdom
 import { createElement, Fragment, useState } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-  WebRemoteControlWorkspaceListResult,
-  WebRemoteControlWorkspaceTarget,
-} from "@zcode/shared";
 import type { ProjectSidebarProps } from "@/project-sidebar/contract.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { WorkspaceSidebar } from "@/WorkspaceSidebar.js";
@@ -72,12 +68,6 @@ vi.mock("@/hooks/usePlatform.js", () => ({
   useSelectDirectory: () => () => {},
   useOptionalPlatform: () => null,
 }));
-vi.mock("@/settings/CodingPlanUpgradeDialogProvider.js", () => ({
-  useCodingPlanUpgradeDialog: () => ({ openCodingPlanUpgrade: () => {} }),
-}));
-vi.mock("@/components/manual-claim-plan/ManualClaimPlanBanner.js", () => ({
-  ManualClaimPlanBanner: () => null,
-}));
 vi.mock("@/WorkspaceSidebarFooter.js", () => ({
   WorkspaceSidebarFooter: () => createElement("footer", {}, "Footer"),
 }));
@@ -92,61 +82,20 @@ vi.mock("@/project-sidebar/useProjectTaskNavigation.js", () => ({
   },
 }));
 
-const offline: WebRemoteControlWorkspaceTarget = {
-  workspacePath: "/srv/app",
-  workspaceIdentity: "remote:ssh:dev:/srv/app",
-  label: "Remote app",
-  kind: "remote",
-  connectionState: "disconnected",
-};
-const online: WebRemoteControlWorkspaceTarget = {
-  ...offline,
-  connectionState: "connected",
-  remoteSessionId: "session-1",
-};
-const local: WebRemoteControlWorkspaceTarget = {
-  workspacePath: "/Users/dev/local",
-  label: "Local app",
-  kind: "local",
-};
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-function createSwitcher(...results: Array<Promise<WebRemoteControlWorkspaceListResult>>) {
-  let push: ((result: WebRemoteControlWorkspaceListResult) => void) | undefined;
-  const switcher = {
-    listWorkspaces: vi.fn(() => results.shift() ?? Promise.resolve({ workspaces: [] })),
-    onWorkspaceListUpdated: vi.fn((listener: typeof push) => {
-      push = listener;
-      return () => {
-        push = undefined;
-      };
-    }),
+// 独立桌面已移除手机 relay，旧宿主即使传入额外字段也不能恢复桥接调用。
+function createRetiredSwitcher() {
+  return {
+    listWorkspaces: vi.fn(async () => ({ workspaces: [] })),
+    onWorkspaceListUpdated: vi.fn(() => () => {}),
     switchWorkspace: vi.fn(async () => {}),
     reconnectWorkspace: vi.fn(async () => {}),
   };
-  return { switcher, push: (result: WebRemoteControlWorkspaceListResult) => push?.(result) };
 }
 
-function props(
-  switcher: ReturnType<typeof createSwitcher>["switcher"],
-  overrides: Partial<ProjectSidebarProps> = {},
-): ProjectSidebarProps {
+function props(overrides: Partial<ProjectSidebarProps> = {}): ProjectSidebarProps {
   return {
-    workspacePath: "remote:ssh:dev:/srv/app",
+    workspacePath: "/local",
     theme: "light",
-    isWebRemoteControl: true,
-    webRemoteControlWorkspaceSwitcher: switcher as unknown as NonNullable<
-      ProjectSidebarProps["webRemoteControlWorkspaceSwitcher"]
-    >,
     onSelectTask: vi.fn(),
     onCreateTask: vi.fn(),
     onCreateConversationTask: vi.fn(),
@@ -163,9 +112,6 @@ function props(
   };
 }
 
-const row = (label: string) =>
-  screen.getByText(label).closest("[data-home-only-workspace]") as HTMLButtonElement;
-
 beforeEach(() => {
   fixture.hasProjectService = false;
 });
@@ -174,10 +120,43 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("ProjectSidebar home-only workspace list", () => {
-  it("skips unrelated parent updates but accepts changed navigation props", async () => {
-    const { switcher } = createSwitcher(Promise.resolve({ workspaces: [local] }));
-    const stableProps = props(switcher);
+describe("独立桌面项目侧栏不恢复已退役的首页 relay 列表", () => {
+  it("缺少项目服务时呈现本地错误，不查询或订阅旧 relay", async () => {
+    const switcher = createRetiredSwitcher();
+    render(
+      createElement(
+        Sidebar,
+        Object.assign(props({ isWebRemoteControl: true }), {
+          webRemoteControlWorkspaceSwitcher: switcher,
+        }),
+      ),
+    );
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Error: project.service-unavailable",
+    );
+    for (const method of Object.values(switcher)) expect(method).not.toHaveBeenCalled();
+    expect(screen.queryByText("webRemoteControl.homeOnlyWorkspaces")).toBeNull();
+    expect(screen.queryByText("webRemoteControl.noSwitchableWorkspaces")).toBeNull();
+  });
+
+  it("项目服务可用时展示项目视图，不启用旧 relay 后备通道", async () => {
+    fixture.hasProjectService = true;
+    const switcher = createRetiredSwitcher();
+    render(
+      createElement(
+        Sidebar,
+        Object.assign(props(), { webRemoteControlWorkspaceSwitcher: switcher }),
+      ),
+    );
+    await waitFor(() => expect(screen.queryByText("common.loading")).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByTestId("virtual-project-new-task")).toBeTruthy();
+    for (const method of Object.values(switcher)) expect(method).not.toHaveBeenCalled();
+  });
+
+  it("跳过无关父更新，导航回调变更仍更新侧栏", async () => {
+    fixture.hasProjectService = true;
+    const stableProps = props();
     function Parent() {
       const [revision, update] = useState(0);
       const [onCreateTask, setOnCreateTask] = useState(() => stableProps.onCreateTask);
@@ -193,7 +172,6 @@ describe("ProjectSidebar home-only workspace list", () => {
         createElement(WorkspaceSidebar, { ...stableProps, onCreateTask }),
       );
     }
-    // 目录 Provider 不属于面板开关 owner；不要让夹具父更新重建 mock 服务/context。
     render(
       createElement(
         TooltipProvider,
@@ -201,120 +179,11 @@ describe("ProjectSidebar home-only workspace list", () => {
         createElement(ProjectDirectoryProvider, null, createElement(Parent)),
       ),
     );
-    await screen.findByText("Local app");
+    await waitFor(() => expect(screen.queryByText("common.loading")).toBeNull());
     fixture.renderSidebar.mockClear();
     fireEvent.click(screen.getByText("Unrelated update"));
     expect(fixture.renderSidebar).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText("Navigation update"));
-    expect(fixture.renderSidebar).toHaveBeenCalled();
-  });
-
-  it("lists desktop workspaces instead of the unavailable project tree", async () => {
-    const { switcher } = createSwitcher(Promise.resolve({ workspaces: [offline, local] }));
-    render(createElement(Sidebar, props(switcher)));
-
-    await screen.findByText("Remote app");
-    expect(screen.getByText("webRemoteControl.homeOnlyWorkspaces")).toBeTruthy();
-    expect(row("Remote app").textContent).toContain("remote.status.offline");
-    expect(row("Remote app").textContent).toContain("remote.action.connect");
-    expect(row("Local app").textContent).not.toContain("remote.action.connect");
-    expect(screen.queryByText(/project\.service-unavailable/)).toBeNull();
-    expect(screen.queryByText("project.projects")).toBeNull();
-  });
-
-  it("reconnects a disconnected workspace, reloads the list, then opens it after it can bridge", async () => {
-    const { switcher } = createSwitcher(
-      Promise.resolve({ workspaces: [offline] }),
-      Promise.resolve({ workspaces: [online] }),
-    );
-    render(createElement(Sidebar, props(switcher)));
-
-    fireEvent.click(await screen.findByText("Remote app"));
-    await waitFor(() =>
-      expect(switcher.reconnectWorkspace).toHaveBeenCalledWith("remote:ssh:dev:/srv/app"),
-    );
-    await waitFor(() => expect(row("Remote app").textContent).toContain("remote.status.online"));
-    expect(switcher.listWorkspaces).toHaveBeenCalledTimes(2);
-    expect(switcher.switchWorkspace).not.toHaveBeenCalled();
-
-    fireEvent.click(row("Remote app"));
-    await waitFor(() =>
-      expect(switcher.switchWorkspace).toHaveBeenCalledWith("remote:ssh:dev:/srv/app"),
-    );
-    expect(switcher.reconnectWorkspace).toHaveBeenCalledOnce();
-  });
-
-  it("opens a local workspace directly through the switcher", async () => {
-    const { switcher } = createSwitcher(Promise.resolve({ workspaces: [local] }));
-    render(createElement(Sidebar, props(switcher)));
-
-    fireEvent.click(await screen.findByText("Local app"));
-    await waitFor(() => expect(switcher.switchWorkspace).toHaveBeenCalledWith("/Users/dev/local"));
-    expect(switcher.reconnectWorkspace).not.toHaveBeenCalled();
-  });
-
-  it("keeps a pushed update when an older list response arrives late", async () => {
-    const pending = deferred<WebRemoteControlWorkspaceListResult>();
-    const { switcher, push } = createSwitcher(pending.promise);
-    render(createElement(Sidebar, props(switcher)));
-
-    act(() => push({ workspaces: [online] }));
-    await screen.findByText("Remote app");
-    await act(async () => pending.resolve({ workspaces: [offline] }));
-
-    expect(row("Remote app").textContent).toContain("remote.status.online");
-  });
-
-  it("disables a workspace that the desktop is reconnecting", async () => {
-    const { switcher } = createSwitcher(
-      Promise.resolve({ workspaces: [{ ...offline, connectionState: "reconnecting" }] }),
-    );
-    render(createElement(Sidebar, props(switcher)));
-
-    await screen.findByText("Remote app");
-    expect(row("Remote app").disabled).toBe(true);
-    expect(row("Remote app").textContent).toContain("remote.status.connecting");
-  });
-
-  it("shows a list failure with retry", async () => {
-    const { switcher } = createSwitcher(
-      Promise.reject(new Error("relay timeout")),
-      Promise.resolve({ workspaces: [local] }),
-    );
-    render(createElement(Sidebar, props(switcher)));
-
-    expect((await screen.findByRole("alert")).textContent).toContain("relay timeout");
-    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
-    await screen.findByText("Local app");
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
-
-  it("shows the empty state when the desktop window has no workspace", async () => {
-    const { switcher } = createSwitcher(Promise.resolve({ workspaces: [] }));
-    render(createElement(Sidebar, props(switcher)));
-
-    await screen.findByText("webRemoteControl.noSwitchableWorkspaces");
-  });
-
-  it("reports a failed reconnect and keeps the row available", async () => {
-    const { switcher } = createSwitcher(Promise.resolve({ workspaces: [offline] }));
-    switcher.reconnectWorkspace.mockRejectedValueOnce(new Error("ssh refused"));
-    render(createElement(Sidebar, props(switcher)));
-
-    fireEvent.click(await screen.findByText("Remote app"));
-    // 失败沿用远程连接错误分类，提示本地化文案；原始错误只进日志。
-    await waitFor(() => expect(fixture.toast).toHaveBeenCalledWith("remote.error.unknown"));
-    await waitFor(() => expect(row("Remote app").disabled).toBe(false));
-    expect(switcher.listWorkspaces).toHaveBeenCalledOnce();
-  });
-
-  it("keeps the project tree and does not request the relay list when project service exists", async () => {
-    fixture.hasProjectService = true;
-    const { switcher } = createSwitcher();
-    render(createElement(Sidebar, props(switcher)));
-
-    await waitFor(() => expect(screen.queryByText("common.loading")).toBeNull());
-    expect(screen.queryByText("webRemoteControl.homeOnlyWorkspaces")).toBeNull();
-    expect(switcher.listWorkspaces).not.toHaveBeenCalled();
+    expect(fixture.renderSidebar).toHaveBeenCalledOnce();
   });
 });

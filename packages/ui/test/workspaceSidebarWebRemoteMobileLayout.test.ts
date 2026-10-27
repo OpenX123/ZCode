@@ -32,7 +32,6 @@ const fixture = vi.hoisted(() => {
     connectHost: vi.fn(),
     removeHost: vi.fn(),
     removeEntry: vi.fn(),
-    openUpgrade: vi.fn(),
   };
 });
 vi.mock("@/hooks/useWorkspaceServices.js", () => {
@@ -101,12 +100,6 @@ vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => async ()
 vi.mock("@/hooks/usePlatform.js", () => ({
   useSelectDirectory: () => vi.fn(),
   useOptionalPlatform: () => null,
-}));
-vi.mock("@/settings/CodingPlanUpgradeDialogProvider.js", () => ({
-  useCodingPlanUpgradeDialog: () => ({ openCodingPlanUpgrade: fixture.openUpgrade }),
-}));
-vi.mock("@/components/manual-claim-plan/ManualClaimPlanBanner.js", () => ({
-  ManualClaimPlanBanner: () => null,
 }));
 vi.mock("@/WorkspaceSidebarFooter.js", () => ({
   WorkspaceSidebarFooter: () => createElement("footer", {}, "Footer"),
@@ -190,9 +183,9 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
-describe("virtual-project sidebar on desktop and mobile", () => {
+describe("独立桌面保留本地和远端项目侧栏", () => {
   it("reads the Controller project contract without calling the desktop-only Source management channel", async () => {
-    render(createElement(Sidebar, props({ isWebRemoteControl: true })));
+    render(createElement(Sidebar, props()));
     await waitFor(() => expect(screen.queryByText("common.loading")).toBeNull());
     expect(fixture.sourceManagement).not.toHaveBeenCalled();
   });
@@ -220,34 +213,30 @@ describe("virtual-project sidebar on desktop and mobile", () => {
     fireEvent.click(screen.getByTestId("virtual-project-new-task"));
     expect(onCreateTask).toHaveBeenNthCalledWith(2, { projectId: null, taskGroupId: null });
   });
-  it("shows the Relay V2 device header only when the remote switcher provides device navigation", async () => {
+  it("旧设备导航输入不恢复手机切换入口，也不调用 relay", async () => {
     const chooseOtherDevice = vi.fn();
     const switcher = {
       listWorkspaces: vi.fn(),
       switchWorkspace: vi.fn(),
       deviceNavigation: { deviceName: "Mac", chooseOtherDevice },
-    } as unknown as NonNullable<ProjectSidebarProps["webRemoteControlWorkspaceSwitcher"]>;
-    const { unmount } = render(
+    };
+    render(
       createElement(
         Sidebar,
-        props({ isWebRemoteControl: true, webRemoteControlWorkspaceSwitcher: switcher }),
+        Object.assign(props({ isWebRemoteControl: true }), {
+          webRemoteControlWorkspaceSwitcher: switcher,
+        }),
       ),
     );
-    const device = screen.getByRole("button", { name: "webRemoteControl.switchDevice" });
-    const navigation = screen.getByTestId("sidebar-primary-navigation");
-    // 设备行是导航首行：位于“新建任务”之上。
-    expect(navigation.firstElementChild).toBe(device);
-    expect(
-      device.compareDocumentPosition(screen.getByText("New task")) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    fireEvent.click(device);
-    expect(chooseOtherDevice).toHaveBeenCalledOnce();
-    unmount();
-
-    render(createElement(Sidebar, props({ isWebRemoteControl: true })));
     await waitFor(() => expect(screen.queryByText("common.loading")).toBeNull());
     expect(screen.queryByRole("button", { name: "webRemoteControl.switchDevice" })).toBeNull();
+    expect(screen.queryByText("Mac")).toBeNull();
+    expect(screen.getByTestId("sidebar-primary-navigation").firstElementChild?.textContent).toBe(
+      "New task",
+    );
+    expect(chooseOtherDevice).not.toHaveBeenCalled();
+    expect(switcher.listWorkspaces).not.toHaveBeenCalled();
+    expect(switcher.switchWorkspace).not.toHaveBeenCalled();
   });
   it("routes a retained remote project's new task to that Host", async () => {
     remoteHost(true);
