@@ -46,6 +46,18 @@ describe("GitHub 桌面更新入口", () => {
       });
     });
     try {
+      await browser.electron.execute((electron) => {
+        for (const win of electron.BrowserWindow.getAllWindows())
+          win.webContents.send("zcode:update-state", {
+            kind: "error",
+            enabled: true,
+            message: "更新检查失败：HTTP 404",
+          });
+      });
+      await browser.executeAsync((done) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => done())),
+      );
+      await expect($('[data-testid="desktop-update-action"]')).not.toExist();
       await clickTestIdByWebDriver(TID_WORKSPACE_HELP_MENU_TRIGGER);
       await clickTestIdByWebDriver("workspace-help-menu-check-updates");
       const action = $('[data-testid="desktop-update-action"]');

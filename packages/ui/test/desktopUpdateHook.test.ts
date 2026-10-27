@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
+import { createElement } from "react";
 import type { IPlatformService, UpdateStatePayload } from "@zcode/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useDesktopUpdates } from "../src/hooks/desktop-updates/index.js";
+import { DesktopUpdateButton } from "../src/desktop-updates/DesktopUpdateButton.js";
 
 const mocks = vi.hoisted(() => ({ platform: {} as IPlatformService, toast: vi.fn() }));
 vi.mock("@/hooks/usePlatform.js", () => ({ usePlatform: () => mocks.platform }));
@@ -18,7 +20,7 @@ afterEach(() => {
 
 function createPlatform() {
   let emit!: (state: UpdateStatePayload) => void;
-  const checkForUpdates = vi.fn(async () => ({
+  const checkForUpdates = vi.fn<NonNullable<IPlatformService["checkForUpdates"]>>(async () => ({
     kind: "up-to-date" as const,
     currentVersion: "1.0.0",
   }));
@@ -44,6 +46,33 @@ function createPlatform() {
 }
 
 describe("桌面更新 hook", () => {
+  it("侧栏隐藏未知版本的检查失败，保留已知版本的下载失败重试", () => {
+    const platform = createPlatform();
+    render(createElement(DesktopUpdateButton));
+    act(() => platform.emit({ kind: "error", enabled: true, message: "HTTP 404" }));
+    expect(screen.queryByTestId("desktop-update-action")).toBeNull();
+    act(() =>
+      platform.emit({
+        kind: "error",
+        enabled: true,
+        message: "checksum mismatch",
+        version: "1.0.1",
+      }),
+    );
+    expect(screen.getByTestId("desktop-update-action")).toBeTruthy();
+    expect(screen.getByTestId("desktop-update-status").textContent).toBe("checksum mismatch");
+  });
+
+  it("手动检查失败仍显示即时提示", async () => {
+    const platform = createPlatform();
+    platform.checkForUpdates.mockResolvedValueOnce({ kind: "error", message: "HTTP 404" });
+    const { result } = renderHook(() => useDesktopUpdates());
+    await act(() => result.current.check());
+    expect(mocks.toast).toHaveBeenCalledWith(
+      "desktopUpdate.error",
+      expect.objectContaining({ variant: "warning" }),
+    );
+  });
   it("Web 不订阅状态，不执行检查", async () => {
     const platform = createPlatform();
     const { result } = renderHook(() => useDesktopUpdates(false));

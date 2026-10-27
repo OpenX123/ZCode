@@ -8,6 +8,8 @@ export function DesktopUpdateButton() {
   const { intl } = useZCodeIntl();
   const { state, busy, activate } = useDesktopUpdates();
   if (!state?.enabled || state.kind === "idle" || state.kind === "checking") return null;
+  // 无候选版本的检查错误只通过手动检查提示，避免启动时长期占用侧栏。
+  if (state.kind === "error" && !state.version) return null;
   const progress = getDesktopUpdateProgress(state);
   const message =
     state.kind === "update-available"

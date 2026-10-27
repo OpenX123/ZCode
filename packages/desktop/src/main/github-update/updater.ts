@@ -102,6 +102,7 @@ export function createGithubDesktopUpdater(
   }
 
   async function performCheck(): Promise<UpdateCheckResultPayload> {
+    const previousState = state;
     publish({ kind: "checking", enabled });
     try {
       const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(15_000)]);
@@ -120,16 +121,20 @@ export function createGithubDesktopUpdater(
         publish({ kind: "idle", enabled });
         return { kind: "up-to-date", currentVersion: options.currentVersion };
       }
-      candidate = { manifest, asset };
-      if (await verifyInstaller(installerPath(candidate), asset)) {
-        lifetime.signal.throwIfAborted();
+      const selected = { manifest, asset };
+      const cached = await verifyInstaller(installerPath(selected), asset);
+      lifetime.signal.throwIfAborted();
+      candidate = selected;
+      if (cached) {
         publish({ kind: "update-downloaded", enabled, version: manifest.version });
         return { kind: "ready", version: manifest.version };
       }
       publish({ kind: "update-available", enabled, version: manifest.version });
       return { kind: "available", version: manifest.version };
     } catch (error) {
-      return failure(error);
+      // 清单尚未发布或网络暂不可达不等于安装失败；保留已确认状态，手动调用方单独提示。
+      publish(previousState);
+      return { kind: "error", message: error instanceof Error ? error.message : String(error) };
     }
   }
 
