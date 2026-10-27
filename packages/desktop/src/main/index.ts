@@ -62,6 +62,7 @@ import {
   InternalChannels,
 } from "@zcode/shared";
 import { logger } from "./logger.js";
+import { installGithubDesktopUpdates } from "./github-update/index.js";
 import { markMainLaunchAppReady } from "./desktopLaunchMarks.js";
 import { createCuaPipFocusRouter, resolveCuaPipWindowKey } from "./cuaPipFocusRouter.js";
 import { BroadcastHub } from "./broadcastHub.js";
@@ -1224,6 +1225,8 @@ app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
 
 app.whenReady().then(async () => {
   markMainLaunchAppReady();
+  const disposeGithubUpdates = installGithubDesktopUpdates();
+  app.once("will-quit", disposeGithubUpdates);
   installLocalMediaPreviewProtocol(session.defaultSession.protocol, {
     isPathAuthorized: localMediaPreviewPathRegistry.isAuthorized,
   });

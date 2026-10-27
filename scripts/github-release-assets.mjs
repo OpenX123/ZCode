@@ -18,8 +18,11 @@ const {
 );
 
 export function releaseBaseUrl(repository, tag) {
-  if (!/^[\w.-]+\/[\w.-]+$/u.test(repository) || !/^build-\d+-\d+$/u.test(tag)) {
-    throw new Error("Expected repository owner/name and immutable build-<run>-<attempt> tag");
+  if (
+    !/^[\w.-]+\/[\w.-]+$/u.test(repository) ||
+    !/^(?:build-\d+-\d+|v1\.0\.(?:0|[1-9]\d*))$/u.test(tag)
+  ) {
+    throw new Error("Expected repository owner/name and immutable build or v1.0.<patch> tag");
   }
   return `https://github.com/${repository}/releases/download/${tag}`;
 }
@@ -51,6 +54,9 @@ export async function verifyDescriptor({
     throw new Error("Release descriptor must contain the current version and all four targets");
   }
   const base = repository || tag ? releaseBaseUrl(repository, tag) : null;
+  if (tag?.startsWith("v") && tag !== `v${version}`) {
+    throw new Error("Release tag must match the descriptor version");
+  }
   const mib = 1024 * 1024;
   if (
     descriptor.archives.reduce((sum, archive) => sum + archive.sizeBytes, metadata.size) >
@@ -82,6 +88,9 @@ export async function verifyDescriptor({
 
 export async function pinReleaseDescriptor({ directory, output, version, repository, tag }) {
   const base = releaseBaseUrl(repository, tag);
+  if (tag.startsWith("v") && tag !== `v${version}`) {
+    throw new Error("Release tag must match the descriptor version");
+  }
   const descriptor = await verifyDescriptor({ directory, version, verifyArchives: true });
   for (const archive of descriptor.archives) archive.urls = [`${base}/${archive.fileName}`];
   await writeFile(
@@ -114,24 +123,49 @@ export async function verifyReleaseAssets(options) {
     ...installers,
   ].sort();
   const entries = await readdir(options.directory, { withFileTypes: true });
+  const allowed = new Set([...names, "ycode-update.json", "SHA256SUMS"]);
   if (
-    entries.length !== names.length ||
-    entries.some((entry) => !entry.isFile() || !names.includes(entry.name))
+    names.some((name) => !entries.some((entry) => entry.name === name)) ||
+    entries.some((entry) => !entry.isFile() || !allowed.has(entry.name))
   ) {
     throw new Error(
       "Release must contain exactly six installers, four remote archives and one descriptor",
     );
   }
   const lines = [];
+  const metadataByName = new Map();
   for (const name of names) {
     const file = join(options.directory, name);
     const metadata = await lstat(file);
     if (!metadata.isFile() || metadata.size === 0)
       throw new Error(`Invalid release asset: ${name}`);
-    lines.push(`${await sha256File(file)}  ${name}`);
+    const sha256 = await sha256File(file);
+    metadataByName.set(name, { size: metadata.size, sha256 });
+    lines.push(`${sha256}  ${name}`);
   }
+  const base = releaseBaseUrl(options.repository, options.tag);
+  const manifest = {
+    schemaVersion: 1,
+    version: options.version,
+    releaseUrl: `https://github.com/${options.repository}/releases/tag/${options.tag}`,
+    assets: ["darwin", "win32"].flatMap((platform) =>
+      ["arm64", "x64"].map((arch) => {
+        const fileName = `YCode-${options.version}-${platform === "darwin" ? "mac" : "win"}-${arch}.${platform === "darwin" ? "dmg" : "exe"}`;
+        return {
+          platform,
+          arch,
+          fileName,
+          url: `${base}/${fileName}`,
+          ...metadataByName.get(fileName),
+        };
+      }),
+    ),
+  };
+  const manifestPath = join(options.directory, "ycode-update.json");
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  lines.push(`${await sha256File(manifestPath)}  ycode-update.json`);
   await writeFile(join(options.directory, "SHA256SUMS"), `${lines.join("\n")}\n`);
-  return names;
+  return [...names, "ycode-update.json"];
 }
 
 async function main() {

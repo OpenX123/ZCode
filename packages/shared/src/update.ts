@@ -27,9 +27,13 @@ export type UpdateCheckResultPayload =
   | { kind: "error"; message: string };
 
 /**
- * 桌面自动更新器的持续状态，用于同步原生菜单和 Windows 自绘标题栏菜单。
+ * 桌面 GitHub 更新的持续状态；Main 唯一管理，所有窗口仅投影快照。
  */
-export type UpdateStatePayload =
+export type UpdateStatePayload = {
+  /** 当前实际运行版本；由 Main 提供，Renderer 不比较版本决定更新。 */
+  currentVersion?: string;
+  releaseUrl?: string;
+} & (
   | { kind: "idle"; enabled: boolean }
   | { kind: "checking"; enabled: boolean }
   | {
@@ -55,4 +59,6 @@ export type UpdateStatePayload =
       version: string;
       channel?: ElectronReleaseChannel;
       releaseNotes?: PostUpdateReleaseNotesPayload;
-    };
+    }
+  | { kind: "error"; enabled: boolean; message: string; version?: string }
+);

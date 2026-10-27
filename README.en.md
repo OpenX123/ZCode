@@ -40,6 +40,14 @@ sudo xattr -rd com.apple.quarantine "/Applications/YCode.app"
 
 Then open YCode again. Adjust the path if installed elsewhere. On Windows, run the EXE for your architecture; unsigned builds may trigger SmartScreen, so check the source and checksum first.
 
+## Versioning and updates
+
+The new release series starts at **V1.0 (`1.0.0`)**. Each new official build increments the patch version (`1.0.1`, `1.0.2`, …), shared across all four desktop targets. Incomplete builds are not published.
+
+Starting with `1.0.0`, the desktop app checks this repository's GitHub Releases at startup and every six hours. A sidebar update button appears when a newer release is available; the Help menu also offers a manual check at any time. Clicking update downloads the installer for the current system and architecture, verifies its size and SHA-256, and opens it for you to install. Running tasks are not forcibly closed. On macOS, replace the application through the DMG and follow the `xattr` instructions above if needed. GitHub access is required for checks and downloads.
+
+Older `3.16.2` / `build-*` apps have no update entry point. Install `1.0.0` manually once to enter the new release series. The existing user data directory is retained when replacing the app.
+
 ## Technology
 
 | Layer                 | Implementation                                                                                          |

@@ -18,10 +18,10 @@ const script = resolve(import.meta.dirname, "../scripts/audit-bundle-size.mjs");
 const roots: string[] = [];
 const targets = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"];
 
-function fixture(extension = ".zip") {
+function fixture(extension = ".zip", version = "1.2.3") {
   const root = mkdtempSync(join(tmpdir(), "zcode-size-audit-"));
   roots.push(root);
-  const resources = join(root, "Resources", "remote-assets", "releases", "1.2.3");
+  const resources = join(root, "Resources", "remote-assets", "releases", version);
   mkdirSync(resources, { recursive: true });
   const artifact = join(root, `app${extension}`);
   writeFileSync(artifact, "");
@@ -31,14 +31,14 @@ function fixture(extension = ".zip") {
     writeFileSync(join(resources, fileName), content);
     return {
       target,
-      version: "1.2.3",
+      version,
       fileName,
       sizeBytes: content.length,
       sha256: createHash("sha256").update(content).digest("hex"),
       urls: [fileName],
     };
   });
-  const descriptor = { schemaVersion: 1, version: "1.2.3", archives };
+  const descriptor = { schemaVersion: 1, version, archives };
   const save = () =>
     writeFileSync(join(resources, "source-server-release.json"), JSON.stringify(descriptor));
   save();
@@ -49,7 +49,7 @@ function fixture(extension = ".zip") {
         script,
         "--artifact-path",
         artifact,
-        ...(withResources ? ["--remote-assets-dir", resources, "--version", "1.2.3"] : []),
+        ...(withResources ? ["--remote-assets-dir", resources, "--version", version] : []),
       ],
       {
         encoding: "utf8",
@@ -137,6 +137,24 @@ describe("安装包基础与离线资源预算", () => {
 });
 
 describe("轻量安装包直接预算和体积报告", () => {
+  it("接受当前正式版本的固定URL，拒绝其他patch串包", () => {
+    const f = fixture(".dmg", "1.0.0");
+    f.makeLightweight();
+    for (const archive of f.descriptor.archives) {
+      archive.urls = [
+        `https://github.com/OpenX123/ZCode/releases/download/v1.0.0/${archive.fileName}`,
+      ];
+    }
+    f.save();
+    expect(f.audit(true, true).status).toBe(0);
+    f.descriptor.archives[0]!.urls[0] = f.descriptor.archives[0]!.urls[0]!.replace(
+      "v1.0.0",
+      "v1.0.1",
+    );
+    f.save();
+    expect(f.audit(true, true).status).toBe(1);
+  });
+
   it.each([
     [".exe", 250_000_000],
     [".dmg", 280_000_000],

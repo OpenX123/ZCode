@@ -8,7 +8,7 @@
 
 工作区终端可显式启动用户安装的原生 Claude Code，默认传入权限模式 `auto`；原生 TUI 和会话事实由 Claude Code 管理，不恢复已移除的第三方 Agent Provider。见 [Claude Code 原生终端接入](./claude-code-native-terminal-spec.md)。
 
-移除官方账号、套餐、额度、邀请、营销、推广、云分享、反馈上传、遥测、手机云端远控、官方更新检查、官方 Server MCP 凭证注入和闲时 ticket 调度。不新建替代商业服务或手机配对服务。
+移除官方账号、套餐、额度、邀请、营销、推广、云分享、反馈上传、遥测、手机云端远控、原厂更新检查、官方 Server MCP 凭证注入和闲时 ticket 调度。不新建替代商业服务或手机配对服务。
 
 安装架构不匹配时保留本地提示，用户自行安装原生架构构建，不提供原厂下载跳转。
 
@@ -141,3 +141,7 @@ sequenceDiagram
 删除功能的专属测试随实现退役；通用 Provider、MCP OAuth、权限、取消、compact、排队、fork、耗时及历史读取断言迁到保留场景。共享 E2E helper 等待匿名工作区，不播种官方 OAuth/JWT；保留普通 API、MCP OAuth 与 SSH 测试凭据。新桌面场景保持 manual-review/pending，不自动转正或准入 CI。
 
 回放不等同真实模型 API 验收；本机回环 SSH 不等同外部 Linux 或桌面远程身份全链路；macOS 构建不等同 Windows/Linux 实机验收。网络按服务用途与路径检查，普通 GLM API 与用户显式联网能力继续保留。
+
+## GitHub 自托管发行更新
+
+YCode 1.0.0 起恢复本仓库 GitHub Release 的版本提示与用户触发的安装器下载。该能力由 Main 管理，使用固定本仓库清单、当前架构资源和 size/SHA 校验，不接原厂账号、更新服务、灰度渠道或强制升级。应用不自动退出，也不静默替换未签名安装包；具体合同见 [GitHub 桌面更新](./github-desktop-update-spec.md)。旧 3.16.2 用户须先手工安装一次 1.0.0。

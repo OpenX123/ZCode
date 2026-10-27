@@ -21,6 +21,7 @@ import type {
   WSLConnectOptions,
 } from "./remoteTarget.js";
 import type { RendererHeapSample } from "./validation.js";
+import type { UpdateCheckResultPayload, UpdateStatePayload } from "./update.js";
 export type {
   PostUpdateReleaseNotesPayload,
   UpdateCheckResultPayload,
@@ -660,6 +661,15 @@ export type CuaOsSupport =
  * 业务服务（文件、终端、凭据等）走 IServiceAccessor 的 RPC 通道。
  */
 export interface IPlatformService {
+  /** GitHub 更新由 Main 唯一管理；Web 不提供。 */
+  getUpdateState?(): Promise<UpdateStatePayload>;
+  checkForUpdates?(): Promise<UpdateCheckResultPayload>;
+  /** 用户操作：下载当前架构安装器，校验后打开；不退出应用。 */
+  downloadUpdate?(): Promise<UpdateCheckResultPayload>;
+  /** 再次校验并打开已经下载的安装器。 */
+  installUpdate?(): Promise<UpdateCheckResultPayload>;
+  onUpdateState?(listener: (state: UpdateStatePayload) => void): () => void;
+
   /** 是否支持当前客户端本机文件的默认应用与目录操作；Web 不具备此能力。 */
   canOpenLocalFiles?: boolean;
 

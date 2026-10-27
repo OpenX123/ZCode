@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: build-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   ZCODE_ENV: production
@@ -43,10 +43,9 @@ jobs:
       - name: Record immutable release identity
         id: identity
         env:
-          RELEASE_TAG: build-${{ github.run_number }}-${{ github.run_attempt }}
-        run: |
-          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          GH_TOKEN: ${{ github.token }}
+          YCODE_OFFICIAL_RELEASE: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+        run: node scripts/github-release-version.mjs allocate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -103,6 +102,7 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
       ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY: "1"
       RELEASE_TAG: ${{ needs.resources.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.resources.outputs.version }}
 
     steps:
       - name: Checkout
@@ -123,6 +123,9 @@ jobs:
         run: pnpm install --frozen-lockfile
         env:
           ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+
+      - name: Restore the shared application version
+        run: node scripts/github-release-version.mjs apply
 
       - name: Download exact shared release descriptor
         uses: actions/download-artifact@v8
@@ -164,6 +167,7 @@ jobs:
       contents: write
     env:
       RELEASE_TAG: ${{ needs.resources.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.resources.outputs.version }}
 
     steps:
       - name: Checkout
@@ -192,6 +196,9 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Restore the shared application version
+        run: node scripts/github-release-version.mjs apply
+
       - name: Download matching remote resources
         uses: actions/download-artifact@v8
         with:
@@ -207,12 +214,16 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists; rerun all jobs for a new build identity." >&2
+            echo "Release $RELEASE_TAG already exists; rerun all jobs to allocate the next patch." >&2
+            exit 1
+          fi
+          if ! gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA" >/dev/null; then
+            echo "Cannot reserve $RELEASE_TAG; rerun all jobs to allocate the next patch. Existing tags are never overwritten." >&2
             exit 1
           fi
           gh release create "$RELEASE_TAG" release-assets/* \
-            --repo "$GITHUB_REPOSITORY" --draft \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
             --title "YCode $RELEASE_TAG" \
-            --notes "由 GitHub Actions 从提交 $GITHUB_SHA 自动构建。包含 macOS / Windows 的 ARM64 与 x64 安装包，以及按需下载的四平台远程资源。安装说明见仓库 README。" \
-            --target "$GITHUB_SHA"
+            --notes "由 GitHub Actions 从提交 $GITHUB_SHA 自动构建。包含 macOS / Windows 的 ARM64 与 x64 安装包，以及按需下载的四平台远程资源。安装说明见仓库 README。"
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

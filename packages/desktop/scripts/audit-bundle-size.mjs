@@ -77,9 +77,10 @@ async function verifyRemoteResources(directory, version) {
       if (archive.urls.length === 0) throw new Error("Missing immutable release URL");
       for (const address of archive.urls) {
         const url = new URL(address);
-        const match = /^\/[^/]+\/[^/]+\/releases\/download\/(build-\d+-\d+)\/([^/]+)$/.exec(
-          url.pathname,
-        );
+        const match =
+          /^\/[^/]+\/[^/]+\/releases\/download\/(build-\d+-\d+|v1\.0\.(?:0|[1-9]\d*))\/([^/]+)$/.exec(
+            url.pathname,
+          );
         if (
           url.protocol !== "https:" ||
           url.hostname !== "github.com" ||
@@ -89,7 +90,8 @@ async function verifyRemoteResources(directory, version) {
           url.search ||
           url.hash ||
           !match ||
-          match[2] !== archive.fileName
+          match[2] !== archive.fileName ||
+          (match[1].startsWith("v") && match[1] !== `v${version}`)
         )
           throw new Error(`Invalid immutable release URL: ${address}`);
         const base = address.slice(0, address.lastIndexOf("/"));

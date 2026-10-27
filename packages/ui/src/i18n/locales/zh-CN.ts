@@ -1894,6 +1894,17 @@ const zhCN: Record<string, string> = {
   "directoryBrowser.errorReadDir": "无法读取目录：{error}",
 
   // 更新按钮
+  "desktopUpdate.check": "检查更新",
+  "desktopUpdate.available": "更新到 v{version}",
+  "desktopUpdate.ready": "打开 v{version} 安装包",
+  "desktopUpdate.retry": "更新失败，点击重试",
+  "desktopUpdate.downloading": "正在下载 {progress}%",
+  "desktopUpdate.downloadHint": "下载并校验后打开安装包",
+  "desktopUpdate.readyHint": "安装包已就绪，可再次打开安装",
+  "desktopUpdate.progress": "更新下载进度",
+  "desktopUpdate.up-to-date": "当前 v{version} 已是最新版本",
+  "desktopUpdate.dev-skipped": "开发模式不检查更新",
+  "desktopUpdate.error": "更新失败：{message}",
   "updateReady.shortTitle": "更新",
   "updateReady.title": "更新 v{version}",
   "updateReady.releaseNotesTitle": "v{version} 更新日志",

@@ -4,7 +4,7 @@ import {
   TID_WORKSPACE_HELP_MENU_RESOURCE_MANAGER,
   TID_WORKSPACE_HELP_MENU_TRIGGER,
 } from "@zcode/shared/test-ids";
-import { ActivityIcon, CircleHelpIcon, DownloadIcon, InfoIcon } from "lucide-react";
+import { ActivityIcon, CircleHelpIcon, DownloadIcon, InfoIcon, RefreshCwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import {
   DropdownMenu,
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu.js";
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
+import { useDesktopUpdates } from "@/hooks/desktop-updates/index.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { runExportLogsAction } from "@/lib/exportLogsAction.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -32,6 +33,7 @@ export function WorkspaceHelpMenuButton({
 }) {
   const { intl } = useZCodeIntl();
   const platform = usePlatform();
+  const updates = useDesktopUpdates(isDesktop);
   const [open, setOpen] = useState(false);
   const helpMenuLabel = intl.formatMessage({ id: "workspaceHeader.help.menu" });
   const handleOpenResourceManager = () => {
@@ -72,6 +74,16 @@ export function WorkspaceHelpMenuButton({
         {isDesktop ? (
           <>
             <DropdownMenuSeparator />
+            {updates.supported ? (
+              <DropdownMenuItem
+                data-testid="workspace-help-menu-check-updates"
+                disabled={updates.busy}
+                onSelect={() => void updates.check()}
+              >
+                <RefreshCwIcon className="size-4" />
+                {intl.formatMessage({ id: "desktopUpdate.check" })}
+              </DropdownMenuItem>
+            ) : null}
             {/* 独立导出入口曾被移除；复用原菜单动作，保持打包、系统定位与提示一致。 */}
             <DropdownMenuItem onSelect={() => void runExportLogsAction(platform, intl)}>
               <DownloadIcon className="size-4" />

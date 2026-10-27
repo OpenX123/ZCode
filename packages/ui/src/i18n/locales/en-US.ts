@@ -2054,6 +2054,17 @@ const enUS: Record<string, string> = {
   "directoryBrowser.errorReadDir": "Failed to read directory: {error}",
 
   // Update ready button
+  "desktopUpdate.check": "Check for Updates",
+  "desktopUpdate.available": "Update to v{version}",
+  "desktopUpdate.ready": "Open v{version} installer",
+  "desktopUpdate.retry": "Update failed. Retry",
+  "desktopUpdate.downloading": "Downloading {progress}%",
+  "desktopUpdate.downloadHint": "Download, verify, and open the installer",
+  "desktopUpdate.readyHint": "Installer ready. Click to open again",
+  "desktopUpdate.progress": "Update download progress",
+  "desktopUpdate.up-to-date": "v{version} is up to date",
+  "desktopUpdate.dev-skipped": "Updates are disabled in development",
+  "desktopUpdate.error": "Update failed: {message}",
   "updateReady.shortTitle": "Update",
   "updateReady.title": "Update v{version}",
   "updateReady.releaseNotesTitle": "v{version} Release Notes",

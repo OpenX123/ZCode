@@ -57,58 +57,6 @@ vi.mock("electron", () => ({
   },
 }));
 
-vi.mock("electron-updater", () => {
-  class CancellationTokenMock {
-    cancelled = false;
-    private cancelListeners: Array<() => void> = [];
-
-    cancel() {
-      this.cancelled = true;
-      const listeners = this.cancelListeners;
-      this.cancelListeners = [];
-      for (const listener of listeners) {
-        listener();
-      }
-    }
-
-    once(event: string, listener: () => void) {
-      if (event === "cancel") {
-        this.cancelListeners.push(listener);
-      }
-      return this;
-    }
-
-    dispose() {
-      this.cancelListeners = [];
-    }
-  }
-
-  class ProviderMock {
-    constructor() {}
-    get isUseMultipleRangeRequest() {
-      return false;
-    }
-    setRequestHeaders() {}
-  }
-
-  return {
-    CancellationToken: CancellationTokenMock,
-    // Bugfix: desktopCommandHandlers 只断言菜单命令，但导入链会加载 autoUpdater 的 manifest provider。
-    // mock 必须包含 Provider，否则 Vitest 会在模块初始化阶段报缺少 electron-updater 命名导出。
-    Provider: ProviderMock,
-    default: {
-      autoUpdater: {
-        autoDownload: false,
-        autoInstallOnAppQuit: false,
-        logger: undefined,
-        on: vi.fn(),
-        checkForUpdates: vi.fn(() => Promise.resolve()),
-        quitAndInstall: vi.fn(),
-      },
-    },
-  };
-});
-
 const originalPlatform = process.platform;
 
 function stubProcessPlatform(platform: NodeJS.Platform): void {

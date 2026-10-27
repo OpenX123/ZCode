@@ -1,4 +1,4 @@
-import { DesktopCommandIds, buildLocalMediaPreviewUrl, type IPlatformService } from "@zcode/shared";
+import { buildLocalMediaPreviewUrl, type IPlatformService } from "@zcode/shared";
 
 import { desktopBrowserPlatformBridge } from "./desktopBrowserPlatformBridge.js";
 import { createDesktopPluginSandboxPlatform } from "./plugin-sandbox/desktopPluginSandboxPlatform.js";
@@ -7,6 +7,15 @@ export function createDesktopPlatform(options: {
   isLocalDevelopmentRuntime: boolean;
 }): IPlatformService {
   return {
+    getUpdateState: window.zcode.getUpdateState ? () => window.zcode.getUpdateState!() : undefined,
+    checkForUpdates: window.zcode.checkForUpdates
+      ? () => window.zcode.checkForUpdates!()
+      : undefined,
+    downloadUpdate: window.zcode.downloadUpdate ? () => window.zcode.downloadUpdate!() : undefined,
+    installUpdate: window.zcode.installUpdate ? () => window.zcode.installUpdate!() : undefined,
+    onUpdateState: window.zcode.onUpdateState
+      ? (listener) => window.zcode.onUpdateState!(listener)
+      : undefined,
     canSelectFilePath: true,
     canOpenLocalFiles: true,
     pluginSandbox: createDesktopPluginSandboxPlatform(),

@@ -694,6 +694,34 @@ modules:
       ui: .
     owner: conversation
 
+  # github-desktop-update：由 architecture:adopt 登记
+  - id: github-desktop-update
+    roots:
+      - packages/desktop/src/main/github-update
+    managed: true
+    requires:
+      - shared
+    publicEntrypoints:
+      - packages/desktop/src/main/github-update/index.ts
+      - packages/desktop/src/main/github-update/contract.ts
+    layers:
+      adapters: .
+    owner: desktop
+  # desktop-updates-ui：由 architecture:adopt 登记
+  - id: desktop-updates-ui
+    roots:
+      - packages/ui/src/desktop-updates
+      - packages/ui/src/hooks/desktop-updates
+    managed: true
+    requires: [ui, shared]
+    publicEntrypoints:
+      - packages/ui/src/desktop-updates/index.ts
+      - packages/ui/src/desktop-updates/contract.ts
+      - packages/ui/src/hooks/desktop-updates/index.ts
+    layers:
+      ui: .
+    owner: desktop
+
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
   # 基于领先 staging 很多的分支开工时，merge-base 之前的"新增"文件不应被追溯。

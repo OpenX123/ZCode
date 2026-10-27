@@ -184,6 +184,20 @@ window.addEventListener("DOMContentLoaded", updateRendererProcessTitle, {
  * 通过 MessagePort RPC 访问，不再经过此 bridge。
  */
 contextBridge.exposeInMainWorld("zcode", {
+  getUpdateState: () => ipcRenderer.invoke(PlatformChannels.GetUpdateState),
+  checkForUpdates: () => ipcRenderer.invoke(PlatformChannels.CheckForUpdates),
+  downloadUpdate: () => ipcRenderer.invoke(PlatformChannels.DownloadUpdate),
+  installUpdate: () => ipcRenderer.invoke(PlatformChannels.InstallUpdate),
+  onUpdateState: (listener: (state: import("@zcode/shared").UpdateStatePayload) => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      state: import("@zcode/shared").UpdateStatePayload,
+    ) => listener(state);
+    ipcRenderer.on(PlatformChannels.UpdateState, handler);
+    return () => {
+      ipcRenderer.removeListener(PlatformChannels.UpdateState, handler);
+    };
+  },
   connectRemote: (
     options: RemoteTarget,
     requestId?: string,

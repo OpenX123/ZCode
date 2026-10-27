@@ -32,6 +32,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { normalizeInterfaceMode } from "@/lib/interfaceMode.js";
+import { DesktopUpdateButton } from "@/desktop-updates/index.js";
 import type { Theme } from "@/useTheme.js";
 const DESKTOP_ZOOM_MIN_LEVEL = -3;
 const DESKTOP_ZOOM_MAX_LEVEL = 5;
@@ -112,6 +113,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   return (
     // footer 被 Settings 复用，页面专属边距由调用方传入，避免修改共享默认样式。
     <footer className={cn("flex shrink-0 flex-col gap-2.5 px-4 pt-2 pb-4", className)}>
+      {isDesktop ? <DesktopUpdateButton /> : null}
       <div className="flex min-w-0 gap-2">
         {/* 主入口直接导航，快捷偏好单独使用滑杆图标，避免两个齿轮都被理解为设置页。 */}
         <Button
