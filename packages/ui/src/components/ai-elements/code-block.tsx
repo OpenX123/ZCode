@@ -24,7 +24,7 @@ import type { BundledTheme } from "shiki";
 import { CodeViewer } from "@/components/ui/code-viewer.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { FileDisplayIcon, resolveFileDisplayDescriptor } from "@/lib/fileDisplay.js";
-import { isMermaidLanguage, shouldRenderMermaidCodeBlock } from "@/lib/mermaidLanguage.js";
+import { shouldRenderMermaidCodeBlock } from "@/lib/mermaidLanguage.js";
 import {
   getCurrentMermaidDocumentVisibility,
   resolveMermaidAutoRenderDecision,
@@ -66,6 +66,7 @@ type CodeBlockProps = HTMLAttributes<HTMLDivElement> & {
 
 interface CodeBlockContextType {
   code: string;
+  isDiagram: boolean;
   mermaidPreviewAvailable: boolean;
   openMermaidPreview: () => void;
   toggleWrapLongLines: () => void;
@@ -140,6 +141,7 @@ function useDocumentVisibilityRevision(enabled: boolean): number {
 // Context
 const CodeBlockContext = createContext<CodeBlockContextType>({
   code: "",
+  isDiagram: false,
   mermaidPreviewAvailable: false,
   openMermaidPreview: () => {},
   toggleWrapLongLines: () => {},
@@ -149,18 +151,21 @@ const CodeBlockContext = createContext<CodeBlockContextType>({
 export const CodeBlockContainer = ({
   className,
   language,
+  diagram = false,
   style,
   ...props
-}: HTMLAttributes<HTMLDivElement> & { language: string }) => (
+}: HTMLAttributes<HTMLDivElement> & { language: string; diagram?: boolean }) => (
   <div
     className={cn(
       "group relative w-full overflow-hidden rounded-xl bg-background text-foreground",
       className,
+      diagram && "mermaid-code-block overflow-visible rounded-none border-0 bg-transparent",
     )}
     data-language={language}
+    data-diagram={diagram || undefined}
     style={{
-      containIntrinsicSize: "auto 200px",
-      contentVisibility: "auto",
+      containIntrinsicSize: diagram ? undefined : "auto 200px",
+      contentVisibility: diagram ? "visible" : "auto",
       ...style,
     }}
     {...props}
@@ -181,6 +186,7 @@ export const CodeBlockHeader = ({
   showWrapButton = true,
   ...props
 }: CodeBlockHeaderProps) => {
+  const { isDiagram } = useContext(CodeBlockContext);
   const languageLabel = language?.trim() || "text";
   const descriptor = resolveFileDisplayDescriptor(
     resolveCodeBlockDisplayFile(languageLabel, displayFile),
@@ -191,22 +197,28 @@ export const CodeBlockHeader = ({
       className={cn(
         "flex items-center justify-between gap-3 px-3 py-2 text-ui-base text-muted-foreground",
         className,
+        isDiagram &&
+          "mermaid-toolbar absolute top-0 right-0 z-10 w-fit rounded-lg border border-border bg-background/95 px-1 py-0.5",
       )}
       {...props}
     >
       {children ?? (
         <>
-          <CodeBlockTitle className="min-w-0">
-            <FileDisplayIcon src={descriptor.fileIconSrc} size={16} className="shrink-0" />
-            <CodeBlockFilename className="truncate lowercase">{languageLabel}</CodeBlockFilename>
-          </CodeBlockTitle>
-          <CodeBlockActions>
-            {isMermaidLanguage(languageLabel) ? (
-              <CodeBlockMermaidPreviewButton />
+          {!isDiagram ? (
+            <CodeBlockTitle className="min-w-0">
+              <FileDisplayIcon src={descriptor.fileIconSrc} size={16} className="shrink-0" />
+              <CodeBlockFilename className="truncate lowercase">{languageLabel}</CodeBlockFilename>
+            </CodeBlockTitle>
+          ) : null}
+          <CodeBlockActions className={isDiagram ? "m-0 gap-0.5" : undefined}>
+            {isDiagram ? (
+              <CodeBlockMermaidPreviewButton className="pointer-coarse:min-h-11 pointer-coarse:min-w-11" />
             ) : showWrapButton ? (
               <CodeBlockWrapButton />
             ) : null}
-            <CodeBlockCopyButton />
+            <CodeBlockCopyButton
+              className={isDiagram ? "pointer-coarse:min-h-11 pointer-coarse:min-w-11" : undefined}
+            />
           </CodeBlockActions>
         </>
       )}
@@ -315,19 +327,38 @@ export const CodeBlock = ({
   const contextValue = useMemo(
     () => ({
       code,
+      isDiagram: shouldRenderMermaid,
       mermaidPreviewAvailable: Boolean(mermaidPreviewSvg),
       openMermaidPreview,
       toggleWrapLongLines,
       wrapLongLines: isWrapped,
     }),
-    [code, isWrapped, mermaidPreviewSvg, openMermaidPreview, toggleWrapLongLines],
+    [
+      code,
+      isWrapped,
+      mermaidPreviewSvg,
+      openMermaidPreview,
+      shouldRenderMermaid,
+      toggleWrapLongLines,
+    ],
   );
 
   return (
     <CodeBlockContext.Provider value={contextValue}>
-      <CodeBlockContainer className={className} language={language} {...props}>
+      <CodeBlockContainer
+        className={className}
+        language={language}
+        diagram={shouldRenderMermaid}
+        {...props}
+      >
         {children}
-        <div className={cn("p-2 pt-0 pb-3", contentClassName)}>
+        <div
+          className={cn(
+            "p-2 pt-0 pb-3",
+            contentClassName,
+            shouldRenderMermaid && "p-0 pt-8 pointer-coarse:pt-12",
+          )}
+        >
           {shouldRenderMermaid ? (
             <MermaidBlock
               code={code}
@@ -337,7 +368,6 @@ export const CodeBlock = ({
               fontSizePx={fontSizePx}
               onOpenPreview={openMermaidPreview}
               onPreviewSvgChange={setMermaidPreviewSvg}
-              // className={cn(children ? "border-t border-border" : null)}
             />
           ) : (
             <CodeViewer

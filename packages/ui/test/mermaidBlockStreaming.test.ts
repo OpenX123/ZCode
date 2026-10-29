@@ -109,9 +109,11 @@ describe("MermaidBlock 图表稳定性", () => {
     const first = render(tree({ code, theme: "light" }));
     await flush();
     expect(screen.getByRole("img")).toBeTruthy();
+    expect(screen.getByRole("img").hasAttribute("data-mermaid-reveal")).toBe(true);
     first.unmount();
     render(tree({ code, theme: "light" }));
     expect(screen.getByRole("img")).toBeTruthy();
+    expect(screen.getByRole("img").hasAttribute("data-mermaid-reveal")).toBe(false);
     expect(screen.queryByRole("status")).toBeNull();
     await flush();
     expect(renderMermaid).toHaveBeenCalledTimes(1);

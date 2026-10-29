@@ -599,6 +599,11 @@ export function DiagramPreviewDialog({
         className="flex h-[100dvh] max-h-[100dvh] w-screen max-w-none grid-rows-none flex-col gap-0 rounded-2xl border-0 p-0 sm:h-[86vh] sm:max-h-[86vh] sm:w-[90vw] sm:border sm:border-popover-border"
         ref={dialogContentRef}
         showCloseButton={false}
+        onOpenAutoFocus={(event) => {
+          // 自动聚焦首个工具按钮会打开 Tooltip，令第一次 Esc 只关闭提示而非预览。
+          event.preventDefault();
+          dialogContentRef.current?.focus();
+        }}
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>
         <DialogDescription className="sr-only">

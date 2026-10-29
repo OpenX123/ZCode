@@ -4,15 +4,20 @@
 
 当前规则见 [双栏规范](../chat/two-column-workbench.md)；取代旧 SWG 任意四向分屏与 TSL08 冷启动清空布局语义。
 
-| Catalog ID    | 验证证据                                                                          | 状态                                                                                                                                          |
-| ------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| TWC01         | workbench-tabs / Composer 配置、附件、pending 身份与项目创建接续回归              | 独立草稿及配置通过；真实 Codex + Claude 并行执行待验证                                                                                        |
-| TWC02 / TWC04 | pending `conversation-session-two-column-workbench.test.ts`                       | macOS Electron 1/1 通过：右上分栏、无顶部会话栏和选中框、独立输入、菜单交换与移动、窄屏切栏、刷新恢复、关闭合栏；比例恢复另由契约验证         |
-| TWC03         | workbenchSessionPlacement / 工作台状态与 UI 回归                                  | 唯一放置、焦点切换及原地绑定通过；真实运行中关闭后续流待验证                                                                                  |
-| TWC05         | scope 状态机与现有 provider/registry 回归                                         | 身份路由回归通过；真实 SSH 混排及断线重连待验证                                                                                               |
-| TWC06         | permissionDialogFocus / elicitationDialogFocus / v4InteractionDialogs             | DOM 焦点回归通过；真实双会话同时请求权限待验证                                                                                                |
-| TWC07         | pending `conversation-session-two-column-workbench.test.ts` / workbench-tabs 契约 | macOS Electron 1/1 通过：每栏标题、× 合栏、目标 active 保留和菜单找回两份草稿；状态契约验证左右任一栏批量合并只通知一次，并保留后台视图与草稿 |
-| MMD01–MMD04   | mermaid-rendering contract / MermaidBlock / 现有图表回归                          | 5 文件 60 项通过，覆盖流式候选、缓存首屏、保图、主题字体和 SVG ID；真实 Agent 输出视觉验收待验证                                              |
+| Catalog ID    | 验证证据                                                                           | 状态                                                                                                                                                                                                                                                                                                                                                            |
+| ------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TWC01         | workbench-tabs / Composer 配置、附件、pending 身份与项目创建接续回归               | 独立草稿及配置通过；真实 Codex + Claude 并行执行待验证                                                                                                                                                                                                                                                                                                          |
+| TWC02 / TWC04 | pending `conversation-session-two-column-workbench.test.ts`                        | macOS Electron 1/1 通过：右上分栏、无顶部会话栏和选中框、独立输入、菜单交换与移动、窄屏切栏、刷新恢复、关闭合栏；比例恢复另由契约验证                                                                                                                                                                                                                           |
+| TWC03         | workbenchSessionPlacement / 工作台状态与 UI 回归                                   | 唯一放置、焦点切换及原地绑定通过；真实运行中关闭后续流待验证                                                                                                                                                                                                                                                                                                    |
+| TWC05         | scope 状态机与现有 provider/registry 回归                                          | 身份路由回归通过；真实 SSH 混排及断线重连待验证                                                                                                                                                                                                                                                                                                                 |
+| TWC06         | permissionDialogFocus / elicitationDialogFocus / v4InteractionDialogs              | DOM 焦点回归通过；真实双会话同时请求权限待验证                                                                                                                                                                                                                                                                                                                  |
+| TWC07         | pending `conversation-session-two-column-workbench.test.ts` / workbench-tabs 契约  | macOS Electron 1/1 通过：每栏标题、× 合栏、目标 active 保留和菜单找回两份草稿；状态契约验证左右任一栏批量合并只通知一次，并保留后台视图与草稿                                                                                                                                                                                                                   |
+| MMD01–MMD04   | mermaid-rendering contract / MermaidBlock / 现有图表回归                           | 5 文件 60 项通过，覆盖流式候选、缓存首屏、保图、主题字体和 SVG ID；真实 Agent 输出视觉验收待验证                                                                                                                                                                                                                                                                |
+| MMD05–MMD06   | pending `packages/ui/test/browser/manual-review/pending/markdown-diagram.test.mjs` | 2026-10-28 浏览器 18/18 通过：纵向/横向 ELK 正交主干与小圆角、矩形节点与虚线条件框、分支/汇合/回边不重叠、同字级紧凑布局和显式布局/曲线覆盖、其他图种/子图/特殊形状、自然高度、375/844/1100px、触屏 44px 操作区、浅深主题与旧别名、文字对比和字体、复制/放大/单次 Esc、自定义样式、流式保图、缓存及减少动态效果；不宣称真实 Agent、整机 Electron 或实体手机覆盖 |
+
+MMD 阅读优化证据：`packages/desktop/.e2e-artifacts/markdown-diagram-browser/` 的浅深主题完整页截图与 `verification.log`。使用真实 `MessageResponse`、Mermaid 和 Dialog，夹具仅提供固定 Markdown，未调用模型或写入真实会话。本轮图表稳定性单测 1 文件 7 项通过；根 typecheck、lint（93 warnings、0 errors）及架构检查通过。候选保持 pending，尚未人工转正。
+
+同日直角折线优化复验：浏览器 14/14、`mermaidBlockStreaming` 7/7、根 typecheck、lint（93 warnings、0 errors）和架构检查通过。首版 `step` 虽为直角折线，但截图暴露了节点入口横拐；最终按主方向选择折线，并新增箭头末段方向断言。图表高度比较使用相同文字、字号和源码，显式恢复原曲线与间距作为对照。
 
 最终桌面证据：`desktop-e2e-20261027085642757-p78360-537781450f24fb2f`，双栏截图为同目录 `two-column-workbench.png`。用例无模型请求，显式启用仓库 replay 配置满足测试启动合同；未使用真实账号。侧栏普通/分组右键菜单由交互单测覆盖；当前开发窗口确认一级菜单仅显示“分栏”，悬停后才显示布局子菜单，右上保留一个布局菜单图标。真实编辑器回归覆盖首次恢复迟到时不覆盖新输入。新增用例保持 manual-review/pending，未转正或加入 CI。
 
@@ -4316,10 +4321,13 @@ E01–E11 产品规则已获用户确认，详见 [规格](../desktop/external-a
 - 候选 `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-external-engine-prewarm.test.ts`：隔离的 ACP/官方状态夹具，选择后配置在首发前可见，切换模式后首发与续聊复用同一引擎会话，切换两家引擎不串配置。夹具不调用真实供应商；真实账号桌面另列证据。
 
 - E13（accepted，复用该候选）：模型目录一次展开且所有项目可见，无滚动容器；选择模型、提交深度后首发与续聊使用相同原始配置。用受控 ACP 响应断言实际回传，不调用真实账号；状态保留 manual-review/pending。
+- E13 深度回跳回归（2026-10-28）：延迟 ACP 配置确认，两家引擎在指针释放、按键释放后持续显示所选档位，不先回到旧值；确认值回流后仍一致。拒绝配置时恢复原确认值并提示失败，不隐式提交 prompt；候选保持 pending。
 
 ### E14 外部引擎运行中配置与工具分段（accepted）
 
 复用候选 `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-external-engine-prewarm.test.ts`。两家引擎在受控运行窗口内切换模式、模型、思考深度；配置 ACK 后继续原 prompt，拒绝的配置提示且保留当前值。正文→工具→思考→最终正文保持分段，完成后过程折叠且最终回答外置。供应商由隔离 ACP 夹具替代，不代表真实 API 或跨平台验收；保留 pending，不自动准入 CI。
+
+停止配置回归（2026-10-28）：停止时引擎返回非法通知并断开，界面须出现已有重试连接入口；重试后原会话和确认值恢复，可直接修改深度，重连与调节不提交额外 prompt。正常停止与单次配置业务拒绝仍保持配置可用。
 
 ### E15 外部引擎工具明细、子 Agent 与上下文（pending）
 

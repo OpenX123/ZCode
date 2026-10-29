@@ -1373,7 +1373,7 @@ export const MessageResponse = memo(
       [renderZCodeFileCitations, workspaceHomePath, workspacePath],
     );
     const responseClassName = cn(
-      "size-full text-ui-base leading-[1.75] tracking-wide [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+      "size-full text-ui-base leading-[1.75] tracking-normal [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
       className,
     );
     const fallbackClassName = cn(responseClassName, "whitespace-pre-wrap break-words");
@@ -1539,7 +1539,7 @@ export const MessageResponse = memo(
           node: _node,
           ...strongProps
         }: MarkdownStrongProps) => (
-          <strong className={cn("font-medium", strongClassName)} {...strongProps} />
+          <strong className={cn("font-semibold", strongClassName)} {...strongProps} />
         ),
         code: ({
           children,

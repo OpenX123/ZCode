@@ -1,6 +1,8 @@
 "use client";
 
 import { createMermaidPlugin, type MermaidConfig } from "@streamdown/mermaid";
+import elkLayouts from "@mermaid-js/layout-elk";
+import mermaid from "mermaid";
 import { Loader2Icon } from "lucide-react";
 import type { HTMLAttributes } from "react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
@@ -37,6 +39,38 @@ export interface MermaidBlockProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 const mermaidPlugin = createMermaidPlugin();
+const elkLayout = elkLayouts[0]!;
+mermaid.registerLayoutLoaders([
+  ...elkLayouts,
+  {
+    ...elkLayout,
+    name: "zcode-elk",
+    loader: async () => {
+      const layout = await elkLayout.loader();
+      return {
+        render(data, svg, helpers, options) {
+          // 在布局测量之前收紧默认节点；只改渲染数据，复制的 Mermaid 原文保持不变。
+          // 显式样式和特殊形状继续由作者控制，避免用 SVG 后处理破坏连线交点。
+          if (String(data.type).startsWith("flowchart")) {
+            for (const node of data.nodes) {
+              if (node.isGroup || node.cssCompiledStyles?.length || node.cssStyles?.length)
+                continue;
+              if (node.shape === "diamond") {
+                node.shape = "rect";
+                node.cssClasses = `${node.cssClasses ?? ""} zcode-decision`;
+              }
+              if (node.shape === "rect" || node.shape === "squareRect") {
+                node.cssClasses = `${node.cssClasses ?? ""} zcode-process`;
+                node.labelPaddingX = 20;
+              }
+            }
+          }
+          return layout.render(data, svg, helpers, options);
+        },
+      };
+    },
+  },
+]);
 const mermaidCoordinator = createMermaidRenderCoordinator(async (id, source, config) => {
   // 排队后页面可能已隐藏；在创建 Mermaid DOM 前再次检查，恢复后会用最新候选重试。
   if (typeof document !== "undefined" && document.visibilityState === "hidden") {
@@ -147,6 +181,15 @@ function createMermaidConfig(resolvedTheme: "light" | "dark"): MermaidConfig {
     "--color-border",
     resolvedTheme === "dark" ? "#3f3f46" : "#d4d4d8",
   );
+  const blue = resolveCssColor(
+    "--color-icon-blue",
+    resolvedTheme === "dark" ? "#80beff" : "#0867ce",
+  );
+  const nodeText = normalizeCssColorForMermaid(`color-mix(in srgb, ${blue} 65%, ${text})`, text);
+  const nodeBorder = normalizeCssColorForMermaid(
+    `color-mix(in srgb, ${blue} 25%, ${accent})`,
+    border,
+  );
 
   return {
     fontFamily: "ui-sans-serif, system-ui, sans-serif",
@@ -154,21 +197,32 @@ function createMermaidConfig(resolvedTheme: "light" | "dark"): MermaidConfig {
     startOnLoad: false,
     suppressErrorRendering: true,
     theme: "base",
+    // 由 ELK 规划正交路径；rounded 仅柔化拐角，不再用 step 插值制造短台阶。
+    layout: "zcode-elk",
+    elk: { mergeEdges: true, nodePlacementStrategy: "NETWORK_SIMPLEX" },
+    flowchart: { curve: "rounded", nodeSpacing: 28, rankSpacing: 36, padding: 12 },
+    themeCSS: `
+      :where(.node rect.basic) { rx: 10px; ry: 10px; }
+      .node.zcode-process .nodeLabel { display: inline-block; min-width: 8em; }
+      .node.zcode-decision rect.basic { fill: ${background}; stroke: ${blue}; stroke-dasharray: 3 3; }
+      .edgeLabel p { border: 1px solid ${nodeBorder}; border-radius: 12px; padding: 2px 8px; background-color: ${background}; }
+    `,
     themeVariables: {
-      actorBkg: background,
-      actorBorder: border,
-      actorTextColor: text,
-      background,
+      actorBkg: accent,
+      actorBorder: nodeBorder,
+      actorTextColor: nodeText,
+      background: "transparent",
+      edgeLabelBackground: background,
       lineColor: subtleText,
-      mainBkg: background,
-      nodeBorder: border,
+      mainBkg: accent,
+      nodeBorder,
       noteBkgColor: accent,
       noteTextColor: text,
-      primaryBorderColor: border,
-      primaryColor: surface,
-      primaryTextColor: text,
+      primaryBorderColor: nodeBorder,
+      primaryColor: accent,
+      primaryTextColor: nodeText,
       secondaryBorderColor: border,
-      secondaryColor: accent,
+      secondaryColor: surface,
       secondaryTextColor: text,
       signalColor: subtleText,
       signalTextColor: text,
@@ -228,13 +282,19 @@ export function MermaidBlock({
   const source = streaming ? completeMermaidSourceLines(code) : code.trim();
   const resolvedTheme = resolveBrowserTheme(theme);
   const themeKey = `${theme}:${resolvedTheme}:${systemThemeRevision}`;
-  const mermaidConfig = useMemo(
-    () => ({ ...createMermaidConfig(resolvedTheme), fontSize: fontSizePx }),
-    [fontSizePx, resolvedTheme, themeKey],
-  );
+  const mermaidConfig = useMemo(() => {
+    const config = createMermaidConfig(resolvedTheme);
+    return {
+      ...config,
+      fontSize: fontSizePx,
+      themeVariables: { ...config.themeVariables, fontSize: `${fontSizePx}px` },
+    };
+  }, [fontSizePx, resolvedTheme, themeKey]);
   const request = useMemo(() => ({ source, config: mermaidConfig }), [source, mermaidConfig]);
   const renderKey = JSON.stringify(request);
   const cachedSvg = mermaidCoordinator.peek(request);
+  // 只让首次异步首图过渡；同一容器的流式更新及缓存重挂载不能反复淡入。
+  const revealFirstDiagram = useRef(cachedSvg === undefined).current;
   const [renderState, setRenderState] = useState<MermaidRenderState>(() => ({
     svg: cachedSvg ?? null,
     errorKey: null,
@@ -285,24 +345,29 @@ export function MermaidBlock({
 
   return (
     <div
-      className={cn("group/mermaid relative min-h-32 w-full bg-card", className)}
+      className={cn("group/mermaid relative min-h-32 w-full min-w-0", className)}
       data-mermaid-block=""
       {...props}
     >
-      <div className="max-h-[420px] overflow-auto p-3 text-foreground">
+      {/* 长图由正文滚动区承载，不再套限高的内部滚动区截断首尾节点。 */}
+      <div className="py-3 text-foreground">
         {!displaySvg && !hasFinalError ? (
           <div
             role="status"
             className="flex min-h-28 items-center justify-center gap-2 text-foreground-subtle text-ui-base"
           >
-            <Loader2Icon className="size-4 animate-spin" />
+            <Loader2Icon className="size-4 animate-spin motion-reduce:animate-none" />
             <span>{intl.formatMessage({ id: "codeBlock.mermaid.loading" })}</span>
           </div>
         ) : null}
         {displaySvg ? (
           <div
             aria-label={intl.formatMessage({ id: "codeBlock.mermaid.ariaLabel" })}
-            className="flex min-h-28 items-center justify-center [&_svg]:h-auto [&_svg]:max-w-full"
+            className={cn(
+              "flex min-h-28 min-w-0 items-center justify-center [&_svg]:h-auto [&_svg]:max-w-full",
+              revealFirstDiagram && "mermaid-reveal",
+            )}
+            data-mermaid-reveal={revealFirstDiagram || undefined}
             dangerouslySetInnerHTML={{ __html: displaySvg }}
             onDoubleClick={onOpenPreview}
             role="img"

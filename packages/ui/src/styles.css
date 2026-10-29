@@ -56,6 +56,42 @@
  * 这里显式补一条 @source，让 Tailwind 始终扫描 UI 包源码，避免下拉框、菜单这类组件渲染成半残状态。
  */
 @source "./**/*.{ts,tsx}";
+
+/* 首图异步完成时柔和出现；后续 SVG 替换复用同一元素，不重播正文或图表动效。 */
+.mermaid-reveal {
+  transition:
+    opacity 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@starting-style {
+  .mermaid-reveal {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@media (hover: hover) and (pointer: fine) {
+  .mermaid-code-block .mermaid-toolbar {
+    opacity: 0;
+    transition: opacity 150ms ease;
+  }
+  .mermaid-code-block:hover .mermaid-toolbar,
+  .mermaid-code-block:focus-within .mermaid-toolbar {
+    opacity: 1;
+  }
+  .mermaid-code-block:focus-within .mermaid-toolbar {
+    transition: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mermaid-reveal {
+    transition: opacity 120ms ease;
+  }
+  @starting-style {
+    .mermaid-reveal {
+      transform: none;
+    }
+  }
+}
 /* 云端模板常用样式的构建保障，不是运行时 class 白名单。 */
 @source inline("text-center text-ui-base/relaxed text-foreground-subtle font-semibold font-normal text-foreground whitespace-nowrap underline decoration-foreground-subtle decoration-dashed underline-offset-4");
 

@@ -6,19 +6,19 @@ Assistant message Markdown uses a reading-oriented type scale while the surround
 
 ## Type Scale
 
-| Surface | Standard |
-|---|---|
-| User and assistant message containers | `text-ui-lg` |
-| Markdown body | `text-ui-base` |
-| h1 | `text-ui-xl` (`--ui-font-size + 4px`) |
-| h2 | `text-ui-lg` (`--ui-font-size + 2px`) |
-| h3 | `text-ui-base` |
-| h4-h6 | `text-ui-base` |
-| Normal and file links | `text-ui-base` |
-| Inline code | `font-mono text-ui-sm` |
-| Code block body | default `14px` |
-| Code block header | `text-ui-base` |
-| Tables | `text-ui-base` |
+| Surface                               | Standard                              |
+| ------------------------------------- | ------------------------------------- |
+| User and assistant message containers | `text-ui-lg`                          |
+| Markdown body                         | `text-ui-base`                        |
+| h1                                    | `text-ui-xl` (`--ui-font-size + 4px`) |
+| h2                                    | `text-ui-lg` (`--ui-font-size + 2px`) |
+| h3                                    | `text-ui-base`                        |
+| h4-h6                                 | `text-ui-base`                        |
+| Normal and file links                 | `text-ui-base`                        |
+| Inline code                           | `font-mono text-ui-sm`                |
+| Code block body                       | default `14px`                        |
+| Code block header                     | `text-ui-base`                        |
+| Tables                                | `text-ui-base`                        |
 
 ## Implementation Contract
 
@@ -27,6 +27,7 @@ Assistant message Markdown uses a reading-oriented type scale while the surround
 - Markdown tables keep their own explicit `text-ui-base` class so table preview and inline table rendering stay aligned.
 - Markdown h1 uses the scalable `text-ui-xl` token instead of Tailwind's fixed `text-xl`, so heading hierarchy follows the UI font-size setting without scaling layout geometry.
 - Code block body size continues to come from code preview settings, with the default set to `14px`.
+- 正文使用自然字距与 1.75 行高，粗体使用 `font-semibold`，明确区分段落与强调；不增加正文逐 token 动画。Mermaid 的自然高度、主题与操作栏规则见 [Mermaid 渲染](chat/mermaid-rendering.md)。
 
 ## Link Interaction Contract
 
