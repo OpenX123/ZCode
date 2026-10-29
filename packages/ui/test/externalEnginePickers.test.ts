@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { EngineConfigOption } from "@zcode/shared/external-engine";
@@ -50,11 +50,75 @@ it("深度拖动仅预览，释放后提交一次；键盘也提交引擎原始�
   expect(onChange).not.toHaveBeenCalled();
   fireEvent.pointerUp(slider);
   expect(onChange).toHaveBeenCalledExactlyOnceWith("reasoning_effort", "high-native");
+  expect(slider.getAttribute("aria-valuetext")).toBe("High");
+  expect((slider as HTMLInputElement).value).toBe("2");
+  // 引擎确认尚未回流时，其他 snapshot 更新也不能把已释放的滑块拉回旧值。
+  view.rerender(tree([{ ...effort }], onChange));
+  expect(slider.getAttribute("aria-valuetext")).toBe("High");
   view.rerender(tree([{ ...effort, currentValue: "high-native" }], onChange));
   fireEvent.change(slider, { target: { value: "0" } });
   fireEvent.keyUp(slider, { key: "Home" });
   expect(onChange).toHaveBeenLastCalledWith("reasoning_effort", "low-native");
   expect(onChange).toHaveBeenCalledTimes(2);
+  expect(slider.getAttribute("aria-valuetext")).toBe("Low");
+  expect((slider as HTMLInputElement).value).toBe("0");
+});
+
+it("接受回包早于 snapshot 时仍保持所选位置，新确认值最终接管", async () => {
+  const request = Promise.withResolvers<boolean>();
+  const onChange = vi.fn(() => request.promise);
+  const view = render(tree([effort], onChange));
+  fireEvent.click(screen.getByRole("button", { name: "Reasoning effort" }));
+  const slider = screen.getByRole("slider");
+  fireEvent.change(slider, { target: { value: "2" } });
+  fireEvent.pointerUp(slider);
+  await act(async () => request.resolve(true));
+  expect(slider.getAttribute("aria-valuetext")).toBe("High");
+  view.rerender(tree([{ ...effort, currentValue: "high-native" }], onChange));
+  expect(slider.getAttribute("aria-valuetext")).toBe("High");
+  view.rerender(tree([effort], onChange));
+  expect(slider.getAttribute("aria-valuetext")).toBe("Medium");
+  view.rerender(tree([{ ...effort, currentValue: "low-native" }], onChange));
+  expect(slider.getAttribute("aria-valuetext")).toBe("Low");
+  expect(onChange).toHaveBeenCalledOnce();
+});
+
+it.each(["failed", "rejected"])("配置 %s 后恢复确认值，不保留未生效的深度", async (kind) => {
+  const request = Promise.withResolvers<boolean>();
+  const onChange = vi.fn(() => request.promise);
+  render(tree([effort], onChange));
+  fireEvent.click(screen.getByRole("button", { name: "Reasoning effort" }));
+  const slider = screen.getByRole("slider");
+  fireEvent.change(slider, { target: { value: "2" } });
+  fireEvent.keyUp(slider, { key: "End" });
+  expect(slider.getAttribute("aria-valuetext")).toBe("High");
+  await act(async () => {
+    if (kind === "failed") request.resolve(false);
+    else request.reject(new Error("E2E_CONFIG_REJECTED"));
+  });
+  expect(slider.getAttribute("aria-valuetext")).toBe("Medium");
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("reasoning_effort", "high-native");
+});
+
+it("较早提交的失败不清除后续手势，关闭后重新打开仍显示确认值", async () => {
+  const request = Promise.withResolvers<boolean>();
+  render(
+    tree(
+      [effort],
+      vi.fn(() => request.promise),
+    ),
+  );
+  const trigger = screen.getByRole("button", { name: "Reasoning effort" });
+  fireEvent.click(trigger);
+  const slider = screen.getByRole("slider");
+  fireEvent.change(slider, { target: { value: "2" } });
+  fireEvent.pointerUp(slider);
+  fireEvent.change(slider, { target: { value: "0" } });
+  await act(async () => request.resolve(false));
+  expect(slider.getAttribute("aria-valuetext")).toBe("Low");
+  fireEvent.keyDown(slider, { key: "Escape" });
+  fireEvent.click(trigger);
+  expect(screen.getByRole("slider").getAttribute("aria-valuetext")).toBe("Medium");
 });
 
 it("Escape 丢弃预览，模型切换后的目录不会沿用旧档位", () => {

@@ -1,6 +1,7 @@
 import type { EngineControlsProps } from "./contract.js";
 export const externalEngineControlsExample = {
   engine: "codex",
+  onConfigChange: async () => true,
   options: [
     {
       id: "mode",

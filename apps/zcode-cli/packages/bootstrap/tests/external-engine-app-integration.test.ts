@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile, rename, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ProviderRegistry } from "@zcode/provider";
 import { createInMemorySessionEventStore, createSqliteSessionStore } from "@zcode/adapters/storage";
 import { createSessionId, SessionEventType } from "@zcode/contracts";
@@ -18,8 +18,9 @@ import { createZCodeApp } from "../src/app/create-app.js";
 const adapter = String.raw`
 const readline = require('node:readline');
 const selected={model:'test',effort:'low'};
+let pending;
 const log=method=>require('node:fs').appendFileSync(process.env.ACP_TEST_REQUESTS,method+'\n');
-const configs=()=>Object.entries(selected).map(([id,currentValue])=>({id,name:id,type:'select',currentValue,options:(id==='model'?['test','other']:['low','high']).map(value=>({value,name:value}))}));
+const configs=()=>Object.entries(selected).map(([id,currentValue])=>({id,name:id,type:'select',currentValue,options:(id==='model'?['test','other']:['low','high','reject']).map(value=>({value,name:value}))}));
 const send = (frame) => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...frame})+'\n');
 readline.createInterface({input:process.stdin}).on('line', (line) => {
  const f=JSON.parse(line); log(f.method); const sid=f.params.sessionId || 'external-test-session';
@@ -30,9 +31,19 @@ readline.createInterface({input:process.stdin}).on('line', (line) => {
   send({id:f.id,result:{sessionId:sid,configOptions:configs()}});
  }
  if(f.method==='session/set_config_option') {
+  if(f.params.value==='reject') { send({id:f.id,error:{code:-32602,message:'unsupported'}});return; }
   selected[f.params.configId]=f.params.value;send({id:f.id,result:{configOptions:configs()}});
  }
+ if(f.method==='session/cancel' && pending) {
+  if(pending.params.prompt[0].text==='broken-cancel') update(null);
+  else send({id:pending.id,result:{stopReason:'cancelled'}});
+  pending=undefined;return;
+ }
  if(f.method==='session/prompt') {
+  if(['healthy-cancel','broken-cancel'].includes(f.params.prompt[0].text)) {
+   pending=f;update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'waiting-for-stop-'+f.params.prompt[0].text}});return;
+  }
+  if(f.params.prompt[0].text==='disconnect') { process.exit(7); }
   if(f.params.prompt[0].text==='interleaved') {
    update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'checking files'}});
    update({sessionUpdate:'tool_call',toolCallId:'bash-1',name:'Bash',rawInput:{},status:'pending'});
@@ -224,6 +235,42 @@ describe("外部引擎 App 集成", () => {
         ))
           cold.applyEvent(event);
         checkAgentDetails(cold);
+        // 停止时的非法通知会使 adapter 清理连接；必须同步撤销 ready，重连不能重发 prompt。
+        for (const scenario of ["healthy-cancel", "broken-cancel", "disconnect"]) {
+          let completion: Promise<unknown>;
+          if (scenario === "disconnect") {
+            completion = app.submitPrompt(scenario).catch(() => undefined);
+          } else {
+            completion = app.submitPrompt(scenario).catch(() => undefined);
+            await vi.waitFor(async () => {
+              expect(JSON.stringify(await eventStore.getEvents(sessionId))).toContain(
+                `waiting-for-stop-${scenario}`,
+              );
+            });
+            app.runtime.stopActiveForegroundExecution();
+          }
+          await completion;
+          expect(app.runtime.getEngineConfigState()).toBe(
+            scenario === "healthy-cancel" ? "ready" : "error",
+          );
+          expect(app.runtime.getEngineConfigOptions()[1]?.currentValue).toBe("high");
+          const before = (await readFile(env.ACP_TEST_REQUESTS, "utf8"))
+            .split("\n")
+            .filter((method) => method === "session/prompt").length;
+          await app.runtime.prepareExternalEngineSession();
+          expect(app.runtime.getEngineConfigState()).toBe("ready");
+          await app.runtime.setEngineConfigOption("effort", "low");
+          expect(app.runtime.getEngineConfigOptions()[1]?.currentValue).toBe("low");
+          await app.runtime.setEngineConfigOption("effort", "high");
+          await expect(app.runtime.setEngineConfigOption("effort", "reject")).rejects.toThrow();
+          expect(app.runtime.getEngineConfigState()).toBe("ready");
+          expect((await store.getSession(sessionId))?.externalSessionId).toBe(
+            "external-test-session",
+          );
+          const requests = (await readFile(env.ACP_TEST_REQUESTS, "utf8")).split("\n");
+          expect(requests.filter((method) => method === "session/prompt")).toHaveLength(before);
+          expect(requests.filter((method) => method === "session/new")).toHaveLength(1);
+        }
         const transcript = JSON.stringify(await store.messages({ sessionID: sessionId }));
         expect(transcript).toContain("external answer");
         await app.close();
@@ -267,8 +314,8 @@ describe("外部引擎 App 集成", () => {
         expect(app.runtime.getEngineConfigOptions()[0]?.currentValue).toBe("other");
         const requests = (await readFile(join(root, "requests.log"), "utf8")).trim().split("\n");
         expect(requests.filter((method) => method === "session/new")).toHaveLength(1);
-        expect(requests.filter((method) => method === "session/resume")).toHaveLength(2);
-        expect(requests.filter((method) => method === "session/prompt")).toHaveLength(4);
+        expect(requests.filter((method) => method === "session/resume")).toHaveLength(4);
+        expect(requests.filter((method) => method === "session/prompt")).toHaveLength(7);
       } finally {
         await app?.close();
         store.close();

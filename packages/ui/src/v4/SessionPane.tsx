@@ -3824,11 +3824,13 @@ export function SessionPane({
               disabled={connecting}
               onConfigChange={(configId, value) => {
                 // 配置与发送复用同一屏障，禁止刚选中的引擎模式尚未应用就开始下一轮。
-                void configCommandBarrier.enqueue(async () => {
+                return configCommandBarrier.enqueue(async () => {
                   const ack = await dispatchConfigCas("setEngineConfigOption", { configId, value });
-                  if (ack?.status !== "accepted" && ack?.status !== "noop") {
+                  const accepted = ack?.status === "accepted" || ack?.status === "noop";
+                  if (!accepted) {
                     toast(intl.formatMessage({ id: "engine.configChangeFailed" }));
                   }
+                  return accepted;
                 });
               }}
             />

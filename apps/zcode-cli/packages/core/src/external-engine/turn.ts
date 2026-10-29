@@ -1,4 +1,8 @@
-import { externalEngineSessionInput, publishExternalEngineSessionUpdate } from "./session.js";
+import {
+  externalEngineSessionInput,
+  publishExternalEngineConfigError,
+  publishExternalEngineSessionUpdate,
+} from "./session.js";
 import { structuredPatch } from "diff";
 import { isExternalSessionEngine } from "@zcode/shared";
 import {
@@ -171,7 +175,7 @@ export async function runExternalEngineTurn(
       else throw new Error("Attachment type is unsupported by the external engine");
     }
   try {
-    const result = await runtime.externalEnginePort.runTurn({
+    const completion = runtime.externalEnginePort.runTurn({
       ...externalEngineSessionInput(runtime, input.signal, input.traceContext),
       prompt: blocks,
       async requestPermission(request) {
@@ -385,6 +389,11 @@ export async function runExternalEngineTurn(
           );
         }
       },
+    });
+    const result = await completion.catch(async (error: unknown) => {
+      // adapter 在 runTurn 抛错时清理连接，必须同步撤销 ready；否则配置会一直命中 not_ready。
+      await publishExternalEngineConfigError(runtime, error, input.traceContext);
+      throw error;
     });
     await closeActiveText();
     state.tokenCount = (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0);

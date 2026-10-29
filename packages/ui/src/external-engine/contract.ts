@@ -18,7 +18,8 @@ export interface EngineControlsProps {
   engine: SessionEngine;
   onSelectEngine?: (engine: SessionEngine) => void;
   options?: EngineConfigOption[];
-  onConfigChange?: (configId: string, value: string) => void;
+  /** 返回 false 表示提交失败，控件撤销该次局部显示；确认配置仍只读 snapshot。 */
+  onConfigChange?: (configId: string, value: string) => void | Promise<boolean>;
   disabled?: boolean;
   loading?: boolean;
   error?: string;

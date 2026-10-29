@@ -12,6 +12,7 @@
 引擎列表默认展示就绪、版本与登录状态；包名折叠到技术详情，复制登录命令不执行命令。
 
 运行中原生配置保持可调，仍复用串行配置屏障与 snapshot 确认值；连接未就绪时禁用，配置拒绝可见提示且保留原值。
+深度滑块提交后保持局部所选位置直到确认配置回流，避免释放瞬间回跳；onConfigChange 可返回 Promise<boolean>，false 或拒绝时撤销该次局部显示。局部显示不写入 snapshot，不覆盖新目录或新确认值；较早请求失败不得清掉后续手势。
 
 上下文用量直接复用 snapshot.usage 与 ChatContextUsage；子 Agent 过程通过现有工具卡按 parentToolCallId 嵌套，无实际 childSessionId 时不展示下钻入口。
 

@@ -1,5 +1,10 @@
 import { describe, expect, test, vi } from "vitest";
-import { createSessionId, SessionEventType, type ExternalEnginePort } from "@zcode/contracts";
+import {
+  createSessionId,
+  SessionEventType,
+  ExternalEngineConnectionError,
+  type ExternalEnginePort,
+} from "@zcode/contracts";
 import { AgentRuntime } from "../src/runtime.js";
 import { createTestSessionEventStore } from "./test-event-store.js";
 import { createRecordingSubagentSessionStore } from "./subagent-test-store.js";
@@ -91,6 +96,55 @@ describe("外部引擎使用既有 turn 生命周期", () => {
     },
   );
 });
+
+test.each(["not_ready", "transport", "timeout", "protocol"] as const)(
+  "配置中的 %s 故障撤销 ready，保留选择并通过既有入口恢复",
+  async (code) => {
+    const sessionId = createSessionId();
+    const eventStore = createTestSessionEventStore();
+    const options = [
+      {
+        id: "reasoning_effort",
+        name: "Reasoning effort",
+        currentValue: "high",
+        options: [{ value: "high", name: "High" }],
+      },
+    ];
+    const prepareSession = vi.fn<ExternalEnginePort["prepareSession"]>(async (input) => {
+      await input.onConfigOptions(options);
+    });
+    const runTurn = vi.fn<ExternalEnginePort["runTurn"]>();
+    const runtime = new AgentRuntime(
+      sessionId,
+      { engine: "codex", externalSessionId: "original-session", workingDirectory: "/workspace" },
+      {
+        eventStore,
+        externalEnginePort: {
+          prepareSession,
+          runTurn,
+          setConfigOption: vi.fn().mockRejectedValue(new ExternalEngineConnectionError({ code })),
+          closeSession: vi.fn(),
+        },
+      },
+    );
+    await runtime.prepareExternalEngineSession();
+    await expect(runtime.setEngineConfigOption("reasoning_effort", "high")).rejects.toThrow();
+    expect(runtime.getEngineConfigState()).toBe("error");
+    expect(runtime.getEngineConfigError()).toEqual({ code });
+    expect(runtime.getEngineConfigOptions()).toEqual(options);
+    await runtime.prepareExternalEngineSession();
+    expect(runtime.getEngineConfigState()).toBe("ready");
+    expect(runtime.getEngineConfigError()).toBeUndefined();
+    expect(prepareSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        externalSessionId: "original-session",
+        configValues: [{ id: "reasoning_effort", value: "high" }],
+      }),
+    );
+    expect(runTurn).not.toHaveBeenCalled();
+    await runtime.closeBrowserSession();
+  },
+);
 
 test("外部引擎busy时拒绝直接guide并把admission guide归一到普通队列", async () => {
   const sessionId = createSessionId();

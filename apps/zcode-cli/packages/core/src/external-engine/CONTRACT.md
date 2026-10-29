@@ -9,3 +9,5 @@
 工具参数、输出和活动通过 ToolCallProgress 更新同一调用；parentToolUseId 映射为 parentToolCallId，并保存在 ToolPart.metadata。子 Agent 文字仅更新父工具活动，不进入主回答。终态后的迟到更新不得重开工具。原始输出与 terminal 元数据优先于包装后的 content，空 content 不丢 rawOutput。
 
 历史冷恢复读取 external_engine_config session entry，然后 prepare 原 externalSessionId 并投影 connecting/ready/error。只有原生确认值才持久化；首发提升补写草稿配置。失败保留历史和保存值，显式重试复用同一 prepare 入口。
+
+runTurn 抛错意味着 adapter 已清理连接，Runtime 在 turn 收尾前发布配置 error，保留原生会话 ID 与已确认值。正常 cancelled 返回保留 ready；配置业务拒绝不改变连接状态，配置中的连接故障进入同一错误投影和既有显式重试入口。

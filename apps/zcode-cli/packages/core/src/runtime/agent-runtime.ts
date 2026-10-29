@@ -4,9 +4,10 @@ import {
   type SessionEngine,
   type EngineConfigOption,
 } from "@zcode/shared";
-import type { ExternalEnginePort } from "@zcode/contracts";
+import { ExternalEngineConnectionError, type ExternalEnginePort } from "@zcode/contracts";
 import {
   publishExternalEngineConfig,
+  publishExternalEngineConfigError,
   prepareExternalEngineSession,
 } from "../external-engine/session.js";
 import {
@@ -400,7 +401,22 @@ export class AgentRuntime {
     const option = this.engineConfigOptions.find((item) => item.id === configId);
     if (!option?.options.some((item) => item.value === value))
       throw new Error("Invalid external engine config option");
-    const options = await this.externalEnginePort.setConfigOption(this.sessionId, configId, value);
+    const options = await this.externalEnginePort
+      .setConfigOption(this.sessionId, configId, value)
+      .catch(async (error: unknown) => {
+        // 业务拒绝保留健康连接；连接类失败则发布 error，开放既有重连入口。
+        if (
+          error instanceof ExternalEngineConnectionError &&
+          ["not_ready", "transport", "timeout", "protocol"].includes(error.failure.code)
+        ) {
+          await publishExternalEngineConfigError(
+            this as unknown as AgentRuntimeInternal,
+            error,
+            this.rootTraceContext,
+          );
+        }
+        throw error;
+      });
     await publishExternalEngineConfig(
       this as unknown as AgentRuntimeInternal,
       options,

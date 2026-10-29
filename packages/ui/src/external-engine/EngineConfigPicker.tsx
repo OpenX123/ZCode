@@ -23,7 +23,7 @@ interface PickerProps {
   open: boolean;
   restoreFocus: boolean;
   onOpenChange: (open: boolean) => void;
-  onValueChange: (value: string) => void;
+  onValueChange: (value: string) => void | Promise<boolean>;
 }
 
 function currentLabel(option: EngineConfigOption) {
@@ -144,9 +144,11 @@ export function EngineEffortPicker({
   onOpenChange,
   onValueChange,
 }: PickerProps & { modelLabel?: string }) {
-  // 仅保存尚未提交的手势预览；snapshot 更新后，旧预览不能覆盖新目录或权威值。
+  // 手势与等待确认期间共用局部预览；新目录或确认值回流后仍由 snapshot 接管。
   const scope = JSON.stringify([option.currentValue, option.options]);
   const [preview, setPreview] = useState<{ scope: string; index: number } | null>(null);
+  // 确认值或目录改变后彻底丢弃旧预览，避免后续切回同一档位时旧手势重新生效。
+  if (preview && preview.scope !== scope) setPreview(null);
   const currentIndex = option.options.findIndex((entry) => entry.value === option.currentValue);
   const index = preview?.scope === scope ? preview.index : currentIndex;
   const label = option.options[index]?.name ?? currentLabel(option);
@@ -154,8 +156,17 @@ export function EngineEffortPicker({
   const sliderDisabled = disabled || option.options.length < 2;
   const commit = (nextIndex: number) => {
     const entry = option.options[nextIndex];
-    setPreview(null);
-    if (!sliderDisabled && entry && entry.value !== option.currentValue) onValueChange(entry.value);
+    if (sliderDisabled || !entry || entry.value === option.currentValue) {
+      setPreview(null);
+      return;
+    }
+    // 释放时立刻清空会先退回旧确认值，再随异步 snapshot 跳到新值；仅失败时撤销本次显示。
+    const submitted = { scope, index: nextIndex };
+    setPreview(submitted);
+    const revert = () => setPreview((current) => (current === submitted ? null : current));
+    void Promise.resolve(onValueChange(entry.value)).then((accepted) => {
+      if (accepted === false) revert();
+    }, revert);
   };
   const changeOpen = (next: boolean) => {
     setPreview(null);

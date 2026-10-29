@@ -157,6 +157,7 @@ sequenceDiagram
 - 模型、模式、fast 等枚举配置点击一次直接展开全部选项，当前值右侧打勾，不使用子菜单、分页或滚动区域。菜单按视口可用高度分列，保持引擎提供的选项顺序，不以隐藏滚动条代替完整展示。
 - `effort`、`reasoning_effort`（含连字符形式）、`thought_level` 配置使用独立深度弹层：上方显示当前档位与当前模型名，下方为带档位圆点的原生离散滑动条。档位及顺序完全来自引擎，不猜测额外档位或默认值；单一档位只展示，不允许调节。
 - 拖动期间只在控件内预览，释放指针或方向键后沿现有 `onConfigChange` 提交一次原始 value；Escape 放弃尚未提交的预览。配置事实仍归 snapshot 所有，打开弹层不写配置。禁用时不允许修改。
+- 释放后等待确认期间，滑块保持所选位置，不得先退回旧确认值再跳到新值；提交回调返回异步接受结果（`false` 表示失败）。确认配置回流后由 snapshot 接管，失败或关闭弹层时丢弃局部显示；较早请求的失败不得清掉后续手势。目录或确认值变化仍以新 snapshot 为准，不新增配置缓存或写入路径。
 - 配置弹层在同一工具栏内互斥；旧弹层退出动画结束时，若用户已打开另一弹层，不得回焦旧触发器或关闭新弹层。保留键盘打开、方向键调节、Home/End 和 Escape 关闭能力。
 - 窄工具栏复用 `useComposerToolbarFit` 的布局裁决：配置入口收为有可访问名称的图标，只读引擎 Logo 保持固定小尺寸，避免外层 `shrink-0` 裁切选项。不新建第二套宽度检测或业务状态。
 - 验收：两家引擎的模式和模型一次展开，全部选项可见且无滚动容器；深度拖动及键盘调节正确回传原始值；单档、未知当前值、禁用、切换模型后的档位变化均不产生隐式配置写入。覆盖深浅主题、窄视口及减少动态效果。
@@ -171,7 +172,9 @@ flowchart TD
   F -->|释放指针或按键| E
   F -->|Escape| G[丢弃预览]
   E --> H[现有 onConfigChange 命令链路]
-  H --> I[snapshot 返回权威配置]
+  H --> K[等待期间保持所选位置]
+  K -->|成功| I[snapshot 返回权威配置]
+  K -->|失败| L[丢弃局部显示并恢复确认值]
   I --> J[更新触发器和滑动条]
 ```
 
@@ -180,6 +183,8 @@ flowchart TD
 隔离桌面 E12/E13 回归通过（1/1，两家引擎）：18 项模型的视口几何与无滚动断言、从模型菜单直接打开深度弹层后的焦点、键盘提交深度、首发及续聊使用 `full / fixture-17 / high`。报告：`packages/desktop/.e2e-artifacts/desktop-e2e-20261025033149385-p63842-f0767c881ad05c2e/summary.md`。选择器相关单测 8/8；根类型检查、E2E 类型检查与架构检查通过；Lint 为 94 warnings / 0 errors。候选用例继续保留 `manual-review/pending`，不据此声明真实供应商或跨平台验收完成。
 
 运行中配置与分段回归（2026-10-25）：修复前两家引擎分别复现正文拼接错位和配置拒绝关闭连接，共 4 个失败断言；修复后 CLI 集成/端口/运行时 15/15、UI 分组/选择器 41/41 通过。隔离 macOS 桌面 E12/E13/E14 通过（1/1，循环覆盖 Claude Code 与 Codex），验证运行中模式/模型/深度切换、配置拒绝提示与 prompt 继续、完成折叠及重新展开。报告：`packages/desktop/.e2e-artifacts/desktop-e2e-20261025040835013-p89419-a2d3594cbd1ce032/summary.md`。根类型检查、E2E 类型检查、架构检查通过；Lint 94 warnings / 0 errors。仅供应商由受控 ACP 夹具替代，不代表真实 API 运行中配置生效时点已验收；用例保留 pending。
+
+深度回跳回归（2026-10-28）：修复前组件断言复现释放后 High 立即退回 Medium；修复后选择器与契约 11/11 通过。隔离 macOS Electron 专项 2/2 通过，覆盖两家引擎的停止重连、指针拖动、键盘调节与配置拒绝；ACP 确认延迟 400ms，释放后连续 800ms 的逐帧档位记录始终保持目标值。截图覆盖 1280px 浅色与 430px 深色 Renderer。报告：`packages/desktop/.e2e-artifacts/desktop-e2e-20261028082641620-p50764-f7fd19815ee7c90a/summary.md`。根类型、E2E 类型与架构检查通过；Lint 93 warnings / 0 errors。供应商为受控夹具，候选保持 pending，未替换已安装应用。
 
 ## 验收场景
 
@@ -366,6 +371,33 @@ sequenceDiagram
 - 根 typecheck 与架构检查通过，根 lint 94 warnings / 0 errors；CLI 改动逻辑定向 lint 通过。未运行全量测试，未提交或推送。真实账号的重新发送、Windows/Linux 整机和 SSH 外部引擎不在本次验收范围。
 
 ## 原会话连接恢复与诊断（2026-10-25）
+
+### 运行中断后的配置状态（2026-10-28）
+
+- adapter 的 `runTurn` 抛错时会清理该会话连接；Runtime 必须同步发布 `engineConfigState=error`，保留已确认配置和原 `externalSessionId`，不能继续发布或沿用 ready。
+- 正常返回 `stopReason=cancelled` 的停止仍可复用连接，不因用户停止而显示连接失败。配置 RPC 的业务拒绝同样保留 ready；配置操作中的连接、协议、超时或 not_ready 错误进入已有错误与重试入口。
+- 用户点击既有重试入口后，通过 prepareSession 恢复原会话及上次确认配置；重试本身不得提交 prompt。恢复成功后可直接调节思考档位，无须额外发送消息。
+- 回归：两家引擎的 prompt 异常和停止时连接异常均投影 error；原配置保留，显式重连后可修改深度，原生会话 ID 不变且 prompt 不重发；健康停止及配置业务拒绝保持可用。
+
+```mermaid
+sequenceDiagram
+  participant U as UI
+  participant R as Runtime
+  participant A as ACP adapter
+  U->>R: 停止当前 turn
+  R->>A: session/cancel
+  alt prompt 正常返回 cancelled
+    A-->>R: cancelled，保留连接
+    R-->>U: turn 停止，配置保持 ready
+  else prompt 抛错并清理连接
+    A-->>R: 抛出异常
+    R-->>U: 配置 error，保留选择及会话 ID
+    U->>R: 既有重试连接命令
+    R->>A: prepare 原 externalSessionId
+    A-->>R: 原生确认配置
+    R-->>U: ready，可调节深度
+  end
+```
 
 - 已复现：同一个 Codex 原生会话可由独立 ACP 进程恢复，但当前桌面 prepare 连续失败；旧实现丢弃 JSON-RPC 出错方法与错误码，无法区分鉴权、会话缺失、协议不支持与暂时错误。不得据统一提示推断网络断开。
 - ACP adapter 仍是连接、请求和重试的唯一所有者。prepareSession 对同一 session 合并并发调用，最多尝试三次，间隔 500ms、1500ms；只重试超时、连接中断和 RPC internal error。鉴权、资源缺失、参数或保存配置不支持立即失败。

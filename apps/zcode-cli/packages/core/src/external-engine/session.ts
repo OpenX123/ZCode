@@ -104,17 +104,25 @@ export async function prepareExternalEngineSession(
     await runtime.externalEnginePort!.prepareSession(input);
     await publishExternalEngineConfigState(runtime, "ready", traceContext);
   } catch (error) {
-    const failure =
-      error instanceof ExternalEngineConnectionError ? error.failure : { code: "request" as const };
-    await publishExternalEngineConfigState(runtime, "error", traceContext, failure);
-    runtime.logger?.warn("External engine preparation failed", {
-      event: "session.external_engine.prepare_failed",
-      module: "core.external_engine",
-      sessionId: runtime.sessionId,
-      ...failure,
-    });
+    await publishExternalEngineConfigError(runtime, error, traceContext);
     throw error;
   }
+}
+
+export async function publishExternalEngineConfigError(
+  runtime: AgentRuntimeInternal,
+  error: unknown,
+  traceContext: TraceContext,
+): Promise<void> {
+  const failure =
+    error instanceof ExternalEngineConnectionError ? error.failure : { code: "request" as const };
+  await publishExternalEngineConfigState(runtime, "error", traceContext, failure);
+  runtime.logger?.warn("External engine connection failed", {
+    event: "session.external_engine.connection_failed",
+    module: "core.external_engine",
+    sessionId: runtime.sessionId,
+    ...failure,
+  });
 }
 
 export async function publishExternalEngineConfig(

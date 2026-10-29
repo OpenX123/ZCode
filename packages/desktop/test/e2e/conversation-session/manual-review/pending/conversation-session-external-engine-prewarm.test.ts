@@ -13,7 +13,9 @@ import { resolveE2EStorageRoot } from "../../../helpers/e2e-runtime-paths.js";
 import {
   prepareV4ConversationE2E,
   getV4PaneSnapshot,
+  getV4FocusedPaneId,
   sendV4Prompt,
+  sendV4PromptInPane,
   startNewV4Draft,
   selectV4TaskById,
   setV4ComposerText,
@@ -28,6 +30,7 @@ const adapter = String.raw`
 const readline=require('node:readline'), fs=require('node:fs'), path=require('node:path');
 const recoveryPath=path.join(__dirname,'recovery-attempts.json');
 const promptPath=path.join(__dirname,'prompt-count.json');
+const configControlPath=path.join(__dirname,'config-control.json');
 const send=f=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...f})+'\n');
 let mode='ENGINE_ID'==='claude-code'?'default':'safe', model='fixture-0', effort='low', turns=0, pendingPrompt; const sid='fixture-session';
 const options=()=>[{id:'fast',name:'Fast mode',currentValue:'off',options:[{value:'off',name:'Off'},{value:'reject',name:'Rejected fast'}]},{id:'mode',name:'Mode',currentValue:mode,options:[{value:'default',name:'Manual'},{value:'auto',name:'Auto'},{value:'safe',name:'Safe'},{value:'full',name:'Full'}]},{id:'model',name:'Model',currentValue:model,options:Array.from({length:18},(_,i)=>({value:'fixture-'+i,name:'Fixture model '+i}))},{id:'EFFORT_ID',name:'Effort',currentValue:effort,options:[{value:'low',name:'Low'},{value:'medium',name:'Medium'},{value:'high',name:'High'}]}];
@@ -39,16 +42,28 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  }
  if(f.method==='initialize')result({protocolVersion:1});
  else if(f.method==='session/new'||f.method==='session/resume')result({sessionId:sid,configOptions:options()});
+ else if(f.method==='session/cancel' && pendingPrompt){
+  if(pendingPrompt.params.prompt[0].text==='E2E_EXTERNAL_STOP_BROKEN')send({method:'session/update',params:{sessionId:sid,update:null}});
+  else send({id:pendingPrompt.id,result:{stopReason:'cancelled'}});
+  pendingPrompt=undefined;
+ }
  else if(f.method==='session/set_config_option'){
-  if(f.params.value==='reject'){send({id:f.id,error:{code:-32602,message:'unsupported'}});return;}
+  const control=fs.existsSync(configControlPath)?JSON.parse(fs.readFileSync(configControlPath,'utf8')):{};
+  const apply=()=>{
+  if(f.params.value==='reject'||f.params.value===control.rejectValue){send({id:f.id,error:{code:-32602,message:'unsupported'}});return;}
 if(f.params.configId==='mode')mode=f.params.value;else if(f.params.configId==='model')model=f.params.value;else if(f.params.configId==='EFFORT_ID')effort=f.params.value;result({configOptions:options()});
   if(pendingPrompt && effort==='medium'){
    send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'E2E_RUNNING_FINAL_'+mode+'_'+model+'_'+effort}}}});
    send({id:pendingPrompt.id,result:{stopReason:'end_turn'}});pendingPrompt=undefined;
   }
+  };
+  if(control.delayMs)setTimeout(apply,control.delayMs);else apply();
  }
  else if(f.method==='session/prompt'){
   fs.writeFileSync(promptPath,JSON.stringify((fs.existsSync(promptPath)?JSON.parse(fs.readFileSync(promptPath,'utf8')):0)+1));
+  if(f.params.prompt[0].text.startsWith('E2E_EXTERNAL_STOP_')){
+   pendingPrompt=f;send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'E2E_STOP_WAITING_'+f.params.prompt[0].text}}}});return;
+  }
   if(f.params.prompt[0].text==='E2E_EXTERNAL_RUNNING'){
    pendingPrompt=f;
    const update=u=>send({method:'session/update',params:{sessionId:sid,update:u}});
@@ -118,35 +133,52 @@ async function expandTool(toolCallId: string) {
   );
 }
 
+async function installExternalEngineFixtures() {
+  const bin = process.env.ZCODE_E2E_EXTERNAL_ENGINE_FIXTURE_BIN;
+  if (!bin || !process.env.PATH?.split(process.platform === "win32" ? ";" : ":").includes(bin))
+    throw new Error("需要隔离的官方 CLI 状态夹具 PATH");
+  for (const engine of ["claude-code", "codex"] as const) {
+    const descriptor = EXTERNAL_ENGINE_RUNTIMES[engine];
+    const root = join(resolveE2EStorageRoot(), "engines", managedAdapterInstallDirName(descriptor));
+    const entry = join(root, ...managedAdapterEntrySegments(descriptor));
+    await mkdir(dirname(entry), { recursive: true });
+    await writeFile(
+      entry,
+      adapter
+        .replaceAll("ENGINE_ID", engine)
+        .replaceAll("fixture-child-bash", `${engine}-fixture-child-bash`)
+        .replaceAll("fixture-bash", `${engine}-fixture-bash`)
+        .replaceAll("fixture-agent", `${engine}-fixture-agent`)
+        .replace("Fixture model", `${engine} fixture model`)
+        .replaceAll("EFFORT_ID", engine === "codex" ? "reasoning_effort" : "effort"),
+    );
+    await writeFile(
+      join(root, "node_modules", ...descriptor.adapterPackage.split("/"), "package.json"),
+      JSON.stringify({ version: descriptor.adapterVersion }),
+    );
+  }
+}
+
+async function displayed(selector: string) {
+  let found: WebdriverIO.Element | undefined;
+  await browser.waitUntil(
+    async () => {
+      for (const element of await $$(selector)) {
+        if (await element.isDisplayed()) {
+          found = element;
+          return true;
+        }
+      }
+      return false;
+    },
+    { timeout: 30000, timeoutMsg: `等待可见控件 ${selector}` },
+  );
+  return found!;
+}
+
 describe("外部引擎首发前配置与同会话续聊", () => {
   it("两家引擎都先展示配置，首发使用所选模式且续聊复用进程", async () => {
-    const bin = process.env.ZCODE_E2E_EXTERNAL_ENGINE_FIXTURE_BIN;
-    if (!bin || !process.env.PATH?.split(process.platform === "win32" ? ";" : ":").includes(bin))
-      throw new Error("需要隔离的官方 CLI 状态夹具 PATH");
-    for (const engine of ["claude-code", "codex"] as const) {
-      const descriptor = EXTERNAL_ENGINE_RUNTIMES[engine];
-      const root = join(
-        resolveE2EStorageRoot(),
-        "engines",
-        managedAdapterInstallDirName(descriptor),
-      );
-      const entry = join(root, ...managedAdapterEntrySegments(descriptor));
-      await mkdir(dirname(entry), { recursive: true });
-      await writeFile(
-        entry,
-        adapter
-          .replaceAll("ENGINE_ID", engine)
-          .replaceAll("fixture-child-bash", `${engine}-fixture-child-bash`)
-          .replaceAll("fixture-bash", `${engine}-fixture-bash`)
-          .replaceAll("fixture-agent", `${engine}-fixture-agent`)
-          .replace("Fixture model", `${engine} fixture model`)
-          .replaceAll("EFFORT_ID", engine === "codex" ? "reasoning_effort" : "effort"),
-      );
-      await writeFile(
-        join(root, "node_modules", ...descriptor.adapterPackage.split("/"), "package.json"),
-        JSON.stringify({ version: descriptor.adapterVersion }),
-      );
-    }
+    await installExternalEngineFixtures();
     await prepareV4ConversationE2E({ skipProvider: true });
     for (const [name, engine] of [
       ["Claude Code", "claude-code"],
@@ -425,6 +457,207 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       await waitForV4AssistantMessageContaining("E2E_ENGINE_REPLY_safe_fixture-1_high_1");
       await waitForV4ConversationState((s) => s.state === "idle", "冷恢复后继续同一会话");
       await browser.saveScreenshot(join(artifactDir, `${engine}-restored-settings.png`));
+    }
+  });
+
+  it("停止后重连原会话并直接调节思考深度", async () => {
+    await installExternalEngineFixtures();
+    await prepareV4ConversationE2E({ skipProvider: true });
+    for (const [name, engine] of [
+      ["Claude Code", "claude-code"],
+      ["Codex", "codex"],
+    ] as const) {
+      if (engine === "codex") await startNewV4Draft();
+      await (await displayed('[data-testid="session-engine-select"]')).click();
+      await $(`[role="option"]=${name}`).click();
+      const paneId = await getV4FocusedPaneId();
+      if (!paneId) throw new Error("缺少停止回归的当前 pane");
+      const effortId = engine === "codex" ? "reasoning_effort" : "effort";
+      const effort = () => displayed(`[data-testid="engine-config-${effortId}"]`);
+      await (await effort()).waitForEnabled({ timeout: 30000 });
+      const selectEffort = async (key: string, expected: string) => {
+        await (await effort()).waitForClickable();
+        await (await effort()).click();
+        const slider = $(`[data-testid="engine-effort-slider-${effortId}"]`);
+        await slider.waitForClickable();
+        // 显式聚焦真实滑动条，再用键盘提交；等引擎确认值回流后才关闭弹层。
+        await slider.click();
+        await browser.keys(key);
+        await browser.waitUntil(
+          async () => (await (await effort()).getAttribute("title")) === expected,
+        );
+        await browser.keys("Escape");
+        await $('[data-testid="engine-effort-value"]').waitForDisplayed({ reverse: true });
+      };
+      await selectEffort("End", "High");
+      for (const scenario of ["HEALTHY", "BROKEN"]) {
+        const prompt = `E2E_EXTERNAL_STOP_${scenario}`;
+        await sendV4PromptInPane(paneId, prompt);
+        await waitForV4AssistantMessageContaining(`E2E_STOP_WAITING_${prompt}`);
+        const taskId = (await getV4PaneSnapshot()).sessionId;
+        if (!taskId) throw new Error("缺少停止回归的会话 ID");
+        const originalSession = persistedHistory(taskId).session;
+        await (await displayed('[data-testid="v4-stop"]')).click();
+        await waitForV4ConversationState((snapshot) => snapshot.state === "idle", "停止收尾完成");
+        const reconnect = $("button=重新连接");
+        if (scenario === "HEALTHY") {
+          expect(await reconnect.isExisting()).toBe(false);
+          expect(await (await effort()).isEnabled()).toBe(true);
+          expect(await (await effort()).getAttribute("title")).toBe("High");
+        } else {
+          await reconnect.waitForDisplayed();
+          const descriptor = EXTERNAL_ENGINE_RUNTIMES[engine];
+          const promptPath = join(
+            resolveE2EStorageRoot(),
+            "engines",
+            managedAdapterInstallDirName(descriptor),
+            ...managedAdapterEntrySegments(descriptor),
+            "..",
+            "prompt-count.json",
+          );
+          const promptCount = JSON.parse(await readFile(promptPath, "utf8"));
+          await reconnect.click();
+          await browser.waitUntil(async () => !(await reconnect.isExisting()));
+          await browser.waitUntil(
+            async () => (await (await effort()).getAttribute("title")) === "High",
+          );
+          await selectEffort("Home", "Low");
+          expect(persistedHistory(taskId).session).toEqual(originalSession);
+          expect(JSON.parse(await readFile(promptPath, "utf8"))).toBe(promptCount);
+        }
+      }
+    }
+  });
+
+  it("深度提交等待确认时不回跳，拒绝后恢复确认值", async () => {
+    await installExternalEngineFixtures();
+    await startNewV4Draft();
+    await prepareV4ConversationE2E({ skipProvider: true, skipShellReady: true });
+    for (const [name, engine] of [
+      ["Claude Code", "claude-code"],
+      ["Codex", "codex"],
+    ] as const) {
+      if (engine === "codex") await startNewV4Draft();
+      await (await displayed('[data-testid="session-engine-select"]')).click();
+      await $(`[role="option"]=${name}`).click();
+      const descriptor = EXTERNAL_ENGINE_RUNTIMES[engine];
+      const controlPath = join(
+        resolveE2EStorageRoot(),
+        "engines",
+        managedAdapterInstallDirName(descriptor),
+        ...managedAdapterEntrySegments(descriptor),
+        "..",
+        "config-control.json",
+      );
+      // 受控延迟制造真实异步确认窗口，保证回跳不能被快速 ACP 响应掩盖。
+      await writeFile(controlPath, JSON.stringify({ delayMs: 400 }));
+      const effortId = engine === "codex" ? "reasoning_effort" : "effort";
+      const trigger = await displayed(`[data-testid="engine-config-${effortId}"]`);
+      await trigger.waitForEnabled();
+      await browser.electron.execute((electron, narrow) => {
+        const win = electron.BrowserWindow.getAllWindows().find(
+          (candidate) => !candidate.isDestroyed(),
+        );
+        win?.setMinimumSize(320, 500);
+        win?.setContentSize(narrow ? 430 : 1280, 812);
+      }, engine === "codex");
+      await browser.execute((dark) => {
+        const actions = (
+          window as typeof window & { __testActions?: { setTheme?: (value: string) => void } }
+        ).__testActions;
+        if (!actions?.setTheme) throw new Error("缺少主题测试入口");
+        actions.setTheme(dark ? "dark" : "light");
+      }, engine === "codex");
+      await browser.waitUntil(async () =>
+        browser.execute(
+          (narrow) =>
+            innerWidth === (narrow ? 430 : 1280) &&
+            document.documentElement.classList.contains("dark") === narrow,
+          engine === "codex",
+        ),
+      );
+      await trigger.click();
+      const slider = $(`[data-testid="engine-effort-slider-${effortId}"]`);
+      await slider.waitForClickable();
+      for (const [eventName, expected, key] of [
+        ["pointerup", "High", "End"],
+        ["keyup", "Low", "Home"],
+      ] as const) {
+        await browser.execute(
+          (id, event) => {
+            const input = document.querySelector<HTMLInputElement>(
+              `[data-testid="engine-effort-slider-${id}"]`,
+            )!;
+            delete input.dataset.commitTrace;
+            input.addEventListener(
+              event,
+              () => {
+                const values = [input.value];
+                let frame: number;
+                const sample = () => {
+                  values.push(input.value);
+                  frame = requestAnimationFrame(sample);
+                };
+                frame = requestAnimationFrame(sample);
+                setTimeout(() => {
+                  cancelAnimationFrame(frame);
+                  input.dataset.commitTrace = JSON.stringify(values);
+                }, 800);
+              },
+              { once: true },
+            );
+          },
+          effortId,
+          eventName,
+        );
+        if (eventName === "pointerup") {
+          const point = await browser.execute((id) => {
+            const rect = document
+              .querySelector(`[data-testid="engine-effort-slider-${id}"]`)!
+              .getBoundingClientRect();
+            return {
+              left: Math.round(rect.left + 14),
+              right: Math.round(rect.right - 14),
+              y: Math.round(rect.top + rect.height / 2),
+            };
+          }, effortId);
+          await browser.performActions([
+            {
+              type: "pointer",
+              id: "effort-drag",
+              parameters: { pointerType: "mouse" },
+              actions: [
+                { type: "pointerMove", duration: 0, x: point.left, y: point.y },
+                { type: "pointerDown", button: 0 },
+                { type: "pointerMove", duration: 150, x: point.right, y: point.y },
+                { type: "pointerUp", button: 0 },
+              ],
+            },
+          ]);
+          await browser.releaseActions();
+        } else await browser.keys(key);
+        await browser.waitUntil(async () =>
+          Boolean(await slider.getAttribute("data-commit-trace")),
+        );
+        const values: string[] = JSON.parse((await slider.getAttribute("data-commit-trace"))!);
+        expect(values.length).toBeGreaterThan(1);
+        expect(values.every((value) => value === (expected === "High" ? "2" : "0"))).toBe(true);
+        expect(await trigger.getAttribute("title")).toBe(expected);
+        const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
+        if (!artifactDir) throw new Error("缺少滑块回归证据目录");
+        await writeFile(
+          join(artifactDir, `${engine}-${eventName}-slider-trace.json`),
+          JSON.stringify(values),
+        );
+        await browser.saveScreenshot(join(artifactDir, `${engine}-${eventName}-slider.png`));
+      }
+      await writeFile(controlPath, JSON.stringify({ delayMs: 400, rejectValue: "high" }));
+      await browser.keys("End");
+      await browser.waitUntil(async () => (await slider.getAttribute("aria-valuetext")) === "High");
+      expect(await trigger.getAttribute("title")).toBe("Low");
+      await browser.waitUntil(async () => (await slider.getAttribute("aria-valuetext")) === "Low");
+      expect(await trigger.getAttribute("title")).toBe("Low");
+      await browser.keys("Escape");
     }
   });
 });
