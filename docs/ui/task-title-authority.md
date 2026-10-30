@@ -9,6 +9,13 @@ Task title can come from several places during a session lifecycle. Renderer cod
 3. First user query title used as the initial optimistic title.
 4. The agent default placeholder `New session`.
 
+## 技能引用的初始标题
+
+- CLI 从首条输入派生标题时，先将 `[$skill](path)` 技能链接转换为 `$skill`，再合并空白并按现有长度上限截断。多个技能和后续需求文字保留；仅引用技能时使用技能名称。
+- 只处理 Markdown 解析器识别到的技能链接，行内代码、普通链接和不完整链接保持原文。消息正文、发给模型的技能路径、模型生成标题和用户手动标题不受影响。
+- 派生结果仍由 CLI 落盘为 `first_input`，并通过既有标题事件同步到 Host；顶部和侧栏读取同一事实，不分别修补显示。已落盘的历史标题不在此变更中迁移。
+- 验收覆盖 macOS、Windows、带空格或括号的技能路径、多个技能、仅技能、清理后截断，以及内置与外部引擎的落盘标题、标题事件及原始正文一致性。
+
 ## Renderer restore rule
 
 - CLI owns persisted titles and title source; `tasks-index.sqlite` contains their read-only Host projection.

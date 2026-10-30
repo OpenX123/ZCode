@@ -62,9 +62,25 @@ describe("外部引擎使用既有 turn 生命周期", () => {
           mcpPort: { connect: mcp } as never,
         },
       );
-      expect(await runtime.executeTurn("first")).toMatchObject({ response: "engine response" });
+      const firstInput = "[$grill-me](/skills/grill-me/SKILL.md) 分析数据库架构";
+      expect(await runtime.executeTurn(firstInput)).toMatchObject({ response: "engine response" });
       expect(await runtime.executeTurn("/compact")).toMatchObject({ response: "engine response" });
-      expect(calls).toEqual(["first", "/compact"]);
+      expect(calls).toEqual([firstInput, "/compact"]);
+      expect(await store.getSession(sessionId)).toMatchObject({
+        title: "$grill-me 分析数据库架构",
+        titleSource: "first_input",
+      });
+      expect(await eventStore.getEvents(sessionId)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: SessionEventType.SessionTitleUpdated,
+            payload: expect.objectContaining({
+              title: "$grill-me 分析数据库架构",
+              source: "first_input",
+            }),
+          }),
+        ]),
+      );
       expect(modelFactory).not.toHaveBeenCalled();
       expect(context).not.toHaveBeenCalled();
       expect(hook).not.toHaveBeenCalled();
@@ -142,6 +158,50 @@ test.each(["not_ready", "transport", "timeout", "protocol"] as const)(
       }),
     );
     expect(runTurn).not.toHaveBeenCalled();
+    await runtime.closeBrowserSession();
+  },
+);
+
+test.each(["claude-code", "codex"] as const)(
+  "%s 停止后进程退出，下一次配置自动恢复原会话",
+  async (engine) => {
+    const sessionId = createSessionId();
+    const options = [
+      {
+        id: "effort",
+        name: "Effort",
+        currentValue: "high",
+        options: [{ value: "high", name: "High" }],
+      },
+    ];
+    const prepareSession = vi.fn<ExternalEnginePort["prepareSession"]>(async (input) => {
+      await input.onConfigOptions(options);
+    });
+    const setConfigOption = vi
+      .fn<ExternalEnginePort["setConfigOption"]>()
+      .mockRejectedValueOnce(new ExternalEngineConnectionError({ code: "not_ready" }))
+      .mockResolvedValue(options);
+    const runTurn = vi.fn<ExternalEnginePort["runTurn"]>();
+    const runtime = new AgentRuntime(
+      sessionId,
+      { engine, externalSessionId: "original-session", workingDirectory: "/workspace" },
+      {
+        eventStore: createTestSessionEventStore(),
+        externalEnginePort: { prepareSession, setConfigOption, runTurn, closeSession: vi.fn() },
+      },
+    );
+    await runtime.prepareExternalEngineSession();
+    expect(await runtime.setEngineConfigOption("effort", "high")).toEqual(options);
+    expect(prepareSession).toHaveBeenCalledTimes(2);
+    expect(prepareSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        externalSessionId: "original-session",
+        configValues: [{ id: "effort", value: "high" }],
+      }),
+    );
+    expect(setConfigOption).toHaveBeenCalledTimes(2);
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(runtime.getEngineConfigState()).toBe("ready");
     await runtime.closeBrowserSession();
   },
 );

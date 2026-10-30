@@ -9,7 +9,9 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { CodePreviewSettings } from "@/store/index.js";
 import type { CodeCommentLabels } from "@/components/ui/code-viewer.js";
 import { MarkdownPreviewContent } from "@/previewPaneMarkdownContent.js";
-import { CodeContent } from "@/previewPaneCodeContent.js";
+import { CodeContent, HtmlPreviewContent } from "@/previewPaneCodeContent.js";
+import type { HtmlPreviewResourceReader } from "@/previewPaneCodeContent.js";
+import { isAssistantPreviewHtmlPath } from "@/lib/assistantFileReferences.js";
 import { ImagePreviewContent, SvgPreviewContent } from "@/previewPaneImageContent.js";
 import type { WorkspaceFileDragPayload } from "@/lib/workspaceFileDrag.js";
 import { PreviewPaneMediaContent } from "@/previewPaneMediaContent.js";
@@ -64,6 +66,8 @@ interface PreviewPaneContentProps {
   markdownSelectionTarget?: MarkdownSelectionTarget;
   markdownViewMode: "preview" | "code";
   svgViewMode: "preview" | "code";
+  htmlViewMode?: "preview" | "code";
+  readHtmlResource?: HtmlPreviewResourceReader;
   wrapLongLines: boolean;
   codeComments: readonly CodeCommentPreview[];
   enableCodeLineSelection?: boolean;
@@ -126,6 +130,8 @@ export function PreviewPaneContent({
   markdownSelectionTarget,
   markdownViewMode,
   svgViewMode,
+  htmlViewMode = "preview",
+  readHtmlResource,
   wrapLongLines,
   codeComments,
   enableCodeLineSelection = false,
@@ -198,6 +204,15 @@ export function PreviewPaneContent({
   }
 
   if (source.type === "text") {
+    if (isAssistantPreviewHtmlPath(source.path ?? "") && htmlViewMode === "preview")
+      return (
+        <HtmlPreviewContent
+          title={source.title}
+          content={source.content}
+          path={source.path}
+          readResource={readHtmlResource}
+        />
+      );
     const isMarkdownSource = source.language === "markdown";
     const isSvgSource = isSvgPath(source.path);
     if (isMarkdownSource && markdownViewMode === "preview") {
@@ -418,6 +433,19 @@ export function PreviewPaneContent({
   }
 
   const fileLanguage = inferCodeLanguage(source.path, filePreview.content);
+  if (
+    source.type !== "code-review" &&
+    isAssistantPreviewHtmlPath(source.path ?? "") &&
+    htmlViewMode === "preview"
+  )
+    return (
+      <HtmlPreviewContent
+        title={source.title}
+        content={filePreview.content}
+        path={source.path}
+        readResource={readHtmlResource}
+      />
+    );
   const codeReviewProjection =
     source.type === "code-review"
       ? resolveCodeReviewContentProjection(source, filePreview.content)

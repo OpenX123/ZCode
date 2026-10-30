@@ -98,13 +98,16 @@ export async function prepareExternalEngineSession(
   runtime: AgentRuntimeInternal,
   traceContext: TraceContext,
 ): Promise<void> {
+  if (runtime.shuttingDown) return;
   await publishExternalEngineConfigState(runtime, "connecting", traceContext);
+  if (runtime.shuttingDown) return;
   try {
     const input = externalEngineSessionInput(runtime, new AbortController().signal, traceContext);
     await runtime.externalEnginePort!.prepareSession(input);
-    await publishExternalEngineConfigState(runtime, "ready", traceContext);
+    if (!runtime.shuttingDown)
+      await publishExternalEngineConfigState(runtime, "ready", traceContext);
   } catch (error) {
-    await publishExternalEngineConfigError(runtime, error, traceContext);
+    if (!runtime.shuttingDown) await publishExternalEngineConfigError(runtime, error, traceContext);
     throw error;
   }
 }

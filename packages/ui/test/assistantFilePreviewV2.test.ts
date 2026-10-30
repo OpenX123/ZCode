@@ -421,7 +421,7 @@ describe("assistant preview validation", () => {
 });
 
 describe("assistant HTML open target", () => {
-  it("本地桌面使用 Browser，远程 workspace 和手机远控降级为 Preview Pane", () => {
+  it("显式运行仅允许本地桌面 HTML", () => {
     expect(shouldOpenAssistantHtmlInBrowser({ path: "/workspace/page.html" })).toBe(true);
     expect(
       shouldOpenAssistantHtmlInBrowser({
@@ -437,37 +437,26 @@ describe("assistant HTML open target", () => {
       }),
     ).toBe(false);
   });
-
-  it("远程只降级 file:// HTML，localhost HTTP 仍使用 Browser", () => {
-    const remoteScope = {
-      workspaceIdentity: "remote:ssh:host:/workspace",
-      workspaceRemoteSessionId: "remote-1",
-    };
+  it("HTML 文件使用静态 Preview Pane，localhost HTTP 仍使用 Browser", () => {
     expect(
-      shouldRenderAssistantPreviewCardAsFile(
-        {
-          id: "website:file:///workspace/page.html",
-          type: "website",
-          title: "page.html",
-          subtitleId: "chat.previewCards.htmlWebsite",
-          url: "file:///workspace/page.html",
-          filePath: "/workspace/page.html",
-        },
-        remoteScope,
-      ),
+      shouldRenderAssistantPreviewCardAsFile({
+        id: "website:file:///workspace/page.html",
+        type: "website",
+        title: "page.html",
+        subtitleId: "chat.previewCards.htmlWebsite",
+        url: "file:///workspace/page.html",
+        filePath: "/workspace/page.html",
+      }),
     ).toBe(true);
     expect(
-      shouldRenderAssistantPreviewCardAsFile(
-        {
-          id: "website:http://localhost:5173/page.html",
-          type: "website",
-          title: "page.html",
-          subtitleId: "chat.previewCards.website",
-          url: "http://localhost:5173/page.html",
-          filePath: "/workspace/page.html",
-        },
-        remoteScope,
-      ),
+      shouldRenderAssistantPreviewCardAsFile({
+        id: "website:http://localhost:5173/page.html",
+        type: "website",
+        title: "page.html",
+        subtitleId: "chat.previewCards.website",
+        url: "http://localhost:5173/page.html",
+        filePath: "/workspace/page.html",
+      }),
     ).toBe(false);
   });
 });

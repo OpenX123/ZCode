@@ -8,7 +8,6 @@ import {
   type AssistantPreviewCardFileStatService,
   type AssistantPreviewCardsAutoOpenRequest,
   getAssistantPreviewCardFilePath,
-  shouldOpenAssistantHtmlInBrowser,
 } from "@/lib/assistantPreviewCards.js";
 import {
   getAssistantPreviewCardsValidationSignature,
@@ -78,24 +77,11 @@ interface AssistantPreviewCardsProps {
   /** Desktop 完成态生成产物：批量打开本轮已通过校验的 PPTX。 */
   autoOpenPptxKey?: string;
   onAutoOpenPptx?: (request: AssistantPreviewCardsAutoOpenRequest) => void;
-  compactForRemoteControl?: boolean;
 }
 
-export function shouldRenderAssistantPreviewCardAsFile(
-  card: AssistantPreviewCard,
-  scope: {
-    workspaceIdentity?: string;
-    workspaceRemoteSessionId?: string;
-    compactForRemoteControl?: boolean;
-  },
-): boolean {
+export function shouldRenderAssistantPreviewCardAsFile(card: AssistantPreviewCard): boolean {
   const filePath = getAssistantPreviewCardFilePath(card);
-  return (
-    card.type !== "website" ||
-    (card.url.startsWith("file://") &&
-      filePath !== null &&
-      !shouldOpenAssistantHtmlInBrowser({ path: filePath, ...scope }))
-  );
+  return card.type !== "website" || (card.url.startsWith("file://") && filePath !== null);
 }
 
 export function useAssistantPreviewCardValidation(
@@ -192,7 +178,6 @@ export function AssistantPreviewCards({
   onOpenCodeViewer,
   autoOpenPptxKey,
   onAutoOpenPptx,
-  compactForRemoteControl,
 }: AssistantPreviewCardsProps) {
   const { intl } = useZCodeIntl();
   const { visibleCards, settled } = useAssistantPreviewCardValidation(cards, {
@@ -242,7 +227,6 @@ export function AssistantPreviewCards({
           onOpenBrowserUrl={onOpenBrowserUrl}
           onOpenFileLink={onOpenFileLink}
           onOpenCodeViewer={onOpenCodeViewer}
-          compactForRemoteControl={compactForRemoteControl}
         />
       ))}
     </div>
@@ -259,7 +243,6 @@ function AssistantPreviewCardRow({
   onOpenBrowserUrl,
   onOpenFileLink,
   onOpenCodeViewer,
-  compactForRemoteControl,
 }: {
   card: AssistantPreviewCard;
   animationDelayMs: number;
@@ -270,14 +253,9 @@ function AssistantPreviewCardRow({
   onOpenBrowserUrl?: (url: string) => void;
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
-  compactForRemoteControl?: boolean;
 }) {
   const filePath = getAssistantPreviewCardFilePath(card);
-  const renderAsFile = shouldRenderAssistantPreviewCardAsFile(card, {
-    workspaceIdentity,
-    workspaceRemoteSessionId,
-    compactForRemoteControl,
-  });
+  const renderAsFile = shouldRenderAssistantPreviewCardAsFile(card);
   const descriptor = filePath ? resolveFileDisplayDescriptor(filePath) : null;
   const fileSource =
     renderAsFile && filePath

@@ -404,11 +404,40 @@ export class AgentRuntime {
     const options = await this.externalEnginePort
       .setConfigOption(this.sessionId, configId, value)
       .catch(async (error: unknown) => {
-        // 业务拒绝保留健康连接；连接类失败则发布 error，开放既有重连入口。
+        // 业务拒绝保留健康连接；空闲断联先恢复原会话，仍失败才进入错误投影。
         if (
           error instanceof ExternalEngineConnectionError &&
           ["not_ready", "transport", "timeout", "protocol"].includes(error.failure.code)
         ) {
+          if (
+            this.config.externalSessionId &&
+            !this.shuttingDown &&
+            !this.hasActiveOrQueuedTurnWork()
+          ) {
+            // ACP 可在停止响应之后退出；空闲配置操作恢复原会话后只重试幂等配置，不重发 prompt。
+            await prepareExternalEngineSession(
+              this as unknown as AgentRuntimeInternal,
+              this.rootTraceContext,
+            );
+            if (this.shuttingDown) throw error;
+            return this.externalEnginePort!.setConfigOption(this.sessionId, configId, value).catch(
+              async (retryError: unknown) => {
+                if (
+                  !this.shuttingDown &&
+                  retryError instanceof ExternalEngineConnectionError &&
+                  ["not_ready", "transport", "timeout", "protocol"].includes(
+                    retryError.failure.code,
+                  )
+                )
+                  await publishExternalEngineConfigError(
+                    this as unknown as AgentRuntimeInternal,
+                    retryError,
+                    this.rootTraceContext,
+                  );
+                throw retryError;
+              },
+            );
+          }
           await publishExternalEngineConfigError(
             this as unknown as AgentRuntimeInternal,
             error,

@@ -1607,7 +1607,6 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
             onOpenFileLink={context.onOpenFileLink}
             autoOpenPptxKey={previewCardsAutoOpenKey}
             onAutoOpenPptx={context.onAutoOpenAssistantPptx}
-            compactForRemoteControl={context.compactForRemoteControl}
           />
         </div>
       ) : null}

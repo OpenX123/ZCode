@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { PreviewPaneContent } from "@/previewPaneContent.js";
+import { JSDOM } from "jsdom";
+import { prepareHtmlPreviewDocument } from "@/previewPaneCodeContent.js";
 
 vi.mock("@pierre/diffs/react", () => ({
   File: ({
@@ -121,6 +123,72 @@ function renderFileContent(overrides: Record<string, unknown> = {}): string {
 }
 
 describe("PreviewPaneContent text files", () => {
+  it.each(["/workspace/site/index.html", "C:/workspace/site/index.html"])(
+    "HTML 相对样式和 CSS 图片从原文件目录读取：%s",
+    async (path) => {
+      const dom = new JSDOM();
+      vi.stubGlobal("DOMParser", dom.window.DOMParser);
+      const root = path.slice(0, path.lastIndexOf("/"));
+      const readResource = vi.fn(async (resourcePath: string) => ({
+        path: resourcePath,
+        mediaType: resourcePath.endsWith(".css") ? "text/css" : "image/png",
+        dataBase64: Buffer.from(
+          resourcePath.endsWith(".css")
+            ? 'h1{background:url("./images/bg.png");color:blue}'
+            : "image",
+        ).toString("base64"),
+        totalBytes: 50,
+      }));
+      try {
+        const result = await prepareHtmlPreviewDocument(
+          '<link rel="stylesheet" href="./styles.css"><h1>正文</h1><img src="./images/bg.png">',
+          path,
+          readResource,
+        );
+        const parsed = new dom.window.DOMParser().parseFromString(result, "text/html");
+        const css = parsed.querySelector("link")!.getAttribute("href")!;
+        expect(css).toMatch(/^data:text\/css;base64,/);
+        expect(Buffer.from(css.split(",")[1]!, "base64").toString()).toContain(
+          "data:image/png;base64,",
+        );
+        expect(parsed.querySelector("img")!.getAttribute("src")).toMatch(
+          /^data:image\/png;base64,/,
+        );
+        expect(readResource.mock.calls.map(([value]) => value)).toEqual(
+          expect.arrayContaining([`${root}/styles.css`, `${root}/images/bg.png`]),
+        );
+        expect(readResource).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.unstubAllGlobals();
+        dom.window.close();
+      }
+    },
+  );
+  it("HTML 默认静态预览，包含登录跳转脚本也不授予脚本权限，并支持源码", () => {
+    const content = '<h1>客户速览</h1><script>location.href="/login"</script>';
+    const source = {
+      type: "file",
+      title: "crm.html",
+      path: "/workspace/crm.html",
+    };
+    const filePreview = {
+      path: source.path,
+      content,
+      offset: 0,
+      bytesRead: content.length,
+      totalBytes: content.length,
+      truncated: false,
+      isBinary: false,
+    };
+    const html = renderFileContent({ source, filePreview });
+    expect(html).toContain('data-testid="html-file-preview"');
+    expect(html).toContain('sandbox=""');
+    expect(html).not.toContain("allow-scripts");
+    expect(html).toContain("客户速览");
+    expect(renderFileContent({ source, filePreview, htmlViewMode: "code" })).not.toContain(
+      'data-testid="html-file-preview"',
+    );
+  });
   it("renders UTF-8 text as one continuous document", () => {
     const html = renderFileContent();
 

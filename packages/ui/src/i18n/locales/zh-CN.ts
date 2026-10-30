@@ -1761,6 +1761,7 @@ const zhCN: Record<string, string> = {
   "codeViewer.markdownPreview": "预览",
   "codeViewer.markdownSource": "源码",
   "codeViewer.svgMode": "SVG",
+  "codeViewer.runHtmlInBrowser": "用内置浏览器运行",
   "codeViewer.svgPreview": "预览",
   "codeViewer.svgSource": "代码",
   "codeViewer.wrapLines": "自动换行",

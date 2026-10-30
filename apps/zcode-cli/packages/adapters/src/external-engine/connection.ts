@@ -18,7 +18,7 @@ const HANDSHAKE_TIMEOUT_MS = 30000;
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): JsonObject {
   if (value === null || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid ACP object");
+    throw new ExternalEngineConnectionError({ code: "protocol" }, "Invalid ACP object");
   return value as JsonObject;
 }
 function configOptions(value: unknown): EngineConfigOption[] {
@@ -281,7 +281,7 @@ export class AcpConnection {
         }
       }
       cancellationTimer = setTimeout(() => {
-        this.fail(new Error("ACP cancellation timed out"));
+        this.fail(new ExternalEngineConnectionError({ code: "timeout", method: "session/prompt" }));
         void this.close();
       }, CANCEL_GRACE_MS);
       cancellationTimer.unref();
@@ -416,7 +416,8 @@ export class AcpConnection {
       });
       await this.notifications;
       if (this.failure) throw this.failure;
-      const usage = result.usage === undefined ? undefined : object(result.usage);
+      // Codex 在尚无 token 统计时返回 usage:null；这不是断联，不能因此回收已停止的健康会话。
+      const usage = result.usage == null ? undefined : object(result.usage);
       return {
         stopReason: String(result.stopReason),
         ...(usage

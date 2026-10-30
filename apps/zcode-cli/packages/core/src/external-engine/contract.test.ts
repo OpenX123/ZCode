@@ -6,6 +6,8 @@ import {
   createTurnId,
   createMessageId,
   SessionEventType,
+  ExternalEngineConnectionError,
+  type ExternalEnginePort,
   parseCompletedToolPartMetadata,
   type MessagePart,
 } from "@zcode/contracts";
@@ -122,6 +124,69 @@ describe("外部引擎事件与 transcript", () => {
     await expect(runExternalEngineTurn(runtime, input)).rejects.toThrow("engine failed");
     expect([...parts.values()].find((part) => part.type === "tool")?.state.status).toBe("error");
   });
+});
+
+test.each([
+  ["claude-code", "transport"],
+  ["codex", "transport"],
+  ["codex", "cancelled-callback"],
+] as const)("%s 停止时 %s 故障自动恢复原会话，不重发 prompt", async (engine, failure) => {
+  const { runtime, input, events } = setup([]);
+  runtime.config.engine = engine;
+  runtime.config.externalSessionId = "original-session";
+  const abort = new AbortController();
+  input.signal = abort.signal;
+  const runTurn = vi.fn(async () => {
+    abort.abort();
+    if (failure === "cancelled-callback") throw new Error("Permission cancelled");
+    throw new ExternalEngineConnectionError({ code: "transport", method: "session/prompt" });
+  });
+  const prepareSession = vi.fn<ExternalEnginePort["prepareSession"]>(async () => {});
+  runtime.externalEnginePort!.runTurn = runTurn;
+  runtime.externalEnginePort!.prepareSession = prepareSession;
+  await expect(runExternalEngineTurn(runtime, input)).rejects.toThrow();
+  expect(prepareSession).toHaveBeenCalledWith(
+    expect.objectContaining({ externalSessionId: "original-session" }),
+  );
+  expect(prepareSession.mock.calls[0]?.[0]?.signal.aborted).toBe(false);
+  expect(runtime.engineConfigState).toBe("ready");
+  expect(
+    events
+      .filter((event) => event.type === SessionEventType.ExternalEngineConfigUpdated)
+      .map((event) => (event.payload as Record<string, unknown>).engineConfigState),
+  ).toEqual(["connecting", "ready"]);
+  expect(runTurn).toHaveBeenCalledTimes(1);
+});
+
+test.each(["恢复失败", "正在关闭", "正常运行故障"])("停止恢复边界：%s", async (scenario) => {
+  const { runtime, input } = setup([]);
+  runtime.config.externalSessionId = "original-session";
+  runtime.shuttingDown = scenario === "正在关闭";
+  const abort = new AbortController();
+  input.signal = abort.signal;
+  const prepareSession = vi.fn<ExternalEnginePort["prepareSession"]>(async () => {
+    throw new ExternalEngineConnectionError({ code: "authentication" });
+  });
+  runtime.externalEnginePort!.prepareSession = prepareSession;
+  runtime.externalEnginePort!.runTurn = vi.fn(async () => {
+    if (scenario !== "正常运行故障") abort.abort();
+    throw new ExternalEngineConnectionError({ code: "transport", method: "session/prompt" });
+  });
+  await expect(runExternalEngineTurn(runtime, input)).rejects.toThrow();
+  expect(prepareSession).toHaveBeenCalledTimes(scenario === "恢复失败" ? 1 : 0);
+  if (scenario !== "正在关闭") expect(runtime.engineConfigState).toBe("error");
+});
+
+test("发布连接状态期间开始关闭，不再启动恢复进程", async () => {
+  const { prepareExternalEngineSession } = await import("./session.js");
+  const { runtime } = setup([]);
+  const prepareSession = vi.fn<ExternalEnginePort["prepareSession"]>();
+  runtime.externalEnginePort!.prepareSession = prepareSession;
+  runtime.appendEvent = vi.fn(async () => {
+    runtime.shuttingDown = true;
+  });
+  await prepareExternalEngineSession(runtime, createRootTraceContext());
+  expect(prepareSession).not.toHaveBeenCalled();
 });
 
 test("准备失败保留安全诊断，重试成功清除旧错误且不创建 turn", async () => {

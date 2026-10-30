@@ -910,7 +910,30 @@ describe("AgentRuntime session persistence", () => {
   // 导致 z-code services 层的 task index sqlite syncer 等不到 session.titleUpdated 事件，
   // 侧边栏一直显示 "New session" 直到后台 LLM 生成 title。这条测试保证首条 prompt 入栈后
   // event store 立刻拿到一条 SessionTitleUpdated（source="first_input"）。
-  it("emits SessionTitleUpdated with source=first_input when ensureSessionPersisted runs", async () => {
+  it.each([
+    ["look into payment refund flow", "look into payment refund flow"],
+    [
+      "[$grill-me](/Users/example/.zcode/skills/grill-me/SKILL.md) 分析现有数据库架构",
+      "$grill-me 分析现有数据库架构",
+    ],
+    ["[$review](<C:/User Skills/review (local)/SKILL.md>)", "$review"],
+    ["[$review](C:\\Users\\example\\skills\\review\\SKILL.md)", "$review"],
+    ["[$review](/skills/review(local)/SKILL.md) 检查方案", "$review 检查方案"],
+    [
+      "[$review](/skills/review/SKILL.md)\n[$design](/skills/design/SKILL.md) 检查方案",
+      "$review $design 检查方案",
+    ],
+    [
+      "`[$review](/skills/review/SKILL.md)` 检查链接语法",
+      "`[$review](/skills/review/SKILL.md)` 检查链接语法",
+    ],
+    ["[文档](https://example.com) 阅读", "[文档](https://example.com) 阅读"],
+    ["[$review](/skills/review", "[$review](/skills/review"],
+    [
+      `[$review](/skills/review/SKILL.md) ${"检查".repeat(40)}`,
+      `$review ${"检查".repeat(24)}检...`,
+    ],
+  ])("首条输入标题落盘并广播可读技能名：%s", async (input, expectedTitle) => {
     const sessionId = createSessionId("runtime-persistence-first-input-title");
     const store = createRecordingSessionStore();
     const eventStore = createTestSessionEventStore();
@@ -936,7 +959,7 @@ describe("AgentRuntime session persistence", () => {
       },
     );
 
-    await runtime.executeTurn("look into payment refund flow");
+    await runtime.executeTurn(input);
 
     const events = await eventStore.getEvents(sessionId);
     const titleEvents = events.filter(
@@ -949,10 +972,18 @@ describe("AgentRuntime session persistence", () => {
       title: string;
     };
     expect(payload.source).toBe("first_input");
-    expect(payload.title).toBe("look into payment refund flow");
+    expect(payload.title).toBe(expectedTitle);
     expect(payload.previousTitle).toBe("");
     expect(store.createdSessions[0]?.title).toBe(payload.title);
     expect(store.createdSessions[0]?.titleSource).toBe("first_input");
+    const messages = await store.messages({ sessionID: sessionId });
+    const user = messages.find((message) => message.info.role === "user");
+    expect(
+      user?.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join(""),
+    ).toBe(input);
   });
 
   it("records production-safe session persistence lifecycle diagnostics", async () => {

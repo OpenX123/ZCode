@@ -62,3 +62,15 @@
 - `packages/ui/src/lib/codeViewerSource.ts`：Code Viewer source 路径规范化
 - `packages/ui/src/lib/workspaceSidePane.ts`：Code Viewer tab key 生成与复用
 - `docs/ui/office-file-preview.md`：Office 文件预览的边界、状态组合和验证契约
+
+## HTML 文件预览（2026-10-30）
+
+消息正文的 HTML/HTM 文件链接及文件卡片统一使用现有文件预览入口，由对应 workspace 的 file service 读取。默认展示 sandbox iframe 中的静态 HTML，禁用脚本、表单、弹窗及自动刷新，避免业务模板将预览跳转到 file:///login。支持预览/源码切换。HTML 中的内联样式与声明式资源按浏览器规则呈现；依赖脚本或后端的数据不伪造。桌面本地文件可从预览菜单显式“用内置浏览器运行”，走已有浏览器入口；远程与 Web 不把远端文件路径交给本机浏览器。
+
+验收覆盖消息文件链接、HTML 文件卡片、源码切换，以及含登录重定向脚本和 meta refresh 的页面仍保留静态内容。HTTP 开发服务链接继续打开原 URL；现有文件树的显式浏览器动作保持运行语义。
+
+相对资源以 HTML 文件目录（或显式 base）为基准。文件样式表、图片和 CSS 中的资源通过同一 workspace 的 file service 读取并内联，不能相对 Renderer 地址请求，也不能将 SSH 路径交给本机读取。保留脚本沙箱；资源读取失败不阻断已有正文。每次预览最多读取 64 个资源，每个沿用 8 MiB 预览上限；切换来源后丢弃迟到结果。验收包含相邻 CSS、CSS 相对图片及 Windows 路径。
+
+相对资源回归：UI 定向 4 文件 95/95 通过；Electron 独立用例验证外置 CSS、相邻 SVG、CSS 背景图及预览/源码切换。资源准备完成后才挂载 iframe，避免空文档切换到正式 srcdoc 时 frame 上下文换代。报告位于 `packages/desktop/.e2e-artifacts/desktop-e2e-20261030102501816-p15036-1c877319e2431533/summary.md`。
+
+2026-10-30 验证：UI 定向 4 文件 93/93 通过。隔离 Electron 的 HTML 文件链接用例通过：真实 Host 读取文件，正文与样式可见，脚本未执行，meta refresh 未跳转，源码切回预览后内容仍可见，桌面本地运行入口存在。报告与截图位于 `packages/desktop/.e2e-artifacts/desktop-e2e-20261030090832151-p99138-ea6a2a89a62358b6/`；候选保持 pending，未替换用户已安装应用。

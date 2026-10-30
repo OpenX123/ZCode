@@ -44,7 +44,7 @@ import {
 import type { PdfViewerSource } from "@/components/ui/pdf-viewer.js";
 import { normalizeCodeViewerSource } from "@/lib/codeViewerSource.js";
 import { FileDisplayIcon, resolveFileDisplayDescriptor } from "@/lib/fileDisplay.js";
-import { getPathLeaf, isAbsoluteFilePath } from "@/lib/path.js";
+import { getPathLeaf, isAbsoluteFilePath, toFileUrl } from "@/lib/path.js";
 import { decodeBase64ToArrayBuffer, getOfficeFilePreviewKind } from "@/lib/officeFilePreview.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useFileContextActions } from "@/hooks/useFileContextActions.js";
@@ -66,6 +66,8 @@ import {
 } from "@/components/ui/dropdown-menu.js";
 import { readLastSelectedEditorId } from "@/lib/editorPreference.js";
 import { PreviewPaneContent } from "@/previewPaneContent.js";
+import { isAssistantPreviewHtmlPath } from "@/lib/assistantFileReferences.js";
+import { shouldOpenAssistantHtmlInBrowser } from "@/lib/assistantPreviewCards.js";
 import {
   dispatchCodeCommentAddToChat,
   dispatchCodeCommentRemoveFromChat,
@@ -380,13 +382,18 @@ function isPlainCodeSource(source: CodeViewerSource | null): boolean {
   }
 
   if (source.type === "text") {
-    return !isMarkdownSource(source) && !isSvgSource(source);
+    return (
+      !isMarkdownSource(source) &&
+      !isSvgSource(source) &&
+      !isAssistantPreviewHtmlPath(source.path ?? "")
+    );
   }
 
   if (source.type === "file") {
     return (
       !isMarkdownFilePath(source.path) &&
       !isSvgFilePath(source.path) &&
+      !isAssistantPreviewHtmlPath(source.path ?? "") &&
       !getFileImageMediaType(source.path) &&
       // PDF、Office 和 PPTX 走专用只读预览，没有源码视图，也不该出现自动换行开关。
       !isPdfPreviewPath(source.path) &&
@@ -409,6 +416,7 @@ export function getPreviewPaneDisplayOptions(
   viewModes: {
     markdownViewMode?: "preview" | "code";
     svgViewMode?: "preview" | "code";
+    htmlViewMode?: "preview" | "code";
   } = {},
 ) {
   const canToggleMarkdownView =
@@ -417,16 +425,22 @@ export function getPreviewPaneDisplayOptions(
   const canToggleSvgView =
     source !== null &&
     (isSvgSource(source) || (source.type === "file" && isSvgFilePath(source.path)));
+  const canToggleHtmlView =
+    (source?.type === "text" || source?.type === "file") &&
+    isAssistantPreviewHtmlPath(source.path ?? "");
   const canToggleCodeWrap =
     isPlainCodeSource(source) ||
     (canToggleMarkdownView && viewModes.markdownViewMode === "code") ||
-    (canToggleSvgView && viewModes.svgViewMode === "code");
+    (canToggleSvgView && viewModes.svgViewMode === "code") ||
+    (canToggleHtmlView && viewModes.htmlViewMode === "code");
 
   return {
     canToggleCodeWrap,
     canToggleMarkdownView,
     canToggleSvgView,
-    hasMoreMenu: canToggleMarkdownView || canToggleSvgView || canToggleCodeWrap,
+    canToggleHtmlView,
+    hasMoreMenu:
+      canToggleMarkdownView || canToggleSvgView || canToggleHtmlView || canToggleCodeWrap,
   };
 }
 
@@ -566,6 +580,10 @@ export function PreviewPane({
     source?.workspaceIdentity,
   );
   const sourceFilePath = source?.path;
+  const readHtmlResource = useCallback(
+    (path: string) => fileService.readMediaPreview({ path, maxBytes: 8 * 1024 * 1024 }),
+    [fileService],
+  );
   const loadImageDownloadSource = useCallback(async () => {
     if (!sourceFilePath) throw new Error("Image source path is unavailable");
     // SVG 文本预览按 UTF-8 解码；下载必须从同一来源 Host 读取原字节，保留其他编码及 XML 声明。
@@ -613,6 +631,7 @@ export function PreviewPane({
   const [preferredEditorId] = useState<string | null>(() => readLastSelectedEditorId());
   const [markdownViewMode, setMarkdownViewMode] = useState<"preview" | "code">("preview");
   const [svgViewMode, setSvgViewMode] = useState<"preview" | "code">("preview");
+  const [htmlViewMode, setHtmlViewMode] = useState<"preview" | "code">("preview");
   const [wrapLongLinesOverride, setWrapLongLinesOverride] = useState<boolean | null>(null);
   const [breadcrumbMaskState, setBreadcrumbMaskState] = useState<BreadcrumbMaskState>("none");
   const breadcrumbScrollRef = useRef<HTMLDivElement | null>(null);
@@ -700,11 +719,17 @@ export function PreviewPane({
       getPreviewPaneDisplayOptions(source, {
         markdownViewMode,
         svgViewMode,
+        htmlViewMode,
       }),
-    [markdownViewMode, source, svgViewMode],
+    [markdownViewMode, source, svgViewMode, htmlViewMode],
   );
-  const { canToggleCodeWrap, canToggleMarkdownView, canToggleSvgView, hasMoreMenu } =
-    displayOptions;
+  const {
+    canToggleCodeWrap,
+    canToggleMarkdownView,
+    canToggleSvgView,
+    canToggleHtmlView,
+    hasMoreMenu,
+  } = displayOptions;
   const codeCommentLabels = useMemo(
     () => ({
       addComment: intl.formatMessage({ id: "codeViewer.comment.add" }),
@@ -766,6 +791,7 @@ export function PreviewPane({
         : "code",
     );
     setWrapLongLinesOverride(null);
+    setHtmlViewMode("preview");
   }, [source]);
 
   const handleSubmitCodeComment = useCallback(
@@ -1714,9 +1740,44 @@ export function PreviewPane({
                   </DropdownMenuRadioGroup>
                 </>
               ) : null}
+              {canToggleHtmlView ? (
+                <>
+                  <DropdownMenuLabel>HTML</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={htmlViewMode}
+                    onValueChange={(value) => setHtmlViewMode(value as "preview" | "code")}
+                  >
+                    <DropdownMenuRadioItem value="preview">
+                      <EyeIcon className="size-4" />
+                      {intl.formatMessage({ id: "codeViewer.markdownPreview" })}
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="code">
+                      <FileCode2Icon className="size-4" />
+                      {intl.formatMessage({ id: "codeViewer.markdownSource" })}
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                  {platform.canOpenLocalFiles &&
+                  !isRemoteSource &&
+                  onOpenBrowserUrl &&
+                  shouldOpenAssistantHtmlInBrowser({
+                    path: source.path ?? "",
+                    workspaceIdentity: source.workspaceIdentity,
+                    workspaceRemoteSessionId: source.workspaceRemoteSessionId,
+                  }) ? (
+                    <DropdownMenuItem onSelect={() => onOpenBrowserUrl(toFileUrl(source.path!))}>
+                      <ExternalLinkIcon className="size-4" />
+                      {intl.formatMessage({
+                        id: "codeViewer.runHtmlInBrowser",
+                      })}
+                    </DropdownMenuItem>
+                  ) : null}
+                </>
+              ) : null}
               {canToggleCodeWrap ? (
                 <>
-                  {canToggleMarkdownView || canToggleSvgView ? <DropdownMenuSeparator /> : null}
+                  {canToggleMarkdownView || canToggleSvgView || canToggleHtmlView ? (
+                    <DropdownMenuSeparator />
+                  ) : null}
                   <DropdownMenuCheckboxItem
                     checked={wrapLongLines}
                     onCheckedChange={(checked) => {
@@ -1855,6 +1916,8 @@ export function PreviewPane({
             }
             markdownViewMode={markdownViewMode}
             svgViewMode={svgViewMode}
+            htmlViewMode={htmlViewMode}
+            readHtmlResource={readHtmlResource}
             wrapLongLines={wrapLongLines}
             codeComments={codeComments}
             enableCodeLineSelection={canCreateCodeComment}

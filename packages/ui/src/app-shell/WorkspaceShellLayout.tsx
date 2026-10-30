@@ -77,8 +77,7 @@ import { toast } from "@/components/ui/toast.js";
 import { getGitDirtyFileCount } from "@/git-branch-switcher/display.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
-import { getPathLeaf, toFileUrl } from "@/lib/path.js";
-import { shouldOpenAssistantHtmlInBrowser } from "@/lib/assistantPreviewCards.js";
+import { getPathLeaf } from "@/lib/path.js";
 import { setWorkspaceSidebarResizeActive } from "@/lib/workspaceSidebarResizeState.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import {
@@ -1295,17 +1294,6 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
           path: target.path,
         });
         if (fileStat.type === "file") {
-          if (
-            shouldOpenAssistantHtmlInBrowser({
-              path: target.path,
-              workspaceIdentity: target.workspaceIdentity,
-              workspaceRemoteSessionId: target.workspaceRemoteSessionId,
-              compactForRemoteControl: false,
-            })
-          ) {
-            handleOpenBrowserUrl(toFileUrl(target.path));
-            return;
-          }
           handleOpenCodeViewer({
             type: "file",
             title: getPathLeaf(target.path),
@@ -1378,7 +1366,6 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
     [
       findFileLinkOwnerWorkspace,
       baseServices.fileService,
-      handleOpenBrowserUrl,
       handleOpenCodeViewer,
       intl,
       openFileTreeRequest,

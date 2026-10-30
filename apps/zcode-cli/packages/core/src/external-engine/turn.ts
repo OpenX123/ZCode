@@ -2,6 +2,7 @@ import {
   externalEngineSessionInput,
   publishExternalEngineConfigError,
   publishExternalEngineSessionUpdate,
+  prepareExternalEngineSession,
 } from "./session.js";
 import { structuredPatch } from "diff";
 import { isExternalSessionEngine } from "@zcode/shared";
@@ -391,8 +392,16 @@ export async function runExternalEngineTurn(
       },
     });
     const result = await completion.catch(async (error: unknown) => {
+      if (input.signal.aborted && !runtime.shuttingDown && runtime.config.externalSessionId) {
+        // 已取消的 turn 不能再用其 signal 准备连接；复用原会话恢复入口，只恢复配置，不重发 prompt。
+        await prepareExternalEngineSession(runtime, input.traceContext).catch(() => {
+          // 准备入口已发布恢复失败；本轮仍按用户取消收尾。
+        });
+        throw error;
+      }
       // adapter 在 runTurn 抛错时清理连接，必须同步撤销 ready；否则配置会一直命中 not_ready。
-      await publishExternalEngineConfigError(runtime, error, input.traceContext);
+      if (!runtime.shuttingDown)
+        await publishExternalEngineConfigError(runtime, error, input.traceContext);
       throw error;
     });
     await closeActiveText();

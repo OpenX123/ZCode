@@ -10,4 +10,6 @@
 
 历史冷恢复读取 external_engine_config session entry，然后 prepare 原 externalSessionId 并投影 connecting/ready/error。只有原生确认值才持久化；首发提升补写草稿配置。失败保留历史和保存值，显式重试复用同一 prepare 入口。
 
-runTurn 抛错意味着 adapter 已清理连接，Runtime 在 turn 收尾前发布配置 error，保留原生会话 ID 与已确认值。正常 cancelled 返回保留 ready；配置业务拒绝不改变连接状态，配置中的连接故障进入同一错误投影和既有显式重试入口。
+runTurn 抛错意味着 adapter 已清理连接。用户停止时的连接、超时、协议或取消回调异常由 Runtime 在 turn 收尾前通过既有 prepareSession 自动恢复原生会话和已确认配置，先 connecting、成功 ready、失败才 error；恢复不重发 prompt。应用关闭时不启动恢复，也不发布迟到 ready/error。其他 prompt 异常发布 error。正常 cancelled 返回保留 ready；配置业务拒绝不改变连接状态，配置中的连接故障进入同一错误投影和既有显式重试入口。
+
+空闲时配置 RPC 发现迟到断联，则先通过同一 prepareSession 恢复原 externalSessionId 和确认值，再对幂等配置写入重试一次；业务拒绝、运行中和关闭中的调用不进入该恢复路径。

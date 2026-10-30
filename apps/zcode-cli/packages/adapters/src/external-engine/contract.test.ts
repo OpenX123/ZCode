@@ -123,17 +123,31 @@ describe("官方 ACP adapter 双向会话", () => {
       code: "engine_not_ready",
     });
   });
-  test("取消会发 session/cancel 并保留可续用的进程", async () => {
-    const { port } = await setup("codex");
-    const abort = new AbortController();
-    const value = turn("codex", [], []);
-    value.signal = abort.signal;
-    value.requestPermission = async () => {
-      abort.abort();
-      return { outcome: "cancelled" };
-    };
-    expect((await port.runTurn(value)).stopReason).toBe("cancelled");
-  });
+  test.each(["claude-code", "codex"] as const)(
+    "%s 取消时接受原生空 usage 并保留可续用的进程",
+    async (engine) => {
+      const { port, root } = await setup(engine);
+      const descriptor = EXTERNAL_ENGINE_RUNTIMES[engine];
+      await writeFile(
+        join(
+          root,
+          managedAdapterInstallDirName(descriptor),
+          ...managedAdapterEntrySegments(descriptor),
+        ),
+        script.replace("stopReason:'cancelled'", "stopReason:'cancelled',usage:null"),
+      );
+      const abort = new AbortController();
+      const value = turn(engine, [], []);
+      value.signal = abort.signal;
+      value.requestPermission = async () => {
+        abort.abort();
+        return { outcome: "cancelled" };
+      };
+      expect((await port.runTurn(value)).stopReason).toBe("cancelled");
+      expect(await port.setConfigOption(value.sessionId, "mode", "safe")).toHaveLength(1);
+      expect((await port.runTurn(turn(engine, [], []))).stopReason).toBe("end_turn");
+    },
+  );
 });
 
 test("进程异常退出与非法帧拒绝pending，不泄露帧且可恢复新进程", async () => {

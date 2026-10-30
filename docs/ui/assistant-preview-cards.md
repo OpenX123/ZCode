@@ -203,14 +203,14 @@ instead of path existence booleans.
   the normal workspace-scoped source key, and the first PPTX card in the card
   order becomes the active tab. This is tabbed preview, not a new split-pane
   layout.
-- Local desktop HTML keeps the Browser side-pane behavior.
-- Remote workspace HTML on Desktop degrades from `file://` Browser navigation to
-  the file Preview Pane because the browser cannot safely resolve the host
-  workspace path.
+- HTML file links and file-backed cards use the file Preview Pane for static HTML
+  on both local and remote workspaces. The sandbox disables scripts and automatic
+  redirects, so business templates cannot replace the preview with `file:///login`.
+  Preview supports source mode. Desktop local files additionally offer an explicit
+  run action in the built-in browser; remote paths are never sent to the local browser.
 - Web `/remote` does not project localhost/127.0.0.1 URL cards or HTML
   output cards. Without port forwarding or a URL proxy those URLs cannot reach
-  the Desktop host, and Preview Pane would only show HTML source rather than the
-  rendered page. Markdown, DOCX, XLSX, PPTX, PDF, and video/audio cards remain available.
+  the Desktop host. Markdown, DOCX, XLSX, PPTX, PDF, and video/audio cards remain available.
 - Desktop localhost HTTP cards keep the Browser side-pane behavior. When a URL
   maps to a generated HTML file, the backing file must also pass the existence
   check.

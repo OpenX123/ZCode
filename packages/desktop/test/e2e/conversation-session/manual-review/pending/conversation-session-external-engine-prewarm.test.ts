@@ -43,8 +43,9 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  if(f.method==='initialize')result({protocolVersion:1});
  else if(f.method==='session/new'||f.method==='session/resume')result({sessionId:sid,configOptions:options()});
  else if(f.method==='session/cancel' && pendingPrompt){
+  if(pendingPrompt.params.prompt[0].text==='E2E_EXTERNAL_STOP_EXIT')process.exit(7);
   if(pendingPrompt.params.prompt[0].text==='E2E_EXTERNAL_STOP_BROKEN')send({method:'session/update',params:{sessionId:sid,update:null}});
-  else send({id:pendingPrompt.id,result:{stopReason:'cancelled'}});
+  else send({id:pendingPrompt.id,result:{stopReason:'cancelled',usage:null}});
   pendingPrompt=undefined;
  }
  else if(f.method==='session/set_config_option'){
@@ -61,6 +62,14 @@ if(f.params.configId==='mode')mode=f.params.value;else if(f.params.configId==='m
  }
  else if(f.method==='session/prompt'){
   fs.writeFileSync(promptPath,JSON.stringify((fs.existsSync(promptPath)?JSON.parse(fs.readFileSync(promptPath,'utf8')):0)+1));
+  if(f.params.prompt[0].text==='E2E_HTML_PREVIEW'){
+   const htmlPath=path.join(process.cwd(),'E2E-preview-login.html');
+   const assets=path.join(process.cwd(),'E2E-preview-assets');fs.mkdirSync(assets,{recursive:true});
+   fs.writeFileSync(path.join(assets,'styles.css'),'h1{color:rgb(20,80,120);background-image:url("./logo.svg")}');
+   fs.writeFileSync(path.join(assets,'logo.svg'),'<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12"><rect width="12" height="12" fill="blue"/></svg>');
+   fs.writeFileSync(htmlPath,'<!doctype html><meta http-equiv="refresh" content="0;url=/login"><link rel="stylesheet" href="./E2E-preview-assets/styles.css"><h1>E2E_HTML_VISIBLE</h1><img alt="E2E_LOGO" src="./E2E-preview-assets/logo.svg"><script>document.body.dataset.executed="yes";location.href="/login"</script>');
+   send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'[E2E_HTML_LINK]('+htmlPath+')'}}}});result({stopReason:'end_turn'});return;
+  }
   if(f.params.prompt[0].text.startsWith('E2E_EXTERNAL_STOP_')){
    pendingPrompt=f;send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'E2E_STOP_WAITING_'+f.params.prompt[0].text}}}});return;
   }
@@ -187,7 +196,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       if (name === "Codex") await startNewV4Draft();
       await $('[data-testid="session-engine-select"]').click();
       await $(`[role="option"]=${name}`).click();
-      await $('[data-testid="engine-config-model"]').waitForDisplayed({ timeout: 30000 });
+      await $('[data-testid="engine-config-model"]').waitForDisplayed({
+        timeout: 30000,
+      });
       await browser.waitUntil(
         async () =>
           (await $('[data-testid="engine-config-model"]').getText()).includes(
@@ -301,7 +312,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       for (const theme of ["light", "dark"] as const) {
         await browser.execute((value) => {
           const actions = (
-            window as typeof window & { __testActions?: { setTheme?: (value: string) => void } }
+            window as typeof window & {
+              __testActions?: { setTheme?: (value: string) => void };
+            }
           ).__testActions;
           if (!actions?.setTheme) throw new Error("缺少主题测试入口");
           actions.setTheme(value);
@@ -411,7 +424,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       );
       await writeFile(recoveryPath, "0");
       const beforeRecovery = persistedHistory(taskId);
-      expect(beforeRecovery.session).toMatchObject({ external_session_id: "fixture-session" });
+      expect(beforeRecovery.session).toMatchObject({
+        external_session_id: "fixture-session",
+      });
       expect(beforeRecovery.messages.length).toBeGreaterThan(0);
       expect(beforeRecovery.parts.length).toBeGreaterThan(0);
       const promptPath = join(dirname(recoveryPath), "prompt-count.json");
@@ -427,7 +442,10 @@ describe("外部引擎首发前配置与同会话续聊", () => {
             (await model.getText()).includes(`${engine} fixture model 1`)
           );
         },
-        { timeout: 30000, timeoutMsg: "冷恢复必须显示上次选择且已连接原生会话" },
+        {
+          timeout: 30000,
+          timeoutMsg: "冷恢复必须显示上次选择且已连接原生会话",
+        },
       );
       expect(JSON.parse(await readFile(recoveryPath, "utf8"))).toBe(3);
       expect((await getV4PaneSnapshot()).sessionId).toBe(taskId);
@@ -460,7 +478,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     }
   });
 
-  it("停止后重连原会话并直接调节思考深度", async () => {
+  it("停止后自动恢复原会话并直接调节思考深度", async () => {
     await installExternalEngineFixtures();
     await prepareV4ConversationE2E({ skipProvider: true });
     for (const [name, engine] of [
@@ -468,36 +486,45 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       ["Codex", "codex"],
     ] as const) {
       if (engine === "codex") await startNewV4Draft();
-      await (await displayed('[data-testid="session-engine-select"]')).click();
-      await $(`[role="option"]=${name}`).click();
       const paneId = await getV4FocusedPaneId();
       if (!paneId) throw new Error("缺少停止回归的当前 pane");
+      const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
+      await (await displayed(`${paneSelector} [data-testid="session-engine-select"]`)).click();
+      await $(`[role="option"]=${name}`).click();
       const effortId = engine === "codex" ? "reasoning_effort" : "effort";
-      const effort = () => displayed(`[data-testid="engine-config-${effortId}"]`);
+      const effort = () => displayed(`${paneSelector} [data-testid="engine-config-${effortId}"]`);
       await (await effort()).waitForEnabled({ timeout: 30000 });
       const selectEffort = async (key: string, expected: string) => {
         await (await effort()).waitForClickable();
         await (await effort()).click();
         const slider = $(`[data-testid="engine-effort-slider-${effortId}"]`);
         await slider.waitForClickable();
-        // 显式聚焦真实滑动条，再用键盘提交；等引擎确认值回流后才关闭弹层。
-        await slider.click();
+        // 点击滑条中点会额外提交 Medium；等待原生自动聚焦后仅提交目标档位。
+        await browser.waitUntil(async () =>
+          browser.execute(
+            (id) => document.activeElement?.getAttribute("data-testid") === id,
+            `engine-effort-slider-${effortId}`,
+          ),
+        );
         await browser.keys(key);
         await browser.waitUntil(
           async () => (await (await effort()).getAttribute("title")) === expected,
         );
         await browser.keys("Escape");
-        await $('[data-testid="engine-effort-value"]').waitForDisplayed({ reverse: true });
+        await $('[data-testid="engine-effort-value"]').waitForDisplayed({
+          reverse: true,
+        });
       };
       await selectEffort("End", "High");
-      for (const scenario of ["HEALTHY", "BROKEN"]) {
+      for (const scenario of ["HEALTHY", "BROKEN", "EXIT"]) {
+        await selectEffort("End", "High");
         const prompt = `E2E_EXTERNAL_STOP_${scenario}`;
         await sendV4PromptInPane(paneId, prompt);
         await waitForV4AssistantMessageContaining(`E2E_STOP_WAITING_${prompt}`);
         const taskId = (await getV4PaneSnapshot()).sessionId;
         if (!taskId) throw new Error("缺少停止回归的会话 ID");
         const originalSession = persistedHistory(taskId).session;
-        await (await displayed('[data-testid="v4-stop"]')).click();
+        await (await displayed(`${paneSelector} [data-testid="v4-stop"]`)).click();
         await waitForV4ConversationState((snapshot) => snapshot.state === "idle", "停止收尾完成");
         const reconnect = $("button=重新连接");
         if (scenario === "HEALTHY") {
@@ -505,7 +532,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
           expect(await (await effort()).isEnabled()).toBe(true);
           expect(await (await effort()).getAttribute("title")).toBe("High");
         } else {
-          await reconnect.waitForDisplayed();
+          expect(await reconnect.isExisting()).toBe(false);
           const descriptor = EXTERNAL_ENGINE_RUNTIMES[engine];
           const promptPath = join(
             resolveE2EStorageRoot(),
@@ -516,8 +543,6 @@ describe("外部引擎首发前配置与同会话续聊", () => {
             "prompt-count.json",
           );
           const promptCount = JSON.parse(await readFile(promptPath, "utf8"));
-          await reconnect.click();
-          await browser.waitUntil(async () => !(await reconnect.isExisting()));
           await browser.waitUntil(
             async () => (await (await effort()).getAttribute("title")) === "High",
           );
@@ -529,10 +554,100 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     }
   });
 
+  it("HTML 文件链接静态预览保留页面，并可切换源码", async () => {
+    await installExternalEngineFixtures();
+    await startNewV4Draft();
+    await prepareV4ConversationE2E({
+      skipProvider: true,
+      skipShellReady: true,
+    });
+    const paneId = await getV4FocusedPaneId();
+    if (!paneId) throw new Error("缺少 HTML 预览的当前 pane");
+    const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
+    await (await displayed(`${paneSelector} [data-testid="session-engine-select"]`)).click();
+    await $('[role="option"]=Codex').click();
+    await (
+      await displayed(`${paneSelector} [data-testid="engine-config-model"]`)
+    ).waitForEnabled({ timeout: 30000 });
+    await sendV4PromptInPane(paneId, "E2E_HTML_PREVIEW");
+    await waitForV4AssistantMessageContaining("E2E_HTML_LINK");
+    await waitForV4ConversationState((snapshot) => snapshot.state === "idle", "HTML 链接生成完成");
+    await (await displayed("button=E2E_HTML_LINK")).click();
+    const frame = $('[data-testid="html-file-preview"]');
+    try {
+      await frame.waitForDisplayed({ timeout: 30000 });
+    } catch (error) {
+      const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
+      if (artifactDir) await browser.saveScreenshot(join(artifactDir, "html-preview-failed.png"));
+      const diagnostics = await browser.execute(() => ({
+        previews: [
+          ...document.querySelectorAll<HTMLElement>(
+            '[data-testid*="preview"], [data-testid*="side-pane"]',
+          ),
+        ].map((node) => ({
+          id: node.dataset.testid,
+          text: node.innerText.slice(0, 600),
+        })),
+        notifications: [
+          ...document.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]'),
+        ].map((node) => node.innerText),
+      }));
+      throw new Error(`HTML 预览未显示 ${JSON.stringify(diagnostics)}`, { cause: error });
+    }
+    expect(await frame.getAttribute("sandbox")).toBe("");
+    await browser.switchFrame(frame);
+    try {
+      await $("h1=E2E_HTML_VISIBLE").waitForDisplayed();
+      expect(await browser.execute(() => document.body.dataset.executed ?? null)).toBe(null);
+      expect(await browser.execute(() => location.href)).toBe("about:srcdoc");
+      expect(
+        await browser.execute(() => getComputedStyle(document.querySelector("h1")!).color),
+      ).toBe("rgb(20, 80, 120)");
+      expect(
+        await browser.execute(
+          () => getComputedStyle(document.querySelector("h1")!).backgroundImage,
+        ),
+      ).toContain("data:image/svg+xml;base64,");
+      await browser.waitUntil(async () =>
+        browser.execute(
+          () =>
+            document.querySelector<HTMLImageElement>('img[alt="E2E_LOGO"]')?.naturalWidth === 12,
+        ),
+      );
+    } finally {
+      await browser.switchFrame(null);
+    }
+    const preview = $('[data-testid="preview-pane"]');
+    // 文件预览标题栏通过 portal 挂在文件管理器顶栏，不在正文 aside 内。
+    const more = () => displayed('[data-file-manager-pane] button[aria-label="更多"]');
+    await (await more()).click();
+    await $('[role="menuitem"]=用内置浏览器运行').waitForDisplayed();
+    await $('[role="menuitemradio"]=源码').click();
+    await frame.waitForDisplayed({ reverse: true });
+    await browser.waitUntil(async () => (await preview.getText()).includes("E2E_HTML_VISIBLE"));
+    await $('[role="menu"]').waitForExist({ reverse: true });
+    await (await more()).click();
+    await (await displayed('[role="menuitemradio"]=预览')).click();
+    await frame.waitForDisplayed();
+    await browser.switchFrame(frame);
+    try {
+      await $("h1=E2E_HTML_VISIBLE").waitForDisplayed();
+      expect(await browser.execute(() => location.href)).toBe("about:srcdoc");
+    } finally {
+      await browser.switchFrame(null);
+    }
+    await $('[role="menu"]').waitForExist({ reverse: true });
+    const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
+    if (artifactDir) await browser.saveScreenshot(join(artifactDir, "html-static-preview.png"));
+  });
+
   it("深度提交等待确认时不回跳，拒绝后恢复确认值", async () => {
     await installExternalEngineFixtures();
     await startNewV4Draft();
-    await prepareV4ConversationE2E({ skipProvider: true, skipShellReady: true });
+    await prepareV4ConversationE2E({
+      skipProvider: true,
+      skipShellReady: true,
+    });
     for (const [name, engine] of [
       ["Claude Code", "claude-code"],
       ["Codex", "codex"],
@@ -563,7 +678,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       }, engine === "codex");
       await browser.execute((dark) => {
         const actions = (
-          window as typeof window & { __testActions?: { setTheme?: (value: string) => void } }
+          window as typeof window & {
+            __testActions?: { setTheme?: (value: string) => void };
+          }
         ).__testActions;
         if (!actions?.setTheme) throw new Error("缺少主题测试入口");
         actions.setTheme(dark ? "dark" : "light");
@@ -629,7 +746,12 @@ describe("外部引擎首发前配置与同会话续聊", () => {
               actions: [
                 { type: "pointerMove", duration: 0, x: point.left, y: point.y },
                 { type: "pointerDown", button: 0 },
-                { type: "pointerMove", duration: 150, x: point.right, y: point.y },
+                {
+                  type: "pointerMove",
+                  duration: 150,
+                  x: point.right,
+                  y: point.y,
+                },
                 { type: "pointerUp", button: 0 },
               ],
             },

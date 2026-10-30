@@ -1917,6 +1917,7 @@ const enUS: Record<string, string> = {
   "codeViewer.markdownPreview": "Preview",
   "codeViewer.markdownSource": "Source",
   "codeViewer.svgMode": "SVG",
+  "codeViewer.runHtmlInBrowser": "Run in built-in browser",
   "codeViewer.svgPreview": "Preview",
   "codeViewer.svgSource": "Code",
   "codeViewer.wrapLines": "Wrap lines",

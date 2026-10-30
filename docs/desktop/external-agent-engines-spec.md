@@ -374,10 +374,12 @@ sequenceDiagram
 
 ### 运行中断后的配置状态（2026-10-28）
 
-- adapter 的 `runTurn` 抛错时会清理该会话连接；Runtime 必须同步发布 `engineConfigState=error`，保留已确认配置和原 `externalSessionId`，不能继续发布或沿用 ready。
-- 正常返回 `stopReason=cancelled` 的停止仍可复用连接，不因用户停止而显示连接失败。配置 RPC 的业务拒绝同样保留 ready；配置操作中的连接、协议、超时或 not_ready 错误进入已有错误与重试入口。
-- 用户点击既有重试入口后，通过 prepareSession 恢复原会话及上次确认配置；重试本身不得提交 prompt。恢复成功后可直接调节思考档位，无须额外发送消息。
-- 回归：两家引擎的 prompt 异常和停止时连接异常均投影 error；原配置保留，显式重连后可修改深度，原生会话 ID 不变且 prompt 不重发；健康停止及配置业务拒绝保持可用。
+- 非用户停止的 `runTurn` 抛错时，adapter 会清理该会话连接；Runtime 必须同步发布 `engineConfigState=error`，保留已确认配置和原 `externalSessionId`，不能继续发布或沿用 ready。用户停止走下述自动恢复路径。
+- 正常返回 `stopReason=cancelled` 的停止仍可复用连接，不因用户停止而显示连接失败。配置 RPC 的业务拒绝同样保留 ready；连接故障在空闲时先自动恢复，仍失败才进入已有错误与重试入口。
+- ACP prompt 响应中的 `usage: null` 与缺省用量都表示本轮没有用量数据，不是协议故障；停止后保留健康连接。
+- 用户停止时若 runTurn 抛错导致 adapter 回收连接（包括连接、协议、超时或取消回调异常），Runtime 自动调用既有 prepareSession，按原 externalSessionId 恢复上次确认配置；恢复期间投影 connecting，成功后 ready，无须手动重连。恢复使用独立于已取消 turn 的 signal，应用关闭时由 closeSession 中止，不创建新会话或重发 prompt。恢复失败仍保留历史、配置及草稿，发布错误并保留手动重试入口。
+- 回归：两家引擎的空用量停止、停止时真实断联自动恢复、恢复失败及关闭边界；原生会话 ID 不变且 prompt 不重发；非停止的 prompt 异常仍投影 error，健康停止及配置业务拒绝保持可用。
+- 停止成功后才退出的进程可在下一次配置操作中被发现。空闲 Runtime 收到结构化连接故障后，通过同一 prepareSession 恢复原会话，并对幂等的 set_config_option 重试一次；不重试业务拒绝，不重发 prompt，运行中或正在关闭时不另建恢复链路。
 
 ```mermaid
 sequenceDiagram
@@ -391,13 +393,26 @@ sequenceDiagram
     R-->>U: turn 停止，配置保持 ready
   else prompt 抛错并清理连接
     A-->>R: 抛出异常
-    R-->>U: 配置 error，保留选择及会话 ID
-    U->>R: 既有重试连接命令
+    R-->>U: connecting，保留选择及会话 ID
     R->>A: prepare 原 externalSessionId
-    A-->>R: 原生确认配置
-    R-->>U: ready，可调节深度
+    alt 恢复成功
+      A-->>R: 原生确认配置
+      R-->>U: ready，可调节深度
+    else 恢复失败
+      R-->>U: error，保留手动重试入口
+    end
   end
 ```
+
+### 暂停自动恢复验证（2026-10-30）
+
+- 生产日志中的停止失败为 `Invalid ACP object`；已安装的 Codex ACP 在无用量统计时返回 `usage:null`。修复前双引擎空用量取消回归失败，修复后保留健康进程，停止后可直接配置和续聊。
+- CLI 定向 4 文件 54/54 通过，覆盖取消后自动恢复、原生 ID 与确认配置保留、关闭竞态、恢复失败、取消回调异常，以及迟到退出后幂等配置重试。无自动重发 prompt。
+- 隔离 Electron 的“停止后自动恢复原会话并直接调节思考深度”通过：Claude Code/Codex 均覆盖健康停止、协议故障、进程退出，检查无需重连、配置可调、原生 ID 与 prompt 次数不变。单项证据见 `packages/desktop/.e2e-artifacts/desktop-e2e-20261030090545306-p97277-c38e88fa884990c9/summary.md`；该次 HTML 用例的菜单定位失败已在后续独立运行修正并通过。
+- 根与 CLI 类型检查通过，根 Lint 为 0 errors / 93 warnings，CLI 改动文件 Lint 通过。额外 CLI 全包 Lint 为 4 errors / 66 warnings：未修改的 `adapters/src/model/runner-stream.ts`、`bootstrap/src/zcode-protocol-v4/transcript-hydration.ts`、`bootstrap/src/zcode-protocol-v4/product-projection.ts`、`contracts/src/model/index.ts` 仍有 max-lines 失败。
+- 供应商使用隔离 ACP 进程夹具，候选保持 pending；未替换用户已安装应用，也不代表真实账号或跨平台验收。
+
+### 既有连接恢复规则（2026-10-25）
 
 - 已复现：同一个 Codex 原生会话可由独立 ACP 进程恢复，但当前桌面 prepare 连续失败；旧实现丢弃 JSON-RPC 出错方法与错误码，无法区分鉴权、会话缺失、协议不支持与暂时错误。不得据统一提示推断网络断开。
 - ACP adapter 仍是连接、请求和重试的唯一所有者。prepareSession 对同一 session 合并并发调用，最多尝试三次，间隔 500ms、1500ms；只重试超时、连接中断和 RPC internal error。鉴权、资源缺失、参数或保存配置不支持立即失败。

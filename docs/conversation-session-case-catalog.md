@@ -4814,3 +4814,7 @@ E01–E11 产品规则已获用户确认，详见 [规格](desktop/external-agen
 ### E17 外部引擎冷恢复自动重试（accepted，候选保持 pending）
 
 扩展 `conversation-session-external-engine-prewarm.test.ts`：两家引擎冷恢复前注入前两次 resume internal error，第三次自动成功；无需手动重连，保留草稿、已确认模型/模式/思考档位和历史，不提交额外 prompt。原生供应商使用隔离 ACP 进程夹具；真实桌面原会话恢复另行取证，不代表跨平台或真实模型调用验收。
+
+## 2026-10-30 HTML 静态预览与停止自动恢复
+
+扩展现有 `conversation-session-external-engine-prewarm.test.ts` 候选：两家引擎分别覆盖 usage:null 的健康停止、非法 session/update 和进程退出后的自动恢复，无须点击重连，原生会话 ID、已确认深度和 prompt 次数保持不变。HTML 文件链接打开静态预览，脚本与 meta refresh 不得跳转 /login，样式可见，源码/预览可切换。供应商使用隔离 ACP 夹具，候选保持 pending。

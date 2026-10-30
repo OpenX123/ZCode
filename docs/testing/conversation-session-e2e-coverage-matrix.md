@@ -4340,3 +4340,7 @@ E01–E11 产品规则已获用户确认，详见 [规格](../desktop/external-a
 ### E17 外部引擎冷恢复自动重试（accepted，候选保持 pending）
 
 扩展 `conversation-session-external-engine-prewarm.test.ts`：两家引擎冷恢复前注入前两次 resume internal error，第三次自动成功；无需手动重连，保留草稿、已确认模型/模式/思考档位和历史，不提交额外 prompt。原生供应商使用隔离 ACP 进程夹具；真实桌面原会话恢复另行取证，不代表跨平台或真实模型调用验收。
+
+## 2026-10-30 停止与 HTML 预览回归候选
+
+既有 `conversation-session-external-engine-prewarm.test.ts` 增补：Claude Code/Codex 健康空用量停止、停止中协议故障及进程退出后自动恢复原会话，保留配置且不重发 prompt；HTML 文件链接的静态显示、阻止脚本/meta refresh 登录跳转、源码切换。状态 accepted/manual-review/pending，隔离供应商，不自动转正或准入 CI。

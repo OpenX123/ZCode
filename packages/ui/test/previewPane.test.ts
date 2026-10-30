@@ -27,7 +27,13 @@ describe("PreviewPane helpers", () => {
     ["C:\\project", "C:\\outside\\drawing.png"],
   ])("keeps an outside image's absolute reference for %s", (workspacePath, path) => {
     const reference = resolvePreviewPaneImageFileReference(
-      { type: "image", title: "drawing.png", mediaType: "image/png", path, workspacePath },
+      {
+        type: "image",
+        title: "drawing.png",
+        mediaType: "image/png",
+        path,
+        workspacePath,
+      },
       workspacePath,
       workspacePath,
     );
@@ -80,7 +86,10 @@ describe("PreviewPane helpers", () => {
         "/other",
         "/other",
       ),
-    ).toMatchObject({ path: "/project/drawing.png", relativePath: "drawing.png" });
+    ).toMatchObject({
+      path: "/project/drawing.png",
+      relativePath: "drawing.png",
+    });
     expect(
       resolvePreviewPaneImageFileReference(
         {
@@ -95,7 +104,12 @@ describe("PreviewPane helpers", () => {
     ).toBeUndefined();
     expect(
       resolvePreviewPaneImageFileReference(
-        { type: "text", title: "inline.svg", content: "<svg/>", language: "xml" },
+        {
+          type: "text",
+          title: "inline.svg",
+          content: "<svg/>",
+          language: "xml",
+        },
         "/project",
         "/project",
       ),
@@ -283,7 +297,9 @@ describe("PreviewPane helpers", () => {
   });
 
   it("only requests a missing-file toast for reference-driven PPTX navigation", () => {
-    const missingError = Object.assign(new Error("missing"), { code: "ENOENT" });
+    const missingError = Object.assign(new Error("missing"), {
+      code: "ENOENT",
+    });
     expect(
       shouldToastPptxReferenceFileMissing(
         {
@@ -440,6 +456,7 @@ describe("PreviewPane helpers", () => {
       canToggleCodeWrap: true,
       canToggleMarkdownView: false,
       canToggleSvgView: false,
+      canToggleHtmlView: false,
       hasMoreMenu: true,
     });
   });
