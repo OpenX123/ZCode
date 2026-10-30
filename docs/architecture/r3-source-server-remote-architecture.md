@@ -1,5 +1,24 @@
 # R3 Source Server 统一远程主链规格
 
+## 2026-10-30 上游稳定性修复
+
+- SSHBackend 是单次连接尝试的完成结果 owner。`dispose` 必须立即拒绝等待中的握手，并移除该次 ready/error 监听；不能等待 socket 关闭，也不能用可能来自旧连接的 close 判定新连接失败。迟到的 ready 不得恢复已释放 backend。
+- SSH、Docker、WSL 的命令退出统一保留数值退出码；信号终止按 `128 + 信号值` 失败；没有 exit-status 或可识别信号时返回 255。不能把空退出信息解释为成功。SSH 捕获输出仍在 close 时收尾，保留 exit 后到达的数据。
+- 验收覆盖认证前取消且不再收到 ready/error、释放后的迟到 ready，以及数值退出、信号退出、无状态 close 和 exit 后输出。连接管理、owner/lease、workspace identity 与重连策略沿用现有合同。
+
+```mermaid
+sequenceDiagram
+  participant Manager as 连接管理器
+  participant Backend as SSHBackend
+  participant Client as ssh2 Client
+  Manager->>Backend: ensureConnected
+  Backend->>Client: connect，监听 ready/error
+  Manager->>Backend: 取消或超时后 dispose
+  Backend-->>Manager: 立即拒绝在途握手
+  Backend->>Client: 移除该次监听并 end
+  Client-->>Backend: 迟到 ready 不再恢复连接
+```
+
 ## 1. 状态与范围
 
 - 状态：已实现（代码基线 `fad93b9e57`，2026-09-13）。正式发布校验与真实 SSH E2E 复跑仍在进行，以 [问题台账](./r3-source-server-remote-open-issues.md) R3-ISSUE-001 / 020 为准。本文是当前事实规格；R3 过程文档已归档到 `docs/archive/remote-r3/`，阅读入口见 [docs/remote/README.md](../remote/README.md)

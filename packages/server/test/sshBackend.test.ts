@@ -114,6 +114,68 @@ function expectSSHExecCommand(command: string, rawCommand: string): void {
 }
 
 describe("SSHBackend", () => {
+  it("认证前释放应立即结束握手，即使 ssh2 不再发 ready/error", async () => {
+    const backend = new SSHBackend({ host: "example.com", username: "root" });
+    const fakeClient = Object.assign(new EventEmitter(), {
+      connect: vi.fn(),
+      end: vi.fn(),
+      exec: vi.fn(),
+    });
+    const mutable = backend as unknown as { client: typeof fakeClient; connected: boolean };
+    mutable.client = fakeClient;
+    let outcome = "pending";
+    const detecting = backend.detect().then(
+      () => {
+        outcome = "resolved";
+      },
+      (error: Error) => {
+        outcome = error.message;
+      },
+    );
+    backend.dispose();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(outcome).toContain("SSH backend 已释放");
+    expect(fakeClient.listenerCount("ready")).toBe(0);
+    fakeClient.emit("ready");
+    expect(mutable.connected).toBe(false);
+    expect(fakeClient.exec).not.toHaveBeenCalled();
+    await detecting;
+  });
+
+  it.each([
+    { code: 0, signal: undefined, expected: 0 },
+    { code: 7, signal: undefined, expected: 7 },
+    { code: null, signal: "SIGKILL", expected: 137 },
+    { code: undefined, signal: undefined, expected: 255 },
+  ])("exec 和输出捕获保留退出语义：$expected", async ({ code, signal, expected }) => {
+    const backend = new SSHBackend({ host: "example.com", username: "root" });
+    const fakeClient = {
+      exec: (_command: string, callback: (error: null, channel: FakeExecChannel) => void) => {
+        const channel = new FakeExecChannel();
+        callback(null, channel);
+        queueMicrotask(() => {
+          if (code !== undefined || signal !== undefined) channel.emit("exit", code, signal);
+          channel.emit("data", Buffer.from("late output"));
+          channel.emit("close", code, signal);
+        });
+      },
+    };
+    const mutable = backend as unknown as {
+      client: typeof fakeClient;
+      connected: boolean;
+      execSimple(command: string): Promise<string>;
+    };
+    mutable.client = fakeClient;
+    mutable.connected = true;
+    const stream = await backend.exec("true");
+    await expect(new Promise<number>((resolve) => stream.onClose(resolve))).resolves.toBe(expected);
+    if (expected === 0) {
+      await expect(mutable.execSimple("true")).resolves.toBe("late output");
+    } else {
+      await expect(mutable.execSimple("true")).rejects.toThrow(`code ${expected}`);
+    }
+  });
+
   it("ready 后 SSH client error 应触发一次断连事件", () => {
     const backend = new SSHBackend({
       host: "example.com",

@@ -19,7 +19,10 @@ import {
   normalizeRemotePlatform,
   resolveRemotePlatform,
 } from "@zcode/server/remote/detectEnv.js";
-import { createCloseEventController } from "@zcode/server/remote/closeEvent.js";
+import {
+  createCloseEventController,
+  resolveRemoteExitCode,
+} from "@zcode/server/remote/closeEvent.js";
 import {
   buildPosixShellExecCommand,
   quotePosixShellArg,
@@ -99,6 +102,8 @@ export class SSHBackend implements IRemoteBackend {
   private disposed = false;
   private hasEverConnected = false;
   private disconnectReported = false;
+  /** 在途握手的失败出口，由 dispose 主动结束等待。 */
+  private failPendingConnect: ((error: Error) => void) | undefined;
   private readonly disconnectEmitter = new Emitter<RemoteDisconnectEvent>();
   readonly onDidDisconnect = this.disconnectEmitter.event;
 
@@ -177,23 +182,27 @@ export class SSHBackend implements IRemoteBackend {
     this.assertNotDisposed();
     if (this.connected) return;
     return new Promise((resolve, reject) => {
-      const handleReady = () => {
+      const settle = () => {
+        this.client.off("ready", handleReady);
         this.client.off("error", handleConnectError);
-        if (this.disposed) {
-          // dispose 与 ssh2 ready 可能交错；迟到的 ready 若重新标记 connected，
-          // 后续 detect 会继续使用已取消连接的旧凭据。再次关闭 socket，并让原调用失败。
-          this.client.end();
-          reject(new Error("SSH backend 已释放，无法重新建立连接"));
-          return;
-        }
+        this.failPendingConnect = undefined;
+      };
+      const handleReady = () => {
+        settle();
         this.connected = true;
         this.hasEverConnected = true;
         this.disconnectReported = false;
         resolve();
       };
       const handleConnectError = (error: unknown) => {
-        this.client.off("ready", handleReady);
+        settle();
         reject(normalizeSSHConnectError(error));
+      };
+      // ssh2 收到 banner 后、认证前被 end 时可能既不发 ready 也不发 error，握手会永久挂起。
+      // dispose 主动拒绝；不用可能来自旧连接的 close 判定当前尝试，避免迟到事件串扰。
+      this.failPendingConnect = (error) => {
+        settle();
+        reject(error);
       };
       this.client.once("ready", handleReady);
       this.client.once("error", handleConnectError);
@@ -307,16 +316,18 @@ export class SSHBackend implements IRemoteBackend {
           if (code !== 0) {
             console.warn(`[ssh] exec channel failed: code=${code}`);
           }
-          onClose.fire(code ?? 0);
+          onClose.fire(code);
         };
 
         // ssh2 channels may fire 'exit' before 'close', or sometimes
         // only one of them. Listen to both to be safe.
-        channel.on("exit", (code: number | null) => {
-          fireOnce(code ?? 0);
+        // ssh2 收到 exit-signal 时 code 为 null；没有收到任何退出信息时 close 不带参数。
+        // 两种情况都不是成功，见 resolveRemoteExitCode。
+        channel.on("exit", (code: number | null, signal?: string) => {
+          fireOnce(resolveRemoteExitCode(code, signal));
         });
-        channel.on("close", () => {
-          fireOnce(0);
+        channel.on("close", (code?: number | null, signal?: string) => {
+          fireOnce(resolveRemoteExitCode(code, signal));
         });
 
         resolve({
@@ -392,12 +403,11 @@ export class SSHBackend implements IRemoteBackend {
         // ssh2 在短命令场景下可能先发 exit，再异步派发 stdout data。
         // 不能在 exit 事件直接 finish：会把后续 data 丢掉，导致 platform/arch 偶发识别为空。
         // 这里改为只在 close 统一收尾，并优先使用 exit 记录的真实退出码，避免误判成功。
-        channel.on("exit", (code: number | null) => {
-          exitCode = code ?? 0;
+        channel.on("exit", (code: number | null, signal?: string) => {
+          exitCode = resolveRemoteExitCode(code, signal);
         });
-        channel.on("close", (code: number | null) => {
-          const resolvedCode = exitCode ?? code ?? 0;
-          finish(resolvedCode);
+        channel.on("close", (code?: number | null, signal?: string) => {
+          finish(exitCode ?? resolveRemoteExitCode(code, signal));
         });
       });
     });
@@ -614,6 +624,8 @@ export class SSHBackend implements IRemoteBackend {
       return;
     }
     this.disposed = true;
+    // 先结束握手并移除 ready 监听，迟到 ready 不得复活已取消的连接。
+    this.failPendingConnect?.(new Error("SSH backend 已释放，无法重新建立连接"));
     // 首次握手失败后，ssh2 可能在 socket end/close 之后继续发出 error。
     // dispose 后保留 onClientError 作为 no-op sink，不能按 end/close 事件时序提前移除，
     // 否则迟到事件会逃逸为 uncaughtException，让共享 Window Host 连带退出其它 workspace。
