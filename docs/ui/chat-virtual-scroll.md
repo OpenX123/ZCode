@@ -61,6 +61,28 @@
 
 ## 渲染缓存与 memo 边界
 
+### 每帧派生成本（2026-10-30 上游同步）
+
+- `ConversationProjectionStore` 仍是消息投影的唯一 owner。按不可变 rows 数组身份派生「历史 + 尾段」，不新增消息状态或写入路径；两段拼接逐项等于 rows，轮次不相交。交错追加旧轮时尾段可含多轮。
+- 应用仅影响尾轮的 delta 时，在通知订阅方之前登记新分区，沿用历史数组；更新旧行、前插、rewind、新轮或 snapshot 更换时重新分区。对象池从尾部查找受影响行，找到全部目标后停止。
+- render unit 选择器按历史数组引用复用历史派生；只有缺 header 的轮次读取 session phase、running 轮次读取时钟、插件卡片读取固定裁决时，相关输入才使历史缓存失效。尾轮被过滤、转终态、新轮开始和插件手动固定后，结果必须与全窗构建相等。
+- running 尾轮独立为自然流 DOM，虚拟历史沿用同一数组及 unit 引用。插件 UI 派生只在回合序列或插件工具行变化时重算。搜索关闭时返回稳定空索引；搜索缓存跟随不可变 unit 身份失效，历史正文修订不能沿用同 key 的旧命中。
+- 所有缓存只属于 renderer，不改变 CLI/Host 的消息事实、队列、生命周期、身份和传输协议。保留双栏独立滚动记忆和 resize 跟随规则。
+
+```mermaid
+flowchart TD
+  A[CLI 投影 delta] --> B[ProjectionStore 应用并共享行]
+  B --> C{只影响现有尾轮?}
+  C -->|是| D[复用历史数组并更新尾段]
+  C -->|否| E[按当前 rows 重建分区]
+  D --> F[通知 renderer 订阅方]
+  E --> F
+  F --> G[选择器复用历史派生并计算尾段]
+  G --> H[Timeline 虚拟历史与自然流尾轮]
+```
+
+验收：尾轮 token 更新不访问历史行并保留虚拟历史引用；历史修订、交错轮次、裁剪、新轮、终态、时钟和固定裁决结果与全窗构建一致。真实 timeline 的流式更新不得重渲染不变的历史轮次；桌面/紧凑布局与深浅主题回归通过。浏览器 fixture 只验证本地渲染和滚动，不代表真实 SSH 链路验收。
+
 - 已完成 markdown 消息固定走 `Streamdown` static 模式；只有真实流式动画进入 streaming/block 路径，避免虚拟滚动和历史懒渲染反复重挂载完成态消息时触发 Streamdown 内部更新循环。
 - `DiffViewer`、edit inline diff、`ToolLayout`、`ToolCallBlock`、`AssistantMessage`、`ChatMessage` 和 turn group 边界使用 `memo`，减少历史消息在父组件更新时的重复 commit。
 - turn group 内传给单条消息的 retry、文件切换、feedback、fork 回调通过 `useCallback` 稳定，避免 memo 被 map 里的 inline function 抵消。

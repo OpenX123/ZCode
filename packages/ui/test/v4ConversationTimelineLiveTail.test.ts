@@ -28,10 +28,11 @@ describe("ConversationTimeline running live tail", () => {
   it("keeps history virtualized and splits only the latest running unit", () => {
     const history = unit("history", false);
     const live = { ...unit("live", true), isLastTurn: true };
-
-    const result = splitConversationTimelineLiveTail([history, live]);
+    const historyUnits = [history];
+    const result = splitConversationTimelineLiveTail({ history: historyUnits, tail: [live] });
 
     expect(result.virtualizedUnits).toEqual([history]);
+    expect(result.virtualizedUnits).toBe(historyUnits);
     expect(result.liveUnit).toBe(live);
     expect(result.liveUnitIndex).toBe(1);
   });
@@ -40,7 +41,7 @@ describe("ConversationTimeline running live tail", () => {
     const history = unit("history", false);
     const terminal = { ...unit("terminal", false), isLastTurn: true };
 
-    const result = splitConversationTimelineLiveTail([history, terminal]);
+    const result = splitConversationTimelineLiveTail({ history: [history], tail: [terminal] });
 
     expect(result.virtualizedUnits).toEqual([history, terminal]);
     expect(result.liveUnit).toBeNull();
@@ -51,7 +52,7 @@ describe("ConversationTimeline running live tail", () => {
     const staleRunning = unit("stale-running", true);
     const terminal = { ...unit("terminal", false), isLastTurn: true };
 
-    const result = splitConversationTimelineLiveTail([staleRunning, terminal]);
+    const result = splitConversationTimelineLiveTail({ history: [staleRunning], tail: [terminal] });
 
     expect(result.virtualizedUnits).toHaveLength(2);
     expect(result.liveUnit).toBeNull();

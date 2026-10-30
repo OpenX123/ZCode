@@ -13,6 +13,7 @@ import {
   type ConversationDelta,
   SUBSCRIPTION_CONTENT_REJECTED,
   type ConversationRow,
+  type ConversationRowsPartition,
   type ConversationSnapshot,
   type ConversationOpenTiming,
   type ConversationTopicFrame,
@@ -266,6 +267,95 @@ export function mergeOlderRows(
   const older = fetched.filter((row) => row.rowId < firstRowId);
   if (older.length === 0) return null;
   return [...older, ...window];
+}
+
+/**
+ * rows.window 的「冻结历史 + 尾轮」分区缓存（类型见 ConversationRowsPartition，
+ * spec：docs/ui/chat-virtual-scroll.md「每帧派生成本」）。
+ *
+ * 为什么需要它：流式帧只改最后一轮，但 rows 每帧都是新数组，消费方只能逐行比较才知道历史没变，
+ * 每帧成本随历史长度线性增长。分区让历史段在只改尾轮的帧之间保持同一个数组引用，
+ * 消费方按引用缓存历史派生，每帧只算尾轮。
+ *
+ * 分区是 rows 的纯派生缓存，以 window 数组身份为键：读取方拿到的永远是与当前 rows 对应的分区，
+ * 不是第二份消息状态。
+ */
+const EMPTY_ROWS_PARTITION: ConversationRowsPartition = { history: [], tail: [] };
+const rowsPartitions = new WeakMap<readonly ConversationRow[], ConversationRowsPartition>();
+
+export function getConversationRowsPartition(
+  rows: readonly ConversationRow[],
+): ConversationRowsPartition {
+  let partition = rowsPartitions.get(rows);
+  if (!partition) {
+    partition = splitConversationRows(rows);
+    rowsPartitions.set(rows, partition);
+  }
+  return partition;
+}
+
+/**
+ * 应用 delta 帧后调用。帧只改尾轮时沿用上一份 history 数组，成本 O(delta + 尾轮)；
+ * 其余情况（新轮开始、旧行更新、rewind 到历史）不登记，由首次读取时整窗重建。
+ * 判定依赖 window 按 rowId 升序：rowId ≥ 尾轮首行即在尾轮内。
+ */
+export function advanceConversationRowsPartition(
+  previousRows: readonly ConversationRow[],
+  nextRows: readonly ConversationRow[],
+  deltas: readonly ConversationDelta[],
+): void {
+  if (nextRows === previousRows) return;
+  const previous = rowsPartitions.get(previousRows);
+  const tailStartRowId = previous?.tail[0]?.rowId;
+  if (!previous || tailStartRowId === undefined) return;
+  const isTailTurn = (turnId: string) => previous.tail.some((row) => row.turnId === turnId);
+  for (const delta of deltas) {
+    switch (delta.op) {
+      case "row.appended":
+        if (!isTailTurn(delta.row.turnId)) return;
+        break;
+      case "row.upserted":
+        if (delta.row.rowId < tailStartRowId || !isTailTurn(delta.row.turnId)) return;
+        break;
+      case "row.delta":
+        if (delta.rowId < tailStartRowId) return;
+        break;
+      case "row.removed":
+        if (delta.fromRowId <= tailStartRowId) return;
+        break;
+      default:
+        // state / pluginUi / workflowRun delta 不改 rows。
+        break;
+    }
+  }
+  rowsPartitions.set(nextRows, {
+    history: previous.history,
+    tail: nextRows.slice(previous.history.length),
+  });
+}
+
+/**
+ * 尾轮起点 = 最后一行所在轮的首行。若尾段内某一轮在更早位置也出现过，起点前移到那里，
+ * 直到两段轮次不相交；按轮分组的派生因此可以分段计算再拼接。O(N)，只在历史变化时执行。
+ */
+function splitConversationRows(rows: readonly ConversationRow[]): ConversationRowsPartition {
+  const last = rows.at(-1);
+  if (!last) return EMPTY_ROWS_PARTITION;
+  const firstIndexByTurnId = new Map<string, number>();
+  rows.forEach((row, index) => {
+    if (!firstIndexByTurnId.has(row.turnId)) firstIndexByTurnId.set(row.turnId, index);
+  });
+  let start = firstIndexByTurnId.get(last.turnId)!;
+  let checkedFrom = rows.length;
+  while (start < checkedFrom) {
+    let nextStart = start;
+    for (let index = start; index < checkedFrom; index += 1) {
+      nextStart = Math.min(nextStart, firstIndexByTurnId.get(rows[index]!.turnId)!);
+    }
+    checkedFrom = start;
+    start = nextStart;
+  }
+  return { history: rows.slice(0, start), tail: rows.slice(start) };
 }
 
 /**
@@ -745,6 +835,8 @@ export class ConversationProjectionStore {
     const applied = applyConversationDeltas(current, frame.payload.deltas);
     // seq 是快照对齐水位（R-03），delta 帧应用完推进到帧右端点。
     const next = this.shareDeltaRows({ ...applied, seq: frame.toSeq }, frame.payload.deltas);
+    // 先于 setState 登记分区：订阅方在同一次通知里读取新 rows 时，分区已就绪。
+    advanceConversationRowsPartition(current.rows.window, next.rows.window, frame.payload.deltas);
     logSubagentProjectionTransition(this.topic, current, next, "deltas");
     const removedFromRowId = frame.payload.deltas.reduce<number | null>(
       (earliest, delta) =>
@@ -813,18 +905,28 @@ export class ConversationProjectionStore {
       else if (delta.op === "row.delta") rememberIds.add(delta.rowId);
     }
     if (shareIds.size === 0 && rememberIds.size === 0) return snapshot;
+    // 同一 rowId 同时被 upsert 和 delta 时以共享为准（与原先 if / else if 的优先级一致）。
+    for (const rowId of shareIds) rememberIds.delete(rowId);
+    // Bug 根因：原先每帧 forEach 整个 window 才找到 delta 命中的几行，长会话里每帧要扫描全部历史。
+    // 行之间的共享互不影响（池按 topic + rowId 分键），窗口内 rowId 唯一，所以从尾部扫描一次、
+    // 找齐全部目标即停；流式命中的行几乎都在尾部。目标不在窗口时退化为整窗扫描，与原先相同。
+    const rows = snapshot.rows.window;
     let window: ConversationRow[] | null = null;
-    snapshot.rows.window.forEach((row, index) => {
+    let remaining = shareIds.size + rememberIds.size;
+    for (let index = rows.length - 1; index >= 0 && remaining > 0; index -= 1) {
+      const row = rows[index]!;
       if (shareIds.has(row.rowId)) {
+        remaining -= 1;
         const shared = this.rowPool.shareRow(this.topic, row);
         if (shared !== row) {
-          window ??= [...snapshot.rows.window];
+          window ??= [...rows];
           window[index] = shared;
         }
       } else if (rememberIds.has(row.rowId)) {
+        remaining -= 1;
         this.rowPool.remember(this.topic, row);
       }
-    });
+    }
     return window === null ? snapshot : { ...snapshot, rows: { ...snapshot.rows, window } };
   }
 

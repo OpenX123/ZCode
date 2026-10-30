@@ -1,6 +1,11 @@
 import { createPluginUiSidePaneTab } from "./sidePane/pluginUiSidePaneTab.js";
 import { describe, expect, it } from "vitest";
-import { exampleOpenSideTab, examplePresentation } from "./contract.example.js";
+import {
+  exampleOpenSideTab,
+  examplePresentation,
+  exampleSelectLogicalUiInstances,
+  exampleConversationPartition,
+} from "./contract.example.js";
 import {
   PLUGIN_UI_CARD_DEFAULT_HEIGHT_PX,
   buildPluginUiSidePaneTabId,
@@ -11,6 +16,12 @@ import {
 } from "./contract.js";
 
 describe("plugin-ui contract", () => {
+  it("插件裁决选择器接受同一 rows 的只读分区并复用结果", () => {
+    const rows = [...exampleConversationPartition.history, ...exampleConversationPartition.tail];
+    const first = exampleSelectLogicalUiInstances(rows, exampleConversationPartition);
+    expect(first).toEqual({ instances: [], byToolCallId: {} });
+    expect(exampleSelectLogicalUiInstances(rows, exampleConversationPartition)).toBe(first);
+  });
   it("侧栏与渲染面同时隔离 workspace/session/plugin", () => {
     const request = {
       workspacePath: "/repo",

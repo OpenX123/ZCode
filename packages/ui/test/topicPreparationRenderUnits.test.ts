@@ -20,7 +20,9 @@ describe("topic messages in conversation flow", () => {
     const units = withTopicPreparationMessages([running], [], pending);
     expect(units).toHaveLength(1);
     expect(units[0]?.key).toBe("running");
-    expect(splitConversationTimelineLiveTail(units).liveUnit?.topicPreparations).toEqual(pending);
+    expect(
+      splitConversationTimelineLiveTail({ history: [], tail: units }).liveUnit?.topicPreparations,
+    ).toEqual(pending);
     expect(running.topicPreparations).toBeUndefined();
   });
   it("formal original ID replaces preparation while preserving canonical units", () => {

@@ -1,5 +1,5 @@
 import { useBotTopicPreparations } from "@/v4/BotTopicPreparation.js";
-import { withTopicPreparationMessages } from "@/v4/topicPreparationRenderUnits.js";
+import { getConversationRowsPartition } from "@/v4/conversationProjectionStore.js";
 /* oxlint-disable eslint(max-lines) -- ConversationTimeline 集中承载虚拟滚动、滚动锚定、loadOlder 与 find 高亮协调；拆散会让同一滚动状态跨文件传递。 */
 import {
   Component,
@@ -37,7 +37,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { ConversationTurnGroup } from "@/v4/ConversationTurnGroup.js";
 import {
-  deriveLogicalUiInstances,
+  createLogicalUiInstancesSelector,
   getPluginUiDisclosureVersion,
   getPluginUiManualPin,
   setPluginUiInstanceDerivation,
@@ -52,6 +52,7 @@ import {
   isSameConversationLatestTurnSummary,
   resolveConversationLatestTurnSummary,
   splitConversationTimelineLiveTail,
+  withTopicPreparationUnits,
   type ConversationLatestTurnSummary,
 } from "@/v4/conversationTimelineLiveTail.js";
 import {
@@ -59,7 +60,7 @@ import {
   getConversationStatusPanelOffsetClassName,
 } from "@/v4/conversationLayout.js";
 import {
-  buildConversationTurnRenderUnits,
+  createConversationTurnRenderUnitsSelector,
   type ConversationTurnRenderUnit,
 } from "@/v4/conversationTurnRenderUnits.js";
 import {
@@ -433,7 +434,12 @@ function ConversationTimelineImpl({
   }, [hasHeaderSlot]);
   const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
   // 插件卡片展示模型——同资源替代 + 最近三回合自动展开 + 手动固定；推导结果发布给卡片自己读。
-  const pluginUiDerivation = useMemo(() => deriveLogicalUiInstances(rows), [rows]);
+  const rowsPartition = useMemo(() => getConversationRowsPartition(rows), [rows]);
+  const selectPluginUi = useMemo(() => createLogicalUiInstancesSelector(), []);
+  const pluginUiDerivation = useMemo(
+    () => selectPluginUi(rows, rowsPartition),
+    [selectPluginUi, rows, rowsPartition],
+  );
   useEffect(() => {
     setPluginUiInstanceDerivation(sessionKey, pluginUiDerivation);
   }, [pluginUiDerivation, sessionKey]);
@@ -451,10 +457,11 @@ function ConversationTimelineImpl({
     });
   }, [pluginUiDerivation, sessionKey, pluginUiDisclosureVersion]);
   const topicPreparations = useBotTopicPreparations();
-  const renderUnits = useMemo(
+  const selectRenderUnits = useMemo(() => createConversationTurnRenderUnitsSelector(), []);
+  const renderUnitsPartition = useMemo(
     () =>
-      withTopicPreparationMessages(
-        buildConversationTurnRenderUnits(rows, {
+      withTopicPreparationUnits(
+        selectRenderUnits(rowsPartition, {
           nowMs: liveNowMs,
           sessionPhase,
           pluginUiPinResolver,
@@ -462,11 +469,23 @@ function ConversationTimelineImpl({
         rows,
         topicPreparations,
       ),
-    [liveNowMs, pluginUiPinResolver, rows, sessionPhase, topicPreparations],
+    [
+      selectRenderUnits,
+      rowsPartition,
+      liveNowMs,
+      pluginUiPinResolver,
+      rows,
+      sessionPhase,
+      topicPreparations,
+    ],
+  );
+  const renderUnits = useMemo(
+    () => [...renderUnitsPartition.history, ...renderUnitsPartition.tail],
+    [renderUnitsPartition],
   );
   const { virtualizedUnits, liveUnit, liveUnitIndex } = useMemo(
-    () => splitConversationTimelineLiveTail(renderUnits),
-    [renderUnits],
+    () => splitConversationTimelineLiveTail(renderUnitsPartition),
+    [renderUnitsPartition],
   );
   const hasRunningUnit = useMemo(() => renderUnits.some((unit) => unit.isRunning), [renderUnits]);
   const latestTurnSummary = useMemo(
@@ -1605,7 +1624,7 @@ function ConversationTimelineImpl({
 
   useConversationTimelineFind({
     rootRef: scrollRef,
-    renderUnits,
+    renderUnits: renderUnitsPartition,
     rows,
     mountedRowsKey,
     canLoadOlder,

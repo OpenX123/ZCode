@@ -4,6 +4,12 @@ import type {
   PluginUiSidePaneTab,
 } from "./contract.js";
 import { buildPluginUiSidePaneTabId, readPluginUiScopeRef } from "./contract.js";
+import type { ConversationRowsPartition } from "@zcode/shared/zcode-protocol-v4";
+import { createLogicalUiInstancesSelector } from "./index.js";
+
+/** 每个时间线保留一个选择器；普通尾轮文本更新可以复用历史插件裁决。 */
+export const exampleSelectLogicalUiInstances = createLogicalUiInstancesSelector();
+export const exampleConversationPartition: ConversationRowsPartition = { history: [], tail: [] };
 
 export const examplePresentation: PluginUiPresentation = {
   serverName: "plugin:example-plugin:widget",

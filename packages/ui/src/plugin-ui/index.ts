@@ -13,6 +13,7 @@ export {
 } from "./domain/pluginUiRowPolicy.js";
 export {
   deriveLogicalUiInstances,
+  createLogicalUiInstancesSelector,
   type PluginUiInstanceDerivation,
 } from "./domain/pluginUiInstancePolicy.js";
 export {

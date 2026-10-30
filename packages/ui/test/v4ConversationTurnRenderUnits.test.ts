@@ -10,7 +10,14 @@ import type {
   TurnHeaderRow,
   UserInputRow,
 } from "@zcode/shared/zcode-protocol-v4";
-import { buildConversationTurnRenderUnits } from "@/v4/conversationTurnRenderUnits.js";
+import {
+  buildConversationTurnRenderUnits,
+  createConversationTurnRenderUnitsSelector,
+} from "@/v4/conversationTurnRenderUnits.js";
+import {
+  getConversationRowsPartition,
+  advanceConversationRowsPartition,
+} from "@/v4/conversationProjectionStore.js";
 import { resolveAssistantCopyText } from "@/v4/ConversationTurnRow.js";
 
 function baseRow<T extends ConversationRow>(
@@ -205,6 +212,135 @@ function goalVerifyMarker(rowId: number): TimelineMarkerRow {
 }
 
 describe("buildConversationTurnRenderUnits", () => {
+  it("尾轮 token 不访问历史行并保留历史派生；历史修订和新轮仍与全窗构建相等", () => {
+    const select = createConversationTurnRenderUnitsSelector();
+    const history = [turnHeader(1), userInput(2, "问题"), assistantText(3, "旧回答")];
+    const running = [
+      turnHeader(4, { turnId: "turn-2", state: "running" }),
+      assistantText(5, "答", { turnId: "turn-2", state: "streaming" }),
+    ];
+    let rows: ConversationRow[] = [...history, ...running];
+    const first = select(getConversationRowsPartition(rows), { nowMs: 1_700_000_100_000 });
+    for (let tick = 0; tick < 3; tick += 1) {
+      const text = { ...running[1]!, text: `回答 ${tick}` } as AssistantTextRow;
+      const next = [...history, running[0]!, text];
+      advanceConversationRowsPartition(rows, next, [{ op: "row.upserted", row: text }]);
+      const partition = getConversationRowsPartition(next);
+      const originalHistory = partition.history;
+      // 首次建立缓存后，锁定历史视图，后续调用不能再读历史行。
+      const guardedSelector = createConversationTurnRenderUnitsSelector();
+      let allowRead = true;
+      const proxy = new Proxy(originalHistory, {
+        get(target, key, receiver) {
+          if (!allowRead) throw new Error("不应扫描历史");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      guardedSelector({ history: proxy, tail: partition.tail }, { nowMs: 1_700_000_100_000 });
+      allowRead = false;
+      guardedSelector({ history: proxy, tail: partition.tail }, { nowMs: 1_700_000_101_000 });
+      const result = select(partition, { nowMs: 1_700_000_100_000 });
+      expect(result.history).toBe(first.history);
+      expect([...result.history, ...result.tail]).toEqual(
+        buildConversationTurnRenderUnits(next, { nowMs: 1_700_000_100_000 }),
+      );
+      rows = next;
+    }
+    const revised = [...rows];
+    revised[2] = assistantText(3, "修订回答");
+    advanceConversationRowsPartition(rows, revised, [{ op: "row.upserted", row: revised[2]! }]);
+    for (const next of [
+      revised,
+      [
+        ...revised,
+        turnHeader(6, { turnId: "turn-3" }),
+        userInput(7, "新问题", { turnId: "turn-3" }),
+      ],
+    ]) {
+      const result = select(getConversationRowsPartition(next), { nowMs: 1_700_000_102_000 });
+      expect([...result.history, ...result.tail]).toEqual(
+        buildConversationTurnRenderUnits(next, { nowMs: 1_700_000_102_000 }),
+      );
+      expect(result.history).not.toBe(first.history);
+    }
+  });
+
+  it("交错轮次分区不拆开同轮，过滤尾轮、时钟和缺 header 的 phase 保持全窗语义", () => {
+    const select = createConversationTurnRenderUnitsSelector();
+    const sets = [
+      [
+        userInput(1, "问题"),
+        userInput(2, "另一轮", { turnId: "turn-2" }),
+        assistantText(3, "迟到回答"),
+      ],
+      [
+        turnHeader(1),
+        assistantText(2, "回答"),
+        turnHeader(3, { turnId: "turn-2", executionKind: "controlOnly" }),
+      ],
+      [reasoning(1, "思考", { state: "streaming" }), userInput(2, "后轮", { turnId: "turn-2" })],
+    ];
+    for (const rows of sets) {
+      const partition = getConversationRowsPartition(rows);
+      expect([...partition.history, ...partition.tail]).toEqual(rows);
+      const historyTurns = new Set(partition.history.map((row) => row.turnId));
+      expect(partition.tail.some((row) => historyTurns.has(row.turnId))).toBe(false);
+      for (const phase of ["running", "completedInterrupted", "completedSuccess"] as const) {
+        const options = { nowMs: 1_700_000_100_000, sessionPhase: phase };
+        const result = select(partition, options);
+        expect([...result.history, ...result.tail]).toEqual(
+          buildConversationTurnRenderUnits(rows, options),
+        );
+      }
+    }
+  });
+
+  it("历史里的运行轮时钟和插件固定变化使缓存失效", () => {
+    const select = createConversationTurnRenderUnitsSelector();
+    const plugin = toolCall(3, "mcp__fixture__view", {
+      display: { kind: "mcp_tool", ui: { resourceUri: "ui://fixture", pluginId: "fixture" } },
+    });
+    const rows = [
+      turnHeader(1, { state: "running" }),
+      reasoning(2, "思考", { state: "streaming" }),
+      plugin,
+      userInput(4, "后轮", { turnId: "turn-2" }),
+    ];
+    const partition = getConversationRowsPartition(rows);
+    let previous: ReturnType<typeof select> | undefined;
+    for (const [nowMs, pinned] of [
+      [1_700_000_100_000, true],
+      [1_700_000_101_000, true],
+      [1_700_000_101_000, false],
+    ] as const) {
+      const options = { nowMs, pluginUiPinResolver: () => ({ manualPinned: pinned }) };
+      const result = select(partition, options);
+      expect([...result.history, ...result.tail]).toEqual(
+        buildConversationTurnRenderUnits(rows, options),
+      );
+      if (previous) expect(result.history[0]).not.toBe(previous.history[0]);
+      previous = result;
+    }
+  });
+
+  it("裁剪尾轮内部可复用历史，删除尾轮起点和旧历史前插必须重建", () => {
+    const rows = [
+      userInput(1, "历史"),
+      userInput(2, "尾轮", { turnId: "turn-2" }),
+      assistantText(3, "正文", { turnId: "turn-2" }),
+    ];
+    const first = getConversationRowsPartition(rows);
+    const partial = rows.slice(0, 2);
+    advanceConversationRowsPartition(rows, partial, [{ op: "row.removed", fromRowId: 3 }]);
+    expect(getConversationRowsPartition(partial).history).toBe(first.history);
+    const rewound = rows.slice(0, 1);
+    advanceConversationRowsPartition(rows, rewound, [{ op: "row.removed", fromRowId: 2 }]);
+    const split = getConversationRowsPartition(rewound);
+    expect(split.history).not.toBe(first.history);
+    expect([...split.history, ...split.tail]).toEqual(rewound);
+    const prepended = [userInput(0, "更早", { turnId: "old" }), ...rows];
+    expect(getConversationRowsPartition(prepended).history).toEqual([prepended[0], rows[0]]);
+  });
   it("旧卡元数据保留为历史，普通多轮输入和输出完整可读", () => {
     const highspeed = {
       schemaVersion: 1 as const,

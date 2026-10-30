@@ -9,6 +9,7 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import {
   buildConversationFindIndex,
+  createConversationFindIndexBuilder,
   findConversationMatchIndexByKey,
   getConversationFindMatchKey,
   resolveConversationFindActiveMatch,
@@ -86,6 +87,22 @@ function units(rows: ConversationRow[]) {
 }
 
 describe("buildConversationFindIndex", () => {
+  it("查询变化复用不可变行，正文修订与代码注释开关重新投影", () => {
+    const build = createConversationFindIndexBuilder();
+    const rows = [turnHeader(1), assistantText(2, "Alpha beta")];
+    const original = units(rows);
+    expect(build(original, "alpha")).toEqual(buildConversationFindIndex(original, "alpha"));
+    expect(build(original, "beta")).toEqual(buildConversationFindIndex(original, "beta"));
+    const revised = units([rows[0]!, assistantText(2, "Gamma")]);
+    expect(build(revised, "alpha").matchCount).toBe(0);
+    expect(build(revised, "gamma").matchCount).toBe(1);
+    for (const enabled of [false, true, false]) {
+      const options = { projectAssistantCodeComments: enabled };
+      expect(build(revised, "gamma", options)).toEqual(
+        buildConversationFindIndex(revised, "gamma", options),
+      );
+    }
+  });
   it("indexes user and assistant body text in render order", () => {
     const index = buildConversationFindIndex(
       units([
@@ -119,12 +136,8 @@ describe("buildConversationFindIndex", () => {
   });
 
   it("feature enabled 时不索引隐藏的 code-comment 协议原文", () => {
-    const directive =
-      '::code-comment{title="Hidden title" body="Hidden body" file="src/main.ts"}';
-    const renderUnits = units([
-      turnHeader(1),
-      assistantText(2, `visible text\n${directive}`),
-    ]);
+    const directive = '::code-comment{title="Hidden title" body="Hidden body" file="src/main.ts"}';
+    const renderUnits = units([turnHeader(1), assistantText(2, `visible text\n${directive}`)]);
 
     expect(buildConversationFindIndex(renderUnits, "Hidden body").matchCount).toBe(1);
     expect(
@@ -171,9 +184,7 @@ describe("buildConversationFindIndex", () => {
       ]),
       "alpha",
     );
-    const activeKey = getConversationFindMatchKey(
-      resolveConversationFindActiveMatch(initial, 1),
-    );
+    const activeKey = getConversationFindMatchKey(resolveConversationFindActiveMatch(initial, 1));
     const prepended = buildConversationFindIndex(
       units([
         turnHeader(1, "turn-1"),

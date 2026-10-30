@@ -445,3 +445,20 @@ export const conversationRowSchema = z.discriminatedUnion("kind", [
 ]);
 export type ConversationRow = z.infer<typeof conversationRowSchema>;
 export type ConversationRowKind = ConversationRow["kind"];
+
+/**
+ * rows.window 的「冻结历史 + 尾轮」分区（spec：docs/ui/chat-virtual-scroll.md「每帧派生成本」）。
+ *
+ * 只是行数组的视图类型，不上 wire，没有 schema；构造与缓存在 renderer 的 conversationProjectionStore。
+ * 放在这里是为了让插件 UI 等 domain 层只依赖协议类型，不依赖 v4 store。
+ * history 与 tail 拼接后逐项等于 rows。
+ */
+export interface ConversationRowsPartition {
+  /** tail 之前的行；只在历史段变化时更换引用。 */
+  readonly history: readonly ConversationRow[];
+  /**
+   * window 的后缀：包含最后一行所在轮的全部行，可能包含多轮（旧轮追加了行、或尾轮内部截断后），
+   * 与 history 的轮次不相交。消费方不能假设 tail 只有一轮。
+   */
+  readonly tail: readonly ConversationRow[];
+}
