@@ -1,5 +1,28 @@
 # Session Persistence
 
+## 共享连接的事务隔离（2026-10-30 上游同步）
+
+SQLite adapter 是连接及事务的唯一所有者。`DatabaseSync` 的事务覆盖整个连接，
+fork、共享上下文导入/状态转换和排队输入提升从 `BEGIN IMMEDIATE` 到
+`COMMIT` / `ROLLBACK` 必须同步完成，内部 repository 不得通过 `await` 让出执行。
+对外 `SessionStorePort` 继续返回 Promise，不新增持久化状态或迁移。
+
+失败只回滚本次事务；其他会话已成功的创建、更新与正文写入不得混入或被撤销。
+并发 fork 必须各自提交，进程退出后新进程仍能读取独立会话及其历史。
+回归使用真实 SQLite、故障注入和跨进程重新打开，来源为官方 `a60ba6a7`。
+
+```mermaid
+sequenceDiagram
+  participant A as 会话 A
+  participant S as SQLite adapter 唯一连接
+  participant B as 会话 B
+  A->>S: 提交事务
+  S->>S: BEGIN → 同步 repository → COMMIT 或 ROLLBACK
+  S-->>A: Promise 结算
+  B->>S: 独立写入
+  S-->>B: 成功写入可重新打开
+```
+
 ## Provider 格式升级与回滚可读性（Todo109）
 
 以 `staging_backup@790884b1ce` 为旧格式对照。Agent 打开库时通过

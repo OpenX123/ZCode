@@ -222,7 +222,6 @@ function assertForkBundleChildLocal(bundle: ForkCommitBundle): void {
   }
 }
 
-
 export class SqliteSessionStore
   implements
     SessionStorePort,
@@ -247,7 +246,10 @@ export class SqliteSessionStore
     this.forkCommitFaultAt = options.forkCommitFaultAt;
   }
 
-  static async open(options: SqliteSessionStoreOptions = {}, migrationOptions?: AsyncSqliteMigrationOptions): Promise<SqliteSessionStore> {
+  static async open(
+    options: SqliteSessionStoreOptions = {},
+    migrationOptions?: AsyncSqliteMigrationOptions,
+  ): Promise<SqliteSessionStore> {
     const dbPath = options.dbPath ?? getDefaultSessionDbPath();
     const startupLockTimeoutMs =
       options.startupLockTimeoutMs ?? DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS;
@@ -267,15 +269,26 @@ export class SqliteSessionStore
       });
     }
     try {
-      const migration = await runSqliteSessionMigrationsAsync(db, dbPath, migrationOptions ?? { lockWaitTimeoutMs: startupLockTimeoutMs });
+      const migration = await runSqliteSessionMigrationsAsync(
+        db,
+        dbPath,
+        migrationOptions ?? { lockWaitTimeoutMs: startupLockTimeoutMs },
+      );
       return new SqliteSessionStore(db, dbPath, options, migration);
     } catch (error) {
-      try { db.close(); } catch { /* 关闭失败不能覆盖迁移错误。 */ }
+      try {
+        db.close();
+      } catch {
+        /* 关闭失败不能覆盖迁移错误。 */
+      }
       throw error;
     }
   }
 
-  static async openStartup(options: SqliteSessionStoreOptions = {}, migrationOptions: AsyncSqliteMigrationOptions = {}) {
+  static async openStartup(
+    options: SqliteSessionStoreOptions = {},
+    migrationOptions: AsyncSqliteMigrationOptions = {},
+  ) {
     return SqliteSessionStore.open(options, migrationOptions);
   }
 
@@ -372,6 +385,7 @@ export class SqliteSessionStore
   }
 
   async commitForkBundle(bundle: ForkCommitBundle): Promise<SessionInfo> {
+    // DatabaseSync 事务属于整个连接；中途 await 会让其他会话写入混入并被本次回滚撤销。
     this.throwBeforeWrite();
     const { child, commandFact, initialInput } = bundle;
     if (
@@ -406,14 +420,14 @@ export class SqliteSessionStore
       this.maybeThrowForkCommitFault("afterChild");
       for (const message of bundle.messages) {
         const messageSource = bundle.copySources?.messages[message.info.id];
-        await messageRepository.saveMessage(
+        messageRepository.saveMessage(
           this.db,
           message.info,
           messageSource ? { sessionID: child.parentID, id: messageSource } : undefined,
         );
         for (const part of message.parts) {
           const partSource = bundle.copySources?.parts[part.id];
-          await messageRepository.savePart(
+          messageRepository.savePart(
             this.db,
             part,
             partSource ? { sessionID: child.parentID, id: partSource } : undefined,
@@ -434,7 +448,7 @@ export class SqliteSessionStore
       }
       this.maybeThrowForkCommitFault("afterEntries");
       if (initialInput) {
-        await sessionInputRepository.saveSessionInput(this.db, initialInput);
+        sessionInputRepository.saveSessionInput(this.db, initialInput);
       }
       this.maybeThrowForkCommitFault("afterInput");
       const now = Date.now();
@@ -490,9 +504,9 @@ export class SqliteSessionStore
         return existing;
       }
       const persisted = sessionRepository.createSession(this.db, session);
-      await messageRepository.saveMessage(this.db, contextMessage.info);
+      messageRepository.saveMessage(this.db, contextMessage.info);
       for (const part of contextMessage.parts) {
-        await messageRepository.savePart(this.db, part);
+        messageRepository.savePart(this.db, part);
       }
       sessionEntryRepository.saveSessionEntry(this.db, provenance);
       this.db.exec("commit");
@@ -539,18 +553,18 @@ export class SqliteSessionStore
           ...(input.sourceId ? { sourceId: input.sourceId } : {}),
         },
       });
-      const contextMessage = (
-        await messageRepository.messages(this.db, { sessionID: input.sessionID })
-      ).find((message) => {
-        const metadata = message.info.metadata;
-        return Boolean(
-          metadata &&
-          typeof metadata === "object" &&
-          (metadata as Record<string, unknown>).contextId === input.contextId,
-        );
-      });
+      const contextMessage = messageRepository
+        .messages(this.db, { sessionID: input.sessionID })
+        .find((message) => {
+          const metadata = message.info.metadata;
+          return Boolean(
+            metadata &&
+            typeof metadata === "object" &&
+            (metadata as Record<string, unknown>).contextId === input.contextId,
+          );
+        });
       if (contextMessage) {
-        await messageRepository.saveMessage(this.db, {
+        messageRepository.saveMessage(this.db, {
           ...contextMessage.info,
           metadata: {
             ...(contextMessage.info.metadata ?? {}),
