@@ -10,6 +10,7 @@ import type {
   ContextSourceDiagnostic,
   ContextSourcePort,
   ContextSourceRequest,
+  ContextSourceResolveOptions,
   ContextSourceSnapshot,
   EnvInfo,
   PackageManager,
@@ -19,7 +20,7 @@ import type {
   ResolvedUserInstructions,
   UserInstructionsOptions,
 } from "@zcode/contracts";
-import { resolveGitSnapshot } from "./git-snapshot.js";
+import { findGitRoot, resolveGitSnapshot, resolveIsGitRepository } from "./git-snapshot.js";
 
 const DEFAULT_PRIORITY_FILES = ["AGENTS.md"];
 const DEFAULT_MAX_BYTES = 100 * 1024;
@@ -35,14 +36,22 @@ export class NodeContextSourceAdapter implements ContextSourcePort {
     this.env = options.env ?? process.env;
   }
 
-  async resolveContextSources(request: ContextSourceRequest): Promise<ContextSourceSnapshot> {
+  async resolveContextSources(
+    request: ContextSourceRequest,
+    options?: ContextSourceResolveOptions,
+  ): Promise<ContextSourceSnapshot> {
     const workingDirectory = resolve(request.workingDirectory);
     const diagnostics: ContextSourceDiagnostic[] = [];
     const projectRoot = await findProjectRoot(workingDirectory);
 
     const envInfo =
       request.envInfo ??
-      (await this.detectEnvInfo(workingDirectory, request.effectiveShellDisplayName));
+      (await this.detectEnvInfo(
+        workingDirectory,
+        request.effectiveShellDisplayName,
+        await resolveIsGitRepository(workingDirectory, projectRoot),
+        options?.signal,
+      ));
     const userInstructions = request.userInstructions
       ? await resolveUserInstructions(
           {
@@ -70,10 +79,12 @@ export class NodeContextSourceAdapter implements ContextSourcePort {
   private async detectEnvInfo(
     workingDirectory: string,
     effectiveShellDisplayName?: string,
+    isGitRepository?: boolean,
+    signal?: AbortSignal,
   ): Promise<EnvInfo> {
     const shellPath = this.env.SHELL ?? this.env.ComSpec ?? this.env.COMSPEC ?? "";
     const shell = effectiveShellDisplayName ?? (shellPath ? basename(shellPath) : "unknown");
-    const gitSnapshot = await resolveGitSnapshot(workingDirectory);
+    const gitSnapshot = await resolveGitSnapshot(workingDirectory, signal, isGitRepository);
     return {
       cwd: workingDirectory,
       platform: process.platform,
@@ -318,23 +329,7 @@ async function detectProjectContext(projectRoot: string): Promise<ProjectContext
 }
 
 async function findProjectRoot(startDir: string): Promise<string | null> {
-  let current = resolve(startDir);
-
-  while (current !== dirname(current)) {
-    if (await hasGitMarker(current)) return current;
-    current = dirname(current);
-  }
-
-  return null;
-}
-
-async function hasGitMarker(directory: string): Promise<boolean> {
-  try {
-    await stat(join(directory, ".git"));
-    return true;
-  } catch {
-    return false;
-  }
+  return (await findGitRoot(resolve(startDir))) ?? null;
 }
 
 async function isFile(path: string): Promise<boolean> {

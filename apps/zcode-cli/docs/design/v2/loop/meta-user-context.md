@@ -153,3 +153,16 @@ rebuilding the tool pool or invalidating tool-schema cache assumptions.
 - New-turn task notifications are not ContextBuilder sections: their complete provider-visible user messages count once in Messages, identified by the existing `task_notification` presentation in the request's `sourceEntries`. The reminder wrapper must not make these messages disappear from usage categories. Static context remains counted through sections without duplication; this changes neither provider token usage nor compact budgets.
 - Node context adapter caps large git status snapshots and appends a truncation
   marker instead of injecting every changed or untracked path.
+
+## 自动 Git 快照的执行边界（2026-10-30 上游同步）
+
+自动 Git 探测由 context adapter 唯一执行，不经过 Bash/PowerShell 工具审批。
+因此必须从 PATH 解析绝对可执行文件，禁止 Windows 从工作区隐式选择 `git.exe`；
+子进程环境去除继承的仓库选择与配置覆盖，禁用 hooks、fsmonitor、自动维护、
+签名展示、交互认证与隐式网络获取。用户显式执行 Git 工具沿用原权限链路。
+Windows PATH 保留绝对盘符/UNC 路径并解析带引号目录，不改变其他工具的环境。
+
+仓库身份根据真实路径上的 `.git` 文件/目录判断；无提交仓库保留符号分支名。
+互不依赖的只读快照查询并行执行，保留字段、2k 字符截断与单命令超时。
+真实 Git 回归验证仓库 fsmonitor 不执行、继承 `GIT_DIR` 不串库；平台参数测试覆盖
+Windows 路径、大小写环境变量与可执行文件查找。来源为官方 `a60ba6a7`。

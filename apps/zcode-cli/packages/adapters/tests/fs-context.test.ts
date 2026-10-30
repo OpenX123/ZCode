@@ -868,7 +868,8 @@ describe("Node file and context adapters", () => {
 
       expect(snapshot.envInfo.cwd).toBe(dir);
       expect(snapshot.envInfo.shell).toBe("zsh");
-      expect(snapshot.envInfo.isGitRepository).toBe(false);
+      // `.git` 的存在是文件系统事实，不再用失败的 git 命令把仓库误判为普通目录。
+      expect(snapshot.envInfo.isGitRepository).toBe(true);
       expect(snapshot.userInstructions?.content).toBe("project instructions");
       expect(snapshot.projectContext).toMatchObject({
         type: "node",
