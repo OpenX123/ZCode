@@ -18,7 +18,9 @@ macOS 的 Main 仍是安装唯一 owner，重复点击复用同一次交接。�
 
 Release tag 必须等于 `v${version}`；文件名固定为 `YCode-${version}-${mac|win}-${arch}.${dmg|exe}`。releaseUrl 必须属于 `https://github.com/OpenX123/ZCode/releases/tag/<tag>`，安装器 URL 必须是同一 tag 的 `https://github.com/OpenX123/ZCode/releases/download/<tag>/<fileName>`。不接受外部仓库、任意 HTTP、认证信息、查询参数、fragment、伪装子域或路径穿越。入口 URL 校验后允许 GitHub 官方资源分发重定向；所有字节仍必须匹配清单 size/SHA。
 
-Main 使用 Electron `net.fetch`，沿用当前 Electron 网络/代理。清单请求 15 秒超时，安装器下载 10 分钟超时；读取流时同时限制实际字节数，不能只依赖 Content-Length。下载唯一临时文件，完整 size/SHA 验证后原子发布到 `<userData>/github-updates/<version>/<sha>/<fileName>`。复用缓存及每次打开安装器前重新校验，缺失/损坏不启动安装器。
+Main 使用独立的 Electron 内存 Session `ycode-github-updates` 发起清单与安装包请求，明确使用系统代理及 Chromium 默认 TLS 校验。禁止借用承载模型 API 的 defaultSession：该会话默认强制直连，会屏蔽系统代理，导致 GitHub 安装包下载停滞。更新网络不继承模型 API 的代理或证书放行配置，不修改 defaultSession 或内置浏览器策略。首次请求初始化代理，并发复用初始化结果，初始化失败允许下次请求重试。
+
+清单请求 15 秒超时，安装器下载 10 分钟超时；读取流时同时限制实际字节数，不能只依赖 Content-Length。下载唯一临时文件，完整 size/SHA 验证后原子发布到 `<userData>/github-updates/<version>/<sha>/<fileName>`。复用缓存及每次打开安装器前重新校验，缺失/损坏不启动安装器。
 
 ## 状态与并发
 
@@ -54,3 +56,4 @@ sequenceDiagram
 - 读取快照和事件来自同一 owner；下载期间检查不冲掉进度；dispose 后网络取消且不打开安装器。
 - 启动检查、6 小时检查、唤醒节流和手动检查使用同一入口；GitHub不可达显示可重试错误，不影响普通编码。
 - macOS 实际文件交接验证：旧 PID 存活时不替换；退出后只替换一次并启动；准备失败不退出；用户取消清理；移入失败回滚；路径含空格、引号、shell 特殊字符时不执行路径内容。
+- 更新网络独立于模型 API：清单与下载经专用 Session；请求前系统代理初始化完成，重复请求不反复初始化；初始化失败可重试；下载不因 defaultSession 的直连策略而绕开系统代理。

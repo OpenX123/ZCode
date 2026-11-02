@@ -4,12 +4,16 @@ const mocks = vi.hoisted(() => ({
   installMac: vi.fn(),
   create: vi.fn(),
   openPath: vi.fn(async () => ""),
+  setProxy: vi.fn(async () => {}),
+  sessionFetch: vi.fn(async () => new Response("update")),
+  fromPartition: vi.fn(),
 }));
 vi.mock("electron", () => ({
   app: { getVersion: () => "1.0.3", isPackaged: true, getPath: () => "/tmp/ycode-update-test" },
   BrowserWindow: { getAllWindows: () => [] },
   ipcMain: { handle: vi.fn(), removeHandler: vi.fn() },
   net: { fetch: vi.fn() },
+  session: { fromPartition: mocks.fromPartition },
   powerMonitor: { on: vi.fn(), removeListener: vi.fn() },
   shell: { openPath: mocks.openPath },
 }));
@@ -29,6 +33,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 function fixture() {
+  mocks.fromPartition.mockReturnValue({ setProxy: mocks.setProxy, fetch: mocks.sessionFetch });
   mocks.create.mockReturnValue({
     getState: vi.fn(),
     checkForUpdates: vi.fn(),
@@ -43,11 +48,47 @@ function fixture() {
   const options = mocks.create.mock.calls.at(-1)![0] as GithubDesktopUpdateOptions;
   return {
     lifecycle,
+    fetch: options.fetch,
     open: () => options.openInstaller("/tmp/update.dmg", "1.0.4", new AbortController().signal),
   };
 }
 
 describe("GitHub 更新安装交接", () => {
+  it("清单与安装包复用独立的系统代理会话，不复用模型 API 网络", async () => {
+    const { fetch } = fixture();
+    const request = { signal: new AbortController().signal };
+    await fetch(new URL("https://github.com/manifest"), request);
+    await fetch("https://github.com/installer", request);
+    expect(mocks.fromPartition).toHaveBeenCalledWith("ycode-github-updates");
+    expect(mocks.setProxy).toHaveBeenCalledExactlyOnceWith({ mode: "system" });
+    expect(mocks.sessionFetch).toHaveBeenNthCalledWith(1, "https://github.com/manifest", request);
+    expect(mocks.sessionFetch).toHaveBeenNthCalledWith(2, "https://github.com/installer", request);
+  });
+  it("系统代理初始化完成前不发请求，并发请求共用初始化", async () => {
+    let ready!: () => void;
+    mocks.setProxy.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          ready = resolve;
+        }),
+    );
+    const { fetch } = fixture();
+    const first = fetch("https://github.com/manifest");
+    const second = fetch("https://github.com/manifest");
+    expect(mocks.sessionFetch).not.toHaveBeenCalled();
+    ready();
+    await Promise.all([first, second]);
+    expect(mocks.setProxy).toHaveBeenCalledTimes(1);
+    expect(mocks.sessionFetch).toHaveBeenCalledTimes(2);
+  });
+  it("网络初始化失败后可重试", async () => {
+    mocks.setProxy.mockRejectedValueOnce(new Error("proxy init failed"));
+    const { fetch } = fixture();
+    await expect(fetch("https://github.com/manifest")).rejects.toThrow("proxy init failed");
+    await fetch("https://github.com/manifest");
+    expect(mocks.setProxy).toHaveBeenCalledTimes(2);
+    expect(mocks.sessionFetch).toHaveBeenCalledTimes(1);
+  });
   it("macOS 的重复 IPC 共用安装助手；成功后直到退出也不重入", async () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     let finish!: (installed: boolean) => void;
