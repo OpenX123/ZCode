@@ -7,9 +7,10 @@ import {
   shell,
   type IpcMainInvokeEvent,
 } from "electron";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { PlatformChannels } from "@zcode/shared";
 import { createGithubDesktopUpdater } from "./updater.js";
+import { installMacUpdate } from "./macInstaller.js";
 
 /** 仅应用自己的顶层 Renderer 可请求更新，内嵌网页和子 frame 无权打开安装器。 */
 function assertApplicationSender(event: IpcMainInvokeEvent): void {
@@ -21,7 +22,12 @@ function assertApplicationSender(event: IpcMainInvokeEvent): void {
   }
 }
 
-export function installGithubDesktopUpdates(): () => void {
+export function installGithubDesktopUpdates(lifecycle: {
+  confirmInstall(): boolean;
+  quitForInstall(): Promise<void>;
+}): () => void {
+  // 成功交接后保留同一 flight，避免退出屏障期间的重复 IPC 再启动助手；取消与失败可重试。
+  let installFlight: Promise<string> | undefined;
   const updater = createGithubDesktopUpdater({
     currentVersion: app.getVersion(),
     platform: process.platform,
@@ -29,7 +35,27 @@ export function installGithubDesktopUpdates(): () => void {
     isPackaged: app.isPackaged,
     cacheDir: join(app.getPath("userData"), "github-updates"),
     fetch: (input, init) => net.fetch(input instanceof URL ? input.href : input, init),
-    openInstaller: (path) => shell.openPath(path),
+    openInstaller: (path, version, signal) => {
+      if (process.platform !== "darwin") return shell.openPath(path);
+      if (installFlight) return installFlight;
+      installFlight = installMacUpdate({
+        appPath: dirname(dirname(dirname(process.execPath))),
+        version,
+        installerPath: path,
+        logPath: join(app.getPath("userData"), "github-updates", "install.log"),
+        signal,
+        ...lifecycle,
+      })
+        .then((installed) => {
+          if (!installed) installFlight = undefined;
+          return "";
+        })
+        .catch((error: unknown) => {
+          installFlight = undefined;
+          throw error;
+        });
+      return installFlight;
+    },
   });
   const handlers = [
     [PlatformChannels.GetUpdateState, () => updater.getState()],

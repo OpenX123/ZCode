@@ -1225,7 +1225,13 @@ app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
 
 app.whenReady().then(async () => {
   markMainLaunchAppReady();
-  const disposeGithubUpdates = installGithubDesktopUpdates();
+  const disposeGithubUpdates = installGithubDesktopUpdates({
+    confirmInstall: () => !shouldConfirmAppQuit() || confirmAppQuit(),
+    quitForInstall: async () => {
+      await prepareAppQuit("github-update-install", "update-install");
+      app.quit();
+    },
+  });
   app.once("will-quit", disposeGithubUpdates);
   installLocalMediaPreviewProtocol(session.defaultSession.protocol, {
     isPathAuthorized: localMediaPreviewPathRegistry.isAuthorized,

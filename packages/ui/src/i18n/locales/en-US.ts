@@ -2052,11 +2052,12 @@ const enUS: Record<string, string> = {
   // Update ready button
   "desktopUpdate.check": "Check for Updates",
   "desktopUpdate.available": "Update to v{version}",
-  "desktopUpdate.ready": "Open v{version} installer",
+  "desktopUpdate.ready": "Install v{version}",
   "desktopUpdate.retry": "Update failed. Retry",
   "desktopUpdate.downloading": "Downloading {progress}%",
-  "desktopUpdate.downloadHint": "Download, verify, and open the installer",
-  "desktopUpdate.readyHint": "Installer ready. Click to open again",
+  "desktopUpdate.downloadHint":
+    "Download, verify, and install the update; macOS restarts automatically",
+  "desktopUpdate.readyHint": "Installer ready. Click to install the update",
   "desktopUpdate.progress": "Update download progress",
   "desktopUpdate.up-to-date": "v{version} is up to date",
   "desktopUpdate.dev-skipped": "Updates are disabled in development",

@@ -171,7 +171,7 @@ export function createGithubDesktopUpdater(
     if (!(await verifyInstaller(path, selected.asset)))
       throw new Error("更新安装器缺失或校验失败，请重新下载");
     lifetime.signal.throwIfAborted();
-    const message = await options.openInstaller(path);
+    const message = await options.openInstaller(path, selected.manifest.version, lifetime.signal);
     if (message) throw new Error(`无法打开更新安装器：${message}`);
     publish({ kind: "update-downloaded", enabled, version: selected.manifest.version });
     return { kind: "ready", version: selected.manifest.version };

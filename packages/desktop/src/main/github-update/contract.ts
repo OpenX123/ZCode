@@ -6,9 +6,9 @@ export interface GithubDesktopUpdateContract {
   getState(): UpdateStatePayload;
   /** 自动检查受六小时节流，手动检查绕过节流；并发请求合并。 */
   checkForUpdates(manual?: boolean): Promise<UpdateCheckResultPayload>;
-  /** 用户明确操作后下载并打开；并发合并且不退出应用。 */
+  /** 用户明确操作后下载并交接安装；macOS 退出并替换，Windows 打开安装器。 */
   downloadUpdate(): Promise<UpdateCheckResultPayload>;
-  /** 重新校验并打开已下载安装器。 */
+  /** 重新校验并安装已下载的更新。 */
   installUpdate(): Promise<UpdateCheckResultPayload>;
   /** 订阅同一 owner；返回注销函数。 */
   subscribe(listener: (state: UpdateStatePayload) => void): () => void;
@@ -25,7 +25,7 @@ export interface GithubDesktopUpdateOptions {
   isPackaged: boolean;
   cacheDir: string;
   fetch: typeof globalThis.fetch;
-  /** 与 Electron shell.openPath 一致：空字符串表示打开成功。 */
-  openInstaller(path: string): Promise<string>;
+  /** 空字符串表示交接成功或用户取消；signal 在退出屏障前阻止迟到安装。 */
+  openInstaller(path: string, version: string, signal: AbortSignal): Promise<string>;
   now?: () => number;
 }
