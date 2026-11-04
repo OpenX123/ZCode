@@ -30,7 +30,7 @@ API 凭据由用户配置，模型费用遵循所选供应商规则；外部 CLI
 
 ## 下载与安装
 
-在 [GitHub Releases](https://github.com/OpenX123/ZCode/releases/latest) 下载对应架构的安装包。每次 `main` 更新，GitHub Actions 会自动构建以下四个目标；四项全部成功后发布 Release，并附 `SHA256SUMS`。
+在 [GitHub Releases](https://github.com/OpenX123/ZCode/releases/latest) 下载对应架构的安装包。`main` 推送和 PR 仅做四平台构建验证，不会自动发版；纯根目录 README 与 README 截图改动跳过构建。正式发版需在 [GitHub Actions](https://github.com/OpenX123/ZCode/actions/workflows/build.yml) 点击 **Run workflow** 并选择 `main`；以下四个目标全部成功后才发布 Release，并附 `SHA256SUMS`。
 
 版本从 **V1.0（`1.0.0`）** 开始，每次新的正式打包自动递增补丁号：`1.0.1`、`1.0.2`……四个平台共享同一版本；构建失败不会公开不完整的版本。
 

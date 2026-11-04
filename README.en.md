@@ -21,7 +21,7 @@ Features include streaming conversations and tool output, project and task manag
 
 ## Download and install
 
-Get installers from [GitHub Releases](https://github.com/OpenX123/ZCode/releases/latest). Each main update builds macOS ARM64/x64 and Windows ARM64/x64; a release is published only after all four targets succeed, with SHA256SUMS included.
+Get installers from [GitHub Releases](https://github.com/OpenX123/ZCode/releases/latest). Pushes to main and pull requests validate macOS ARM64/x64 and Windows ARM64/x64 builds without publishing; changes limited to root README files and README screenshots skip builds. To publish, select **Run workflow** on main in [GitHub Actions](https://github.com/OpenX123/ZCode/actions/workflows/build.yml). A release is published only after all four targets succeed, with SHA256SUMS included.
 
 Local coding runtimes are included. Remote runtimes are separate assets in the same release: the first SSH / WSL / Docker connection downloads only the matching platform and architecture, verifies it, and caches it. The default path downloads locally and uploads to the target, so the remote machine does not need GitHub access. For a first deployment without network access, see the [offline import guide](docs/desktop/offline-source-server-import-spec.md) (Chinese).
 

@@ -3,16 +3,24 @@ name: Build and release YCode
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "README.md"
+      - "README.*.md"
+      - "docs/images/readme/**"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "README.md"
+      - "README.*.md"
+      - "docs/images/readme/**"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: build-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' || github.event_name != 'workflow_dispatch' }}
 
 env:
   ZCODE_ENV: production
@@ -44,7 +52,8 @@ jobs:
         id: identity
         env:
           GH_TOKEN: ${{ github.token }}
-          YCODE_OFFICIAL_RELEASE: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+          # 只有 main 手动运行才分配正式版本，避免普通推送再次误发版。
+          YCODE_OFFICIAL_RELEASE: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
         run: node scripts/github-release-version.mjs allocate
 
       - name: Install dependencies
@@ -159,7 +168,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     needs: [resources, package]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
