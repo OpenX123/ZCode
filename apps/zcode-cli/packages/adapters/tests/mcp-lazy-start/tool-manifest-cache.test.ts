@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   computeMcpServerFingerprint,
   createFileMcpToolManifestCache,
-} from "../src/mcp/tool-manifest-cache.js";
+} from "../../src/mcp/lazy-start/index.js";
 
 const SECRET = "sk-live-should-never-be-written";
 const STDIO: McpServerConfig = {

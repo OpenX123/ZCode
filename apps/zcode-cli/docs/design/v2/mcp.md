@@ -259,7 +259,7 @@ Minimum coverage for the first implementation slice:
 - TUI / headless 直连 `createMcpAdapter`、测试替身与借用端口不实现 `startConfiguredServers`，
   runtime 回退到原有阻塞的 `connectConfiguredServers`。
 
-工具清单缓存（`adapters/src/mcp/tool-manifest-cache.ts`）：
+工具清单缓存（managed 模块 `cli-mcp-lazy-start`，`adapters/src/mcp/lazy-start/tool-manifest-cache.ts`；同模块的 server 生命周期对象持有待首次使用登记与闲置计时）：
 
 - 指纹 = SHA-256（应用版本、server 名、transport、command/args/cwd、URL origin+path、header 键名、
   OAuth 类型、`timeoutMs`/`alwaysLoad`/`protocolVersion`/`isolation`、env 键名、`ZCODE_PLUGIN_ID`、

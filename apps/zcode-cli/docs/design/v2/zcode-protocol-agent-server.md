@@ -55,7 +55,7 @@ message、desktop continuous 或 web remote replayable 的交付语义。
 ## 请求调度分道
 
 一个 CLI 进程服务整个 workspace 的全部会话。`ZCodeProtocolNdjsonConnection` 是请求调度的唯一所有者；
-分类规则集中在 `bootstrap/src/zcode-protocol/transport-lanes.ts`，handler 不再自行假设"前序请求已完成"。
+分类规则集中在 `bootstrap/src/zcode-protocol/transport.ts` 的 `planProtocolDispatch`，handler 不再自行假设"前序请求已完成"。
 过去除少数旁路外所有请求走同一条严格 FIFO，A 会话的冷恢复会让 B 会话的订阅、行范围和工作区展示
 等待数秒到十几秒（1.0.5 生产日志：`subscribeConversationV4` p90 13s，`readWorkspacePresentation` p90 18s）。
 

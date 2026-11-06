@@ -13,10 +13,12 @@ import type {
   McpToolDescriptor,
 } from "@zcode/contracts";
 import { randomUUID } from "node:crypto";
-import { McpLeaseIdleReclaimer } from "./pool-idle-reclaim.js";
-import { McpLeaseLazyStart, type McpLazyStartTrigger } from "./pool-lazy-start.js";
+import {
+  createMcpLeaseServerLifecycle,
+  type McpLazyStartTrigger,
+  type McpToolManifestCache,
+} from "./lazy-start/index.js";
 import type { McpTelemetryTracker } from "./telemetry.js";
-import type { McpToolManifestCache } from "./tool-manifest-cache.js";
 
 const DEFAULT_IDLE_GRACE_MS = 30_000;
 // 会话里已连接、无在途请求的 server 闲置这么久后由 lease 关闭，回到"待首次使用"。
@@ -210,8 +212,8 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
       for (const serverName of [...leased.keys()]) {
         if (!configuredNames.has(serverName)) release(serverName);
       }
-      for (const serverName of lazyStart?.deferredNames() ?? []) {
-        if (!configuredNames.has(serverName)) lazyStart?.forget(serverName);
+      for (const serverName of lifecycle?.deferredNames() ?? []) {
+        if (!configuredNames.has(serverName)) lifecycle?.forget(serverName);
       }
     };
 
@@ -226,7 +228,7 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
       const key = leased.get(serverName);
       if (!key) return;
       leased.delete(serverName);
-      idleReclaimer?.cancel(serverName);
+      lifecycle?.forget(serverName);
       invalidateApps(serverName);
       const entry = entries.get(key);
       if (!entry) return;
@@ -254,7 +256,7 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
       // 修复原因：首次使用时启动可能晚于会话关闭；关闭后再建 entry 会留下永远不释放的引用和进程。
       if (leaseClosed) throw new Error(LEASE_CLOSED_MESSAGE);
       // 显式连接（含后台与首次使用）接管该 server，不再报告缓存登记。
-      lazyStart?.forget(serverName);
+      lifecycle?.forget(serverName);
       acquiredServers.set(serverName, { config, connectOptions });
       const key = connectionKey({
         config,
@@ -363,7 +365,7 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
       }
       // 闲置窗口从连接完成起算；在途使用结束时重新计时。
       if (status.status === "connected" && leased.get(serverName) === key) {
-        idleReclaimer?.arm(serverName);
+        lifecycle?.connected(serverName);
       }
       return status;
     };
@@ -372,14 +374,17 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
      * 闲置回收：到期时再确认仍由本 lease 持有、无在途请求、无 MCP App 连接且已连接，
      * 再释放连接并回到"待首次使用"。工具沿用真实清单，registry 不变；下一次使用重新连接。
      */
-    const reclaimIdleServer = async (serverName: string): Promise<void> => {
+    const reclaimIdleServer = async (
+      serverName: string,
+      isStillIdle: () => boolean,
+    ): Promise<void> => {
       const key = leased.get(serverName);
       const entry = key ? entries.get(key) : undefined;
       const acquired = acquiredServers.get(serverName);
-      if (leaseClosed || !entry || !acquired || !lazyStart || !idleReclaimer) return;
+      if (leaseClosed || !entry || !acquired || !lifecycle) return;
       if ((appListeners.get(serverName)?.size ?? 0) > 0) {
         // MCP App 页面仍连接着该 server：不回收，下一个窗口再看。
-        idleReclaimer.arm(serverName);
+        lifecycle.connected(serverName);
         return;
       }
       const status = (await entry.adapter.status())[serverName];
@@ -390,7 +395,7 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
         !tools ||
         leaseClosed ||
         leased.get(serverName) !== key ||
-        idleReclaimer.isBusy(serverName) ||
+        !isStillIdle() ||
         (appListeners.get(serverName)?.size ?? 0) > 0
       ) {
         return;
@@ -399,7 +404,7 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
       // 释放后该 adapter 的 list_changed 计数不再计入 lease revision；并入后 revision 仍单调。
       const releasedRevision = entry.adapter.toolListRevision?.() ?? 0;
       release(serverName);
-      lazyStart.defer(serverName, acquired.config, acquired.connectOptions, tools, releasedRevision);
+      lifecycle.defer(serverName, acquired.config, acquired.connectOptions, tools, releasedRevision);
       logger?.info("MCP idle server reclaimed", {
         ...entry.connectionContext,
         event: "mcp.idle_reclaim.closed",
@@ -411,46 +416,33 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
       });
     };
 
-    const sessionIdleReclaimMs = options.sessionIdleReclaimMs ?? DEFAULT_SESSION_IDLE_RECLAIM_MS;
-    const idleReclaimer =
-      sessionId && options.toolManifestCache && sessionIdleReclaimMs > 0
-        ? new McpLeaseIdleReclaimer({
-            idleMs: sessionIdleReclaimMs,
-            onIdle: (serverName) => {
-              void reclaimIdleServer(serverName).catch((error: unknown) => {
-                logger?.warn("MCP idle reclaim failed", {
-                  error: error instanceof Error ? error.message : String(error),
-                  event: "mcp.idle_reclaim.failed",
-                  mcpServerName: serverName,
-                  status: "failed",
-                  ...(sessionId ? { sessionId } : {}),
-                });
-              });
-            },
-          })
-        : undefined;
-
-    /** 一次对 server 的实际使用：期间不计闲置；结束时重新计时。 */
-    const trackUse = async <T>(serverName: string, run: () => Promise<T>): Promise<T> => {
-      const end = idleReclaimer?.begin(serverName);
-      try {
-        return await run();
-      } finally {
-        end?.();
-      }
-    };
-
     const readEntryServerTools = async (
       entry: PoolEntry,
       serverName: string,
     ): Promise<McpToolDescriptor[]> =>
       (await entry.adapter.listTools()).filter((tool) => tool.serverName === serverName);
 
-    const lazyStart = options.toolManifestCache
-      ? new McpLeaseLazyStart({
+    // 只有会话 lease 闲置回收；设置页 lease 的状态轮询不能把被回收的 server 显示成断开。
+    const sessionIdleReclaimMs = sessionId
+      ? (options.sessionIdleReclaimMs ?? DEFAULT_SESSION_IDLE_RECLAIM_MS)
+      : 0;
+    const lifecycle = options.toolManifestCache
+      ? createMcpLeaseServerLifecycle({
           acquire,
           cache: options.toolManifestCache,
+          idleReclaimMs: sessionIdleReclaimMs,
           logger,
+          onIdle: (serverName, isStillIdle) => {
+            void reclaimIdleServer(serverName, isStillIdle).catch((error: unknown) => {
+              logger?.warn("MCP idle reclaim failed", {
+                error: error instanceof Error ? error.message : String(error),
+                event: "mcp.idle_reclaim.failed",
+                mcpServerName: serverName,
+                status: "failed",
+                ...(sessionId ? { sessionId } : {}),
+              });
+            });
+          },
           readServerTools: async (serverName) => {
             const key = leased.get(serverName);
             const entry = key ? entries.get(key) : undefined;
@@ -460,15 +452,16 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
         })
       : undefined;
 
-    /** 待首次使用的 server 先单飞连接，再交给原有的 entry 路径。 */
-    const ensureEntry = async (
+    /** 一次对 server 的实际使用：待首次使用的先单飞连接，期间不计闲置，再交给原有 entry 路径。 */
+    const withServer = async <T>(
       serverName: string,
       trigger: McpLazyStartTrigger,
-      signal?: AbortSignal,
-    ): Promise<PoolEntry> => {
-      await lazyStart?.ensureStarted(serverName, trigger, signal);
-      return requireEntry(serverName);
-    };
+      signal: AbortSignal | undefined,
+      run: (entry: PoolEntry) => Promise<T>,
+    ): Promise<T> =>
+      lifecycle
+        ? await lifecycle.use(serverName, trigger, () => run(requireEntry(serverName)), signal)
+        : await run(requireEntry(serverName));
 
     const collectSnapshot = async (): Promise<McpConnectionSnapshot> => {
       const statuses: Record<string, McpServerStatus> = {};
@@ -479,12 +472,12 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
         const status = (await entry.adapter.status())[serverName];
         if (status) statuses[serverName] = status;
         // 首次使用时连接期间继续报告缓存工具，连上后改为真实工具。
-        tools.push(...(lazyStart?.cachedTools(serverName) ?? (await entry.adapter.listTools())));
+        tools.push(...(lifecycle?.cachedTools(serverName) ?? (await entry.adapter.listTools())));
       }
-      for (const serverName of lazyStart?.deferredNames() ?? []) {
-        const status = lazyStart?.deferredStatus(serverName);
+      for (const serverName of lifecycle?.deferredNames() ?? []) {
+        const status = lifecycle?.deferredStatus(serverName);
         if (status) statuses[serverName] = status;
-        tools.push(...(lazyStart?.cachedTools(serverName) ?? []));
+        tools.push(...(lifecycle?.cachedTools(serverName) ?? []));
       }
       return { statuses, tools };
     };
@@ -524,7 +517,7 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
     };
 
     function toolListRevision(): number {
-      let revision = lazyStart?.toolListRevision ?? 0;
+      let revision = lifecycle?.toolListRevision ?? 0;
       for (const key of new Set(leased.values())) {
         revision += entries.get(key)?.adapter.toolListRevision?.() ?? 0;
       }
@@ -547,11 +540,10 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
     return {
       async waitForAppConnection(serverName) {
         // MCP App 首次签发凭证是对 server 的实际使用；启动失败按"连接不可用"返回 null。
-        if (lazyStart?.isDeferred(serverName)) {
-          const started = await lazyStart.ensureStarted(serverName, "app_connection").then(
-            () => true,
-            () => false,
-          );
+        if (lifecycle?.deferredStatus(serverName)) {
+          const started = await lifecycle
+            .use(serverName, "app_connection", async () => true)
+            .catch(() => false);
           if (!started) return null;
         }
         const key = leased.get(serverName);
@@ -594,18 +586,16 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
         request: McpCallToolRequest,
         callOptions?: McpCallToolOptions,
       ): Promise<McpToolCallResult> {
-        return await trackUse(request.serverName, async () => {
-          const entry = await ensureEntry(request.serverName, "tool_call", callOptions?.signal);
-          return await entry.adapter.callTool(request, callOptions);
-        });
+        return await withServer(request.serverName, "tool_call", callOptions?.signal, (entry) =>
+          entry.adapter.callTool(request, callOptions),
+        );
       },
       async readResource(
         request: McpReadResourceRequest,
         callOptions?: McpCallToolOptions,
       ): Promise<McpReadResourceResult> {
-        return await trackUse(request.serverName, async () => {
-          const adapter = (await ensureEntry(request.serverName, "resource", callOptions?.signal))
-            .adapter;
+        return await withServer(request.serverName, "resource", callOptions?.signal, async (entry) => {
+          const adapter = entry.adapter;
           if (!adapter.readResource) {
             throw new Error(`MCP adapter does not support resources: ${request.serverName}`);
           }
@@ -614,9 +604,8 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
       },
       // 资源列表与订阅经同一 entry 的 adapter；登记表在 adapter（连接层）里，多 session 共享。
       async listResources(request, callOptions) {
-        return await trackUse(request.serverName, async () => {
-          const adapter = (await ensureEntry(request.serverName, "resource", callOptions?.signal))
-            .adapter;
+        return await withServer(request.serverName, "resource", callOptions?.signal, async (entry) => {
+          const adapter = entry.adapter;
           if (!adapter.listResources) {
             throw new Error(`MCP adapter does not support resources: ${request.serverName}`);
           }
@@ -624,9 +613,8 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
         });
       },
       async listResourceTemplates(request, callOptions) {
-        return await trackUse(request.serverName, async () => {
-          const adapter = (await ensureEntry(request.serverName, "resource", callOptions?.signal))
-            .adapter;
+        return await withServer(request.serverName, "resource", callOptions?.signal, async (entry) => {
+          const adapter = entry.adapter;
           if (!adapter.listResourceTemplates) {
             throw new Error(`MCP adapter does not support resources: ${request.serverName}`);
           }
@@ -634,9 +622,8 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
         });
       },
       async subscribeResource(request, callOptions) {
-        await trackUse(request.serverName, async () => {
-          const adapter = (await ensureEntry(request.serverName, "resource", callOptions?.signal))
-            .adapter;
+        await withServer(request.serverName, "resource", callOptions?.signal, async (entry) => {
+          const adapter = entry.adapter;
           if (!adapter.subscribeResource) {
             throw new Error(`MCP adapter does not support resources: ${request.serverName}`);
           }
@@ -645,7 +632,7 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
       },
       async unsubscribeResource(request, callOptions) {
         // 从未启动的 server 没有任何订阅，不为退订而启动它。
-        if (lazyStart?.isDeferred(request.serverName)) return;
+        if (lifecycle?.deferredStatus(request.serverName)) return;
         const adapter = requireEntry(request.serverName).adapter;
         if (!adapter.unsubscribeResource) return;
         await adapter.unsubscribeResource(request, callOptions);
@@ -667,8 +654,7 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
         if (leaseClosed) return;
         leaseClosed = true;
         // 先结束首次连接的等待方并清掉闲置计时器，再按原引用计数释放；在途连接沿空闲回收关闭。
-        lazyStart?.close();
-        idleReclaimer?.close();
+        lifecycle?.close();
         for (const serverName of [...leased.keys()]) release(serverName);
       },
       connectConfiguredServers,
@@ -676,7 +662,7 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
         servers: Record<string, McpServerConfig>,
         connectOptions: McpConnectOptions = {},
       ): Promise<McpConnectionSnapshot> {
-        if (!lazyStart) return await connectConfiguredServers(servers, connectOptions);
+        if (!lifecycle) return await connectConfiguredServers(servers, connectOptions);
         reconcileConfiguredServers(servers);
         const configured = Object.entries(servers);
         // 停用的 server 不启动进程，沿用原有收敛立即得到 disabled 状态。
@@ -687,7 +673,7 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
         );
         // 启动遥测要在后台连接结束后才有真实的 connected / failed，快照阶段不上报。
         sessionStartupReported = true;
-        const registered = await lazyStart.register(
+        const registered = await lifecycle.register(
           configured.filter(([, config]) => config.enabled !== false),
           connectOptions,
         );
@@ -706,9 +692,9 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
         return await acquire(serverName, config, connectOptions);
       },
       async disconnectServer(serverName: string): Promise<McpServerStatus | undefined> {
-        const deferredStatus = lazyStart?.deferredStatus(serverName);
+        const deferredStatus = lifecycle?.deferredStatus(serverName);
         if (deferredStatus) {
-          lazyStart?.forget(serverName);
+          lifecycle?.forget(serverName);
           return {
             status: "disconnected",
             toolCount: 0,

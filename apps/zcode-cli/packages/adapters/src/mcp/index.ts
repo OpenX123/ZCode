@@ -78,7 +78,7 @@ import { terminateMcpStdioProcessTree } from "./process-tree.js";
 import { McpResourceSubscriptionRegistry } from "./resource-subscriptions.js";
 import { ProcessTreeStdioClientTransport } from "./stdio-transport.js";
 import type { McpTelemetryTracker } from "./telemetry.js";
-import type { McpToolManifestCache } from "./tool-manifest-cache.js";
+import type { McpToolManifestCache } from "./lazy-start/index.js";
 import {
   createMcpDeadline,
   McpTimeoutError,
@@ -190,7 +190,7 @@ export {
   createFileMcpToolManifestCache,
   type CreateMcpToolManifestCacheOptions,
   type McpToolManifestCache,
-} from "./tool-manifest-cache.js";
+} from "./lazy-start/index.js";
 export {
   createMcpTelemetryTracker,
   resolvePluginName,

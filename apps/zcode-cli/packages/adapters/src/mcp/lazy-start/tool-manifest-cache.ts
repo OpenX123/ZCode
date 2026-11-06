@@ -1,7 +1,8 @@
-import type { Logger, McpServerConfig, McpToolDescriptor } from "@zcode/contracts";
+import type { McpServerConfig, McpToolDescriptor } from "@zcode/contracts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { CreateMcpToolManifestCacheOptions, McpToolManifestCache } from "./contract.js";
 
 /**
  * MCP 工具清单缓存：按 server 解析后配置的指纹保存上次成功的 `tools/list`（规则见
@@ -10,27 +11,6 @@ import { join } from "node:path";
  * 指纹只取配置的结构与 env / header 的**键名**；env、header、OAuth 的值（可能是密钥）既不参与
  * 指纹也不写入文件。文件内容只有指纹、server 名、保存时间与工具描述。全部为异步 IO。
  */
-export interface McpToolManifestCache {
-  /** 读取缓存清单；缺失、损坏或与指纹不符时返回 undefined。 */
-  read(serverName: string, config: McpServerConfig): Promise<McpToolDescriptor[] | undefined>;
-  /** 写入真实清单；与本进程已知内容相同时不写盘。失败只记 warn，不抛错。 */
-  write(
-    serverName: string,
-    config: McpServerConfig,
-    tools: readonly McpToolDescriptor[],
-  ): Promise<void>;
-  /** 删除该指纹的缓存（启动失败时调用）。 */
-  invalidate(serverName: string, config: McpServerConfig): Promise<void>;
-}
-
-export interface CreateMcpToolManifestCacheOptions {
-  appVersion: string;
-  logger?: Logger;
-  /** 目录内文件数上限，超出按 mtime 淘汰最旧文件。 */
-  maxEntries?: number;
-  rootDir: string;
-}
-
 interface ToolManifestFile {
   fingerprint: string;
   savedAt: string;

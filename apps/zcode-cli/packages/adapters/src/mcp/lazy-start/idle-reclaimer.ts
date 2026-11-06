@@ -6,20 +6,17 @@
  * 没有在途请求、也没有工具调用持续一个闲置窗口后由所属 lease 关闭，回到"待首次使用"，工具仍按
  * 清单缓存保留，下一次调用经同一首次启动路径重新连接。
  *
- * 本类只拥有计时与在途计数；是否可回收（MCP App 连接、连接状态）与回收动作由 lease 决定。
- * 计时器全部 unref，并在 lease 关闭或 server 释放时清除，不会在会话关闭后遗留。
+ * 模块内部实现：只拥有计时与在途计数；是否可回收与回收动作由 lease 决定。计时器全部 unref，
+ * 并在 server 释放或 lease 关闭时清除，不会在会话关闭后遗留。
  */
-export class McpLeaseIdleReclaimer {
+export class LeaseIdleReclaimer {
   private readonly inflight = new Map<string, number>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private closed = false;
 
   constructor(
-    private readonly options: {
-      idleMs: number;
-      /** 闲置窗口到期且没有在途请求时调用；由 lease 再确认后回收。 */
-      onIdle: (serverName: string) => void;
-    },
+    private readonly idleMs: number,
+    private readonly onIdle: (serverName: string, isStillIdle: () => boolean) => void,
   ) {}
 
   /** 开始一次对该 server 的使用；返回的函数在使用结束时调用（重复调用无效）。 */
@@ -40,18 +37,19 @@ export class McpLeaseIdleReclaimer {
     };
   }
 
-  isBusy(serverName: string): boolean {
-    return (this.inflight.get(serverName) ?? 0) > 0;
-  }
-
-  /** 从现在起重新计时；有在途请求或已关闭时不计时。 */
+  /** 从现在起重新计时；有在途使用、已关闭或未启用时不计时。 */
   arm(serverName: string): void {
-    if (this.closed || this.options.idleMs <= 0 || this.isBusy(serverName)) return;
+    if (this.closed || this.idleMs <= 0 || this.isBusy(serverName)) return;
     this.cancel(serverName);
     const timer = setTimeout(() => {
       this.timers.delete(serverName);
-      if (!this.closed && !this.isBusy(serverName)) this.options.onIdle(serverName);
-    }, this.options.idleMs);
+      if (this.closed || this.isBusy(serverName)) return;
+      // 回收方会跨 await 再确认；期间出现新使用或新计时都说明已不再闲置。
+      this.onIdle(
+        serverName,
+        () => !this.closed && !this.isBusy(serverName) && !this.timers.has(serverName),
+      );
+    }, this.idleMs);
     timer.unref?.();
     this.timers.set(serverName, timer);
   }
@@ -70,7 +68,7 @@ export class McpLeaseIdleReclaimer {
     this.timers.clear();
   }
 
-  get pendingTimerCount(): number {
-    return this.timers.size;
+  private isBusy(serverName: string): boolean {
+    return (this.inflight.get(serverName) ?? 0) > 0;
   }
 }

@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { Logger } from "@zcode/contracts";
 import { zcodeProtocolMethods, type ZCodeProtocolMessage } from "@zcode/shared";
 import { V4_METHODS } from "@zcode/shared/zcode-protocol-v4";
-import { ZCodeProtocolNdjsonConnection } from "../src/zcode-protocol/transport.js";
-import { planProtocolDispatch } from "../src/zcode-protocol/transport-lanes.js";
+import {
+  planProtocolDispatch,
+  ZCodeProtocolNdjsonConnection,
+} from "../src/zcode-protocol/transport.js";
 
 type Handler = (message: ZCodeProtocolMessage) => Promise<unknown>;
 

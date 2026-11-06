@@ -6,31 +6,27 @@ import type {
   McpToolDescriptor,
 } from "@zcode/contracts";
 import { MCP_SERVER_START_FAILED_ERROR_CODE } from "@zcode/contracts";
-import { toolManifestSignature, type McpToolManifestCache } from "./tool-manifest-cache.js";
+import type {
+  McpLazyStartTrigger,
+  McpLeaseServerLifecycle,
+  McpLeaseServerLifecycleDeps,
+} from "./contract.js";
+import { LeaseIdleReclaimer } from "./idle-reclaimer.js";
+import { toolManifestSignature } from "./tool-manifest-cache.js";
 
 /**
- * 会话 MCP lease 的"首次使用时启动"状态（规则见 docs/design/v2/mcp.md
+ * 会话 MCP lease 的 server 生命周期（规则见 docs/design/v2/mcp.md
  * 「会话启动：工具清单缓存与首次使用时启动」）。
  *
  * 修复原因：会话首个模型请求过去等待全部 MCP server 连接（1.0.5：p50 2.5s / p90 4.5s，最大 7.4s；
  * 4 个默认启用的 office 插件各自启动 YCode.exe 并加载 14.5MB bundle）。现在命中工具清单缓存的
  * server 只登记、首次实际使用才连接；未命中的后台连接，连上后通过 revision 让 runtime 在下一次
- * 模型步骤加入工具。本类只拥有"待首次使用 / 启动中"两种登记，连接本身仍由 lease 的 acquire 创建。
+ * 模型步骤加入工具。本类只拥有"待首次使用 / 启动中"登记与闲置计时，连接本身仍由 lease 创建与释放。
  */
-export type McpLazyStartTrigger = "app_connection" | "resource" | "tool_call";
-
-export interface McpLeaseLazyStartDeps {
-  /** lease 的 acquire：创建或复用连接并等待其结果。lease 关闭后应抛错。 */
-  acquire(
-    serverName: string,
-    config: McpServerConfig,
-    connectOptions: McpConnectOptions,
-  ): Promise<McpServerStatus>;
-  cache: McpToolManifestCache;
-  logger?: Logger;
-  /** 连接成功后读取该 server 的真实工具描述。 */
-  readServerTools(serverName: string): Promise<McpToolDescriptor[]>;
-  sessionId?: string;
+export function createMcpLeaseServerLifecycle(
+  deps: McpLeaseServerLifecycleDeps,
+): McpLeaseServerLifecycle {
+  return new LeaseServerLifecycle(deps);
 }
 
 interface DeferredServer {
@@ -48,15 +44,19 @@ interface PendingStart {
 
 const LEASE_CLOSED_MESSAGE = "MCP connection lease is closed";
 
-export class McpLeaseLazyStart {
+class LeaseServerLifecycle implements McpLeaseServerLifecycle {
   private readonly deferred = new Map<string, DeferredServer>();
   private readonly starting = new Map<string, PendingStart>();
   private readonly closeController = new AbortController();
+  private readonly idleReclaimer: LeaseIdleReclaimer;
   private readonly logger?: Logger;
   private revision = 0;
 
-  constructor(private readonly deps: McpLeaseLazyStartDeps) {
+  constructor(private readonly deps: McpLeaseServerLifecycleDeps) {
     this.logger = deps.logger;
+    this.idleReclaimer = new LeaseIdleReclaimer(deps.idleReclaimMs ?? 0, (serverName, isStillIdle) =>
+      deps.onIdle?.(serverName, isStillIdle),
+    );
   }
 
   /** 叠加到 lease 的 toolListRevision：后台连接结束、清单漂移、首次启动失败都会递增。 */
@@ -64,7 +64,7 @@ export class McpLeaseLazyStart {
     return this.revision;
   }
 
-  get closed(): boolean {
+  private get closed(): boolean {
     return this.closeController.signal.aborted;
   }
 
@@ -120,10 +120,6 @@ export class McpLeaseLazyStart {
     };
   }
 
-  isDeferred(serverName: string): boolean {
-    return this.deferred.has(serverName);
-  }
-
   deferredNames(): string[] {
     return [...this.deferred.keys()];
   }
@@ -146,23 +142,31 @@ export class McpLeaseLazyStart {
   }
 
   /**
-   * 首次使用：同一 server 的并发调用共享一次连接。调用方的 signal 与 lease 关闭只结束本次等待，
-   * 已发起的连接继续由 lease 的引用计数与空闲回收管理，不会漏到其它会话。
+   * 一次实际使用：期间暂停闲置计时；待首次使用的 server 先单飞连接。调用方的 signal 与 lease
+   * 关闭只结束本次等待，已发起的连接继续由 lease 的引用计数与空闲回收管理，不会漏到其它会话。
    */
-  async ensureStarted(
+  async use<T>(
     serverName: string,
     trigger: McpLazyStartTrigger,
+    run: () => Promise<T>,
     signal?: AbortSignal,
-  ): Promise<void> {
-    // lease 关闭后不再创建新连接；在途的首次连接由下面的等待以关闭原因结束。
-    if (this.closed && !this.starting.has(serverName)) throw new Error(LEASE_CLOSED_MESSAGE);
-    const pending = this.starting.get(serverName) ?? this.beginStart(serverName, trigger);
-    if (!pending) return;
-    await waitUntilSettledOrAborted(pending.promise, [signal, this.closeController.signal]);
+  ): Promise<T> {
+    const end = this.idleReclaimer.begin(serverName);
+    try {
+      await this.ensureStarted(serverName, trigger, signal);
+      return await run();
+    } finally {
+      end();
+    }
   }
 
-  /** server 被释放、换配置或显式断开：丢弃待首次使用的登记。 */
+  connected(serverName: string): void {
+    this.idleReclaimer.arm(serverName);
+  }
+
+  /** server 被释放、换配置或显式连接/断开：丢弃待首次使用的登记并取消闲置计时。 */
   forget(serverName: string): void {
+    this.idleReclaimer.cancel(serverName);
     if (this.deferred.delete(serverName)) this.revision += 1;
   }
 
@@ -191,7 +195,20 @@ export class McpLeaseLazyStart {
   close(): void {
     if (this.closed) return;
     this.closeController.abort(new Error(LEASE_CLOSED_MESSAGE));
+    this.idleReclaimer.close();
     this.deferred.clear();
+  }
+
+  private async ensureStarted(
+    serverName: string,
+    trigger: McpLazyStartTrigger,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    // lease 关闭后不再创建新连接；在途的首次连接由下面的等待以关闭原因结束。
+    if (this.closed && !this.starting.has(serverName)) throw new Error(LEASE_CLOSED_MESSAGE);
+    const pending = this.starting.get(serverName) ?? this.beginStart(serverName, trigger);
+    if (!pending) return;
+    await waitUntilSettledOrAborted(pending.promise, [signal, this.closeController.signal]);
   }
 
   private startInBackground(

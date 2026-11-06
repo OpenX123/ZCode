@@ -6,9 +6,9 @@ import type {
 } from "@zcode/contracts";
 import { MCP_SERVER_START_FAILED_ERROR_CODE } from "@zcode/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMcpConnectionPool } from "../src/mcp/pool.js";
-import { createMcpTelemetryTracker } from "../src/mcp/telemetry.js";
-import type { McpToolManifestCache } from "../src/mcp/tool-manifest-cache.js";
+import { createMcpConnectionPool } from "../../src/mcp/pool.js";
+import { createMcpTelemetryTracker } from "../../src/mcp/telemetry.js";
+import type { McpToolManifestCache } from "../../src/mcp/lazy-start/index.js";
 
 const CONFIG: McpServerConfig = { command: "node", args: ["server.js"], type: "stdio" };
 const IDLE_MS = 10 * 60_000;

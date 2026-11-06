@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "@zcode/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OfficialPluginFileStat } from "../src/app/official-plugin-digest-cache.js";
+import type { OfficialPluginFileStat } from "../../src/app/official-plugin-digest/index.js";
 
 const DIGEST_STORE_FILE = "official-plugin-digests.json";
 const DEFINITION = { name: "fixture-plugin", version: "1.0.0" };
@@ -13,7 +13,7 @@ const DEFINITION = { name: "fixture-plugin", version: "1.0.0" };
 /** 每次重新加载模块等价于一个新的 CLI 进程：进程内记忆清空，只剩持久化文件。 */
 async function loadFreshModule() {
   vi.resetModules();
-  return await import("../src/app/official-plugin-digest-cache.js");
+  return await import("../../src/app/official-plugin-digest/index.js");
 }
 
 function fileStats(rootPath: string, mtimeMs = 1_000): OfficialPluginFileStat[] {

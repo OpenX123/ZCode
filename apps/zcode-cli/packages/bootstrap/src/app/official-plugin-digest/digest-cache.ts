@@ -2,6 +2,12 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Logger } from "@zcode/contracts";
+import type {
+  OfficialPluginDigestSource,
+  OfficialPluginFileDigest,
+  OfficialPluginFileStat,
+  ResolveOfficialPluginFileDigestsInput,
+} from "./contract.js";
 
 /**
  * 文件系统来源的内置插件摘要缓存（规则见 docs/design/v2/plugin-compat.md「内置插件摘要缓存」）。
@@ -11,25 +17,6 @@ import type { Logger } from "@zcode/contracts";
  * 单线程。内置插件随应用版本不可变：同一进程只计算一次；跨进程按"应用版本 + 文件统计签名"
  * 复用持久化的摘要，签名一致时不再读取文件内容。复制进缓存时仍逐文件校验 SHA-256。
  */
-export type OfficialPluginDigestSource = "memory" | "persisted" | "hashed";
-
-export interface OfficialPluginFileStat {
-  /** 已按 seed 规则归一化的文件权限。 */
-  mode: number;
-  mtimeMs: number;
-  /** 相对插件根目录的 POSIX 路径。 */
-  path: string;
-  size: number;
-  sourcePath: string;
-}
-
-export interface OfficialPluginFileDigest {
-  mode: number;
-  path: string;
-  sha256: string;
-  sourcePath: string;
-}
-
 interface OfficialPluginStatSignature {
   fileCount: number;
   maxMtimeMs: number;
@@ -65,17 +52,10 @@ const digestMemo = new Map<string, OfficialPluginFileDigest[]>();
 // 持久化文件只在进程内首次未命中记忆时读取；同一进程后续只读内存副本。
 const loadedStores = new Map<string, DigestStoreFile>();
 
-export function resolveOfficialPluginFileDigests(input: {
-  appVersion?: string;
-  definition: { name: string; version: string };
-  /** 计算单个文件的 SHA-256（读取文件内容），只在签名不匹配时调用。 */
-  hashFile: (file: OfficialPluginFileStat) => string;
-  /** 枚举并 stat 插件文件（不读内容），按 path 排序。 */
-  listFiles: () => OfficialPluginFileStat[];
-  logger?: Logger;
-  rootPath: string;
-  storageRoot: string;
-}): { files: OfficialPluginFileDigest[]; source: OfficialPluginDigestSource } {
+export function resolveOfficialPluginFileDigests(input: ResolveOfficialPluginFileDigestsInput): {
+  files: OfficialPluginFileDigest[];
+  source: OfficialPluginDigestSource;
+} {
   const appVersion = input.appVersion?.trim() || UNKNOWN_APP_VERSION;
   const memoKey = [appVersion, input.rootPath, input.definition.name, input.definition.version].join(
     "\0",

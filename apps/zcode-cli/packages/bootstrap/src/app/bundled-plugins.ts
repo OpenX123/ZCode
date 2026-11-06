@@ -32,7 +32,7 @@ import {
   resolveOfficialPluginFileDigests,
   type OfficialPluginDigestSource,
   type OfficialPluginFileStat,
-} from "./official-plugin-digest-cache.js";
+} from "./official-plugin-digest/index.js";
 import { writeOfficialPluginRuntimeManifest } from "./official-plugin-runtime.js";
 import {
   isOfficialPluginSeedLockTimeoutError,
