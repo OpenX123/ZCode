@@ -13,6 +13,7 @@ import {
   zcodeProtocolNotifications,
 } from "@zcode/shared";
 import type { Logger } from "@zcode/contracts";
+import { planProtocolDispatch, type ProtocolLaneKind } from "./transport-lanes.js";
 
 type ZCodeProtocolOutgoingMessage =
   | ZCodeProtocolError
@@ -25,35 +26,18 @@ type ZCodeProtocolMessageHandler = (
 ) => Promise<ZCodeProtocolOutgoingMessage | undefined>;
 
 const PROTOCOL_EOF_DRAIN_MS = 100;
-// 插件读请求收到即处理，不排在安装/更新之后。describe 写 manifest 的分支自带 storage lock；
-// list/overview 是同步 handler，执行中不让出事件循环，seed 只在内容变化时写盘，
-// 不会与安装跨 await 的读改写交错。
-const PLUGIN_READ_IMMEDIATE_METHODS = new Set<string>([
-  zcodeProtocolMethods.pluginsDescribe,
-  zcodeProtocolMethods.pluginsList,
-  zcodeProtocolMethods.pluginsOverview,
-]);
-// MCP App 的请求由实例凭证和 callId 隔离；若与普通命令一起等待完成，
-// uiCallTool 会挡住自己的 cancel/close，真实 stdio 链路将死锁。
-const MCP_APP_CONCURRENT_METHODS = new Set<string>([
-  zcodeProtocolMethods.mcpReadResource,
-  zcodeProtocolMethods.mcpUiOpenInstance,
-  zcodeProtocolMethods.mcpUiCloseInstance,
-  zcodeProtocolMethods.mcpUiValidateInstance,
-  zcodeProtocolMethods.mcpUiCallTool,
-  zcodeProtocolMethods.mcpUiSampling,
-  zcodeProtocolMethods.mcpUiCancelSampling,
-  zcodeProtocolMethods.mcpUiCancelCall,
-  zcodeProtocolMethods.mcpUiReadResource,
-  zcodeProtocolMethods.mcpUiListResources,
-  zcodeProtocolMethods.mcpUiListResourceTemplates,
-  zcodeProtocolMethods.mcpUiSubscribeResource,
-  zcodeProtocolMethods.mcpUiUnsubscribeResource,
-  zcodeProtocolMethods.mcpUiRegisterAppTools,
-  zcodeProtocolMethods.mcpUiUnregisterAppTools,
-  zcodeProtocolMethods.mcpUiClaimAppToolCall,
-  zcodeProtocolMethods.mcpUiResolveAppToolCall,
-]);
+// 本地性能摘要只关心可感知的排队与慢请求；阈值以下不落日志，避免逐请求刷屏。
+const REQUEST_QUEUE_WAIT_LOG_THRESHOLD_MS = 50;
+const SLOW_REQUEST_LOG_THRESHOLD_MS = 500;
+const TRANSPORT_LOG_MODULE = "bootstrap.zcode_protocol";
+
+type RequestTimingLane = ProtocolLaneKind | "control" | "immediate";
+
+/** 某条分道上最后入队的请求：后来者等 done，控制请求等 started。 */
+interface ProtocolLaneTail {
+  done: Promise<void>;
+  started: Promise<void>;
+}
 
 interface ZCodeProtocolNdjsonConnectionOptions {
   signal?: AbortSignal;
@@ -61,6 +45,8 @@ interface ZCodeProtocolNdjsonConnectionOptions {
   handleMessage: ZCodeProtocolMessageHandler;
   input: NodeJS.ReadableStream;
   logger?: Logger;
+  /** 单调时钟，仅用于排队与耗时观测；测试可注入。 */
+  now?: () => number;
   onTransportClosed?: (error: Error) => void;
   output: NodeJS.WritableStream;
   takePostResponseMessages?: (
@@ -74,8 +60,11 @@ interface ZCodeProtocolNdjsonConnectionOptions {
 
 export class ZCodeProtocolNdjsonConnection {
   private buffer = "";
-  private processing: Promise<void> = Promise.resolve();
-  private lastQueuedMessageStarted: Promise<void> = Promise.resolve();
+  /** 分道键 → 最后入队请求。分道空闲后删除，避免会话数增长时无界积累。 */
+  private readonly lanes = new Map<string, ProtocolLaneTail>();
+  /** 所有在途请求处理（分道、控制与收到即处理），EOF drain 等它们全部结束。 */
+  private readonly inflight = new Set<Promise<void>>();
+  private readonly now: () => number;
   private readonly closedPromise: Promise<void>;
   private resolveClosed!: () => void;
   private rejectClosed!: (error: Error) => void;
@@ -85,6 +74,7 @@ export class ZCodeProtocolNdjsonConnection {
   private drainTimer?: ReturnType<typeof setTimeout>;
 
   constructor(private readonly options: ZCodeProtocolNdjsonConnectionOptions) {
+    this.now = options.now ?? (() => performance.now());
     this.closedPromise = new Promise((resolve, reject) => {
       this.resolveClosed = resolve;
       this.rejectClosed = reject;
@@ -148,11 +138,16 @@ export class ZCodeProtocolNdjsonConnection {
     this.notifyTransportClosed(new Error("ZCode Protocol client connection closed"));
     // EOF 保留短请求半关闭响应，但挂起 handler 不能让进程永久保活。
     this.drainTimer = setTimeout(() => this.finish(), PROTOCOL_EOF_DRAIN_MS);
-    void this.processing.then(
-      () => this.finish(),
-      (error: Error) => this.fail(error),
-    );
+    // 分道后没有单条 processing 链可等：所有分道与收到即处理的在途请求都结束才算 drain 完成。
+    void this.whenIdle().then(() => this.finish());
   };
+
+  private async whenIdle(): Promise<void> {
+    // 在途请求在 dispatchLine 中同步登记；EOF 后 onData 不再接单，集合只会缩小。
+    while (this.inflight.size > 0) {
+      await Promise.allSettled(this.inflight);
+    }
+  }
 
   private readonly onAbort = (): void => {
     this.notifyTransportClosed(new Error("ZCode Protocol runtime stopping"));
@@ -224,44 +219,101 @@ export class ZCodeProtocolNdjsonConnection {
       });
       return;
     }
-    if (
-      "id" in message &&
-      "method" in message &&
-      PLUGIN_READ_IMMEDIATE_METHODS.has(message.method)
-    ) {
+    const plan = planProtocolDispatch(message);
+    const enqueuedAt = this.now();
+    if (plan.kind === "immediate") {
       // Bugfix：插件详情与列表曾排在串行队列里，安装 A 下载期间打开详情卡在组件 loading，
-      // 新建右侧标签页（新 store 首次加载 list/overview）卡在骨架屏。读请求不依赖前序请求的
-      // 执行结果，因此也不等 lastQueuedMessageStarted：否则 B 排在 A 后面时仍要等到 A 完成。
-      void this.handleMessage(message).catch((error: unknown) => {
-        this.fail(error instanceof Error ? error : new Error(String(error)));
-      });
+      // 新建右侧标签页（新 store 首次加载 list/overview）卡在骨架屏。无会话纯读不依赖前序请求的
+      // 执行结果，因此不排队，也不等任何分道的"已开始"屏障。
+      this.track(this.runTimed(message, "immediate", enqueuedAt));
       return;
     }
-    if (this.shouldBypassProcessingQueue(message)) {
-      // 停止/取消控制必须等它前面的普通请求真正进入 handler、建立 abort
-      // controller，再越过该请求的异步执行；只延后一轮微任务会让控制请求提前成为空操作。
-      void this.lastQueuedMessageStarted
-        .then(() => this.handleMessage(message))
-        .catch((error: unknown) => {
-          this.fail(error instanceof Error ? error : new Error(String(error)));
-        });
+    if (plan.kind === "control") {
+      // 停止/取消控制必须等它前面的同道请求真正进入 handler、建立 abort controller，再越过该请求的
+      // 异步执行；只延后一轮微任务会让控制请求提前成为空操作。只等到达时已入队的最后一个请求。
+      const barriers = plan.laneKeys.map((key) => this.lanes.get(key)?.started);
+      this.track(
+        Promise.all(barriers).then(() => this.runTimed(message, "control", enqueuedAt)),
+      );
       return;
     }
+    this.enqueueInLanes(message, plan.laneKind, plan.laneKeys, enqueuedAt);
+  }
+
+  /**
+   * 同一分道 FIFO：请求等这些分道上所有前序请求完成后开始。涉及多个分道的请求同时成为这些分道的
+   * 队尾，因而与每个分道里前后的请求都保序。不同分道之间互不等待。
+   */
+  private enqueueInLanes(
+    message: ZCodeProtocolMessage,
+    laneKind: ProtocolLaneKind,
+    laneKeys: readonly string[],
+    enqueuedAt: number,
+  ): void {
+    const previous = laneKeys.map((key) => this.lanes.get(key)?.done);
     let markStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
     });
-    this.lastQueuedMessageStarted = started;
-    this.processing = this.processing
-      .then(async () => {
-        const handling = this.handleMessage(message);
-        markStarted();
-        await handling;
-      })
-      .catch((error: unknown) => {
-        markStarted();
-        this.fail(error instanceof Error ? error : new Error(String(error)));
+    const done = Promise.all(previous).then(() =>
+      this.runTimed(message, laneKind, enqueuedAt, markStarted),
+    );
+    const tail: ProtocolLaneTail = { done, started };
+    for (const key of laneKeys) this.lanes.set(key, tail);
+    this.track(done);
+    void done.then(() => {
+      for (const key of laneKeys) {
+        if (this.lanes.get(key) === tail) this.lanes.delete(key);
+      }
+    });
+  }
+
+  private track(work: Promise<void>): void {
+    this.inflight.add(work);
+    void work.then(() => this.inflight.delete(work));
+  }
+
+  /** 执行一条请求并记录排队/耗时观测；永不 reject，handler 失败按原语义终结连接。 */
+  private async runTimed(
+    message: ZCodeProtocolMessage,
+    lane: RequestTimingLane,
+    enqueuedAt: number,
+    markStarted?: () => void,
+  ): Promise<void> {
+    const startedAt = this.now();
+    const queueWaitMs = startedAt - enqueuedAt;
+    const method = "method" in message ? message.method : undefined;
+    if (queueWaitMs > REQUEST_QUEUE_WAIT_LOG_THRESHOLD_MS) {
+      this.options.logger?.info("ZCode Protocol request waited in lane", {
+        event: "zcode_protocol.request.queue_wait",
+        lane,
+        method,
+        module: TRANSPORT_LOG_MODULE,
+        status: "started",
+        waitMs: Math.round(queueWaitMs),
       });
+    }
+    try {
+      const handling = this.handleMessage(message);
+      markStarted?.();
+      await handling;
+    } catch (error) {
+      markStarted?.();
+      this.fail(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    const durationMs = this.now() - startedAt;
+    if (durationMs >= SLOW_REQUEST_LOG_THRESHOLD_MS) {
+      this.options.logger?.info("ZCode Protocol request slow", {
+        durationMs: Math.round(durationMs),
+        event: "zcode_protocol.request.slow",
+        lane,
+        method,
+        module: TRANSPORT_LOG_MODULE,
+        queueWaitMs: Math.round(queueWaitMs),
+        status: "completed",
+      });
+    }
   }
 
   private decodeLine(line: string): ZCodeProtocolMessage | null {
@@ -288,18 +340,6 @@ export class ZCodeProtocolNdjsonConnection {
     }
 
     return parsed.data;
-  }
-
-  private shouldBypassProcessingQueue(message: ZCodeProtocolMessage): boolean {
-    // 模型任务占住串行队列时，停止/取消请求必须仍能进入 server，
-    // 才能把底层 AbortSignal 传给真实模型请求。控制面只旁路当前执行，普通请求仍保持串行。
-    return (
-      "id" in message &&
-      "method" in message &&
-      (message.method === zcodeProtocolMethods.sessionStop ||
-        message.method === zcodeProtocolMethods.workspaceCancelGenerateText ||
-        MCP_APP_CONCURRENT_METHODS.has(message.method))
-    );
   }
 
   private async handleMessage(message: ZCodeProtocolMessage): Promise<void> {
