@@ -54,6 +54,7 @@ Desktop Host 的成功轮询 RPC 日志走现有 debug logger，普通运行不�
 
 输出编码由 execution adapter 的 `run()` 在取消检查后解析一次；任务记录仅保存这次解析的
 编码值，供前后台切换及终态详情复用，不在创建记录或查询时重新执行 Windows `chcp`。
+`chcp` 本身每个 CLI 进程只异步查询一次并复用结果（2026-11-07），解析不再同步阻塞事件循环。
 记录不持有 collector 或完整输出 buffer，文件直写与有界读取保持不变。
 
 观察只复用 existing-only runtime，不启动/恢复会话、不改变通知消费状态、不产生模型请求。

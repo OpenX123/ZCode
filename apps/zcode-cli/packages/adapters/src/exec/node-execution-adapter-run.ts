@@ -81,10 +81,11 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
     };
     try {
       if (isStopped()) return await cancelled();
-      const legacyOutputEncoding = resolveLegacyExecutionOutputEncoding({
+      const legacyOutputEncoding = await resolveLegacyExecutionOutputEncoding({
         platform: this.platform,
         processEnv: this.processEnv,
       });
+      if (isStopped()) return await cancelled();
       const knownPath = this.outputPathForRequest(request, "stdout")!;
       // 请求可能被复用；缓存保存的是实际路径，降级根必须始终来自原有配置。
       const fallbackPath = join(
@@ -182,13 +183,14 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
             }
           }
         : undefined;
+    // Windows chcp 已按进程异步缓存；这里仍只解析一次，等待期间的取消与关闭由 spawn 前检查收口。
     const legacyOutputEncoding = preparedOutput
       ? preparedOutput.legacyOutputEncoding
-      : resolveLegacyExecutionOutputEncoding({
+      : await resolveLegacyExecutionOutputEncoding({
           platform: this.platform,
           processEnv: this.processEnv,
         });
-    // 任务记录单独解析会重复同步执行 Windows chcp；复用执行时的编码值。
+    // 任务记录单独解析会重复执行 Windows 代码页解析；复用执行时的编码值。
     internalOptions.onOutputEncodingResolved?.(legacyOutputEncoding);
     const file =
       preparedOutput?.file ??

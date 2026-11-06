@@ -98,8 +98,8 @@ describe.each(shells)("direct Bash $display.name", (shell) => {
     async (mode) => {
       const resolveEncoding = vi
         .spyOn(outputEncoding, "resolveLegacyExecutionOutputEncoding")
-        .mockReturnValueOnce("gb18030")
-        .mockReturnValue("cp437");
+        .mockResolvedValueOnce("gb18030")
+        .mockResolvedValue("cp437");
       const { adapter, request, path, release } = await fixture(
         shell,
         `const fs = require('node:fs');

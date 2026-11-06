@@ -8,6 +8,15 @@ resolveInteraction ACK → broker → 原生选项回执 → adapter 续跑，�
 计划等待停止转圈，清单完成度不决定 turn 终态。RPC 与流中重试错误在 adapter 边界脱敏，
 首次重试可见，真实进度和终态清场。契约及验收见根 `docs/desktop/native-plan-errors-spec.md`。
 
+## Windows 输出代码页按进程查询（2026-11-07）
+
+execution adapter 的 `resolveLegacyExecutionOutputEncoding` 改为异步：`ZCODE_WINDOWS_OUTPUT_ENCODING`
+覆盖仍逐次读取；否则 Windows `chcp` 每个 CLI 进程按 ComSpec 只异步执行一次（`execFile`，1 秒超时），
+在途与已完成结果由同一 Promise 复用，失败也记为无结果并回退 locale 推断，不再在每次工具执行时
+同步 `execFileSync` 阻塞事件循环。`run()` / Bash 输出准备仍各只解析一次并把编码传入任务记录，
+取消检查、输出解码、模型 schema 与 App 协议不变。回归覆盖多次解析只查询一次、并发解析共用
+同一查询、失败回退与覆盖项不触发查询。
+
 ## Bash 临时输出路径隔离
 
 主应用及 workflow 子运行时装配 tmp 父目录 → execution adapter 实际准备具名输出文件 →
