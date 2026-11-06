@@ -52,6 +52,64 @@ console.* / dependency logs    -> stderr -> Host log collector
 该边界同时适用于桌面本地与 SSH/WSL/Docker 远程 agent；它不改变 protocol
 message、desktop continuous 或 web remote replayable 的交付语义。
 
+## 请求调度分道
+
+一个 CLI 进程服务整个 workspace 的全部会话。`ZCodeProtocolNdjsonConnection` 是请求调度的唯一所有者；
+分类规则集中在 `bootstrap/src/zcode-protocol/transport-lanes.ts`，handler 不再自行假设"前序请求已完成"。
+过去除少数旁路外所有请求走同一条严格 FIFO，A 会话的冷恢复会让 B 会话的订阅、行范围和工作区展示
+等待数秒到十几秒（1.0.5 生产日志：`subscribeConversationV4` p90 13s，`readWorkspacePresentation` p90 18s）。
+
+| 类别 | 方法 | 调度 |
+| --- | --- | --- |
+| 响应 / 观测 | 反向请求的 response、`process/networkCapture` 通知 | 收到即处理，不进入任何分道 |
+| 无会话纯读 | `workspace/readPresentation`、`session/list`、`v4/sessionsIndex/reconcile`、`v4/commands/query`（`clock: true`）、`plugins/list`/`describe`/`overview`/`referenceCatalog`/`referenceCatalogWithCategory`/`listUiSurfaces`、`skills/referenceCatalog`、`workflows/list`/`get`/`runs`/`forRun`、`usage/stats`、`v4/usage/stats`、`process/childProcesses`、`runtime/capabilities`、`v4/connection/flow` | 收到即处理 |
+| 自串行 owner | `provider/refreshRegistry` | 收到即处理；Registry service 按 generation 合并并发刷新，Host 在依赖它的请求前等待其响应 |
+| 控制 | `session/stop`、`workspace/cancelGenerateText`、`plugins/cancelOperation`、MCP App 请求 | 等所在分道上一个请求进入 handler（已建立 abort 入口）后旁路执行，不等其完成 |
+| 会话分道 | 携带 `sessionId`、`conversation/<id>` topic、`commands[].sessionId`、v4 命令信封 `sessionId` 或 `createSession.payload.sessionId` 的请求 | 同会话 FIFO；不同会话并发；涉及多个会话的请求同时占用这些分道，全部轮到后才开始 |
+| topic 分道 | 会话索引、工作区配置 topic 的 subscribe / resync / unsubscribe | 同 topic FIFO |
+| 模型分道 | `workspace/generateText`、`provider/testModelConnectivity` | 彼此 FIFO；不阻塞全局写，也不被全局写阻塞 |
+| 全局分道 | 其余无会话请求：hook 信任、偏好同步、无 ID 的 `session/create`、`mcp/list`、插件写操作、工作流写操作、未知方法 | FIFO |
+
+保序保证：
+
+- 同一会话内的写命令、订阅与读取按到达顺序开始，`createSession`（Host 预留 `payload.sessionId`）先于
+  同会话的 `conversation/<id>` 订阅；命令 ACK 在各自分道内保持到达顺序。
+- 控制请求只越过当前执行，不越过排在它前面、尚未开始的请求：它等待到达时分道上最后一个请求的"已开始"。
+- 跨会话、跨分道没有顺序承诺。依赖其它请求结果的调用方必须等待响应（Host 现有发送前
+  `provider/refreshRegistry`、偏好同步均已等待响应）。
+- EOF 后停止接单；所有分道及收到即处理的在途请求完成后关闭，或 100ms drain 到期强制关闭；
+  stdin/stdout 错误与 abort 立即终止，语义与原先相同。
+
+```mermaid
+sequenceDiagram
+  participant H as Host
+  participant T as NDJSON 连接（分道调度）
+  participant A as 会话 A 分道
+  participant B as 会话 B 分道
+  participant S as server handler
+  H->>T: v4/command createSession(payload.sessionId=A)
+  T->>A: 入队（A 空闲，立即开始）
+  A->>S: createSession A（冷启动 app）
+  H->>T: v4/conversation/subscribe(conversation/A)
+  T->>A: 入队，等待 createSession 完成
+  H->>T: v4/conversation/rowsRange(sessionId=B)
+  T->>B: 入队（与 A 并发）
+  B->>S: rowsRange B
+  S-->>H: rowsRange B 响应
+  H->>T: workspace/readPresentation
+  T->>S: 无会话纯读，收到即处理
+  S-->>H: presentation 响应
+  S-->>H: createSession A ACK
+  A->>S: subscribe A（在 create 之后）
+  H->>T: session/stop(sessionId=A)
+  T->>S: 控制：等待 A 分道最后一个请求已开始，旁路执行
+```
+
+性能观测：等待超过 50ms 的请求记录 `zcode_protocol.request.queue_wait`（`method`、`lane`、`waitMs`），
+handler 耗时 ≥ 500ms 记录 `zcode_protocol.request.slow`（`method`、`lane`、`durationMs`、`queueWaitMs`），
+均为 info，字段不含路径与正文。产品规则见
+[内置引擎性能规格](../../../../../docs/desktop/engine-performance-1.1-spec.md)。
+
 ## 协议进程生命周期
 
 CLI 入口在第一次异步初始化前接管 stdin/stdout 和信号，拥有唯一 shutdown deadline。

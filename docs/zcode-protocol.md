@@ -27,6 +27,8 @@ zcode-cli app-server
 
 stdio NDJSON 只按 LF 字节 `0x0a` 分帧；写帧格式固定为 `JSON.stringify(message) + "\n"`。reader 可兼容帧尾 CRLF，但不得 trim 或改写帧内字符串。
 
+CLI 按会话分道调度请求：同一会话（`sessionId`、`conversation/<id>` topic、命令信封或 `createSession.payload.sessionId`）的请求按到达顺序开始，不同会话并发；无会话的纯读收到即处理；其余无会话请求走全局分道；停止/取消类控制只等所在分道上一个请求开始。跨会话没有顺序承诺，依赖其他请求结果的客户端必须等待响应。分类表与时序见 [CLI Agent Server 规格](../apps/zcode-cli/docs/design/v2/zcode-protocol-agent-server.md#请求调度分道)。
+
 ## V4 读路径
 
 客户端订阅 `conversation/<sessionId>` topic。subscribe ACK 本身不内嵌 snapshot；服务端随后按该
