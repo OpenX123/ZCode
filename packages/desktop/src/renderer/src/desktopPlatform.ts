@@ -134,6 +134,8 @@ export function createDesktopPlatform(options: {
       window.zcode.onDesktopZoomLevelChanged?.(handler) ?? (() => {}),
     onTaskNotificationClick: (handler) => window.zcode.onTaskNotificationClick(handler),
     exportLogs: () => window.zcode.exportLogs(),
+    // 复用既有 renderer → main 日志通道（zcode:log），生产包同样写入本机日志文件，不经网络。
+    writeLocalDiagnosticLog: (message, fields) => window.zcode.log("info", [message, fields]),
     captureWindowScreenshot: () =>
       window.zcode.captureWindowScreenshot?.() ?? Promise.resolve(null),
     getDesktopSessionActivity: () =>

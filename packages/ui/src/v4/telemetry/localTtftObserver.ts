@@ -1,6 +1,8 @@
 import { mergeLocalTtftFacts } from "@/v4/telemetry/localTtftFacts.js";
 import {
+  buildLocalPerfSummary,
   buildLocalTtftRecord,
+  type LocalPerfSummary,
   type LocalTtftPending as Pending,
 } from "@/v4/telemetry/localTtftRecord.js";
 import { logger } from "@/logger.js";
@@ -20,6 +22,9 @@ import type {
   TopicFrameDeliveryKind,
 } from "@zcode/shared/zcode-protocol-v4";
 
+/** cold/warm 判定只需记住近期已出摘要的会话；超出按写入顺序淘汰。 */
+const LOCAL_PERF_SUMMARY_SESSION_LIMIT = 512;
+
 /** Renderer 独占点击总时钟；不使用 ACK 或旁路 telemetry 判定首输出。 */
 export class LocalTtftObserver {
   enabled = false;
@@ -27,12 +32,15 @@ export class LocalTtftObserver {
   private isForeground = true;
   private lastClockSample?: number;
   private readonly clocks = new Map<string, LocalTtftCalibration>();
+  private readonly summarizedSessions = new Set<string>();
   constructor(
     private readonly onRecord: (record: LocalTtftRecord) => void = (record) =>
       logger.debug("[local-ttft] measurement", record),
     private readonly now = localTtftNow,
     private readonly wallNow = Date.now,
     private readonly readForeground?: () => boolean,
+    /** 1.1 本地性能摘要出口；生产 debug 不落盘，摘要由宿主经平台日志写本机。 */
+    private readonly onSummary?: (summary: LocalPerfSummary) => void,
   ) {}
   private emit(record: LocalTtftRecord): void {
     try {
@@ -40,6 +48,27 @@ export class LocalTtftObserver {
     } catch {
       /* 观测失败不能阻断提交、内容投影或清理。 */
     }
+  }
+  /** 已下发命令的观测在首个内容或此前的排除/失败时闭合，各出一条摘要。 */
+  private summarize(pending: Pending, record: LocalTtftRecord): void {
+    if (!this.onSummary || pending.summarized || pending.dispatch === undefined) return;
+    if (record.kind !== "first_output" && record.kind !== "excluded") return;
+    pending.summarized = true;
+    const sessionKey = `${pending.workspace}\u0000${record.sessionId ?? pending.sessionId ?? ""}`;
+    const start = this.summarizedSessions.has(sessionKey) ? "warm" : "cold";
+    this.summarizedSessions.delete(sessionKey);
+    this.summarizedSessions.add(sessionKey);
+    if (this.summarizedSessions.size > LOCAL_PERF_SUMMARY_SESSION_LIMIT)
+      this.summarizedSessions.delete(this.summarizedSessions.values().next().value!);
+    try {
+      this.onSummary(buildLocalPerfSummary(pending, record, start));
+    } catch {
+      /* 摘要失败不能影响真实请求与内容投影。 */
+    }
+  }
+  private emitClosing(pending: Pending, record: LocalTtftRecord): void {
+    this.emit(record);
+    this.summarize(pending, record);
   }
   start(workspace: string, busy: boolean, unsupported = false): LocalTtftContext | undefined {
     if (!this.enabled) return undefined;
@@ -80,12 +109,14 @@ export class LocalTtftObserver {
     workspace: string,
     commandId: string,
     sessionId?: string | null,
+    engine?: string,
   ): LocalTtftContext | undefined {
     const pending = this.pending.get(context.observationId);
     if (!pending || pending.workspace !== workspace) return undefined;
     pending.dispatch ??= this.now();
     pending.commandId ??= commandId;
     pending.sessionId ??= sessionId ?? undefined;
+    pending.engine ??= engine;
     this.emit(this.record(pending, "checkpoint", "success"));
     return context;
   }
@@ -112,8 +143,12 @@ export class LocalTtftObserver {
       this.exclude(context, excluded);
       return;
     }
-    if (status !== "accepted" && status !== "duplicate")
+    if (status !== "accepted" && status !== "duplicate") {
       this.exclude(context, status === "rejected" ? "rejected" : "failed");
+      return;
+    }
+    const pending = this.pending.get(context.observationId);
+    if (pending) pending.ackAt ??= this.now();
   }
   calibrate(workspace: string, clock: LocalTtftCalibration): void {
     if (this.clocks.size >= LOCAL_TTFT_MAX_PENDING)
@@ -236,7 +271,7 @@ export class LocalTtftObserver {
         pending.closed = true;
         pending.outcome = "success";
         const completed = this.record(pending, "first_output", "success");
-        this.emit(completed);
+        this.emitClosing(pending, completed);
       }
       if (kind === "text") {
         this.emit(this.record(pending, "first_text", "success"));
@@ -245,7 +280,8 @@ export class LocalTtftObserver {
       }
     }
     if (facts.terminal && !pending.textClosed) {
-      this.emit(
+      this.emitClosing(
+        pending,
         this.record(
           pending,
           pending.first ? "no_text" : "excluded",
@@ -271,7 +307,10 @@ export class LocalTtftObserver {
       return;
     }
     if (pending.confirmationStart !== undefined) this.confirmation(context, false);
-    this.emit(this.record(pending, pending.first ? "no_text" : "excluded", outcome));
+    this.emitClosing(
+      pending,
+      this.record(pending, pending.first ? "no_text" : "excluded", outcome),
+    );
     pending.closed = true;
     pending.outcome = outcome;
     pending.textClosed = true;

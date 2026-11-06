@@ -1003,6 +1003,15 @@ export interface IPlatformService {
   /** 导出日志：打包 ~/.zcode/v2 及外部 agent 日志为 zip 并在系统文件浏览器中显示 */
   exportLogs(): Promise<{ success: boolean; path?: string; error?: string }>;
 
+  /**
+   * 向本机桌面日志写一行 info 级本地诊断（如 1.1 本地性能摘要）。生产包同样落盘，不上传；
+   * 调用方只能传数字、布尔、枚举与生成的标识，不得含正文或路径。Web 不实现。
+   */
+  writeLocalDiagnosticLog?(
+    message: string,
+    fields: Readonly<Record<string, string | number | boolean | null>>,
+  ): void;
+
   /** 截取当前窗口，用于错误反馈携带现场画面；Web fallback 可返回 null */
   captureWindowScreenshot?(): Promise<WindowScreenshotResult | null>;
 
