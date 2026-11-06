@@ -1,4 +1,5 @@
 import type { McpServerConfig, McpServerStatus } from "@zcode/contracts";
+import { isMcpServerAvailableForTools } from "@zcode/contracts";
 import { matchesModelVisibleMcpServerName } from "../mcp/name.js";
 
 export interface ParsedAgentMcpServers {
@@ -45,13 +46,14 @@ export function matchesRequiredMcpServer(
   requiredName: string,
   statuses: Record<string, McpServerStatus>,
 ): boolean {
+  // 待首次使用的 server 按清单缓存提供工具，调用时由 parent lease 启动，与已连接同样满足要求。
   if (requiredName === "*") {
-    return Object.values(statuses).some((status) => status.status === "connected");
+    return Object.values(statuses).some((status) => isMcpServerAvailableForTools(status));
   }
   const expected = requiredName.toLowerCase();
   return Object.entries(statuses).some(
     ([serverName, status]) =>
-      status.status === "connected" &&
+      isMcpServerAvailableForTools(status) &&
       // MCP tool name 会把 plugin:android-emulator:android-emulator
       // 规范化成 plugin_android-emulator_android-emulator；required-server 检查
       // 必须使用同一套模型可见命名规则，否则已连接的 plugin MCP 会被误判为 missing。

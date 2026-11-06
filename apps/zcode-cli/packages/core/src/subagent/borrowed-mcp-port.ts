@@ -1,4 +1,5 @@
 import type { McpConnectionSnapshot, McpPort } from "@zcode/contracts";
+import { isMcpServerAvailableForTools } from "@zcode/contracts";
 import { SUBAGENT_COMPUTER_USE_UNAVAILABLE_MESSAGE } from "./computer-use-policy.js";
 
 export interface BorrowedSubagentMcpAccess {
@@ -19,9 +20,10 @@ export function createBorrowedSubagentMcpAccess(
   const statuses = Object.fromEntries(
     Object.entries(parentStartupSnapshot.statuses).filter(([serverName]) => isInScope(serverName)),
   );
+  // 已连接与待首次使用（按清单缓存注册、调用时由 parent lease 启动）的 server 都可借用。
   const connectedServerNames = new Set(
     Object.entries(statuses)
-      .filter(([, status]) => status.status === "connected")
+      .filter(([, status]) => isMcpServerAvailableForTools(status))
       .map(([serverName]) => serverName),
   );
   const snapshot: McpConnectionSnapshot = {

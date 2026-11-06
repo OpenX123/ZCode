@@ -1,8 +1,10 @@
-import { createConfig } from "@zcode/adapters/config";
+import { join } from "node:path";
+import { createConfig, resolvePath } from "@zcode/adapters/config";
 import type { McpElicitationPort, McpNotificationPort } from "@zcode/contracts";
 import { createNodeModelSelectionFacade } from "@zcode/provider-node";
 import { createNodeLoggerFactory } from "@zcode/adapters/logging";
 import {
+  createFileMcpToolManifestCache,
   createMcpAdapterConnectionPool,
   createMcpTelemetryTracker,
   type McpConnectionPool,
@@ -19,6 +21,7 @@ import type { McpPort, ModelSelection } from "@zcode/contracts";
 import type { PresentationSurface } from "@zcode/core";
 import type { RunZCodeProtocolAgentOptions, ZCodeAppOptions } from "./app/types.js";
 import { createZCodeApp } from "./app/create-app.js";
+import { getCliStorageRoot } from "./app/paths.js";
 import {
   createNodeReplBrowserBroker,
   type NodeReplBrowserBroker,
@@ -193,6 +196,17 @@ export async function runZCodeProtocolAgent(
               caCertFile: configResult.config.network.caCertFile,
             },
             telemetry: mcpTelemetryTracker,
+            // 会话首个模型请求不等 MCP：命中工具清单缓存的 server 首次使用时才启动，
+            // 会话 lease 闲置 10 分钟的连接回收到"待首次使用"（docs/design/v2/mcp.md）。
+            toolManifestCache: createFileMcpToolManifestCache({
+              appVersion: options.version ?? "0.0.0",
+              logger,
+              rootDir: join(
+                getCliStorageRoot(resolvePath(configResult.config.storage.dir)),
+                "mcp",
+                "tool-manifests",
+              ),
+            }),
             workingDirectory: options.cwd,
           });
     mcpPort = mcpConnectionPool?.acquireLease({ leaseId: "protocol-settings" });

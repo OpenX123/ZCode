@@ -2,6 +2,7 @@
 // 契约：解析 canonical text → 冻结 catalog →
 // 与 live Skill/MCP/Subagent inventory 取交集 → 生成本轮 model-only reminder。
 // 失败语义：对话 fail open（任何异常都不阻塞本轮），能力注入 fail closed（异常时不注入）。
+import { isMcpServerAvailableForTools } from "@zcode/contracts";
 import { toMcpToolName } from "../../mcp/index.js";
 import {
   buildPluginReferenceReminderBody,
@@ -24,7 +25,12 @@ async function collectLiveMcpServers(
   // 这里提前 await 不增加额外等待。引用绝不触发 connect/reconnect/OAuth——只读取现状。
   await runtime.initializeMcp(traceContext);
   const statuses = await runtime.mcpPort.status();
-  const snapshot = runtime.mcpStartupPromise ? await runtime.mcpStartupPromise : undefined;
+  const startupSnapshot = runtime.mcpStartupPromise ? await runtime.mcpStartupPromise : undefined;
+  // 非阻塞启动后，后台连上的 server 不在启动快照里；改读端口当前工具表（不触发连接）。
+  const snapshot =
+    startupSnapshot && runtime.mcpPort.startConfiguredServers
+      ? { tools: await runtime.mcpPort.listTools() }
+      : startupSnapshot;
   const registeredToolNames = new Set(runtime.getTools().map((tool) => tool.name));
   // 与 turn-loop 的 provider 工具过滤保持完全相同的“完整工具名”语义；
   // 带参数的执行规则不会把整个工具从 provider 工具表移除，不能在 reminder 侧扩大解释。
@@ -44,7 +50,8 @@ async function collectLiveMcpServers(
   }
   return Object.entries(statuses).map(([serverName, status]) => ({
     serverName,
-    connected: status.status === "connected",
+    // 待首次使用的 server 已按清单缓存注册工具，调用时启动，对模型而言与已连接等价。
+    connected: isMcpServerAvailableForTools(status),
     providerVisibleToolCount: providerVisibleToolCounts.get(serverName) ?? 0,
   }));
 }

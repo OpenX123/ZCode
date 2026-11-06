@@ -246,6 +246,12 @@ Minimum coverage for the first implementation slice:
   schema 漂移也会重注册。
 - lease 关闭后拒绝新连接（`acquire` 抛错），正在等待首次连接的调用立即以错误返回；
   已发起的连接沿原 entry 引用计数与空闲回收关闭，不会泄漏到其它会话。
+- 闲置回收（`McpConnectionPoolOptions.sessionIdleReclaimMs`，缺省 10 分钟，需配合工具清单缓存）：
+  会话 lease（有 sessionId）内已连接的 server 没有在途请求（`callTool`、资源读取与订阅）且闲置满窗口后，
+  lease 再确认仍由自己持有、已连接、没有 MCP App 连接失效监听，然后 `release` 并以回收时的真实清单
+  回到待首次使用（`deferredStart`），registry 不变；下一次使用经首次启动路径重新连接，30s 空闲回收内
+  再次使用会复用同一 entry。在途或有 MCP App 连接时到期只重新计时。计时器 unref，server 释放与
+  lease 关闭时清除。记 `mcp.idle_reclaim.closed`（info）。设置页 lease 不回收。
 - 会话启动遥测 `session_startup` 在后台连接全部结束后上报；待首次使用的 server 不计入
   connected，也不计入 failed。
 - 子智能体借用父端口时以父端口的当前 `status()` / `listTools()` 为准；插件引用提醒同样把待首次使用

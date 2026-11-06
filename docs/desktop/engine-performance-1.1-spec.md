@@ -27,15 +27,22 @@
 - 任一 server 连上后都用真实 `tools/list` 刷新缓存；与缓存不一致时以真实清单为准，registry 从下一次模型步骤起使用真实清单（签名覆盖完整描述，包括 inputSchema）。
 - 首次调用时启动失败：返回结构化工具错误给模型并记 warn 日志，删除该指纹的缓存；不挂起轮次。失败后该 server 的工具从下一次模型步骤起移出 registry（与原先启动失败不注册工具一致）。
 - 保持会话隔离与既有 lease / close 语义：工具清单缓存只决定"何时连接"，连接仍由会话自己的 lease 创建与释放。会话关闭时正在进行的首次连接立即让等待方以错误返回，连接本身沿原有空闲回收；lease 关闭后不再创建新连接。
+- 闲置回收（本机 1.0.5 实测 61 个 `YCode.exe … __zcode-plugin-host` 进程、约 4.0GB RSS，部分运行 3 天：常驻会话的每会话 MCP / 插件宿主从不退出）：
+  - 会话 lease 内已连接的 server 在没有在途请求（工具调用、资源读取与订阅）且 10 分钟没有使用后，由该 lease 释放连接（经既有 30s 空闲回收关闭进程），回到"待首次使用"。
+  - 工具沿用回收时的真实清单（同时刷新缓存），registry 不变；下一次调用经同一首次启动路径重新连接。
+  - 不回收：有在途调用的 server；有 MCP App 页面连接（lease 上登记了连接失效监听）的 server。窗口到期时再确认，条件不满足则重新计时。
+  - 只适用于会话 lease；设置页（`mcp/list`）的 lease 不回收，避免状态轮询把被回收的 server 显示成断开。
+  - 计时器由 lease 持有并 unref；server 被释放或 lease 关闭时清除，会话关闭后不遗留。
 - 不实现非阻塞启动的端口（TUI / headless 直连 adapter、测试替身、子智能体借用端口）保持原有"启动时连接全部 server"语义。
 
 ### 状态所有者
 
-| 状态                   | 唯一所有者                                   | 其他层                                               |
-| ---------------------- | -------------------------------------------- | ---------------------------------------------------- |
-| 连接与"待首次使用"登记 | 会话 MCP lease（`adapters/src/mcp/pool.ts`） | runtime 只调用 `startConfiguredServers` / `callTool` |
-| 工具清单缓存文件       | `adapters/src/mcp/tool-manifest-cache.ts`    | lease 在连接完成时写入，在登记时读取                 |
-| registry 中的 MCP 工具 | runtime（`core/src/runtime/methods/mcp.ts`） | 只在模型步骤边界按 `toolListRevision` 刷新           |
+| 状态                   | 唯一所有者                                                         | 其他层                                                         |
+| ---------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------- |
+| 连接与"待首次使用"登记 | 会话 MCP lease（`adapters/src/mcp/pool.ts`、`pool-lazy-start.ts`） | runtime 只调用 `startConfiguredServers` / `callTool`           |
+| 闲置计时与在途计数     | 会话 MCP lease（`adapters/src/mcp/pool-idle-reclaim.ts`）          | 回收条件由 lease 再确认，回收动作复用 release + 待首次使用登记 |
+| 工具清单缓存文件       | `adapters/src/mcp/tool-manifest-cache.ts`                          | lease 在连接完成时写入，在登记时读取                           |
+| registry 中的 MCP 工具 | runtime（`core/src/runtime/methods/mcp.ts`）                       | 只在模型步骤边界按 `toolListRevision` 刷新                     |
 
 ### 事件顺序
 
@@ -63,6 +70,25 @@ sequenceDiagram
   L-->>RT: 执行 A.x 的结果
 ```
 
+闲置回收：
+
+```mermaid
+sequenceDiagram
+  participant RT as Runtime（core）
+  participant L as 会话 MCP lease
+  participant S as MCP server 进程
+  RT->>L: callTool(A.x)
+  L->>L: A 在途 +1，取消闲置计时
+  L->>S: 执行 A.x
+  S-->>L: 结果
+  L->>L: A 在途 -1 → 重新计时 10 分钟
+  Note over L: 10 分钟无使用、无 MCP App 连接
+  L->>L: 再确认后 release(A)，A 回到待首次使用（工具不变）
+  L->>S: 空闲回收后关闭进程（mcp.idle_reclaim.closed）
+  RT->>L: callTool(A.y)
+  L->>S: 经首次使用路径重新连接后执行
+```
+
 - 子智能体借用父会话端口时读取**当前**连接状态与工具（而非启动时快照），"待首次使用"的 server 视为可用；子智能体的调用由父 lease 按同一规则首次连接。
 - 插件引用提醒把"待首次使用"的 server 视为可用。
 
@@ -73,7 +99,7 @@ sequenceDiagram
   - 跨进程持久化到 `<插件存储>/official-plugin-digests.json`，键为应用版本 + 插件根目录 + 插件名与版本，校验值为**文件统计签名**（文件数、总字节数、最大 mtime、逐文件 path/size/mtime/mode 的摘要）。签名一致时直接复用摘要，不读文件内容；不一致时重新哈希并覆盖写入。
   - 复制到缓存时仍逐文件校验 SHA-256（不一致即报 hash mismatch，与原语义相同）。SEA 来源本来就使用清单内 hash，不变。
   - 非内置（用户安装、市场、项目）插件的完整性语义不变。
-- 工作区展示（`workspace/readPresentation`）与会话快照的 `/` 命令目录：自定义命令发现对插件的解析结果（命令根目录）按（workspace、插件修订）在进程内记忆。插件修订由以下事实组成：生效配置中的插件段（启停、抑制、选项、额外市场）、插件存储中 `installed_plugins.json` 与 `known_marketplaces.json` 的统计签名、内置插件摘要。安装、卸载、更新、启停、恢复内置都会改变其中之一，下一次读取即重新解析；命令文件本身每次仍实时枚举。
+- 工作区展示（`workspace/readPresentation`）与会话快照的 `/` 命令目录：自定义命令发现对插件的解析结果（命令根目录）按（workspace、插件修订）在进程内记忆。插件修订由以下事实组成：生效配置中的插件段（启停、抑制、选项、额外市场、inline 目录）、插件存储中 `installed_plugins.json`、`known_marketplaces.json` 与官方插件缓存目录的统计签名。安装、卸载、更新、启停、恢复内置都会改变其中之一，下一次读取即重新解析；命令文件本身每次仍实时枚举。
 
 ## 3. CLI 传输分道
 
@@ -114,6 +140,7 @@ EOF 后停止接单，等待所有分道与在途请求完成或 100ms drain 到
 | `mcp.lazy_start.started` / `.completed` / `.failed`  | 首次使用触发连接             | `mcpServerName`、`trigger`、`durationMs`、`manifestChanged`（完成时）、`error`（失败时，warn） |
 | `mcp.background_start.completed`                     | 无缓存 server 后台连接结束   | `mcpServerName`、`status`、`durationMs`、`toolCount`                                           |
 | `mcp.manifest_cache.drift`                           | 真实清单与缓存不一致         | `mcpServerName`、`cachedToolCount`、`toolCount`                                                |
+| `mcp.idle_reclaim.closed`                            | 闲置回收释放会话连接         | `mcpServerName`、`idleMs`、`toolCount`、`sessionId`                                            |
 | `mcp.startup.completed`                              | 会话启动登记完成             | `durationMs`、`deferredCount`、`backgroundCount`、`mode`（lazy/eager）                         |
 | `turn.first_model_request.started`                   | 每轮首个主模型请求发出前     | `durationMs`（自本轮执行开始）                                                                 |
 | `bootstrap.official_plugin_digest.resolved`          | 每个进程首次解析内置插件摘要 | `source`（memory/persisted/hashed）、`pluginCount`、`durationMs`                               |
