@@ -5,6 +5,8 @@
 Codex 状态诊断使用当前连接的身份环境；API Key 模式只检查该 profile 的凭据是否存在，不执行原用户的 login status，也不验证供应商。官方 login 只做无子进程的可启动性预检。
 检测失效按引擎切换代次：旧在途请求不阻挡新检测，迟到结果不回填缓存或发布状态广播。
 
+2026-11-07：两家引擎对称支持沿用 CLI / 官方登录 / API Key 与多个命名配置。`updateConnectionProfiles` 是唯一写入命令（create / edit 新 ID / delete 隐藏 / select 上次使用），在文件锁内读改写 `connections.json`，成功后广播 `onConnectionProfilesChanged` 并使该引擎状态缓存失效；视图不含 credentialKey。诊断与登录环境使用共享 `buildEngineConnectionEnv`；状态附 `connectionProfileId`、`auth.gatewayHost` 与 `inheritedGatewayHost`（只读 config.toml / settings.json 的 base_url host）。Claude 官方登录运行 `claude auth login --claudeai`。`testConnection` 委托注入的 Agent Service 走 CLI `externalEngine/testConnection`，同一时间一个、可取消，日志只含引擎、配置 ID、分类与耗时。
+
 执行 Host 上的外部 Agent 引擎安装与就绪检测服务（`IExternalEngineService`）。
 
 - `getStatus` / `listStatuses` 只读：检测 YCode 管理目录中的锁定版 adapter、PATH 中的官方 CLI（缺失时用 adapter 安装树内的官方 CLI），并调用官方 CLI 的登录状态命令。不读写 `~/.claude`、`~/.codex` 下的凭据文件。

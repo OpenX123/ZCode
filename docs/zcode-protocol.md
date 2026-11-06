@@ -58,15 +58,15 @@ epoch、CAS 和 product guard 裁决。
 
 当前命令全集以 `packages/shared/src/zcode-protocol-v4/command.ts` 为唯一类型事实源，主要分组如下：
 
-| 分组          | 命令                                                                                                           |
-| ------------- | -------------------------------------------------------------------------------------------------------------- |
-| 会话/输入     | `createSession`、`createSelectionSideSession`、`sendText`、`sendGoalCommand`、`renameSession`、`deleteSession` |
-| 生成控制      | `stop`、`compact`、`retryTurn`、`editUserQuery`、`forkAssistant`                                               |
-| 文件回退      | `applyFileRewind`                                                                                              |
-| 队列          | `sendQueuedNow`、`editQueueItem`、`reorderQueueItem`、`deleteQueueItem`、`setAutoDrain`                        |
-| 配置          | `switchModelConfig`、`switchCollaborationMode`、`setEngineConfigOption`、`prepareExternalEngineSession`、`setFollowupMode`                     |
-| Goal/后台工作 | `pauseGoal`、`resumeGoal`、`cancelBackgroundWork`                                                              |
-| 阻塞交互      | `resolveInteraction`、`snoozeInteractionAutoResolution`                                                        |
+| 分组          | 命令                                                                                                                       |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| 会话/输入     | `createSession`、`createSelectionSideSession`、`sendText`、`sendGoalCommand`、`renameSession`、`deleteSession`             |
+| 生成控制      | `stop`、`compact`、`retryTurn`、`editUserQuery`、`forkAssistant`                                                           |
+| 文件回退      | `applyFileRewind`                                                                                                          |
+| 队列          | `sendQueuedNow`、`editQueueItem`、`reorderQueueItem`、`deleteQueueItem`、`setAutoDrain`                                    |
+| 配置          | `switchModelConfig`、`switchCollaborationMode`、`setEngineConfigOption`、`prepareExternalEngineSession`、`setFollowupMode` |
+| Goal/后台工作 | `pauseGoal`、`resumeGoal`、`cancelBackgroundWork`                                                                          |
+| 阻塞交互      | `resolveInteraction`、`snoozeInteractionAutoResolution`                                                                    |
 
 `session/steer`、`session/rewind` 和独立 rewind 命令已经删除。引导输入由 `sendText` + `inputRouting`/follow-up mode 裁决；重试和编辑分别使用 `retryTurn`、`editUserQuery`；workspace 文件撤销使用 `applyFileRewind`，不会隐式截断会话历史。
 
@@ -130,6 +130,12 @@ Host 把带 revision 的 registry 同步给对应 workspace CLI。聊天 UI 用 
 被拒绝。外部引擎会话不下发 `canEdit`/`canRetry` row actions，`fork`、`compact`、`switchModelConfig`
 availability 为 `external_engine_unsupported`。未就绪时写路径返回 `engine_not_ready`。契约见
 `packages/shared/src/external-engine/contract.ts`，规则见 [external-agent-engines-spec](./desktop/external-agent-engines-spec.md)。
+
+连接配置：`createSession.config.engineConnectionProfileId` 可选，只在创建外部引擎草稿时生效，缺省由 CLI
+按该引擎的上次使用配置解析；绑定后不可变，经 snapshot `config.engineConnectionProfileId` 只读投影，
+不含密钥。设置页的连接测试使用 JSON-RPC `externalEngine/testConnection {operationId, engine,
+connectionProfileId}`（临时 cwd 的一次性原生会话，不进入会话存储）与
+`externalEngine/cancelConnectionTest {operationId}`；二者不进入 CLI 串行请求队列。
 
 ## 兼容工具调度事件
 

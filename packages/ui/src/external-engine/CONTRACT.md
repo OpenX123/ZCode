@@ -18,3 +18,5 @@
 上下文用量直接复用 snapshot.usage 与 ChatContextUsage；子 Agent 过程通过现有工具卡按 parentToolCallId 嵌套，无实际 childSessionId 时不展示下钻入口。
 
 历史会话的连接状态和配置均只读 snapshot：connecting 显示加载，error 显示失败和重新连接；未就绪时原生配置不可写，草稿仍可编辑。重试通过 V4 配置 CAS 命令 prepareExternalEngineSession。
+
+2026-11-07 连接配置：设置页每个引擎下列出连接配置（名称、方式、网关、默认标记），新建、编辑、删除、设为默认均调用 Host `updateConnectionProfiles` 并以返回视图为准；`useEngineConnectionProfiles` 只缓存视图并订阅 `onConnectionProfilesChanged`，不做乐观改写。测试连接经 Host `testConnection`（需本地 workspace），可取消。输入框草稿通过 `useEngineConnectionControl` 选择配置：选择后 Host 记录上次使用，草稿 owner 重建预热并在 createSession 携带 `engineConnectionProfileId`；绑定事实只读 snapshot `config.engineConnectionProfileId`，已创建会话只读显示非缺省绑定。

@@ -9,3 +9,5 @@
 规则来源：`docs/desktop/external-agent-engines-spec.md`。
 
 EngineConnectionFailure 是连接错误的安全投影：固定错误分类、ACP 方法、数值 rpcCode；不包含供应商原文。connecting/ready 事件清除旧错误，旧快照字段可缺省。
+
+2026-11-07：`connection.ts` 是连接配置的唯一契约：配置 / 文件 / 视图 schema、写入命令、测试结果，以及纯函数（内置配置、绑定解析、网关域名、`buildEngineConnectionEnv` 环境规则）。Host 诊断/登录与 CLI 启动 adapter 共用这些函数，不另写剔除列表；函数不读写文件或凭据，密钥只作为参数进入 Claude API Key 环境。
