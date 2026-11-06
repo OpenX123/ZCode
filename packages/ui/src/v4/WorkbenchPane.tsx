@@ -447,6 +447,8 @@ export function WorkbenchLeafPane({
           onSessionCreated={handleSessionCreated}
           onSessionDeleted={handleSessionDeleted}
           focused={focused}
+          // 1.1 启动恢复：隐藏 Tab 首次可见前不订阅会话（docs/desktop/engine-performance-1.1-spec.md）。
+          paneVisible={!hidden}
           allowEscapeStopOutsidePane={shell.allowEscapeStopOutsidePane}
           onClosePane={isPrimary || tabBinding ? undefined : handleClosePane}
           workspaceBadge={!isPrimary && !isShellWorkspace ? workspaceBadgeFor(scope) : undefined}

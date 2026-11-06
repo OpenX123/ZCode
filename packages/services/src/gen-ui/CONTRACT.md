@@ -17,5 +17,8 @@ containment and the current session's output subdirectory are not read authoriza
 Widget state remains scoped to the current workspace identity and session.
 
 State storage is an injected adapter. Atomic file replacement and the existing cross-process file
-lock serialize full snapshots; notifications project durable state. Only modelContent is exported
+lock serialize full snapshots; notifications project durable state. Once a scope directory is
+watched, a change to any record file in it is published, including records written by another Host
+for a path this Host has not read yet; the record's own target identifies the change, and a record
+whose target belongs to another scope is ignored. Only modelContent is exported
 as untrusted next-turn context. Main owns native sandbox resources, not persisted state.

@@ -50,9 +50,16 @@ export function createGenUiStateStorage(root: string): GenUiStateStorage {
     }
   }
   async function publishLatest(file: string) {
-    const target = targets.get(file);
+    if (disposed) return;
+    const known = targets.get(file);
+    const record = await readRecord(file);
+    // 1.1：Renderer 按 scope 缓存 listState，失效只依赖本通知。其他 Host 新写入、本 Host 尚未读过的
+    // 路径过去因 targets 缺项被静默丢弃，缓存便会漏掉新 widget 状态。用记录自带的 target 识别，
+    // 并要求它确实映射到这个文件，防止把其他 scope 的记录发布到本目录。
+    const target = known ?? (record && fileFor(record.target) === file ? record.target : undefined);
     if (disposed || !target) return;
-    const state = (await readRecord(file))?.state ?? null;
+    if (!known) targets.set(file, target);
+    const state = record?.state ?? null;
     const serialized = JSON.stringify(state);
     if (disposed || lastPublished.get(file) === serialized) return;
     lastPublished.set(file, serialized);

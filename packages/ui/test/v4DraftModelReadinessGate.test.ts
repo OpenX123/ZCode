@@ -66,7 +66,8 @@ describe("draft model readiness gate", () => {
 
   it("旧草稿发送复查的迟到结果不覆盖新草稿的 ready", async () => {
     let resolveOld!: (view: ModelSelectionView) => void;
-    const getView = vi.fn(async () => selectionView(1, true));
+    // 1.1：只有投影为 missing 时首发才做权威复查；旧草稿先处于 missing，复查迟到返回。
+    const getView = vi.fn(async () => selectionView(1, false));
     const service = selectionService({ getView });
     const { result, rerender } = renderHook(
       ({ sessionId }: { sessionId: string | null }) =>
@@ -77,7 +78,7 @@ describe("draft model readiness gate", () => {
         }),
       { initialProps: { sessionId: null as string | null } },
     );
-    await waitFor(() => expect(result.current.agentStartupAllowed).toBe(true));
+    await waitFor(() => expect(result.current.error).not.toBeNull());
     getView.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -85,6 +86,7 @@ describe("draft model readiness gate", () => {
         }),
     );
     const oldSend = result.current.ensureReadyForSend();
+    getView.mockImplementation(async () => selectionView(2, true));
     rerender({ sessionId: "active" });
     rerender({ sessionId: null });
     await waitFor(() => expect(result.current.agentStartupAllowed).toBe(true));
@@ -94,6 +96,67 @@ describe("draft model readiness gate", () => {
     });
     expect(result.current.agentStartupAllowed).toBe(true);
     expect(result.current.error).toBeNull();
+  });
+
+  it("投影已就绪时首发复查不再发 getView", async () => {
+    const getView = vi.fn(async () => selectionView(1, true));
+    const service = selectionService({ getView });
+    const { result } = renderHook(() =>
+      useDraftModelReadinessGate({
+        workspacePath: "/workspace/app",
+        sessionId: null,
+        modelSelectionService: service,
+      }),
+    );
+    await waitFor(() => expect(result.current.agentStartupAllowed).toBe(true));
+    expect(getView).toHaveBeenCalledTimes(1);
+
+    await expect(result.current.ensureReadyForSend()).resolves.toBe(true);
+    await expect(result.current.ensureReadyForSend()).resolves.toBe(true);
+    expect(getView).toHaveBeenCalledTimes(1);
+  });
+
+  it("挂载读取在途时首发等待同一次读取，不另发请求", async () => {
+    let resolveInitial!: (view: ModelSelectionView) => void;
+    const getView = vi.fn(
+      () =>
+        new Promise<ModelSelectionView>((resolve) => {
+          resolveInitial = resolve;
+        }),
+    );
+    const service = selectionService({ getView });
+    const { result } = renderHook(() =>
+      useDraftModelReadinessGate({
+        workspacePath: "/workspace/app",
+        sessionId: null,
+        modelSelectionService: service,
+      }),
+    );
+    const sending = result.current.ensureReadyForSend();
+    await act(async () => {
+      resolveInitial(selectionView(1, true));
+      await expect(sending).resolves.toBe(true);
+    });
+    expect(getView).toHaveBeenCalledTimes(1);
+  });
+
+  it("投影跟随变更事件：先缺模型后配置完成，首发直接放行", async () => {
+    const emitter = new Emitter<ModelSelectionView>();
+    const getView = vi.fn(async () => selectionView(1, false));
+    const service = selectionService({ getView, emitter });
+    const { result } = renderHook(() =>
+      useDraftModelReadinessGate({
+        workspacePath: "/workspace/app",
+        sessionId: null,
+        modelSelectionService: service,
+      }),
+    );
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    act(() => emitter.fire(selectionView(2, true)));
+    await waitFor(() => expect(result.current.agentStartupAllowed).toBe(true));
+
+    await expect(result.current.ensureReadyForSend()).resolves.toBe(true);
+    expect(getView).toHaveBeenCalledTimes(1);
   });
 
   it("blocks a new draft when the Selection View confirms there are no models", async () => {
