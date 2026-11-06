@@ -46,6 +46,22 @@ function resolveUserHomeDir() {
   return envHome && envHome.length > 0 ? envHome : homedir();
 }
 
+type ExternalEngineConfigPreferences = NonNullable<AppSettings["externalEngineConfigPreferences"]>;
+
+/** 按引擎与 configId 合并模型/深度记忆增量；补丁未提及的引擎和配置项保持原值。 */
+function mergeExternalEngineConfigPreferences(
+  current: AppSettings["externalEngineConfigPreferences"],
+  patch: ExternalEngineConfigPreferences,
+): ExternalEngineConfigPreferences {
+  const merged: ExternalEngineConfigPreferences = { ...current };
+  for (const [engine, values] of Object.entries(patch) as Array<
+    [keyof ExternalEngineConfigPreferences, Record<string, string> | undefined]
+  >) {
+    if (values) merged[engine] = { ...current?.[engine], ...values };
+  }
+  return merged;
+}
+
 function defaultSettings(): AppSettings {
   return appSettingsSchema.parse({});
 }
@@ -330,6 +346,14 @@ export function createSettingServiceWithMigrations(): {
           ...current,
           ...validatedPatch,
         });
+        if (validatedPatch.externalEngineConfigPreferences) {
+          // 原因：模型与思考深度会在同一窗口连续确认，整字段覆盖会让后写者用旧快照抹掉前一项；
+          // 补丁只携带确认的增量，由写队列内按引擎与 configId 合并，保持单一所有者的读改写原子。
+          merged.externalEngineConfigPreferences = mergeExternalEngineConfigPreferences(
+            current.externalEngineConfigPreferences,
+            validatedPatch.externalEngineConfigPreferences,
+          );
+        }
 
         if (writesConnections) {
           // 即使选择值相同也代表一次新操作，版本由同一写锁保证单调递增。

@@ -1209,6 +1209,72 @@ describe("useDraftSessionPrewarm workspace owner", () => {
   });
 });
 
+it("pending 只覆盖真实在途的创建：禁用、就绪、失败与丢弃都不算连接中", async () => {
+  let resolveCreate!: (ack: CommandAck) => void;
+  let createCount = 0;
+  const { calls, dispatch } = createDispatchRecorder({
+    onCreate: () => {
+      createCount += 1;
+      if (createCount === 2) return { ...NOOP_ACK, status: "failed", reasonCode: "test.failed" };
+      return new Promise<CommandAck>((resolve) => {
+        resolveCreate = resolve;
+      });
+    },
+  });
+  const root = createRoot(installMinimalDom());
+  mountedRoots.push(root);
+  const transportIdentity = {};
+  let owner!: ReturnType<typeof useDraftSessionPrewarm>;
+  const render = (enabled: boolean, invalidationVersion = 0) =>
+    createElement(PrewarmHarness, {
+      enabled,
+      workspaceKey: "/pending-workspace",
+      transportIdentity,
+      invalidationVersion,
+      dispatchCommand: dispatch,
+      onRender: () => {},
+      onOwner: (value) => {
+        owner = value;
+      },
+    });
+
+  // 恢复中的待定首发 / 远程不可用时预热被禁用：没有任何在途创建。
+  await act(async () => {
+    root.render(render(false));
+  });
+  expect(owner.pending).toBe(false);
+  expect(calls).toEqual([]);
+
+  await act(async () => {
+    root.render(render(true));
+    await flushMicrotasks();
+  });
+  expect(owner.pending).toBe(true);
+  expect(owner.binding).toBeNull();
+  await act(async () => {
+    resolveCreate(acceptedCreateAck("pending-draft"));
+    await flushMicrotasks();
+  });
+  expect(owner.binding?.sessionId).toBe("pending-draft");
+  expect(owner.pending).toBe(false);
+
+  // 订阅失败后丢弃：同版本不重建，也不能继续显示连接中。
+  await act(async () => {
+    owner.binding?.discard();
+    await flushMicrotasks();
+  });
+  expect(owner.binding).toBeNull();
+  expect(owner.pending).toBe(false);
+
+  // 新一代创建失败：显示错误而不是连接中。
+  await act(async () => {
+    root.render(render(true, 1));
+    await flushMicrotasks();
+  });
+  expect(owner.error).toBeInstanceOf(Error);
+  expect(owner.pending).toBe(false);
+});
+
 it("外部引擎握手失败向草稿反馈原因，不伪造就绪 binding", async () => {
   const onError = vi.fn();
   const onReady = vi.fn();

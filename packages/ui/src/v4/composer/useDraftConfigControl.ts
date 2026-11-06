@@ -122,6 +122,8 @@ export interface DraftConfigControl {
   handleDraftSelectThought: (thought: string) => void;
   handleDraftSwitchMode: (mode: string) => void;
   handleDraftSelectEngine: (engine: SessionEngine) => Promise<void>;
+  /** 本生命周期内新固定外部引擎的草稿：原生配置就绪后可恢复按引擎记忆的模型与深度。 */
+  engineConfigRestorable: boolean;
 }
 
 interface ComposerState {
@@ -132,6 +134,8 @@ interface ComposerState {
   observedConfig?: { permissionGrantId?: string; planTransitionId?: string };
   promotedSessionId?: string;
   inheritedRootDraft?: boolean;
+  /** 引擎在本生命周期内由默认偏好或显式改选固定；持久化恢复的已有草稿不带此标记。 */
+  engineConfigRestorable?: boolean;
 }
 
 export function useDraftConfigControl(params: {
@@ -148,6 +152,8 @@ export function useDraftConfigControl(params: {
   sessionConfig?: Partial<SessionConfigState> | null;
   /** provider registry 已通过 renderer readiness 门禁后才允许拉起 Agent。 */
   agentStartupAllowed?: boolean;
+  /** 该工作区是否提供外部引擎服务（远程工作区与 Web 为 false）；由 SessionPane 统一判定。 */
+  externalEnginesSupported?: boolean;
   modelSelectionService: IModelSelectionService | null;
 }): DraftConfigControl {
   const {
@@ -161,6 +167,7 @@ export function useDraftConfigControl(params: {
     inheritRootDraft = false,
     sessionConfig,
     agentStartupAllowed = true,
+    externalEnginesSupported = true,
     modelSelectionService,
   } = params;
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
@@ -249,10 +256,23 @@ export function useDraftConfigControl(params: {
   const enginePreferenceReady =
     sessionId !== null || draft.engine !== undefined || !enginePreferences.loading;
   if (sessionId === null && draft.engine === undefined && enginePreferenceReady) {
-    draft = {
-      ...draft,
-      engine: resolveSessionEngine({ engine: enginePreferences.settings?.defaultSessionEngine }),
-    };
+    const preferred = resolveSessionEngine({
+      engine: enginePreferences.settings?.defaultSessionEngine,
+    });
+    // 原因：远程（SSH/WSL/Docker）与 Web 工作区没有外部引擎服务，旧逻辑仍把外部默认引擎套到
+    // 新草稿，此后每次发送都被引擎门禁拒绝。这里只让该草稿使用 YCode，不写回默认偏好。
+    const engine =
+      !externalEnginesSupported && isExternalSessionEngine(preferred) ? "zcode" : preferred;
+    draft = { ...draft, engine };
+    currentState = { ...currentState, engineConfigRestorable: isExternalSessionEngine(engine) };
+  } else if (
+    sessionId === null &&
+    !externalEnginesSupported &&
+    isExternalSessionEngine(draft.engine)
+  ) {
+    // 1.0.7 按默认值写入外部引擎的远程旧草稿同样无法发送；该工作区不能运行外部引擎，改用 YCode。
+    draft = { ...draft, engine: "zcode" };
+    currentState = { ...currentState, engineConfigRestorable: false };
   }
   const externalEngine = isExternalSessionEngine(resolveSessionEngine(sessionConfig ?? draft));
   // 草稿 owner 已知引擎后再检查 Registry，外部引擎不读取内置模型目录。
@@ -559,6 +579,12 @@ export function useDraftConfigControl(params: {
     async (engine: SessionEngine) => {
       if (sessionId !== null || !isCurrentScope()) return;
       updateComposerDraft((current) => ({ ...current, engine }));
+      // 显式改选会回收旧预热并为新引擎重建原生配置，等同新的外部引擎草稿，可恢复按引擎记忆。
+      stateRef.current = {
+        ...stateRef.current,
+        engineConfigRestorable: isExternalSessionEngine(engine),
+      };
+      setStoredState(stateRef.current);
       await enginePreferences.update({ defaultSessionEngine: engine });
     },
     [sessionId, isCurrentScope, updateComposerDraft, enginePreferences.update],
@@ -756,6 +782,10 @@ export function useDraftConfigControl(params: {
     handleDraftSelectThought,
     handleDraftSwitchMode,
     handleDraftSelectEngine,
+    engineConfigRestorable:
+      sessionId === null &&
+      Boolean(currentState.engineConfigRestorable) &&
+      isExternalSessionEngine(draft.engine),
   };
 }
 

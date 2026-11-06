@@ -7,7 +7,7 @@ import type { WorkspacePurpose } from "./workspacePurpose.js";
 import type { DynamicWorkflowMode } from "./dynamic-workflow-feature.js";
 import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-metadata.js";
 import type { AppToolSearchMode } from "./app-runtime-preferences.js";
-import type { SessionEngine } from "./external-engine/contract.js";
+import type { ExternalEngineConfigPreferences, SessionEngine } from "./external-engine/index.js";
 
 // ── Domain types ──
 
@@ -256,6 +256,11 @@ export interface ResourceUsageSnapshot {
 export interface AppSettings {
   /** 本机最近显式选择的会话引擎；仅初始化之后创建的草稿。 */
   defaultSessionEngine?: SessionEngine;
+  /**
+   * 每个外部引擎最近一次显式确认的模型与思考深度（ACP configId → 原始值），不含权限模式；
+   * 只给之后新固定引擎的草稿恢复，补丁按引擎与 configId 合并。
+   */
+  externalEngineConfigPreferences?: ExternalEngineConfigPreferences;
   /** 仅隐藏对应版本的侧栏更新提示；null 表示用户手动恢复展示。 */
   dismissedDesktopUpdateVersion?: string | null;
   /** 当前 App/Host 不再显示提交前体验套餐推荐；不改变任何入口的模型选择。 */

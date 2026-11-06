@@ -708,6 +708,7 @@ function syncImmediateAppSettings(patch: ReturnType<typeof appSettingsPatchSchem
   if (
     patch.shortcutBindings !== undefined ||
     patch.defaultSessionEngine !== undefined ||
+    patch.externalEngineConfigPreferences !== undefined ||
     patch.dismissedDesktopUpdateVersion !== undefined
   ) {
     // 本机偏好落盘后统一通知窗口；远端工作区也不能把设备偏好写进远端设置。

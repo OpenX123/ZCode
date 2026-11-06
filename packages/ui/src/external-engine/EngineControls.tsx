@@ -1,4 +1,9 @@
-import { EXTERNAL_ENGINE_RUNTIMES } from "@zcode/shared/external-engine";
+import {
+  EXTERNAL_ENGINE_RUNTIMES,
+  engineConfigOptionKind,
+  isExternalSessionEngine,
+  type SessionEngine,
+} from "@zcode/shared/external-engine";
 import { useState } from "react";
 import { BotIcon, ChevronDownIcon } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -28,6 +33,7 @@ export function EngineControls({
   error,
   connectionFailure,
   onRetry,
+  externalEngineUnavailableReason,
 }: EngineControlsProps) {
   const { intl } = useZCodeIntl();
   const failureMessage = connectionFailure
@@ -84,11 +90,22 @@ export function EngineControls({
               if (activePicker !== null && activePicker !== "engine") event.preventDefault();
             }}
           >
-            {Object.entries(ENGINE_LABELS).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
+            {Object.entries(ENGINE_LABELS).map(([value, label]) => {
+              // 远程工作区不能运行外部引擎：保留行布局，灰显并就地说明原因。
+              const unavailable =
+                Boolean(externalEngineUnavailableReason) &&
+                isExternalSessionEngine(value as SessionEngine);
+              return (
+                <SelectItem key={value} value={value} disabled={unavailable}>
+                  <span>{label}</span>
+                  {unavailable ? (
+                    <span className="text-ui-sm text-foreground-subtlest">
+                      {externalEngineUnavailableReason}
+                    </span>
+                  ) : null}
+                </SelectItem>
+              );
+            })}
           </SelectContent>
         </Select>
       ) : (
@@ -148,9 +165,7 @@ export function EngineControls({
             setActivePicker((current) => (open ? picker : current === picker ? null : current)),
           onValueChange: (value: string) => onConfigChange?.(option.id, value),
         };
-        return ["effort", "reasoningeffort", "thoughtlevel"].includes(
-          option.id.replace(/[-_]/g, "").toLowerCase(),
-        ) ? (
+        return engineConfigOptionKind(option.id) === "effort" ? (
           <EngineEffortPicker key={option.id} {...props} modelLabel={modelLabel} />
         ) : (
           <EngineConfigMenu key={option.id} {...props} />

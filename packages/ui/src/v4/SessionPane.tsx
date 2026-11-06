@@ -4,7 +4,7 @@ import {
   type SessionEngine,
 } from "@zcode/shared/external-engine";
 import { EngineControls, isEngineNotReadyError } from "@/external-engine/index.js";
-import { useExternalEngineService } from "@/hooks/external-engine/index.js";
+import { useEngineConfigMemory, useExternalEngineService } from "@/hooks/external-engine/index.js";
 import type { ComposerTimingSeed } from "@/v4/telemetry/localTtftObserver.js";
 import type { SessionLease } from "@/v4/sessionDataLayer.js";
 import { remoteHostIdFromWorkspaceIdentity } from "@zcode/shared";
@@ -900,6 +900,8 @@ export function SessionPane({
     taskId: null,
   });
 
+  // 工作区能否运行外部引擎只看该工作区的引擎服务（远程工作区与 Web 为空）。
+  const externalEngineService = useExternalEngineService(workspaceIdentity);
   // Composer 保存下一次 Submission 的 renderer intent；prewarm session 仅承载草稿预热。
   const {
     modelReadiness,
@@ -912,6 +914,7 @@ export function SessionPane({
     handleDraftSelectThought,
     handleDraftSwitchMode,
     handleDraftSelectEngine,
+    engineConfigRestorable,
     promoteComposerDraft,
     captureAcceptedModelSelection,
     replaceComposerDraft,
@@ -927,6 +930,7 @@ export function SessionPane({
     inheritRootDraft,
     sessionConfig: runtimeReady && snapshot?.sessionId === sessionId ? snapshot.config : null,
     agentStartupAllowed: remoteAvailable,
+    externalEnginesSupported: Boolean(externalEngineService),
     modelSelectionService,
   });
   const {
@@ -939,7 +943,6 @@ export function SessionPane({
 
   const draftAgentStartupAllowed = providerAgentStartupAllowed && remoteAvailable;
 
-  const externalEngineService = useExternalEngineService(workspaceIdentity);
   const sessionEngine = resolveSessionEngine(sessionId ? snapshot?.config : composerDraft);
   const externalEngine = isExternalSessionEngine(sessionEngine);
   const connectionFailureCode = snapshot?.config.engineConfigError?.code;
@@ -2131,6 +2134,7 @@ export function SessionPane({
     binding: prewarmBinding,
     waitForSession: waitForDraftSession,
     error: prewarmError,
+    pending: prewarmPending,
   } = useDraftSessionPrewarm({
     enabled:
       sessionId === null &&
@@ -3129,6 +3133,37 @@ export function SessionPane({
   );
   ensureDraftPrewarmConfigBeforeSendRef.current = ensureDraftPrewarmConfigBeforeSend;
 
+  // 按引擎记忆的模型/深度：恢复只经既有配置屏障与 setEngineConfigOption，首发仍排在其后。
+  const applyRememberedEngineOption = useCallback(
+    (targetSessionId: string, configId: string, value: string) =>
+      configCommandBarrier.enqueue(async () => {
+        const ack = await dispatchConfigCas(
+          "setEngineConfigOption",
+          { configId, value },
+          { targetSessionId },
+        );
+        return ack?.status === "accepted" || ack?.status === "noop";
+      }),
+    [configCommandBarrier, dispatchConfigCas],
+  );
+  const engineConfigSnapshotOptions =
+    externalEngine &&
+    snapshot?.config.engine === sessionEngine &&
+    snapshot.config.engineConfigState === "ready"
+      ? snapshot.config.engineConfigOptions
+      : undefined;
+  const engineConfigMemory = useEngineConfigMemory({
+    engine: sessionEngine,
+    sessionId: snapshot?.sessionId ?? null,
+    options: engineConfigSnapshotOptions,
+    restoreEnabled:
+      sessionId === null &&
+      engineConfigRestorable &&
+      prewarmSessionId !== null &&
+      snapshot?.sessionId === prewarmSessionId,
+    applyOption: applyRememberedEngineOption,
+  });
+
   const followupModeSyncKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const targetSessionId = sessionId ?? prewarmSessionId;
@@ -3806,10 +3841,17 @@ export function SessionPane({
         draftConfig={draftConfig}
         externalEngine={externalEngine}
         engineControls={
-          externalEngineService ? (
+          // 桌面远程工作区的草稿仍显示选择器（外部引擎灰显说明原因）；Web 无本机引擎服务。
+          externalEngineService ||
+          (sessionId === null && baseWorkspaceServices.externalEngineService) ? (
             <EngineControls
               engine={sessionEngine}
               onSelectEngine={sessionId === null ? handleSelectEngine : undefined}
+              externalEngineUnavailableReason={
+                externalEngineService
+                  ? undefined
+                  : intl.formatMessage({ id: "engine.unavailable.remote" })
+              }
               options={
                 externalEngine && snapshot?.config.engine === sessionEngine
                   ? snapshot.config.engineConfigOptions
@@ -3818,7 +3860,11 @@ export function SessionPane({
               loading={
                 externalEngine &&
                 (sessionId === null
-                  ? !prewarmBinding && !prewarmError
+                  ? // 原因：曾用“无 binding 且无错误”推断在途，预热被禁用（待恢复首发、远程不可用）时
+                    // 两者都为空，草稿永久显示“正在连接引擎…”；改为只读 owner 上报的真实在途状态。
+                    prewarmPending ||
+                    (snapshot?.sessionId === prewarmSessionId &&
+                      snapshot?.config.engineConfigState === "connecting")
                   : connecting || snapshot?.config.engineConfigState === "connecting")
               }
               error={
@@ -3853,6 +3899,9 @@ export function SessionPane({
                   const accepted = ack?.status === "accepted" || ack?.status === "noop";
                   if (!accepted) {
                     toast(intl.formatMessage({ id: "engine.configChangeFailed" }));
+                  } else {
+                    // 只有 snapshot 确认为所选值后才写入按引擎记忆；权限模式等不记忆。
+                    engineConfigMemory.recordExplicitChange(configId, value);
                   }
                   return accepted;
                 });

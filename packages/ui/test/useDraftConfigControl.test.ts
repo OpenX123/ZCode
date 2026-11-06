@@ -285,7 +285,6 @@ describe("useDraftConfigControl slash command hydration", () => {
     function Probe({ tabId = "first" }: { tabId?: string }) {
       control = useActualDraftConfigControl({
         workspacePath: "/preference",
-        workspaceIdentity: "ssh://host/preference",
         sessionId: null,
         draftTabId: tabId,
         modelSelectionService: service,
@@ -300,6 +299,7 @@ describe("useDraftConfigControl slash command hydration", () => {
     settingsMocks.settings = { defaultSessionEngine: "codex" } as AppSettings;
     await act(async () => root.render(createElement(Probe)));
     expect(control.composerDraft.engine).toBe("codex");
+    expect(control.engineConfigRestorable).toBe(true);
     expect(service.getView).not.toHaveBeenCalled();
     expect(settingsMocks.calls).toContain(settingsMocks.localServices);
     settingsMocks.settings = { defaultSessionEngine: "claude-code" } as AppSettings;
@@ -308,6 +308,83 @@ describe("useDraftConfigControl slash command hydration", () => {
     await act(async () => root.render(createElement(Probe, { tabId: "second" })));
     expect(control.composerDraft.engine).toBe("claude-code");
     act(() => root.unmount());
+  });
+
+  it("远程工作区不能运行外部默认引擎：草稿使用 YCode，默认偏好不被覆盖", async () => {
+    const workspacePath = "/srv/preference";
+    const workspaceIdentity = "remote:ssh:devbox:/srv/preference";
+    const root = createRoot(installMinimalDom());
+    settingsMocks.settings = { defaultSessionEngine: "codex" } as AppSettings;
+    // 1.0.7 曾按默认值把外部引擎写进远程旧草稿，之后每次发送都被引擎门禁拒绝。
+    persistV4ComposerDraft(workspacePath, workspaceIdentity, "__draft__:tab:legacy", {
+      text: "旧远程草稿",
+      engine: "codex",
+    });
+    let control!: ReturnType<typeof useActualDraftConfigControl>;
+    function Probe({ tabId }: { tabId: string }) {
+      control = useActualDraftConfigControl({
+        workspacePath,
+        workspaceIdentity,
+        sessionId: null,
+        draftTabId: tabId,
+        externalEnginesSupported: false,
+        agentStartupAllowed: false,
+        modelSelectionService: null,
+      });
+      return null;
+    }
+    try {
+      await act(async () => root.render(createElement(Probe, { tabId: "fresh" })));
+      expect(control.composerDraft.engine).toBe("zcode");
+      expect(control.draftConfig.engine).toBe("zcode");
+      expect(control.engineConfigRestorable).toBe(false);
+      await act(async () => root.render(createElement(Probe, { tabId: "legacy" })));
+      expect(control.composerDraft).toMatchObject({ text: "旧远程草稿", engine: "zcode" });
+      expect(control.draftConfig.engine).toBe("zcode");
+      // 回落只作用于该工作区的草稿：不调用偏好写入，回到本机的新草稿仍使用 Codex。
+      expect(settingsMocks.update).not.toHaveBeenCalled();
+      expect(settingsMocks.settings?.defaultSessionEngine).toBe("codex");
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  it("只有本生命周期新固定外部引擎的草稿可恢复按引擎记忆的配置", async () => {
+    const workspacePath = "/engine-restorable";
+    const root = createRoot(installMinimalDom());
+    settingsMocks.settings = { defaultSessionEngine: "codex" } as AppSettings;
+    persistV4ComposerDraft(workspacePath, undefined, "__draft__:tab:existing", {
+      text: "已有草稿",
+      engine: "codex",
+    });
+    let control!: ReturnType<typeof useActualDraftConfigControl>;
+    function Probe({ tabId }: { tabId: string }) {
+      control = useActualDraftConfigControl({
+        workspacePath,
+        sessionId: null,
+        draftTabId: tabId,
+        agentStartupAllowed: false,
+        modelSelectionService: null,
+      });
+      return null;
+    }
+    try {
+      // 持久化恢复的已有草稿保留原生默认值，不套用记忆。
+      await act(async () => root.render(createElement(Probe, { tabId: "existing" })));
+      expect(control.composerDraft.engine).toBe("codex");
+      expect(control.engineConfigRestorable).toBe(false);
+      // 显式改选为新的外部引擎草稿；改回 YCode 后不再恢复。
+      await act(async () => control.handleDraftSelectEngine("claude-code"));
+      expect(control.engineConfigRestorable).toBe(true);
+      await act(async () => control.handleDraftSelectEngine("zcode"));
+      expect(control.engineConfigRestorable).toBe(false);
+      // 全新草稿取得外部默认引擎即可恢复。
+      await act(async () => root.render(createElement(Probe, { tabId: "fresh" })));
+      expect(control.composerDraft.engine).toBe("codex");
+      expect(control.engineConfigRestorable).toBe(true);
+    } finally {
+      act(() => root.unmount());
+    }
   });
 
   it("旧草稿保持隐式 YCode，显式改选写入本机默认", async () => {

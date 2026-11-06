@@ -61,7 +61,14 @@ describe("GitHub 桌面更新入口", () => {
       await clickTestIdByWebDriver(TID_WORKSPACE_HELP_MENU_TRIGGER);
       await clickTestIdByWebDriver("workspace-help-menu-check-updates");
       const action = $('[data-testid="desktop-update-action"]');
+      const dismiss = $('[data-testid="desktop-update-dismiss"]');
       await expect(action).toHaveText(expect.stringContaining("1.0.1"));
+      // 说明按平台区分：Windows 打开安装程序，macOS 自动安装并重启。
+      await expect($('[data-testid="desktop-update-status"]')).toHaveText(
+        process.platform === "win32"
+          ? expect.stringMatching(/打开安装程序|open the installer/)
+          : expect.stringMatching(/自动重启|restarts automatically/),
+      );
       await browser.saveScreenshot(
         join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "desktop-update-available.png"),
       );
@@ -83,6 +90,8 @@ describe("GitHub 桌面更新入口", () => {
       await action.click();
       await expect(action).toBeDisabled();
       await expect($('[role="progressbar"]')).toHaveAttribute("aria-valuenow", "37");
+      // 用户开始下载后进度持续可见，不再提供关闭。
+      await expect(dismiss).not.toExist();
       await browser.saveScreenshot(
         join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "desktop-update-progress.png"),
       );
@@ -96,6 +105,8 @@ describe("GitHub 桌面更新入口", () => {
           });
       });
       await expect($('[data-testid="desktop-update-status"]')).toHaveText("E2E checksum mismatch");
+      // 已知版本的下载失败可以跳过该版本。
+      await expect(dismiss).toExist();
       await browser.saveScreenshot(
         join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "desktop-update-error.png"),
       );
@@ -110,6 +121,7 @@ describe("GitHub 桌面更新入口", () => {
           });
       });
       await expect(action).toBeEnabled();
+      await expect(dismiss).not.toExist();
       await browser.saveScreenshot(
         join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "desktop-update-ready.png"),
       );

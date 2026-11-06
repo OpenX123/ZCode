@@ -1,8 +1,12 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import iconv from "iconv-lite";
 
 const WINDOWS_OUTPUT_ENCODING_OVERRIDE_ENV = "ZCODE_WINDOWS_OUTPUT_ENCODING";
+const WINDOWS_CODE_PAGE_QUERY_TIMEOUT_MS = 1_000;
+const WINDOWS_UTF8_CODE_PAGE = "65001";
+/** 按 ComSpec 缓存的活动代码页查询；在途与已完成结果共用同一个 Promise。 */
+const windowsActiveCodePageQueries = new Map<string, Promise<string | null>>();
 const PYTHON_UTF8_ENV_PATCH = {
   PYTHONIOENCODING: "utf-8",
   PYTHONUTF8: "1",
@@ -201,23 +205,36 @@ export function createExecutionOutputStreamDecoder(legacyOutputEncoding: string 
   };
 }
 
-function readWindowsActiveCodePageEncoding(env: NodeJS.ProcessEnv): string | null {
+function parseWindowsCodePageEncoding(output: string): string | null {
+  const codePage = output.match(/(\d{3,5})/)?.[1];
+  if (!codePage) return null;
+  if (codePage === WINDOWS_UTF8_CODE_PAGE) return "utf8";
+  const encoding = `cp${codePage}`;
+  return iconv.encodingExists(encoding) ? encoding : null;
+}
+
+function readWindowsActiveCodePageEncoding(env: NodeJS.ProcessEnv): Promise<string | null> {
   const comSpec = getEnvValue(env, "ComSpec", "win32") ?? "cmd.exe";
-  try {
-    const output = execFileSync(comSpec, ["/d", "/s", "/c", "chcp"], {
-      encoding: "utf8",
-      env,
-      timeout: 1_000,
-      windowsHide: true,
-    });
-    const codePage = output.match(/(\d{3,5})/)?.[1];
-    if (!codePage) return null;
-    if (codePage === "65001") return "utf8";
-    const encoding = `cp${codePage}`;
-    return iconv.encodingExists(encoding) ? encoding : null;
-  } catch {
-    return null;
-  }
+  const cached = windowsActiveCodePageQueries.get(comSpec);
+  if (cached) return cached;
+  // 原因：旧实现在每次工具执行前同步 execFileSync("chcp")，Windows 上每次都阻塞 CLI 事件循环
+  // 数十毫秒，期间所有会话的流式事件与命令都无法处理。新建的隐藏控制台使用系统 OEM 代码页，
+  // 进程生命周期内不变，因此每个进程按 ComSpec 只异步查询一次；失败同样缓存为 null，
+  // 由调用方回退 locale 推断，避免每次执行重复超时。
+  const query = new Promise<string | null>((resolve) => {
+    try {
+      execFile(
+        comSpec,
+        ["/d", "/s", "/c", "chcp"],
+        { encoding: "utf8", env, timeout: WINDOWS_CODE_PAGE_QUERY_TIMEOUT_MS, windowsHide: true },
+        (error, stdout) => resolve(error ? null : parseWindowsCodePageEncoding(stdout)),
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+  windowsActiveCodePageQueries.set(comSpec, query);
+  return query;
 }
 
 function resolveWindowsLocaleLegacyEncoding(env: NodeJS.ProcessEnv): string {
@@ -245,10 +262,10 @@ function resolveWindowsLocaleLegacyEncoding(env: NodeJS.ProcessEnv): string {
   return "cp437";
 }
 
-export function resolveLegacyExecutionOutputEncoding(options: {
+export async function resolveLegacyExecutionOutputEncoding(options: {
   platform: NodeJS.Platform;
   processEnv: NodeJS.ProcessEnv;
-}): string | null {
+}): Promise<string | null> {
   if (options.platform !== "win32") {
     return null;
   }
@@ -260,7 +277,7 @@ export function resolveLegacyExecutionOutputEncoding(options: {
   if (override) {
     return iconv.encodingExists(override) ? override : null;
   }
-  const activeEncoding = readWindowsActiveCodePageEncoding(options.processEnv);
+  const activeEncoding = await readWindowsActiveCodePageEncoding(options.processEnv);
   if (activeEncoding && activeEncoding !== "utf8") {
     return activeEncoding;
   }

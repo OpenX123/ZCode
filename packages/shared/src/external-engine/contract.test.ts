@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { describeSessionEngine } from "./contract.example.js";
+import { engineConfigOptionKind } from "./config-options.js";
 import {
   EXTERNAL_ENGINE_RUNTIMES,
   externalEngineStatusSchema,
@@ -9,6 +10,16 @@ import {
   ZCODE_AGENT_ENGINE_NOT_READY_CODE,
   ZCODE_AGENT_ENGINE_NOT_READY_REASON,
 } from "./contract.js";
+
+describe("原生配置类别", () => {
+  it("模型与思考深度按 configId 判定，权限模式等其余配置为 other", () => {
+    expect(engineConfigOptionKind("model")).toBe("model");
+    for (const id of ["effort", "reasoning_effort", "reasoning-effort", "thought_level", "Effort"])
+      expect(engineConfigOptionKind(id)).toBe("effort");
+    for (const id of ["mode", "permission-mode", "fast", "Model"])
+      expect(engineConfigOptionKind(id)).toBe("other");
+  });
+});
 
 describe("外部引擎运行时描述", () => {
   it("只为外部引擎提供描述，版本锁定为精确版本", () => {

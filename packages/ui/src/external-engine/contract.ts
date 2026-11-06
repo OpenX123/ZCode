@@ -25,6 +25,8 @@ export interface EngineControlsProps {
   error?: string;
   connectionFailure?: EngineConnectionFailure;
   onRetry?: () => void;
+  /** 工作区不能运行外部引擎时的原因；设置后外部引擎在选择器中灰显并就地说明。 */
+  externalEngineUnavailableReason?: string;
 }
 
 export function isEngineNotReadyError(error: unknown): boolean {

@@ -70,7 +70,10 @@ sequenceDiagram
   - Claude Code：`@agentclientprotocol/claude-agent-acp`（封装 `@anthropic-ai/claude-agent-sdk`）。
   - Codex：`@agentclientprotocol/codex-acp`（驱动 `codex app-server`）。
 - 优先使用用户 PATH 中的官方 CLI 二进制：Claude 通过 `CLAUDE_CODE_EXECUTABLE`，Codex 通过 `CODEX_PATH` 指定。未安装时才回退到 adapter 自带副本。
-- Windows 的 Claude npm `.cmd` / `.bat` 包装入口必须解析为该包装文件实际引用的 JavaScript 文件，再将同一路径用于检测和连接；不能把批处理文件交给不支持 shell 的 Claude SDK 直接启动。未能识别的包装入口视为不可用，继续寻找可执行文件或已安装 adapter 的官方副本。Codex adapter 自带 cross-spawn，保留其 `.cmd` 执行能力。
+- Windows 的 npm / pnpm `.cmd` / `.bat` 包装入口按其接收用户参数的目标（`"%dp0%\<相对路径>" %*` 或 `%~dp0` 形式）解析，检测（版本、登录状态）与连接（`CLAUDE_CODE_EXECUTABLE` / `CODEX_PATH`）共用同一解析器和同一路径，跳过 cmd.exe 与 node.exe：
+  - Claude：目标为 `.exe`（如 `node_modules\@anthropic-ai\claude-code\bin\claude.exe`）时直接使用该原生文件；目标为 JavaScript 时沿用该脚本。不能把批处理文件交给不支持 shell 的 Claude SDK 直接启动；未能识别或目标缺失的包装入口视为不可用，继续寻找 PATH 中后续入口或已安装 adapter 的官方副本。
+  - Codex：目标为官方 `@openai/codex/bin/codex.js` 时，按该脚本的真实路径向上查找平台 optional 包 `@openai/codex-win32-<arch>`（嵌套、提升与 pnpm 布局），回退包内 `vendor`，使用 `vendor/<target-triple>/bin/codex.exe`；目标直接为 `.exe` 时使用该文件。原生文件缺失或包装入口无法识别时保留原 `.cmd`，由 adapter 的 cross-spawn 执行（原行为）。附带的 `codex-resources`、`codex-path` 与 `codex-package.json` 仍位于原生文件的安装目录；`codex.js` 额外注入的 `CODEX_MANAGED_*` 从二进制字符串看只用于安装诊断与升级提示，直接启动时不再设置。经原生文件运行真实 app-server 会话须在 Windows 上独立验收。
+  - 2026-11-07 本机实测（Windows 11，npm 全局安装 Codex 0.156.0，热缓存 9 轮中位数）：`codex --version` 经 `codex.cmd` 为 171ms（157–180ms），直接执行解析出的 `codex.exe` 为 51ms（47–60ms）。
 - PATH 无可用入口时，Claude 使用锁定 SDK 的平台原生 optional 包（Linux 按 libc 选择），Codex 使用安装树中的官方 JavaScript 入口；Host 与 adapter 通过同一解析器选择同一文件，不依赖已退役的 Claude SDK `cli.js`。
 - YCode 不读写用户原有 `~/.claude/.credentials.json`、`~/.codex/auth.json`，不自行实现 OAuth 或设备码登录，不新增遥测。Claude 引导用户运行 `claude auth login`；Codex 可沿用已有 CLI 配置，或在设置页发起专用身份目录内的官方 `codex login`，API Key 连接通过原生 provider 接口配置。
 - 不启用 claude-agent-acp 的 `--hide-claude-auth`。该开关的作用是拒绝走 claude.ai 订阅，与本功能目标相反。
@@ -125,7 +128,7 @@ sequenceDiagram
   - 外部引擎会话不下发 row actions 中的 `canEdit` / `canRetry`。
   - session availability 中 `fork`、`compact`、`switchModelConfig` 为 `{allowed:false, reasonCode:"external_engine_unsupported"}`。
 - 安装布局：Host 启动 CLI 时注入 `ZCODE_EXTERNAL_ENGINES_DIR=<YCode 数据目录>/.zcode/engines`。adapter 安装在 `<dir>/<engine>@<version>/`（`npm install --prefix`）。Host 另注入 `ZCODE_EXTERNAL_ENGINE_USER_HOME=<真实用户目录>`；CLI 只在启动外部 adapter 时恢复该 `HOME`（Windows 同时恢复 `USERPROFILE`），缺省时沿用当前用户目录，空值或非绝对路径拒绝启动；内置 Agent 的数据目录隔离不变。确保官方 CLI 能读到 `~/.claude`、`~/.codex`。PATH 无官方 CLI 时，Host 与 adapter 通过描述符 `bundledOfficialCli` 定位锁定安装树内的官方 CLI；Claude 使用 SDK 平台原生包，Codex 的 JavaScript 入口由同一 Node 执行，并保留真实 HOME。
-- Host 服务：受管模块 `external-engine-service`（`packages/services/src/external-engine/`）提供 `IExternalEngineService`，方法为 `getStatus`、`listStatuses`、`installAdapter`、`onStatusChanged`。`IServiceAccessor.externalEngineService` 为可选字段，未提供该服务的 host 中，UI 隐藏外部引擎入口。
+- Host 服务：受管模块 `external-engine-service`（`packages/services/src/external-engine/`）提供 `IExternalEngineService`，方法为 `getStatus`、`listStatuses`、`installAdapter`、`onStatusChanged`。`IServiceAccessor.externalEngineService` 为可选字段，未提供该服务的 host 中，UI 隐藏外部引擎入口；桌面远程工作区的草稿按“不支持外部引擎的工作区”灰显外部引擎。
 - Host 执行门禁通过 `session/list {sessionIds, includeDrafts:true}` 读取 CLI 权威的 engine；该选项只允许精确读取已驻留草稿，不激活 runtime，不把草稿加入普通任务索引。冷恢复读取 SQLite 的 engine，不能按 Provider 值或 UI 当前草稿推断。
 - 登录检测直接调用官方 CLI 的状态命令（`claude auth status`、`codex login status`），只提取身份类别，丢弃账号和密钥片段。
 
@@ -489,24 +492,65 @@ sequenceDiagram
 - Electron 隔离候选 1/1 通过：Claude Code 与 Codex 冷重启后前两次 resume 故障、第三次自动恢复，原会话 ID、未发送草稿、持久化正文和 prompt 次数保持一致；恢复后可调整配置并续聊。报告：`packages/desktop/.e2e-artifacts/desktop-e2e-20261025084459994-p65325-b89a7216764e7a7f/summary.md`。供应商为受控 ACP 夹具，候选保持 pending，不表示人工转正或 CI 准入。
 - 根与 CLI 类型检查、桌面 E2E 类型检查通过；架构检查 0 violations。根 Lint 为 94 warnings、0 errors；CLI Lint 仍受 4 个 max-lines 错误阻塞：runner-stream、transcript-hydration、product-projection 和 contracts/model，其中 product-projection 是本轮触及的原有超长文件。
 
-## 默认引擎偏好（2026-11-06）
+## 默认引擎偏好（2026-11-06，2026-11-07 补充）
 
 - 本机 `AppSettings.defaultSessionEngine` 保存用户最近一次显式选择；输入框选择器与引擎设置页共用该字段，未设置时使用 YCode。选择立即改变当前草稿，保存失败保留草稿并可见提示。
-- 全新草稿在模型目录、readiness 与预热之前读取本机设置并固定引擎；设置尚未读取完成时不启动错误引擎。远程项目也读本机偏好，不写远端设置。
+- 全新草稿在模型目录、readiness 与预热之前读取本机设置并固定引擎；设置尚未读取完成时不启动错误引擎。远程项目只读本机偏好，不写远端设置。
 - 导航为新 Tab 预写的空正文与项目归属只表示草稿占位，不算旧版引擎意图；没有正文、编辑状态和模型/模式配置的占位仍须使用本机默认引擎。
 - 已有草稿（含旧版隐式 YCode 草稿）与已创建会话不随全局偏好改变；未就绪的默认引擎仍保留选择并引导配置，不静默换引擎。
 - 本机设置提交后通过现有 SettingsChanged 广播刷新所有窗口；以后创建的新草稿采用新值，不重置已经打开的独立草稿。
-- 回归覆盖：跨项目/重启继承、设置迟到不启动内置引擎、旧草稿与已有会话不变、本机/SSH 设置隔离、偏好保存失败可见。
+
+### 不支持外部引擎的工作区
+
+- 工作区能否运行外部引擎只看该工作区的 `externalEngineService`（`hooks/external-engine` 对远程身份返回空）：SSH、WSL、Docker、Source Server 等远程工作区，以及没有本机引擎服务的 Web，都不能运行。
+- 这类工作区的草稿一律使用 YCode：默认偏好为外部引擎的全新草稿固定为 YCode；1.0.7 已按默认值写入外部引擎的远程旧草稿同样按 YCode 投影。不调用偏好写入，`defaultSessionEngine` 保持原值，回到本机工作区的新草稿仍使用该默认引擎。
+- 桌面远程工作区的草稿仍显示引擎选择器，Claude Code、Codex 灰显并就地标注“远程工作区暂不支持”，只能选择 YCode；已创建会话与 Web 维持原样（Web 无本机引擎服务，不显示选择器）。
+
+### 按引擎记忆模型与思考深度
+
+- 本机 `AppSettings.externalEngineConfigPreferences` 按外部引擎分别保存最近一次显式确认的原生值，键为 ACP configId、值为引擎原始 option value。只记 `model` 与思考深度（`effort`、`reasoning_effort`、`reasoning-effort`、`thought_level`，去掉 `-`/`_` 并忽略大小写匹配）；权限模式与 fast 等其它配置不记忆，Claude 新会话的 Auto 默认规则不变。
+- 写入：用户在草稿或已有会话中显式修改上述配置，命令被接受且 snapshot 显示的当前值等于所选值后写入该引擎的该项。引擎拒绝、引擎改用其它值、恢复过程自动下发的值都不写入。设置服务在写队列内按引擎与 configId 合并增量，连续确认模型与深度不会互相覆盖。
+- 恢复：只用于本生命周期内新固定引擎的草稿（全新草稿取得默认引擎，或用户在草稿中显式改选引擎）。该草稿的预热会话原生配置 ready 后先恢复模型；snapshot 确认模型后，再按新模型的目录恢复深度。值不在当前目录、已是当前值或连接未 ready 时跳过该项。恢复复用既有 `configCommandBarrier → setEngineConfigOption` 链路，首发仍排在同一屏障之后。
+- 每个预热会话最多恢复一次；恢复期间用户显式修改任一配置即停止剩余步骤。持久化恢复出的已有草稿、已创建会话与 fork 不套用记忆，记忆变化也不重配已打开的草稿。
+- Runtime 仍是已确认配置的唯一所有者；记忆只是本机偏好，Renderer 不保存第二份配置事实。
+
+### 草稿连接中提示
+
+- 草稿的“正在连接引擎…”只表示预热 `createSession` 在途（含排在旧代创建收口之后的新一代）。预热被禁用（存在待恢复的首发、远程连接不可用）、创建失败或预热会话被丢弃时不显示加载；失败仍显示原错误与重试入口。
+
+回归覆盖：跨项目/重启继承、设置迟到不启动内置引擎、旧草稿与已有会话不变、本机/SSH 设置隔离、偏好保存失败可见；SSH 草稿使用 YCode 且默认偏好不变、远程选择器灰显并说明原因；记忆只写确认的模型/深度、权限模式不记忆、恢复按目录跳过且模型先于深度、已有草稿不套用；预热禁用时不显示连接中。
 
 ```mermaid
 flowchart TD
     A[新草稿] --> B{已有草稿引擎?}
     B -- 是 --> C[保留草稿选择]
     B -- 否 --> D[读取本机默认引擎]
-    D --> E[固定本草稿引擎]
+    D --> K{工作区可运行外部引擎?}
+    K -- 否 --> L[草稿使用 YCode，不改默认偏好]
+    K -- 是 --> E[固定本草稿引擎并标记可恢复记忆]
     C --> F[按选定引擎预热]
     E --> F
-    G[用户显式改选] --> H[更新本草稿并回收旧预热]
+    F --> M{新草稿且原生配置 ready?}
+    M -- 是 --> N[经配置屏障恢复模型，确认后恢复深度]
+    M -- 否 --> O[沿用引擎原生值]
+    G[用户显式改选] --> H[更新本草稿、回收旧预热并标记可恢复记忆]
     H --> I[保存本机偏好并广播其他窗口]
     I --> J[后续新草稿继承]
+```
+
+```mermaid
+sequenceDiagram
+    participant U as Composer
+    participant B as configCommandBarrier
+    participant R as Runtime（配置唯一所有者）
+    participant S as 本机设置服务
+    U->>B: 用户显式修改 model / 深度
+    B->>R: setEngineConfigOption
+    R-->>U: ACK accepted + snapshot 确认值
+    U->>S: 确认值等于所选值时写入该引擎增量
+    Note over U,R: 新草稿预热 ready
+    U->>B: 恢复记忆的 model（在目录内且不同）
+    B->>R: setEngineConfigOption
+    R-->>U: snapshot 确认模型与新深度目录
+    U->>B: 恢复记忆的深度（在新目录内且不同）
 ```
