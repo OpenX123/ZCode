@@ -458,6 +458,8 @@ const SESSION_SUBSCRIBE_RETRY_BASE_DELAY_MS = 500;
 const SESSION_SUBSCRIBE_RETRY_MAX_DELAY_MS = 5_000;
 const SESSION_SUBSCRIBE_MAX_ATTEMPTS = 8;
 const MAX_TRACKED_SESSION_EVENT_IDS = 10_000;
+/** 会话引擎缓存容量；引擎不可变，超出只按写入顺序淘汰最旧项，未命中回落 session/list。 */
+const SESSION_ENGINE_CACHE_LIMIT = 2_048;
 const SSH_REMOTE_WORKSPACE_IDENTITY_PREFIX = "remote:ssh:";
 const WSL_REMOTE_WORKSPACE_IDENTITY_PREFIX = "remote:wsl:";
 
@@ -1003,6 +1005,11 @@ interface CreateZCodeAgentServiceOptions extends Omit<
    * browser 命令返回 backend_unavailable，不影响其它功能。
    */
   browserControlExecutor?: BrowserAmbientContextExecutor;
+  /**
+   * 进程级 Provider Registry 当前配置修订号（内容哈希）。注入后，同一 CLI 进程在修订号未变时
+   * 跳过 provider/refreshRegistry；缺省或返回 undefined 时保持每次刷新。
+   */
+  readProviderConfigRevision?: () => string | undefined;
   channelReplyExecutor?: (request: ChannelReplyHostRequest) => Promise<ChannelReplyResult>;
   topicResourceExecutor?: (
     request: ZCodeTopicResourceReadParams &
@@ -1089,6 +1096,13 @@ export function createZCodeAgentService(
     idleTimeoutMs: options?.mcpStatusIdleTimeoutMs ?? MCP_STATUS_LANE_IDLE_TIMEOUT_MS,
   });
   const sessionEmitters = new Map<string, Emitter<ZCodeAgentServiceEvent>>();
+  // 1.1 Host 发送路径：会话引擎创建后不可变（external-engine CONTRACT），Host 是这份只读事实的
+  // 唯一缓存者。过去每条带 sessionId 的命令都先走一次 session/list（排在 CLI 单队列后，
+  // 实测 p90 数秒）；命中缓存即可省掉该往返，未命中仍回落原查询。见
+  // docs/desktop/engine-performance-1.1-spec.md「会话引擎缓存」。
+  const sessionEngineCache = new Map<string, SessionEngine>();
+  // 每个 CLI 进程最近一次成功刷新 Provider Registry 时的 Host 配置修订号；进程换代即新 client。
+  const providerRegistryRevisionByClient = new WeakMap<ZCodeProtocolClient, string>();
   const providerRuntimeHeadersWorkspaceEmitters = new Map<
     string,
     Emitter<ZCodeProviderRuntimeHeadersRequestParams>
@@ -1389,11 +1403,7 @@ export function createZCodeAgentService(
           }
           const { workspace } = waiting;
           const client = await getClient(workspace);
-          await client.request(
-            zcodeProtocolMethods.providerRefreshRegistry,
-            { reason: `startup_ready:${event.reason}` },
-            zcodeProviderRefreshRegistryResultSchema,
-          );
+          await refreshProviderRegistryForClient(client, `startup_ready:${event.reason}`);
           logger.info(undefined, "provider/model 就绪后已启动等待中的 ZCode agent", {
             providerCount: event.snapshot.providerCount,
             reason: event.reason,
@@ -3014,12 +3024,23 @@ export function createZCodeAgentService(
     return envelope;
   }
 
+  function rememberSessionEngine(params: ZCodeAgentSessionTarget, engine: SessionEngine): void {
+    const key = sessionEventKey(params);
+    sessionEngineCache.delete(key);
+    sessionEngineCache.set(key, engine);
+    if (sessionEngineCache.size <= SESSION_ENGINE_CACHE_LIMIT) return;
+    const oldest = sessionEngineCache.keys().next().value;
+    if (oldest !== undefined) sessionEngineCache.delete(oldest);
+  }
+
   async function sessionEngineForExecution(
     params: ZCodeAgentSessionTarget,
   ): Promise<SessionEngine> {
     // 只读进程不需要 Registry；engine 从 CLI 持久化事实读取，冷恢复不能按 UI 缺省猜测。
     if (options?.externalEnginesSupported === undefined && !options?.externalEngineService)
       return "zcode";
+    const cached = sessionEngineCache.get(sessionEventKey(params));
+    if (cached) return cached;
     const client = await getReadOnlyClient(params);
     const { sessions } = await client.request(
       zcodeProtocolMethods.sessionList,
@@ -3032,7 +3053,33 @@ export function createZCodeAgentService(
       },
       zcodeSessionListResultSchema,
     );
-    return resolveSessionEngine(sessions.find((session) => session.sessionId === params.sessionId));
+    const session = sessions.find((candidate) => candidate.sessionId === params.sessionId);
+    const engine = resolveSessionEngine(session);
+    // 只缓存 CLI 确认存在的会话；“未找到”不能固化成 zcode，否则稍后创建的外部会话会被误判。
+    if (session) rememberSessionEngine(params, engine);
+    return engine;
+  }
+
+  /**
+   * 1.1：Provider Registry 刷新只在 Host 配置修订号变化时执行。过去每次 sendText 都向 CLI
+   * 单队列发一次 refreshRegistry；修订号为配置内容哈希，Host 内写入在返回前已刷新快照，
+   * 因此“与该 CLI 上次刷新时相同”即可证明 Worker Registry 不旧于 Host 视图。
+   * 修订号在发起前读取；刷新失败不记录，下次仍刷新。
+   */
+  async function refreshProviderRegistryForClient(
+    client: ZCodeProtocolClient,
+    reason: string,
+  ): Promise<void> {
+    const revision = options?.readProviderConfigRevision?.();
+    if (revision !== undefined && providerRegistryRevisionByClient.get(client) === revision) {
+      return;
+    }
+    await client.request(
+      zcodeProtocolMethods.providerRefreshRegistry,
+      { reason },
+      zcodeProviderRefreshRegistryResultSchema,
+    );
+    if (revision !== undefined) providerRegistryRevisionByClient.set(client, revision);
   }
 
   async function clientForEngine(
@@ -3212,11 +3259,7 @@ export function createZCodeAgentService(
       const startedAt = Date.now();
       const client = externalClient ?? (await getClient(params));
       if (!isExternalSessionEngine(engine))
-        await client.request(
-          zcodeProtocolMethods.providerRefreshRegistry,
-          { reason: "session_create" },
-          zcodeProviderRefreshRegistryResultSchema,
-        );
+        await refreshProviderRegistryForClient(client, "session_create");
       const sessionTraceId = params.sessionTraceId;
       logger.info(sessionTraceId, "开始请求 ZCode Protocol session/create", {
         hasInitialModel: params.model !== undefined,
@@ -3238,6 +3281,7 @@ export function createZCodeAgentService(
           sessionTraceId ? { trace: { traceId: sessionTraceId } } : undefined,
         );
         rememberSessionTrace({ ...params, sessionId: snapshot.session.sessionId }, snapshot);
+        rememberSessionEngine({ ...params, sessionId: snapshot.session.sessionId }, engine);
         logger.info(sessionTraceId, "ZCode Protocol session/create 完成", {
           durationMs: Date.now() - startedAt,
           messageCount: snapshot.messages.length,
@@ -3278,6 +3322,7 @@ export function createZCodeAgentService(
           sessionTraceId ? { trace: { traceId: sessionTraceId } } : undefined,
         );
         rememberSessionTrace({ ...params, sessionId: snapshot.session.sessionId }, snapshot);
+        rememberSessionEngine({ ...params, sessionId: snapshot.session.sessionId }, engine);
         if (!compatFields.includes("thoughtLevel") || !params.thoughtLevel) {
           logger.info(sessionTraceId, "ZCode Protocol session/create 兼容重试完成", {
             durationMs: Date.now() - startedAt,
@@ -3332,11 +3377,7 @@ export function createZCodeAgentService(
       const startedAt = Date.now();
       const client = externalClient ?? (await getClient(params));
       if (!isExternalSessionEngine(engine))
-        await client.request(
-          zcodeProtocolMethods.providerRefreshRegistry,
-          { reason: "session_resume" },
-          zcodeProviderRefreshRegistryResultSchema,
-        );
+        await refreshProviderRegistryForClient(client, "session_resume");
       const cachedTraceId = getSessionTraceId(params);
       // 冷恢复同样按 Host 的灰度判定下发，否则恢复出来的会话会丢掉工作流工具簇。
       const dynamicWorkflowFlags = await resolveDynamicWorkflowSessionFlags();
@@ -4590,11 +4631,7 @@ export function createZCodeAgentService(
       const engine = await sessionEngineForExecution(params);
       const client = await clientForEngine(params, engine);
       if (!isExternalSessionEngine(engine))
-        await client.request(
-          zcodeProtocolMethods.providerRefreshRegistry,
-          { reason: "session_send" },
-          zcodeProviderRefreshRegistryResultSchema,
-        );
+        await refreshProviderRegistryForClient(client, "session_send");
       const sessionTraceId = params.sessionTraceId?.trim() || getSessionTraceId(params);
       const logTraceId = sessionTraceId ?? params.inputId;
       const browserAmbientContext =
@@ -5203,11 +5240,7 @@ export function createZCodeAgentService(
       // 首帧前先让 Worker 刷新随包与 Personal 配置，不提升模型执行权限；
       // Registry 仍只由 Worker 维护，不读取旧账号 Overlay。
       const providerRegistryStartedAt = performance.now();
-      await client.request(
-        zcodeProtocolMethods.providerRefreshRegistry,
-        { reason: "conversation_subscribe" },
-        zcodeProviderRefreshRegistryResultSchema,
-      );
+      await refreshProviderRegistryForClient(client, "conversation_subscribe");
       const providerRegistrySyncMs = Math.max(
         0,
         Math.round(performance.now() - providerRegistryStartedAt),
@@ -5255,6 +5288,9 @@ export function createZCodeAgentService(
               throw new Error("project.session-lineage-invalid");
             break;
           }
+          // 订阅前的谱系查询已拿到持久化引擎；顺手填充引擎缓存，打开后的首发不再重复查询。
+          if (directorySessionId === params.sessionId)
+            rememberSessionEngine(params, resolveSessionEngine(session));
           if (
             resolveWorkspaceKey(session.workspace) !== resolveWorkspaceKey(params) ||
             session.workspace.workspacePath !== params.workspacePath
@@ -5369,11 +5405,7 @@ export function createZCodeAgentService(
         "desktop-continuous";
       let envelope = await buildConversationCommandEnvelope(params);
       if (!isExternalSessionEngine(engine) && requiresProviderRegistryRefresh(envelope.type)) {
-        await client.request(
-          zcodeProtocolMethods.providerRefreshRegistry,
-          { reason: "v4_command" },
-          zcodeProviderRefreshRegistryResultSchema,
-        );
+        await refreshProviderRegistryForClient(client, "v4_command");
       }
       // TTFT 首版只允许可信桌面本地 continuous，手机/远端透传不能开启本地观测。
       if (
@@ -5412,6 +5444,14 @@ export function createZCodeAgentService(
         }
       }
       const ack: CommandAck = await client.request(V4_METHODS.command, envelope, commandAckSchema);
+      // 引擎缓存只认 accepted：createSession 的引擎来自本次命令配置；deleteSession 后会话 ID
+      // 不再指向原会话。duplicate 不能证明目标仍是本次配置，交给未命中时的 session/list。
+      if (ack.status === "accepted") {
+        if (envelope.type === "createSession" && ack.result?.type === "createSession")
+          rememberSessionEngine({ ...params, sessionId: ack.result.sessionId }, engine);
+        else if (envelope.type === "deleteSession" && envelope.sessionId)
+          sessionEngineCache.delete(sessionEventKey({ ...params, sessionId: envelope.sessionId }));
+      }
       // Prompt command 在 committed TurnStarted 或 committed WorkspaceHookReviewRequested
       // 任一 authority 到达后即返回；人工审核不能占用 Host RPC，因此继续使用统一默认
       // timeout/watchdog。放宽到审核领域 deadline 只会掩盖串行协议队列死锁。

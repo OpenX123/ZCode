@@ -1769,6 +1769,10 @@ export function createLocalServices(options: {
       (await projectService.resolveSessionDirectories({ ...target, taskId: target.sessionId }))
         .additionalDirectories,
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),
+    // CLI 与 Host 读同一份随包 / Personal 配置文件；Host Registry 的内容修订号是是否需要
+    // 让 Worker 重新读取的唯一判据（docs/desktop/engine-performance-1.1-spec.md）。
+    readProviderConfigRevision: () =>
+      providerRuntime.registryService.getSnapshot()?.sourceRevisions.config,
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     // 桌面与 SSH 共用本地默认 onDemand；显式用户设置由同一设置源决定。
     resolveDynamicWorkflowClientConfig: async () =>

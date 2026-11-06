@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import {
   browserCommandResultSchema,
   type BrowserBackendDescriptor,
@@ -58,13 +59,49 @@ function sanitizeAmbientUrl(rawUrl: string | undefined): string | undefined {
 }
 
 /**
- * 只读收集 provider ambient state。失败时返回 undefined，不能让浏览器 UI 状态阻断真实 prompt。
+ * 发送准入等待环境上下文的上限。环境上下文只是尽力附加的信息：Host 没有浏览器页面存在性的
+ * 廉价事实（标签列表归 Main 所有），过去每次发送都等 Host→Main 两次 execute，Main 忙或页面
+ * executeJavaScript 卡住时最多被 30s 桥预算拖住。超出本预算时本轮不带环境上下文，迟到结果丢弃。
+ * 见 docs/desktop/engine-performance-1.1-spec.md「浏览器环境上下文」。
+ */
+export const BROWSER_AMBIENT_CONTEXT_BUDGET_MS = 150;
+
+const logger = createServiceLogger("browser-ambient-context");
+
+/**
+ * 只读收集 provider ambient state。失败或超出预算时返回 undefined，不能让浏览器 UI 状态阻断真实 prompt。
  */
 export async function collectBrowserAmbientContext(
   executor: BrowserAmbientContextExecutor | undefined,
   target: BrowserAmbientContextTarget,
+  options: { budgetMs?: number } = {},
 ): Promise<ZCodeBrowserAmbientContext | undefined> {
   if (!executor) return undefined;
+  const budgetMs = options.budgetMs ?? BROWSER_AMBIENT_CONTEXT_BUDGET_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budgetExceeded = new Promise<"budget-exceeded">((resolve) => {
+    timer = setTimeout(() => resolve("budget-exceeded"), budgetMs);
+  });
+  try {
+    const outcome = await Promise.race([
+      readBrowserAmbientContext(executor, target),
+      budgetExceeded,
+    ]);
+    if (outcome !== "budget-exceeded") return outcome;
+    logger.debug(undefined, "浏览器环境上下文超出发送预算，本轮不附带", {
+      budgetMs,
+      sessionId: target.sessionId,
+    });
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readBrowserAmbientContext(
+  executor: BrowserAmbientContextExecutor,
+  target: BrowserAmbientContextTarget,
+): Promise<ZCodeBrowserAmbientContext | undefined> {
   const workspaceKey = target.workspaceIdentity?.trim() || target.workspacePath;
   const clientMode = target.clientMode ?? "desktop-continuous";
   const common = {

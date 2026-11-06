@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  BROWSER_AMBIENT_CONTEXT_BUDGET_MS,
   collectBrowserAmbientContext,
   type BrowserAmbientContextExecutor,
 } from "../src/zcode-agent/zcodeAgentBrowserAmbientContext.js";
@@ -119,5 +120,23 @@ describe("collectBrowserAmbientContext", () => {
         { sessionId: "sess-1", workspacePath: "/workspace" },
       ),
     ).resolves.toBeUndefined();
+  });
+
+  it("does not hold the send when Main never answers within the budget", async () => {
+    // 1.1：发送准入只等预算内的环境上下文；迟到结果丢弃，不能再被 30s 桥预算拖住。
+    const executor: BrowserAmbientContextExecutor = {
+      list: vi.fn(async () => [descriptor]),
+      execute: vi.fn(() => new Promise<never>(() => {})),
+    };
+    const startedAt = Date.now();
+    await expect(
+      collectBrowserAmbientContext(
+        executor,
+        { sessionId: "sess-1", workspacePath: "/workspace" },
+        { budgetMs: 20 },
+      ),
+    ).resolves.toBeUndefined();
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(BROWSER_AMBIENT_CONTEXT_BUDGET_MS).toBeLessThanOrEqual(150);
   });
 });
