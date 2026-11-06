@@ -122,3 +122,11 @@ sequenceDiagram
 - Codex 最终错误作为正文：`~/.zcode/engines/codex@2.2.2/.../codex-acp/dist/index.js:31777`；Claude 计划选项：`.../claude-agent-acp/dist/permissions/options/tools.js:42-98`。
 - 默认引擎 SSH 问题：`packages/ui/src/v4/composer/useDraftConfigControl.ts:249-256,558-565`。
 - 平台文案：`packages/ui/src/i18n/locales/zh-CN.ts:1937`。
+
+## 附录 B：追加决策（2026-11-07 本机进程实测）
+
+本机 1.0.5 运行三天后常驻 85 个 YCode.exe：61 个官方插件 MCP 宿主（约 4.0GB）、10 个 Claude adapter（约 0.8GB）及其 10 个 `claude.exe`（约 1.9GB）、6 个工作区 CLI（约 0.8GB），合计约 8.6GB。常驻会话的 MCP 与引擎进程从不回收，是"整体变慢"的重要来源。据此追加：
+
+- MCP 进程闲置回收：已连接的 MCP server 无在途请求且 10 分钟未被调用时，由会话 lease 关闭并回到"待首次使用"，工具仍按清单缓存注册，下次调用经同一懒启动路径重启；持有 MCP App/UI 连接或在途调用时不回收。
+- 外部引擎闲置连接：会话无运行中轮次、无待处理交互且空闲 15 分钟时关闭该会话的 adapter 进程，保留订阅、配置与 `externalSessionId`；下次发送或修改配置时按原会话恢复（UI 显示连接中）。最近活跃的 3 个会话不受此限。未订阅会话的常驻池回收维持 30 分钟。
+- 验收：本机连续使用一天后，YCode 子进程数与内存占用相对 1.0.5 显著下降，且闲置后首次发送仍可在恢复后正常完成。
