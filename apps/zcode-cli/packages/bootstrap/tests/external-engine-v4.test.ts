@@ -111,39 +111,174 @@ describe("外部引擎 V4 接线", () => {
     expect(projection.getSnapshot().plan?.items[0]?.status).toBe("pending");
   });
 
-  it("网关终态保留诊断，运行终止后的旧重试不能复活", () => {
+  it("网关终态随 TurnError 固定在失败轮末尾，运行终止后的旧重试不能复活", () => {
     const projection = new ProductProjection("s1", "terminal-provider-error");
+    projection.applyEvent(event(SessionEventType.TurnStarted, { turnNumber: 1, input: "test" }, 1));
+    const failure = {
+      code: "provider",
+      method: "session/prompt",
+      httpStatus: 502,
+      attempt: 2,
+      maxAttempts: 5,
+      message: "unexpected status 502 Bad Gateway: Bad gateway",
+      url: "https://gateway.example.test/v1/responses",
+      requestId: "fixture-request",
+      failureId: "codex-turn-1:error",
+      retryable: true,
+    };
+    projection.applyEvent(
+      event(SessionEventType.ExternalEngineFailureUpdated, { failure, retrying: true }, 2),
+    );
+    // 原生展示的 2/5 → v4 maxAttempts 含首次请求，为 6。
+    expect(projection.getSnapshot().control.apiRetry).toMatchObject({
+      attempt: 2,
+      maxAttempts: 6,
+      httpStatus: 502,
+      url: "https://gateway.example.test/v1/responses",
+      requestId: "fixture-request",
+      failureId: "codex-turn-1:error",
+    });
+    projection.applyEvent(
+      event(SessionEventType.ExternalEngineFailureUpdated, { failure, retrying: false }, 3),
+    );
+    expect(projection.getSnapshot().control.apiRetry).toBeNull();
+    projection.applyEvent(
+      event(
+        SessionEventType.TurnError,
+        {
+          error: {
+            type: "UnknownError",
+            code: "external_engine_connection_failed",
+            message: failure.message,
+            failure,
+          },
+          turnPhase: "model",
+        },
+        4,
+      ),
+    );
+    const snapshot = projection.getSnapshot();
+    const header = snapshot.rows.window.find((row) => row.kind === "turnHeader");
+    expect(header).toMatchObject({
+      state: "failed",
+      failure: {
+        code: "external_engine.provider",
+        summary: failure.message,
+        source: "provider",
+        httpStatus: 502,
+        url: "https://gateway.example.test/v1/responses",
+        requestId: "fixture-request",
+        failureId: "codex-turn-1:error",
+      },
+    });
+    expect(snapshot.control.lastError).toMatchObject({ turnId: header?.turnId });
+    projection.applyEvent(
+      event(SessionEventType.ExternalEngineFailureUpdated, { failure, retrying: true }, 5),
+    );
+    expect(projection.getSnapshot().control.apiRetry).toBeNull();
+  });
+
+  it("内置引擎重试投影状态码、脱敏原因、上游请求 ID 与收窄 URL", () => {
+    const projection = new ProductProjection("s1", "builtin-retry");
     projection.applyEvent(event(SessionEventType.TurnStarted, { turnNumber: 1, input: "test" }, 1));
     projection.applyEvent(
       event(
-        SessionEventType.ExternalEngineFailureUpdated,
+        SessionEventType.ModelNetworkStatus,
         {
-          failure: {
-            code: "provider",
-            httpStatus: 502,
-            message: "Bad Gateway",
-            requestId: "fixture-request",
-            retryable: true,
-          },
-          retrying: false,
+          type: "model_retry_scheduled",
+          attempt: 1,
+          maxAttempts: 11,
+          delayMs: 1000,
+          nextAttempt: 2,
+          reason: "server_error",
+          message: "Provider request failed. token=fixture-token",
+          statusCode: 503,
+          providerRequestId: "provider-req-1",
+          baseURL: "https://api.example.test/v4?api_key=fixture-secret",
+          requestId: "internal-req",
+          providerId: "p",
+          modelId: "m",
+          transport: "sse",
+          timestamp: new Date(1000).toISOString(),
+          traceId: "trace-1",
         },
         2,
       ),
     );
-    expect(projection.getSnapshot().control.lastError).toMatchObject({
-      source: "provider",
-      message: "Bad Gateway",
-      detail: "Request ID: fixture-request",
+    const retry = projection.getSnapshot().control.apiRetry;
+    expect(retry).toMatchObject({
+      attempt: 1,
+      maxAttempts: 11,
+      httpStatus: 503,
+      requestId: "provider-req-1",
+      url: "https://api.example.test/v4",
     });
-    projection.applyEvent(event(SessionEventType.TurnComplete, { duration: 1, success: false }, 3));
+    expect(JSON.stringify(retry)).not.toContain("fixture-token");
+    expect(JSON.stringify(retry)).not.toContain("fixture-secret");
+  });
+
+  it("内置引擎 TurnError 的归因状态码进入失败轮；ExitPlanMode 原生选项进入审批交互", () => {
+    const projection = new ProductProjection("s1", "builtin-turn-error");
+    projection.applyEvent(event(SessionEventType.TurnStarted, { turnNumber: 1, input: "test" }, 1));
     projection.applyEvent(
       event(
-        SessionEventType.ExternalEngineFailureUpdated,
-        { failure: { code: "provider", httpStatus: 502 }, retrying: true },
-        4,
+        SessionEventType.PermissionRequested,
+        {
+          requestId: "perm-1",
+          toolCallId: "toolu_plan",
+          toolName: "ExitPlanMode",
+          riskLevel: "low",
+          reason: "计划已准备好",
+          input: { plan: "# 计划" },
+          approvalMode: "user-once",
+          nativeOptions: [
+            {
+              optionId: "exit-plan-clear-auto",
+              label: "Yes, clear context",
+              kind: "allow_always",
+              clearsContext: true,
+            },
+            {
+              optionId: "exit-plan-auto",
+              label: "Yes, and use auto mode",
+              kind: "allow_always",
+              recommended: true,
+            },
+            { optionId: "reject", label: "No, keep planning", kind: "reject_once" },
+          ],
+        },
+        2,
       ),
     );
-    expect(projection.getSnapshot().control.apiRetry).toBeNull();
+    const pending = projection.getSnapshot().pendingInteractions[0];
+    expect(pending?.payload).toMatchObject({
+      kind: "userInput",
+      toolName: "ExitPlanMode",
+      nativeOptions: [
+        { optionId: "exit-plan-clear-auto", clearsContext: true },
+        { optionId: "exit-plan-auto", recommended: true },
+        { optionId: "reject", kind: "reject_once" },
+      ],
+    });
+    projection.applyEvent(
+      event(
+        SessionEventType.TurnError,
+        {
+          error: {
+            type: "ModelError",
+            message: "Provider is overloaded.",
+            attribution: { source: "provider", statusCode: 529, retryable: true },
+          },
+          turnPhase: "model",
+        },
+        3,
+      ),
+    );
+    expect(
+      projection.getSnapshot().rows.window.find((row) => row.kind === "turnHeader"),
+    ).toMatchObject({
+      failure: { summary: "Provider is overloaded.", httpStatus: 529, source: "provider" },
+    });
   });
 
   it("ACP 配置事件进入实时投影并在后续运行态变化后仍禁用历史改写", () => {

@@ -1304,6 +1304,32 @@ describe("broker × v4 竞速", () => {
     await expect(pending).resolves.toMatchObject({ decision: "allow" });
   });
 
+  it.each([
+    { optionId: "exit-plan-bypass", decision: "allow" },
+    { optionId: "reject", decision: "deny" },
+  ])(
+    "ExitPlanMode：外部引擎原生 optionId $optionId 按 kind 映射并原样回传",
+    async ({ optionId, decision }) => {
+      const { broker, registry } = makeBrokerContext();
+      const pending = broker.requestPermission({
+        ...permissionRequest({ requestId: `plan_native_${optionId}`, toolName: "ExitPlanMode" }),
+        nativeOptions: [
+          { optionId: "exit-plan-auto", label: "Yes, and use auto mode", kind: "allow_always" },
+          {
+            optionId: "exit-plan-bypass",
+            label: "Yes, and bypass permissions",
+            kind: "allow_always",
+          },
+          { optionId: "reject", label: "No, keep planning", kind: "reject_once" },
+        ],
+      });
+      await new Promise((r) => setTimeout(r, 0));
+
+      registry.resolve(`plan_native_${optionId}`, { optionId });
+      await expect(pending).resolves.toMatchObject({ decision, nativeOptionId: optionId });
+    },
+  );
+
   it("ExitPlanMode：v4 freeText 先到 → 计划反馈（deny + plan_approval_feedback）", async () => {
     const { broker, registry } = makeBrokerContext();
     const pending = broker.requestPermission(

@@ -1,8 +1,10 @@
-import type {
-  ErrorAttribution,
-  ModelApiErrorPhase,
-  ModelFailureExceptionKind,
+import {
+  ExternalEngineConnectionError,
+  type ErrorAttribution,
+  type ModelApiErrorPhase,
+  type ModelFailureExceptionKind,
 } from "@zcode/contracts";
+import type { EngineConnectionFailure } from "@zcode/shared";
 
 export interface ExecutionErrorPayloadProjection {
   attribution?: ErrorAttribution;
@@ -11,6 +13,22 @@ export interface ExecutionErrorPayloadProjection {
   underlyingErrorDetail?: string;
   underlyingErrorMessage?: string;
   message: string;
+  /** 外部引擎请求失败在 adapter 边界脱敏后的结构化诊断，供失败轮的行内错误行使用。 */
+  failure?: EngineConnectionFailure;
+}
+
+const MAX_CAUSE_DEPTH = 6;
+
+function findExternalEngineFailure(error: unknown): EngineConnectionFailure | undefined {
+  let current = error;
+  const seen = new WeakSet<object>();
+  for (let depth = 0; depth <= MAX_CAUSE_DEPTH; depth += 1) {
+    if (!current || typeof current !== "object" || seen.has(current)) return undefined;
+    seen.add(current);
+    if (current instanceof ExternalEngineConnectionError) return current.failure;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 export const ErrorPayloadRole = {
@@ -64,9 +82,11 @@ export function projectExecutionErrorPayload(
   const underlyingFrame =
     [...frames].reverse().find((frame) => !frame.isWrapper) ?? frames[frames.length - 1];
   const attribution = projectErrorAttribution(frames);
+  const failure = findExternalEngineFailure(error);
 
   return {
     ...(attribution ? { attribution } : {}),
+    ...(failure ? { failure } : {}),
     ...(code ? { code } : {}),
     message,
     ...(detail ? { detail } : {}),

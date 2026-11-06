@@ -119,6 +119,9 @@ export const sessionErrorInfoSchema = z.object({
   underlyingErrorMessage: z.string().optional(),
   underlyingErrorDetail: z.string().optional(),
   attribution: errorAttributionSchema.optional(),
+  // additive：TurnError 产生的错误携带所属轮次；该轮已渲染行内错误行时输入框横幅不再重复展示。
+  // 旧快照缺省时维持原横幅。
+  turnId: z.string().optional(),
 });
 export type SessionErrorInfo = z.infer<typeof sessionErrorInfoSchema>;
 
@@ -130,6 +133,9 @@ export const apiRetryStateSchema = z.object({
   httpStatus: z.number().int().optional(),
   message: z.string().optional(),
   requestId: z.string().optional(),
+  // additive：仅 scheme + host + path 的上游 URL 与 adapter 失败 ID；旧快照缺省。
+  url: z.string().max(512).optional(),
+  failureId: z.string().max(200).optional(),
 });
 export type ApiRetryState = z.infer<typeof apiRetryStateSchema>;
 
@@ -281,6 +287,17 @@ export const userInputQuestionPayloadSchema = z.object({
 });
 export type UserInputQuestionPayload = z.infer<typeof userInputQuestionPayloadSchema>;
 
+export const nativePermissionOptionSchema = z.object({
+  optionId: z.string().min(1),
+  label: z.string(),
+  kind: z.enum(["allow_once", "allow_always", "reject_once", "reject_always"]),
+  /** Runtime 按进入计划前的模式选出的主按钮选项。 */
+  recommended: z.boolean().optional(),
+  /** 选择后清空上下文；界面必须单独标注，任何路径都不得隐式选择。 */
+  clearsContext: z.boolean().optional(),
+});
+export type NativePermissionOption = z.infer<typeof nativePermissionOptionSchema>;
+
 export const userInputRequestPayloadSchema = z.object({
   kind: z.literal("userInput"),
   prompt: z.string(),
@@ -297,6 +314,9 @@ export const userInputRequestPayloadSchema = z.object({
   currentQuestionIndex: z.number().optional(),
   answerDrafts: z.record(z.string(), z.array(z.string())).optional(),
   origin: zcodeInteractionRequestOriginSchema.optional(),
+  // additive：外部引擎计划审批的原生选项（顺序同 adapter）；界面回传精确 optionId。
+  // 旧快照缺省时计划卡只提供开始执行 / 继续修改。
+  nativeOptions: z.array(nativePermissionOptionSchema).optional(),
 });
 export type UserInputRequestPayload = z.infer<typeof userInputRequestPayloadSchema>;
 
@@ -453,6 +473,11 @@ export const planStateSchema = z.object({
   items: z.array(planItemSchema),
   updatedAt: timestampSchema,
   document: z.object({ id: z.string(), markdown: z.string() }).optional(),
+  // additive：引擎写完计划却未发审批请求时，Runtime 发布切出 Plan 的原生配置值；
+  // 下一轮开始或离开 Plan 时清除。旧快照缺省时不显示无审批的开始执行入口。
+  startWithoutReview: z
+    .object({ configId: z.string().min(1), value: z.string().min(1) })
+    .optional(),
 });
 export type PlanState = z.infer<typeof planStateSchema>;
 

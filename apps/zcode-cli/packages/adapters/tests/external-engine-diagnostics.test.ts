@@ -30,7 +30,7 @@ describe("ACP安全错误诊断", () => {
     });
     expect(connection.healthy).toBe(false);
   });
-  it("RPC 502保留状态与request id，同时剔除URL和凭据", async () => {
+  it("RPC 502保留状态、request id 与仅 scheme+host+path 的 URL，同时剔除 query 和凭据", async () => {
     const child = Object.assign(new EventEmitter(), {
       stdin: new PassThrough(),
       stdout: new PassThrough(),
@@ -59,9 +59,12 @@ describe("ACP安全错误诊断", () => {
         requestId: "fixture-request",
         method: "session/prompt",
         rpcCode: -32603,
+        // 2026-11 决策：URL 仅保留 scheme + host + path 供诊断，query 与凭据一律脱敏。
+        url: "https://example.test/responses",
       },
     });
     expect(JSON.stringify(error)).not.toContain("fixture-secret");
-    expect(JSON.stringify(error)).not.toContain("example.test");
+    expect(JSON.stringify(error)).not.toContain("api_key");
+    expect(JSON.stringify(error)).not.toContain("Bearer");
   });
 });
