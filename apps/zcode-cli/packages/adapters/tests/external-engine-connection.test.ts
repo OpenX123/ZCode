@@ -274,7 +274,9 @@ describe("测试连接", () => {
     });
     expect(result.status).toBe("unexpectedReply");
     const text = JSON.stringify(result);
-    expect(text).not.toMatch(/leak|sk-abcdefghijklmnop|gw\.example/);
+    // 1.1 方案统一脱敏口径：URL 只保留 scheme + host + path（与行内错误行一致），query 与凭据剔除。
+    expect(text).not.toMatch(/leak|sk-abcdefghijklmnop|\?key=/);
+    expect(text).toContain("https://gw.example/v1");
   });
 
   test("取消后返回 cancelled 并关闭原生会话", async () => {

@@ -19,34 +19,11 @@ import {
 export const ENGINE_CONNECTION_TEST_PROMPT = "Reply with OK";
 const ENGINE_CONNECTION_TEST_TIMEOUT_MS = 90_000;
 const EXPECTED_REPLY = /\bok(?:ay)?\b/i;
-// AIR 失败分类到连接诊断分类；未知分类按请求失败展示。
-const AIR_FAILURE_CODES: Record<string, EngineConnectionFailure["code"]> = {
-  access: "authentication",
-  connection: "transport",
-  limit: "provider",
-  service: "provider",
-  request: "request",
-};
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-/** 原生失败通知：Codex 的 codex.error 与两家 AIR sessionFailure；只保留脱敏后的结构化字段。 */
-function nativeFailure(update: Record<string, unknown>): EngineConnectionFailure | undefined {
-  if (update.sessionUpdate !== "session_info_update") return undefined;
-  const meta = record(update._meta);
-  const codexError = record(record(meta.codex).error);
-  if (typeof codexError.message === "string")
-    return readExternalEngineFailure(codexError, { code: "provider" });
-  const airFailure = record(record(record(meta.jetbrains).air).sessionFailure);
-  if (airFailure.severity !== "error" || typeof airFailure.title !== "string") return undefined;
-  return readExternalEngineFailure(
-    { message: airFailure.title },
-    { code: AIR_FAILURE_CODES[String(airFailure.category)] ?? "request" },
-  );
 }
 
 /**
@@ -69,6 +46,7 @@ export async function runExternalEngineConnectionTest(
   );
   timeout.unref();
   let failure: EngineConnectionFailure | undefined;
+  let result: Awaited<ReturnType<ExternalEnginePort["runTurn"]>> | undefined;
   let reply = "";
   // 结束原因的优先级：原生失败 > 用户取消 > 超时；prompt 是否以异常收尾不改变该判定。
   const interrupted = (): ExternalEngineConnectionTestResult | undefined => {
@@ -85,7 +63,7 @@ export async function runExternalEngineConnectionTest(
   try {
     const signal = AbortSignal.any([input.signal, stop.signal]);
     try {
-      await port.runTurn({
+      result = await port.runTurn({
         sessionId,
         engine: input.engine,
         connectionProfileId: input.connectionProfileId,
@@ -99,12 +77,13 @@ export async function runExternalEngineConnectionTest(
           const content = record(update.content);
           if (update.sessionUpdate === "agent_message_chunk" && typeof content.text === "string")
             reply += content.text;
-          const nativeError = nativeFailure(update);
-          // 首个失败即结束测试，不等待引擎自行重试；终态以最先发现的失败为准。
-          if (nativeError && !failure) {
-            failure = nativeError;
-            stop.abort();
-          }
+        },
+        // 原生失败只经 adapter 边界（failure.ts）归一后由 onFailure 交付，不再出现在 onUpdate；
+        // 首个失败（含引擎仍在重试的 warning）即结束测试，不等待引擎自行重试。
+        async onFailure(notice) {
+          if (failure) return;
+          failure = notice.failure;
+          stop.abort();
         },
         // 测试只验证连接，任何工具调用都拒绝。
         requestPermission: async () => ({ outcome: "cancelled" }),
@@ -120,6 +99,8 @@ export async function runExternalEngineConnectionTest(
     }
     const ended = interrupted();
     if (ended) return ended;
+    // typed 终态失败可能随 prompt 响应返回（stopReason 仍为 end_turn），同样按失败收尾。
+    if (result?.failure) return { status: "failed", latencyMs: elapsed(), failure: result.failure };
     if (EXPECTED_REPLY.test(reply)) return { status: "success", latencyMs: elapsed() };
     // 部分引擎把最终请求错误作为正文返回；只展示与错误摘要同口径脱敏的首行。
     const preview = (readExternalEngineFailure({ message: reply.trim() }).message ?? "").slice(
