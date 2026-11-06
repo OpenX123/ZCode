@@ -3689,6 +3689,9 @@ export class ProductProjection {
       };
     }
     if (isExitPlanModeToolName(payload.toolName)) {
+      // 外部引擎原生选项原样透出，计划卡据此提供“更多”并回传精确 optionId；
+      // 非法事件只降级为无原生选项的计划卡，不能让投影整体抛错。
+      const nativeOptions = nativePermissionOptionSchema.array().safeParse(payload.nativeOptions);
       // ExitPlanMode 复用 userInput/elicitation 通道承载计划审批反馈；
       // 普通 permission payload 无法表达 approve/custom feedback 的业务语义。
       return {
@@ -3707,9 +3710,8 @@ export class ProductProjection {
           schema: { interaction: "plan_approval", toolName: payload.toolName },
           questions: [createExitPlanModeApprovalQuestion(payload.reason)],
           ...(payload.origin ? { origin: payload.origin } : {}),
-          // 外部引擎原生选项原样透出，计划卡据此提供“更多”并回传精确 optionId。
-          ...(payload.nativeOptions?.length
-            ? { nativeOptions: nativePermissionOptionSchema.array().parse(payload.nativeOptions) }
+          ...(nativeOptions.success && nativeOptions.data.length
+            ? { nativeOptions: nativeOptions.data }
             : {}),
         },
       };
