@@ -8,24 +8,47 @@ import { pathToFileURL } from "node:url";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const run = promisify(execFile);
-const releaseVersionPattern = /^1\.0\.(0|[1-9]\d*)$/u;
+// 1.1 起按 package.json 的 1.<minor> 发版线递增 patch（ADR 0005）；主版本固定为 1。
+const releaseVersionPattern = /^1\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
+const releaseTagPattern = /^v1\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 
-export function nextReleaseVersion(tags) {
-  let highest = -1;
-  for (const tag of tags) {
-    const match = /^v1\.0\.(0|[1-9]\d*)$/u.exec(tag.replace(/^refs\/tags\//u, ""));
-    if (!match) continue;
-    const patch = Number(match[1]);
-    if (!Number.isSafeInteger(patch) || patch >= Number.MAX_SAFE_INTEGER) {
-      throw new Error("Release patch exceeds the supported integer range");
-    }
-    highest = Math.max(highest, patch);
+function safeVersionPart(value) {
+  const part = Number(value);
+  if (!Number.isSafeInteger(part) || part >= Number.MAX_SAFE_INTEGER) {
+    throw new Error("Release patch exceeds the supported integer range");
   }
-  return `1.0.${highest + 1}`;
+  return part;
+}
+
+/** 发版线取自 package.json 的 1.<minor>；缺省为 1.0 线，保持 1.0.x 的既有行为。 */
+export function releaseLine(currentVersion = "1.0.0") {
+  const match = releaseVersionPattern.exec(currentVersion);
+  if (!match) throw new Error("Expected release version 1.<minor>.<patch>");
+  return safeVersionPart(match[1]);
+}
+
+export function nextReleaseVersion(tags, currentVersion = "1.0.0") {
+  const minor = releaseLine(currentVersion);
+  let highest = -1;
+  let highestMinor = -1;
+  for (const tag of tags) {
+    const match = releaseTagPattern.exec(tag.replace(/^refs\/tags\//u, ""));
+    if (!match) continue;
+    const tagMinor = safeVersionPart(match[1]);
+    const patch = safeVersionPart(match[2]);
+    highestMinor = Math.max(highestMinor, tagMinor);
+    if (tagMinor === minor) highest = Math.max(highest, patch);
+  }
+  // 已有更高发版线的正式标签时拒绝分配，避免向用户发布更低的版本号。
+  if (highestMinor > minor) {
+    throw new Error(`Release line 1.${minor} is older than published 1.${highestMinor}`);
+  }
+  return `1.${minor}.${highest + 1}`;
 }
 
 export async function applyReleaseVersion({ directory = repoRoot, version }) {
-  if (!releaseVersionPattern.test(version)) throw new Error("Expected release version 1.0.<patch>");
+  if (!releaseVersionPattern.test(version))
+    throw new Error("Expected release version 1.<minor>.<patch>");
   const file = join(directory, "package.json");
   const packageJson = JSON.parse(await readFile(file, "utf8"));
   packageJson.version = version;
@@ -45,8 +68,9 @@ export async function allocateReleaseIdentity({
     throw new Error("Expected GitHub repository owner/name");
   if (!/^\d+$/u.test(runNumber) || !/^\d+$/u.test(runAttempt))
     throw new Error("Missing workflow run identity");
-  const version = official ? nextReleaseVersion(await readTags()) : currentVersion;
-  if (!releaseVersionPattern.test(version)) throw new Error("Expected release version 1.0.<patch>");
+  const version = official ? nextReleaseVersion(await readTags(), currentVersion) : currentVersion;
+  if (!releaseVersionPattern.test(version))
+    throw new Error("Expected release version 1.<minor>.<patch>");
   return { version, tag: official ? `v${version}` : `build-${runNumber}-${runAttempt}` };
 }
 
@@ -74,7 +98,8 @@ async function main() {
         [
           "api",
           "--paginate",
-          `repos/${repository}/git/matching-refs/tags/v1.0.`,
+          // 读取全部 1.x 正式标签，nextReleaseVersion 据此拒绝回退到更低的发版线。
+          `repos/${repository}/git/matching-refs/tags/v1.`,
           "--jq",
           ".[].ref",
         ],

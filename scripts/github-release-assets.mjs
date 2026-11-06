@@ -20,9 +20,9 @@ const {
 export function releaseBaseUrl(repository, tag) {
   if (
     !/^[\w.-]+\/[\w.-]+$/u.test(repository) ||
-    !/^(?:build-\d+-\d+|v1\.0\.(?:0|[1-9]\d*))$/u.test(tag)
+    !/^(?:build-\d+-\d+|v1\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/u.test(tag)
   ) {
-    throw new Error("Expected repository owner/name and immutable build or v1.0.<patch> tag");
+    throw new Error("Expected repository owner/name and immutable build or v1.<minor>.<patch> tag");
   }
   return `https://github.com/${repository}/releases/download/${tag}`;
 }

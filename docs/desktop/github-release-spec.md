@@ -7,7 +7,7 @@
 - 四个目标各自在对应系统及架构的 GitHub 托管 runner 构建，固定 Node.js 24.14.0、pnpm 10.33.2，锁文件安装。构建使用 production 产品身份。
 - 复用 `bundle:desktop`、现有原生工具及远程资源生成流程，不创建第二套打包实现。远程资源生成中的 pnpm 子进程复用打包命令执行器，通过当前包管理器的 JS 入口启动，避免 Windows `.cmd` 被直接 spawn 导致 ENOENT。
 - push、PR 和非 main 的手动运行只构建与上传临时 artifact，不分配正式版本、不创建标签或 Release。正式发版仅允许在 GitHub Actions 的 `Build and release YCode` 页面点击 `Run workflow` 并选择 main；推送版本标签不触发此工作流。
-- main 的手动运行分配下一正式 patch 版本；四个平台全部成功后才发布 DMG、ZIP、EXE 与 SHA256SUMS。Release 指向触发构建的 commit，产物保留架构名；artifact 缺失视为失败，不得发布不完整版本。
+- main 的手动运行在 `package.json` 的 `1.<minor>` 发版线上分配下一正式 patch 版本（新线从 `.0` 起，已有更高发版线的正式标签时拒绝分配，见 ADR 0005）；四个平台全部成功后才发布 DMG、ZIP、EXE 与 SHA256SUMS。Release 指向触发构建的 commit，产物保留架构名；artifact 缺失视为失败，不得发布不完整版本。
 - 并发组区分事件与 ref，push / PR 可取消各自旧构建；main 的手动发版不因普通推送而取消，同组正式发版串行执行，复用现有版本分配及不可覆盖发布机制。
 - 无签名证书时不尝试读取开发者本机身份。README 明确说明未签名 macOS 安装方式与 `sudo xattr -rd com.apple.quarantine "/Applications/YCode.app"`。
 

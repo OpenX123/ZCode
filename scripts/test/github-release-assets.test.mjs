@@ -81,6 +81,13 @@ test("版本不匹配、重复目标和不安全发布身份均被拒绝", async
   await assert.rejects(pinReleaseDescriptor(f.options), /Duplicate/);
   assert.throws(() => releaseBaseUrl(repository, "latest"));
   assert.throws(() => releaseBaseUrl("../../other", tag));
+  // 1.1 起允许 1.<minor> 发版线的正式标签，主版本以外的序列仍拒绝。
+  assert.equal(
+    releaseBaseUrl(repository, "v1.1.0"),
+    `https://github.com/${repository}/releases/download/v1.1.0`,
+  );
+  assert.throws(() => releaseBaseUrl(repository, "v2.0.0"));
+  assert.throws(() => releaseBaseUrl(repository, "v1.1.01"));
 });
 
 test("六种安装文件和四归档齐全后才输出逐文件 SHA256SUMS", async () => {

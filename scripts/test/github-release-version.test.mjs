@@ -17,9 +17,21 @@ afterEach(async () => {
 test("无正式标签从1.0.0起，忽略历史build和其他版本序列", () => {
   assert.equal(nextReleaseVersion([]), "1.0.0");
   assert.equal(
-    nextReleaseVersion(["build-8-1", "v3.16.2", "v1.1.0", "v1.0.01", "v1.0.1-beta"]),
+    nextReleaseVersion(["build-8-1", "v3.16.2", "v2.0.0", "v1.0.01", "v1.0.1-beta"]),
     "1.0.0",
   );
+});
+
+test("发版线取自package.json的1.<minor>，新线从patch 0起且只统计本线标签", () => {
+  const tags = ["v1.0.0", "v1.0.6", "refs/tags/v1.0.12"];
+  assert.equal(nextReleaseVersion(tags, "1.0.7"), "1.0.13");
+  assert.equal(nextReleaseVersion(tags, "1.1.0"), "1.1.0");
+  assert.equal(nextReleaseVersion([...tags, "v1.1.0", "v1.1.3"], "1.1.0"), "1.1.4");
+});
+
+test("已有更高发版线的正式标签时拒绝回退分配", () => {
+  assert.throws(() => nextReleaseVersion(["v1.1.0"], "1.0.9"), /older than published 1\.1/);
+  assert.throws(() => nextReleaseVersion([], "2.0.0"), /Expected release version/);
 });
 
 test("读取全部标签的最大patch，顺序和跨页不影响递增", () => {
