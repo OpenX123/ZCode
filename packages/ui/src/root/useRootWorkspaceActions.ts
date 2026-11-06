@@ -540,11 +540,14 @@ export function useRootWorkspaceActions({
           logger.info("[Root] 目录已在其他窗口打开，已激活该窗口对应 tab，跳过重复打开");
           return;
         }
+        // 1.1：Desktop 返回按磁盘实际大小写规范化的路径；同一 Windows 目录的不同写法
+        // 只能落到同一 Tab 与同一 CLI（docs/desktop/engine-performance-1.1-spec.md）。
+        const workspacePath = result.workspacePath ?? path;
         // 新增 tab（如果已在本窗口打开则激活它）
-        addTab(path);
+        addTab(workspacePath);
         // 打开 workspace 是 workspace-only 意图，不是“继续上次会话”。
         // 即使命中已存在 tab，也必须清掉该 workspace 的 activeTaskId 并回到单 pane 草稿。
-        startDraftInWorkspace(path);
+        startDraftInWorkspace(workspacePath);
         setWorkspaceActionError(null);
       } catch (err) {
         logger.error("[Root] handleSelectProject error:", err);

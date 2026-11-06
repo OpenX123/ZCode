@@ -117,7 +117,9 @@ declare global {
       /** 订阅远程 workspace session 关闭事件，返回 disposer */
       onRemoteSessionClosed(handler: (event: RemoteSessionClosedEvent) => void): () => void;
       /** 检查目录是否已在其他窗口打开 */
-      activateOrSetWorkspace?(path: string): Promise<{ activated: boolean }>;
+      activateOrSetWorkspace?(
+        path: string,
+      ): Promise<{ activated: boolean; workspacePath?: string }>;
       /** 同步当前窗口所有 tab 的 workspace 路径到 main 进程 */
       syncWindowTabs(paths: string[]): void;
       /** 同步当前窗口的未读 task 数到 main 进程 */

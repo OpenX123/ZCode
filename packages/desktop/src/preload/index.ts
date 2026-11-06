@@ -305,8 +305,8 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.RemoteSessionReconnected, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.RemoteSessionReconnected, handler);
   },
-  /** 检查目录是否已在其他窗口打开 */
-  activateOrSetWorkspace: (path: string): Promise<{ activated: boolean }> =>
+  /** 检查目录是否已在其他窗口打开；返回 Main 规范化后的本地路径 */
+  activateOrSetWorkspace: (path: string): Promise<{ activated: boolean; workspacePath?: string }> =>
     ipcRenderer.invoke(PlatformChannels.ActivateOrSetWorkspace, path),
   /** 同步当前窗口所有 tab 的 workspace 路径到 main 进程 */
   syncWindowTabs: (paths: string[]) => ipcRenderer.send(PlatformChannels.SyncWindowTabs, paths),

@@ -6,9 +6,23 @@ import {
   isValidLocalWorkspaceDirectory,
 } from "./desktopOAuthDeepLink.js";
 import {
+  canonicalizeLocalWorkspacePathCase,
   createOpenWorkspaceStartupBootstrap,
   type StartupWindowBootstrap,
 } from "./startupWorkspace.js";
+
+/**
+ * 1.1：冷启动显式工作区（argv / deep link）按磁盘实际大小写规范化后再建首窗，
+ * 使首个 Tab 与启动预热的 CLI 和之后从目录选择框打开的同一目录共用一个 key。
+ */
+export async function canonicalizeExplicitStartupWorkspaceBootstrap(
+  bootstrap: StartupWindowBootstrap,
+): Promise<StartupWindowBootstrap> {
+  const workspacePath = bootstrap.initialWorkspacePath;
+  if (!workspacePath) return bootstrap;
+  const canonical = await canonicalizeLocalWorkspacePathCase(workspacePath);
+  return canonical === workspacePath ? bootstrap : createOpenWorkspaceStartupBootstrap(canonical);
+}
 
 export type ExplicitStartupWorkspaceSource = "open-workspace-arg" | "deep-link";
 

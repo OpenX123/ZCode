@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
-import { access, mkdir, readFile, stat } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { win32 } from "node:path";
 import {
   appSettingsSchema,
   formatZodError,
@@ -80,6 +81,45 @@ export function createOpenWorkspaceStartupBootstrap(workspacePath: string): Star
     initialWorkspacePurpose: "project",
     agentWarmupTargets: [{ workspacePath }],
   };
+}
+
+const WINDOWS_DRIVE_ROOT = /^[A-Za-z]:\\$/u;
+
+/**
+ * 1.1 Bug 根因（已在 Windows 本机实测确认）：本地 workspace key 就是原始 workspacePath 字符串，
+ * Host 按它启动 CLI、Renderer 按它去重 Tab，而 Windows 文件系统大小写不敏感，`--open-workspace`、
+ * deep link 与终端输入会保留用户写法。同一目录以 `c:\proj` 与 `C:\Proj` 打开时便各起一个 Tab 和 CLI。
+ * 修复：进入工作区前把每一段替换为磁盘实际大小写（与目录选择框返回的写法一致），盘符大写。
+ * 刻意不用 realpath：它会解析 junction、符号链接、subst 与网络映射，改变用户看到的路径与会话归属。
+ * 非 Windows、网络路径或无法读取的段保持原文；不改写 workspaceIdentity（远端 identity 不经过这里）。
+ */
+export async function canonicalizeLocalWorkspacePathCase(
+  workspacePath: string,
+  options: {
+    platform?: NodeJS.Platform;
+    readDirectory?: (directory: string) => Promise<string[]>;
+  } = {},
+): Promise<string> {
+  if ((options.platform ?? process.platform) !== "win32") return workspacePath;
+  const normalized = win32.normalize(workspacePath);
+  const { root } = win32.parse(normalized);
+  if (!WINDOWS_DRIVE_ROOT.test(root)) return workspacePath;
+  const readDirectory = options.readDirectory ?? ((directory: string) => readdir(directory));
+  let current = root.toUpperCase();
+  for (const segment of normalized.slice(root.length).split("\\").filter(Boolean)) {
+    let actual = segment;
+    try {
+      const entries = await readDirectory(current);
+      if (!entries.includes(segment)) {
+        const folded = segment.toLowerCase();
+        actual = entries.find((entry) => entry.toLowerCase() === folded) ?? segment;
+      }
+    } catch {
+      // 无权限或路径段不存在：保留用户写法，后续目录校验照常报错。
+    }
+    current = win32.join(current, actual);
+  }
+  return current;
 }
 
 export async function resolveStartupWindowBootstrap({
