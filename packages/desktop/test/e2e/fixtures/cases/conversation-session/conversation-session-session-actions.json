@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-session-actions",
+  "spec": "./test/e2e/conversation-session/conversation-session-session-actions.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/common.json",
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-session-actions.json"
+  ],
+  "fileFixtures": [],
+  "requests": [
+    {
+      "id": "session-actions-title",
+      "description": "会话菜单首发的独立标题响应。",
+      "kind": "common",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "菜单操作只需稳定完成的历史，使用独立合成响应隔离供应商波动，不断言真实模型。"
+    },
+    {
+      "id": "session-actions-turn",
+      "description": "完整历史供同目录及新工作树 Fork 继承。",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "菜单操作只需稳定完成的历史，使用独立合成响应隔离供应商波动，不断言真实模型。"
+    }
+  ]
+}

@@ -7,7 +7,7 @@
 ### 市场与来源
 
 **Official Marketplace（官方市场）**:
-沿用市场 id `zcode-plugins-official` 的本地随包渠道，启动时只播种仓库内置插件。该 id 保留目录兼容语义，不代表启动时连接官方服务。远端来源由用户显式添加。
+沿用市场 id `zcode-plugins-official` 的分发渠道，默认来源是自托管市场 `https://skill.artai.top/marketplace.json`，已有来源不覆盖。启动时播种仓库内置插件并合并本地已缓存的 CDN 目录，不在播种时联网。
 _Avoid_: 把 claude-plugins-official 称作"官方市场"；"官方"泛指一切受信市场
 
 **Builtin Plugin（内置插件）**:
@@ -15,7 +15,7 @@ _Avoid_: 把 claude-plugins-official 称作"官方市场"；"官方"泛指一切
 _Avoid_: 预装插件、bundled plugin（口语可用，文档统一"内置"）
 
 **CDN Plugin（CDN 插件）**:
-用户显式配置来源后，通过 sha256 校验的远端 zip 包按需安装的插件；默认不注册官方 CDN 来源。
+通过已登记来源下载、经 sha256 校验的远端 zip 包按需安装的插件；默认登记自托管市场。
 _Avoid_: 网络插件、在线插件
 
 **Personal Source（个人来源）**:
@@ -23,10 +23,10 @@ _Avoid_: 网络插件、在线插件
 _Avoid_: 第三方市场（claude-plugins-official 也归此类，"第三方"名不副实）
 
 **Local Catalog Read（本地目录读取）**:
-进入商店页时读取本地目录和已安装内容，不自动刷新官方远端来源。
+读取本地目录和已安装内容。进入商店页时，已登记的官方市场另走既有自动刷新，以 10 分钟窗口节流。
 
 **Manual Refresh（手动刷新）**:
-商店页顶栏刷新按钮显式刷新已有来源；只有用户添加的远端来源可以发起相应网络请求。
+商店页顶栏刷新按钮显式刷新全部已登记来源，包括默认自托管市场与用户添加的来源。
 _Avoid_: 刷新、检查更新（口语可用，文档统一"手动刷新"）
 
 ### 商店页结构

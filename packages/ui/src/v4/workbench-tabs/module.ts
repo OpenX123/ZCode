@@ -4,7 +4,7 @@
  */
 export const conversationWorkbenchModule = {
   id: "conversation-workbench",
-  requires: ["ui", "shared", "external-engine-ui"],
+  requires: ["ui", "shared", "external-engine-ui", "session-navigation"],
   provides: ["conversation-workbench"],
   publicEntrypoints: ["index.ts", "contract.ts"],
 } as const;

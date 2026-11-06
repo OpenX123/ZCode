@@ -500,6 +500,21 @@ describe("v4 assistant preview cards helper", () => {
 });
 
 describe("ConversationTurnGroup assistant preview cards", () => {
+  it.each([
+    ["connecting", "正在启动引擎"],
+    ["ready", "正在等待模型"],
+  ] as const)("外部引擎%s阶段只在首内容前显示", (phase, label) => {
+    const context = { ...rowContext, externalEngineWaitPhase: phase };
+    const emptyRunning = { ...baseUnit([]), isRunning: true };
+    expect(renderTurnWithContext(emptyRunning, context)).toContain(label);
+    expect(
+      renderTurnWithContext({ ...baseUnit([assistantText(1, "")]), isRunning: true }, context),
+    ).toContain(label);
+    const streaming = assistantText(1, "开始回答");
+    expect(
+      renderTurnWithContext({ ...baseUnit([streaming]), isRunning: true }, context),
+    ).not.toContain(label);
+  });
   it("renders preview cards once below the latest assistant text row", () => {
     const early = assistantText(1, "Preview http://localhost:5173.");
     const latest = assistantText(2, "Final answer.");

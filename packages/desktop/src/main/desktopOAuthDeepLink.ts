@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from "node:path";
 import { app, BrowserWindow, dialog } from "electron";
 import type { WebContents } from "electron";
 import { type Locale, PlatformChannels } from "@zcode/shared";
+import { parseSessionDeepLink, type SessionLocator } from "@zcode/shared/session-navigation";
 import { extractWorkspaceOpenPath, isWorkspaceOpenUrl } from "./desktopDeepLinkUrl.js";
 import { registerLinuxDeepLinkProtocol } from "./desktopLinuxDeepLinkRegistration.js";
 
@@ -13,6 +14,8 @@ interface DeepLinkWorkspaceGateOptions {
   onWorkspaceOpenBlocked?: (workspacePath: string) => void;
   /** 业务窗口解析器；必须排除 CUA indicator 等 Main 辅助窗口。 */
   resolveApplicationWindow?: () => BrowserWindow | null;
+  /** 请求已缓存，调用方可按应用生命周期创建主窗口。 */
+  onSessionWindowMissing?: () => void;
 }
 
 export interface ExternalWorkspaceOpenDialogCopy {
@@ -23,6 +26,7 @@ export interface ExternalWorkspaceOpenDialogCopy {
 }
 
 const rendererReadyWebContentsIds = new Set<number>();
+const pendingSessionRequests: Array<{ target: SessionLocator; windowId?: number }> = [];
 let pendingOpenWorkspaceRequest: {
   path: string;
   targetWebContentsId?: number;
@@ -180,6 +184,30 @@ export function handleDeepLink(
     return false;
   }
 
+  const sessionTarget = parseSessionDeepLink(url);
+  if (sessionTarget) {
+    if (options.canOpenWorkspace && !options.canOpenWorkspace(sessionTarget.workspacePath)) {
+      options.onWorkspaceOpenBlocked?.(sessionTarget.workspacePath);
+      return true;
+    }
+    const targetWindow = options.resolveApplicationWindow
+      ? options.resolveApplicationWindow()
+      : (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null);
+    if (targetWindow) {
+      const windowId = targetWindow.webContents.id;
+      if (rendererReadyWebContentsIds.has(windowId)) {
+        targetWindow.webContents.send(PlatformChannels.OpenSession, sessionTarget);
+      } else {
+        pendingSessionRequests.push({ target: sessionTarget, windowId });
+      }
+      focusDeepLinkTargetWindow(targetWindow);
+    } else {
+      pendingSessionRequests.push({ target: sessionTarget });
+      options.onSessionWindowMissing?.();
+    }
+    return true;
+  }
+
   if (isWorkspaceOpenUrl(parsedUrl)) {
     const workspacePath = extractWorkspaceOpenPath(parsedUrl);
     if (!workspacePath) {
@@ -280,6 +308,15 @@ export function registerDeepLinkProtocol(
 
 export function deliverPendingDeepLink(webContents: WebContents): void {
   rendererReadyWebContentsIds.add(webContents.id);
+  for (let index = 0; index < pendingSessionRequests.length; ) {
+    const request = pendingSessionRequests[index]!;
+    if (request.windowId != null && request.windowId !== webContents.id) {
+      index++;
+      continue;
+    }
+    pendingSessionRequests.splice(index, 1);
+    webContents.send(PlatformChannels.OpenSession, request.target);
+  }
   if (
     pendingOpenWorkspaceRequest &&
     (pendingOpenWorkspaceRequest.targetWebContentsId == null ||
@@ -292,6 +329,10 @@ export function deliverPendingDeepLink(webContents: WebContents): void {
 
 export function clearDeepLinkRoutesForWindow(windowId: number): void {
   rendererReadyWebContentsIds.delete(windowId);
+  for (let index = pendingSessionRequests.length - 1; index >= 0; index--) {
+    if (pendingSessionRequests[index]?.windowId === windowId)
+      pendingSessionRequests.splice(index, 1);
+  }
   if (pendingOpenWorkspaceRequest?.targetWebContentsId === windowId) {
     pendingOpenWorkspaceRequest = null;
   }

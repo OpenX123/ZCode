@@ -65,6 +65,21 @@ describe("GitHub 桌面更新入口", () => {
       await browser.saveScreenshot(
         join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "desktop-update-available.png"),
       );
+      await clickTestIdByWebDriver("desktop-update-dismiss");
+      await expect(action).not.toExist();
+      await browser.electron.execute((electron) => {
+        for (const win of electron.BrowserWindow.getAllWindows())
+          win.webContents.send("zcode:update-state", {
+            kind: "update-available",
+            enabled: true,
+            version: "1.0.1",
+          });
+      });
+      await expect(action).not.toExist();
+      // 主动检查必须重新显示同一版本，关闭提示不等于关闭更新功能。
+      await clickTestIdByWebDriver(TID_WORKSPACE_HELP_MENU_TRIGGER);
+      await clickTestIdByWebDriver("workspace-help-menu-check-updates");
+      await expect(action).toHaveText(expect.stringContaining("1.0.1"));
       await action.click();
       await expect(action).toBeDisabled();
       await expect($('[role="progressbar"]')).toHaveAttribute("aria-valuenow", "37");
@@ -107,7 +122,7 @@ describe("GitHub 桌面更新入口", () => {
             }
           ).__updateTestCalls,
       );
-      expect(calls).toEqual({ check: 1, download: 2, install: 1 });
+      expect(calls).toEqual({ check: 2, download: 2, install: 1 });
     } finally {
       await browser.electron.execute((electron) => {
         const globals = globalThis as typeof globalThis & {

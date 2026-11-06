@@ -2,7 +2,11 @@ import {
   useDraftModelReadinessGate,
   type DraftModelReadinessGate,
 } from "@/v4/composer/useDraftModelReadinessGate.js";
-import { isExternalSessionEngine, resolveSessionEngine } from "@zcode/shared/external-engine";
+import {
+  isExternalSessionEngine,
+  resolveSessionEngine,
+  type SessionEngine,
+} from "@zcode/shared/external-engine";
 /* eslint-disable max-lines -- Composer 草稿 owner 同时收口选择、正文与提交生命周期，保持单一状态边界。 */
 // 当前编辑由 Composer 持有；进入已有 Session 从当前快照恢复权限/Plan，在线只响应新变化。
 // 菜单点击立即保存 Renderer 意图，Prewarm 与 Submission 只消费它，不反向覆盖。
@@ -28,6 +32,7 @@ import { submissionModeSchema } from "@zcode/shared/zcode-protocol-v4";
 import { prepareWorkspaceWithZCodeSessionService } from "@/hooks/useWorkspacePrepare.js";
 import { useZCodeSessionService } from "@/hooks/useZCodeSessionService.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { parseModelPickerValue } from "@/lib/zcodeSessionProjection.js";
 import { resolveDraftInitialModelSelection } from "@/lib/composerRecent.js";
 import { initializeNewTaskDraft } from "@/v4/composer/newTaskDraft.js";
@@ -116,6 +121,7 @@ export interface DraftConfigControl {
   handleDraftSelectModel: (modelProvider: string, model: string, reasoningLevel?: string) => void;
   handleDraftSelectThought: (thought: string) => void;
   handleDraftSwitchMode: (mode: string) => void;
+  handleDraftSelectEngine: (engine: SessionEngine) => Promise<void>;
 }
 
 interface ComposerState {
@@ -161,6 +167,8 @@ export function useDraftConfigControl(params: {
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
   const zcodeSessionService = useZCodeSessionService(workspacePath, null, workspaceIdentity);
   const { settings: sharedSettings } = useSettings();
+  const localServices = useBaseWorkspaceServices();
+  const enginePreferences = useSettings({ services: localServices });
   const appFollowupMode = resolveAppFollowupMode(sharedSettings);
   const scopeId =
     sessionId ?? (draftTabId ? getV4TabDraftScopeId(draftTabId) : V4_DRAFT_SCOPE_ROOT);
@@ -199,10 +207,25 @@ export function useDraftConfigControl(params: {
         ? readV4ComposerDraft(workspacePath, workspaceIdentity, V4_DRAFT_SCOPE_ROOT, rootScope)
         : null;
     const saved = ownDraft ?? inherited;
+    // 新 Tab 先落盘正文/归属占位，尚未初始化配置；它不代表旧版的隐式 YCode 选择。
+    const uninitializedTab =
+      sessionId === null &&
+      Boolean(draftTabId) &&
+      saved &&
+      saved.engine === undefined &&
+      saved.text === "" &&
+      !saved.editorStateJson &&
+      !saved.mention &&
+      saved.mode === undefined &&
+      saved.planEnabled === undefined &&
+      !saved.modelSelection;
     return {
       scopeKey,
       workspaceKey,
-      draft: saved ?? { text: "", updatedAt: 0, ...navigationInitialization?.config },
+      // 已编辑的旧草稿缺 engine 表示内置引擎；纯导航占位继续等待默认值。
+      draft: saved
+        ? { ...saved, ...(uninitializedTab ? {} : { engine: resolveSessionEngine(saved) }) }
+        : { text: "", updatedAt: 0, ...navigationInitialization?.config },
       ...(inherited ? { inheritedRootDraft: true } : {}),
       initialization:
         sessionId === null || (!saved && navigationInitialization) ? "new-task" : "session",
@@ -223,19 +246,38 @@ export function useDraftConfigControl(params: {
           }
         : loadedScope;
   let draft = currentState.draft;
+  const enginePreferenceReady =
+    sessionId !== null || draft.engine !== undefined || !enginePreferences.loading;
+  if (sessionId === null && draft.engine === undefined && enginePreferenceReady) {
+    draft = {
+      ...draft,
+      engine: resolveSessionEngine({ engine: enginePreferences.settings?.defaultSessionEngine }),
+    };
+  }
   const externalEngine = isExternalSessionEngine(resolveSessionEngine(sessionConfig ?? draft));
   // 草稿 owner 已知引擎后再检查 Registry，外部引擎不读取内置模型目录。
-  const modelReadiness = useDraftModelReadinessGate({
+  const providerReadiness = useDraftModelReadinessGate({
     workspacePath,
     workspaceIdentity,
     provider,
     sessionId,
     modelSelectionService,
-    enabled: !externalEngine,
+    enabled: !externalEngine && enginePreferenceReady,
   });
+  // 原因：默认引擎设置迟到时曾先启动内置模型目录/预热，再回收并连接外部引擎。
+  // 所有首发和预热复用同一门禁，先固定草稿引擎，再访问对应执行面。
+  const ensureEngineReadyForSend = useCallback(
+    () => (enginePreferenceReady ? providerReadiness.ensureReadyForSend() : Promise.resolve(false)),
+    [enginePreferenceReady, providerReadiness.ensureReadyForSend],
+  );
+  const modelReadiness = {
+    ...providerReadiness,
+    agentStartupAllowed: enginePreferenceReady && providerReadiness.agentStartupAllowed,
+    ensureReadyForSend: ensureEngineReadyForSend,
+  };
   const modelSelectionRead = useModelSelectionServiceView(
     modelSelectionService,
-    !externalEngine,
+    !externalEngine && enginePreferenceReady,
     "remote-waiting",
     {
       selection: draft.modelSelection ?? null,
@@ -513,6 +555,14 @@ export function useDraftConfigControl(params: {
     },
     [updateComposerDraft],
   );
+  const handleDraftSelectEngine = useCallback(
+    async (engine: SessionEngine) => {
+      if (sessionId !== null || !isCurrentScope()) return;
+      updateComposerDraft((current) => ({ ...current, engine }));
+      await enginePreferences.update({ defaultSessionEngine: engine });
+    },
+    [sessionId, isCurrentScope, updateComposerDraft, enginePreferences.update],
+  );
 
   const promoteComposerDraft = useCallback(
     (createdSessionId: string) => {
@@ -705,6 +755,7 @@ export function useDraftConfigControl(params: {
     handleDraftSelectModel,
     handleDraftSelectThought,
     handleDraftSwitchMode,
+    handleDraftSelectEngine,
   };
 }
 

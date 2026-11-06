@@ -1,8 +1,6 @@
-import { LOCAL_TTFT_MAX_PENDING, localTtftNow, type LocalTtftDetail } from "@zcode/shared";
+import { LOCAL_TTFT_MAX_PENDING, LOCAL_TTFT_PREPARATION_STAGES, localTtftNow } from "@zcode/shared";
 
-type PreparationStage =
-  | Exclude<LocalTtftDetail["stage"], "attempt" | "retry_wait" | "user_confirmation">
-  | "execution";
+type PreparationStage = (typeof LOCAL_TTFT_PREPARATION_STAGES)[number] | "execution" | "request";
 export interface LocalTurnPreparationFact {
   sessionId: string;
   turnId: string;

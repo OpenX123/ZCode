@@ -911,6 +911,7 @@ export function SessionPane({
     handleDraftSelectModel,
     handleDraftSelectThought,
     handleDraftSwitchMode,
+    handleDraftSelectEngine,
     promoteComposerDraft,
     captureAcceptedModelSelection,
     replaceComposerDraft,
@@ -941,6 +942,18 @@ export function SessionPane({
   const externalEngineService = useExternalEngineService(workspaceIdentity);
   const sessionEngine = resolveSessionEngine(sessionId ? snapshot?.config : composerDraft);
   const externalEngine = isExternalSessionEngine(sessionEngine);
+  const connectionFailureCode = snapshot?.config.engineConfigError?.code;
+  const requestFailureCode = snapshot?.control.lastError?.code;
+  useEffect(() => {
+    if (!isExternalSessionEngine(sessionEngine)) return;
+    if (
+      ["authentication", "configuration", "not_ready"].includes(connectionFailureCode ?? "") ||
+      requestFailureCode === "external_engine.authentication"
+    ) {
+      // 原生认证与配置失败会使之前的诊断失效；健康续聊无需重复探测 CLI。
+      void externalEngineService?.invalidateStatus?.(sessionEngine).catch(() => {});
+    }
+  }, [externalEngineService, sessionEngine, connectionFailureCode, requestFailureCode]);
   const engineReadinessScope = `${workspaceKey}:${sessionId ?? "draft"}:${sessionEngine}`;
   const [engineNotReadyScope, setEngineNotReadyScope] = useState<string | null>(null);
   const engineNotReady = engineNotReadyScope === engineReadinessScope;
@@ -953,7 +966,9 @@ export function SessionPane({
   const handleSelectEngine = useCallback(
     (engine: SessionEngine) => {
       if (sessionId || !externalEngineService) return;
-      replaceComposerDraft({ ...composerDraft, engine });
+      void handleDraftSelectEngine(engine).catch(() => {
+        toast(intl.formatMessage({ id: "engine.preferenceSaveFailed" }), { variant: "warning" });
+      });
       setEngineNotReady(false);
       // 引擎创建后不可切换；切换草稿选择必须回收旧预热载体，由同一 owner 串行重建。
       invalidateOwnedDraftRuntime();
@@ -962,8 +977,8 @@ export function SessionPane({
       setEngineNotReady,
       sessionId,
       externalEngineService,
-      replaceComposerDraft,
-      composerDraft,
+      handleDraftSelectEngine,
+      intl,
       invalidateOwnedDraftRuntime,
     ],
   );
@@ -1976,6 +1991,11 @@ export function SessionPane({
       compactForRemoteControl,
       chatLoadingBlockedByActiveWork,
       chatLoadingBlockedByInteraction,
+      externalEngineWaitPhase: isExternalSessionEngine(snapshot?.config.engine ?? "zcode")
+        ? snapshot?.config.engineConfigState === "connecting"
+          ? "connecting"
+          : "ready"
+        : undefined,
       messageStreamShowReasoning,
       messageStreamShowTodos,
       toolGroupingExploreEnabled,
@@ -2047,6 +2067,8 @@ export function SessionPane({
       remoteSessionId,
       modelSelectionView,
       snapshot?.logEpoch,
+      snapshot?.config.engine,
+      snapshot?.config.engineConfigState,
       theme,
       codePreviewSettings,
       sessionId,
@@ -2446,8 +2468,10 @@ export function SessionPane({
           });
 
       if (externalEngine && isExternalSessionEngine(sessionEngine)) {
-        const status = await externalEngineService?.getStatus(sessionEngine);
-        if (!status?.ready) {
+        const ready = externalEngineService?.isLaunchReady
+          ? await externalEngineService.isLaunchReady(sessionEngine)
+          : (await externalEngineService?.getStatus(sessionEngine))?.ready === true;
+        if (!ready) {
           setEngineNotReady(true);
           return "blocked" as const;
         }

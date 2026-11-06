@@ -1,3 +1,9 @@
+import {
+  isRemoteWorkspaceIdentity,
+  remoteHostIdFromWorkspaceIdentity,
+  buildRemoteHostWorkspaceIdentity,
+} from "@zcode/shared";
+import type { IGitService } from "#src/git/git.js";
 import { isAuxiliarySessionKind } from "@zcode/shared";
 import { createBotTopicAdmission } from "#src/zcode-agent/botTopicAdmission.js";
 import {
@@ -183,6 +189,7 @@ interface CreateZCodeTaskServiceAdapterOptions {
   // 否则 desktop-continuous 路径和 task adapter 路径的事件订阅会分裂成两份，UI 收不全。
   taskIndexSyncer: ZCodeTaskIndexSyncer;
   settingService?: Pick<ISettingService, "get">;
+  gitService?: Pick<IGitService, "getSessionWorktreePreparation" | "prepareSessionWorktree">;
   cuaProductMcpServerResolver?: CuaProductMcpServerResolver;
 }
 
@@ -243,6 +250,11 @@ function resolveZCodeAgentCurrentLogFilePath(now = new Date()): string {
 export function createZCodeTaskServiceAdapter(
   options: CreateZCodeTaskServiceAdapterOptions,
 ): IZCodeTaskService {
+  const forkOperations = new Map<
+    string,
+    { fingerprint: string; promise: ReturnType<IZCodeTaskService["forkTask"]> }
+  >();
+
   // Bot 原来绕过连接 facade，导致真实附件 admission 缺少可信身份；复用既有 scope，
   // 同一 Bot 接入的附件、命令及对账共用连接，不改变桌面与手机各自的传输模式。
   const botConnectionScopes = new Map<string, ReturnType<typeof createZCodeAgentConnectionScope>>();
@@ -1734,6 +1746,94 @@ export function createZCodeTaskServiceAdapter(
 
     async checkCodexConnectivity(): Promise<ZCodeCodexConnectivityCheckResult> {
       return { target: "zcode-agent", reachable: true };
+    },
+
+    async forkTask(params) {
+      if (!/^[a-zA-Z0-9_-]{8,100}$/.test(params.operationId))
+        throw new Error("Invalid fork operation ID");
+      const fingerprint = JSON.stringify([resolveWorkspaceKey(params), params.taskId, params.mode]);
+      const existing = forkOperations.get(params.operationId);
+      if (existing) {
+        if (existing.fingerprint !== fingerprint) throw new Error("Fork operation target changed");
+        return existing.promise;
+      }
+      const promise = (async () => {
+        const source = await taskIndexRepo.getTaskMeta(params);
+        if (!source) throw new Error("会话不存在或已被删除");
+        const sourceTarget = {
+          workspacePath: source.workspacePath,
+          workspaceIdentity: source.workspaceIdentity,
+          ...(params.remoteSessionId ? { remoteSessionId: params.remoteSessionId } : {}),
+        };
+        let prepared: Awaited<ReturnType<IGitService["prepareSessionWorktree"]>> | undefined;
+        if (params.mode === "worktree") {
+          if (!options.gitService) throw new Error("此执行 Host 不支持工作树分叉");
+          const previous = await options.gitService.getSessionWorktreePreparation({
+            workspacePath: source.workspacePath,
+            operationId: params.operationId,
+          });
+          // 已准备操作可能已提交 child；父会话后来运行不应阻断幂等登记与导航恢复。
+          if (!previous) {
+            const current = await options.zcodeAgentService.readSession({
+              ...sourceTarget,
+              sessionId: params.taskId,
+            });
+            if (current.session.status === "running" || current.session.status === "waiting")
+              throw new Error("源会话空闲后才能创建工作树分叉");
+          }
+          prepared = await options.gitService.prepareSessionWorktree({
+            workspacePath: source.workspacePath,
+            operationId: params.operationId,
+          });
+        }
+        const targetPath = prepared?.workspacePath ?? source.workspacePath;
+        // 远端 identity 必须由现有构造工具产生，不能把 SSH 路径误当本地路径。
+        const targetIdentity = prepared
+          ? source.workspaceIdentity && isRemoteWorkspaceIdentity(source.workspaceIdentity)
+            ? buildRemoteHostWorkspaceIdentity(
+                remoteHostIdFromWorkspaceIdentity(source.workspaceIdentity)!,
+                targetPath,
+              )
+            : undefined
+          : source.workspaceIdentity;
+        const workspace = {
+          workspacePath: targetPath,
+          workspaceIdentity: targetIdentity,
+          workspaceKey: targetIdentity?.trim() || targetPath,
+        };
+        // 导出也可能已冻结 child 或创建原生分叉；响应丢失无法证明无副作用，保留工作树供同操作恢复。
+        const transfer = await options.zcodeAgentService.exportSessionFork({
+          ...sourceTarget,
+          sessionId: params.taskId,
+          operationId: params.operationId,
+          targetWorkspace: workspace,
+        });
+        // 目标 CLI 可能已提交。响应丢失时保留目标，下次以同一 operationId 幂等补完。
+        const imported = await options.zcodeAgentService.importSessionFork({
+          ...workspace,
+          ...(params.remoteSessionId ? { remoteSessionId: params.remoteSessionId } : {}),
+          transfer,
+        });
+        const meta = await syncTaskIndexSnapshot(imported.snapshot, "task_meta_changed");
+        notifySyncerSession({
+          taskId: meta.taskId,
+          workspacePath: meta.workspacePath,
+          workspaceIdentity: meta.workspaceIdentity,
+        });
+        return {
+          taskId: meta.taskId,
+          workspacePath: meta.workspacePath,
+          workspaceIdentity: meta.workspaceIdentity,
+          forkKind: imported.forkKind,
+        };
+      })();
+      forkOperations.set(params.operationId, { fingerprint, promise });
+      const releaseOperation = () => {
+        if (forkOperations.get(params.operationId)?.promise === promise)
+          forkOperations.delete(params.operationId);
+      };
+      void promise.then(releaseOperation, releaseOperation);
+      return promise;
     },
 
     async createTask(params): Promise<ZCodeTaskCreateResult> {

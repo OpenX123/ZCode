@@ -1,7 +1,8 @@
+/* eslint-disable max-lines -- 既有 turn 入口集中维护 reservation、输入持久化与终态顺序；本次仅收窄准备阶段类型，保留同一生命周期裁决。 */
 import { isExternalSessionEngine } from "@zcode/shared";
 import { runExternalEngineTurn } from "../../external-engine/turn.js";
 import type { ExternalTurnLoopState } from "../../external-engine/contract.js";
-import { beginLocalTurnPreparation, type LocalTtftDetail } from "@zcode/contracts";
+import { beginLocalTurnPreparation } from "@zcode/contracts";
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
 import { withConversationQuotes } from "../helpers/conversation-quotes.js";
 import { ensureGroupTaskPermissionScope } from "./input-intent-persistence.js";
@@ -172,7 +173,7 @@ export async function executeTurnCommand(
   let turnPhase = "queued";
   let turnFailureHandled = false;
   let finishPreparation: () => void = () => {};
-  const preparationStages: Record<string, LocalTtftDetail["stage"]> = {
+  const preparationStages: Record<string, Parameters<typeof beginLocalTurnPreparation>[1]> = {
     context_initialization: "context",
     session_start_hooks: "hooks",
     user_prompt_hooks: "hooks",
@@ -182,10 +183,7 @@ export async function executeTurnCommand(
   };
   const startTurnPhase = (phase: string): number => {
     const stage = preparationStages[phase];
-    finishPreparation =
-      stage && stage !== "attempt" && stage !== "retry_wait" && stage !== "user_confirmation"
-        ? beginLocalTurnPreparation(turnTraceContext, stage)
-        : () => {};
+    finishPreparation = stage ? beginLocalTurnPreparation(turnTraceContext, stage) : () => {};
     turnPhase = phase;
     const startedAt = Date.now();
     this.logger?.info("Turn phase started", {

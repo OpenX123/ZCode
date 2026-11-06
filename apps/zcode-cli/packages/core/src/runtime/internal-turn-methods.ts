@@ -58,6 +58,8 @@ import type {
   ResolvedTurnAttachment,
   SelectionSideChatCreateOptions,
   StableConversationForkOptions,
+  ConversationForkExportOptions,
+  ConversationForkExport,
   TurnResult,
   WorkspaceCheckpointSummary,
   WorkspaceFileRewindApplyResult,
@@ -265,6 +267,7 @@ export interface AgentRuntimeTurnMethods {
     targetMessageId?: MessageId;
     traceContext?: TraceContext;
   }): Promise<WorkspaceForkResult>;
+  exportConversationFork(options: ConversationForkExportOptions): Promise<ConversationForkExport>;
   forkStableConversationAtMessage(
     options: StableConversationForkOptions,
   ): Promise<WorkspaceForkResult>;

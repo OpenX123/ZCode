@@ -51,20 +51,22 @@ async function setup(ready: boolean, supported = true) {
     ready,
   };
   const getStatus = vi.fn(async () => status);
+  const externalEngineService = {
+    getStatus,
+    listStatuses: async () => [status],
+    installAdapter: vi.fn(),
+    onStatusChanged: () => ({ dispose() {} }),
+    isLaunchReady: undefined as undefined | ((engine: "claude-code" | "codex") => Promise<boolean>),
+  };
   const prepareSessionCreation = vi.fn(async () => []);
   const service = createZCodeAgentService({
     externalEnginesSupported: supported,
-    externalEngineService: {
-      getStatus,
-      listStatuses: async () => [status],
-      installAdapter: vi.fn(),
-      onStatusChanged: () => ({ dispose() {} }),
-    },
+    externalEngineService,
     prepareSessionCreation,
     // 不提供模型 Registry：外部引擎应能独立工作，内置模型仍保持原就绪门禁。
   });
   disposers.push(() => service.disposeAll());
-  return { service, request, getStatus, getClient, prepareSessionCreation };
+  return { service, request, getStatus, getClient, prepareSessionCreation, externalEngineService };
 }
 
 function sendEnvelope() {
@@ -78,6 +80,22 @@ function sendEnvelope() {
 }
 
 describe("Host 外部引擎执行门禁", () => {
+  it("首次及连续发送使用廉价门禁，不等待版本或登录诊断", async () => {
+    const f = await setup(true);
+    const isLaunchReady = vi.fn(async () => true);
+    f.externalEngineService.isLaunchReady = isLaunchReady;
+    f.getStatus.mockRejectedValue(new Error("完整诊断不得进入发送路径"));
+    for (const commandId of ["first", "second"]) {
+      await expect(
+        f.service.sendConversationCommandV4({
+          workspacePath: "/workspace",
+          envelope: { ...sendEnvelope(), commandId },
+        }),
+      ).resolves.toMatchObject({ status: "accepted" });
+    }
+    expect(f.getStatus).not.toHaveBeenCalled();
+    expect(isLaunchReady).toHaveBeenCalledWith("codex");
+  });
   it.each(["workspace", "all", "allAndWait"] as const)(
     "%s 释放期间迟到的就绪结果不得重启 CLI 或预留项目 task",
     async (scope) => {

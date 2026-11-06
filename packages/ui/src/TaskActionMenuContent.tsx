@@ -18,6 +18,7 @@ interface TaskActionMenuSeparatorProps {
 export function TaskActionMenuContent({
   intl,
   workbenchSession,
+  showWorkbenchLayoutActions = true,
   isPinned,
   isArchived = false,
   fileManagerLabel,
@@ -48,6 +49,7 @@ export function TaskActionMenuContent({
     formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
   };
   workbenchSession?: WorkbenchSessionBinding;
+  showWorkbenchLayoutActions?: boolean;
   isPinned: boolean;
   isArchived?: boolean;
   fileManagerLabel: string;
@@ -90,6 +92,7 @@ export function TaskActionMenuContent({
           Separator={Separator}
           disabled={disableTaskActions}
           disabledReason={disabledReason}
+          showLayoutActions={showWorkbenchLayoutActions}
         />
       ) : null}
       <Item

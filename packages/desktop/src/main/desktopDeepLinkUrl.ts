@@ -1,3 +1,5 @@
+import { parseSessionDeepLink } from "@zcode/shared/session-navigation";
+
 const DEEP_LINK_SCHEME = "zcode";
 const DEEP_LINK_RE = /\bzcode:(?:\/\/|\/)?[^\s"'<>]+/i;
 const OAUTH_CALLBACK_HOSTS = new Set(["oauth"]);
@@ -179,6 +181,8 @@ function isCompleteDeepLinkUrl(value: string): boolean {
   if (isShareImportUrl(parsedUrl)) {
     return extractShareImportCode(parsedUrl) !== null;
   }
+
+  if (parsedUrl.hostname === "session") return parseSessionDeepLink(value) !== null;
 
   return true;
 }

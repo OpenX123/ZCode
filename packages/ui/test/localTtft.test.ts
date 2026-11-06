@@ -3,6 +3,42 @@ import { LocalTtftObserver } from "../src/v4/telemetry/localTtftObserver.js";
 import type { LocalTtftRecord } from "@zcode/shared";
 
 describe("Renderer 首输出与乱序归属", () => {
+  it("点击至提交预览按实际commit采一次，并保留命令收到与准入明细", () => {
+    let now = 100;
+    const records: LocalTtftRecord[] = [];
+    const observer = new LocalTtftObserver(
+      (record) => records.push(record),
+      () => now,
+      () => now,
+    );
+    observer.enabled = true;
+    const context = observer.start("workspace", false)!;
+    now = 105;
+    observer.optimisticRendered(context);
+    now = 110;
+    observer.optimisticRendered(context);
+    observer.dispatch(context, "workspace", "command");
+    observer.calibrate("workspace", {
+      instanceId: "cli",
+      offsetMs: 0,
+      errorMs: 1,
+      measuredAt: 100,
+    });
+    observer.checkpoint("workspace", {
+      ...context,
+      instanceId: "cli",
+      commandId: "command",
+      receivedAt: 112,
+      admittedAt: 120,
+    });
+    expect(records.at(-1)?.details).toEqual([
+      expect.objectContaining({ stage: "optimistic_render", start: 100, end: 105 }),
+      expect.objectContaining({ stage: "command_received", start: 110, end: 112 }),
+      expect.objectContaining({ stage: "command_admitted", start: 112, end: 120 }),
+    ]);
+    expect(records.at(-1)?.userWaitMs).toBe(0);
+    expect(records.filter((record) => record.kind === "first_output")).toHaveLength(0);
+  });
   it("首输出早于 ACK 只收口一次，空开始不触发，正文晚到独立计数", () => {
     let now = 1000;
     const records: LocalTtftRecord[] = [];

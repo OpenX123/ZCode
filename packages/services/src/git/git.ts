@@ -25,6 +25,9 @@ import type {
   GitWorkspaceRepositoryInfo,
   GitFileChange,
   GitSwitchBranchRequest,
+  GitSessionWorktreeRequest,
+  GitSessionWorktreeResult,
+  GitSessionWorktreeRollbackResult,
 } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
@@ -36,6 +39,13 @@ export interface IGitService {
   getCommitGraph(params: GitCommitGraphRequest): Promise<GitCommitGraphResult>;
   switchBranch(params: GitSwitchBranchRequest): Promise<GitBranchMutationResult>;
   createBranchAndSwitch(params: GitCreateBranchRequest): Promise<GitBranchMutationResult>;
+  getSessionWorktreePreparation(
+    params: GitSessionWorktreeRequest,
+  ): Promise<GitSessionWorktreeResult | undefined>;
+  prepareSessionWorktree(params: GitSessionWorktreeRequest): Promise<GitSessionWorktreeResult>;
+  rollbackSessionWorktree(
+    params: GitSessionWorktreeRequest,
+  ): Promise<GitSessionWorktreeRollbackResult>;
   getChanges(params: GitChangesRequest): Promise<GitFileChange[]>;
   getIgnoredPaths(params: GitIgnoredPathsRequest): Promise<string[]>;
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;

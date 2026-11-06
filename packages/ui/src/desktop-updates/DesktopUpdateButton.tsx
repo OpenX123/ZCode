@@ -1,4 +1,4 @@
-import { Download, LoaderCircle, RefreshCw } from "lucide-react";
+import { Download, LoaderCircle, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useDesktopUpdates } from "@/hooks/desktop-updates/index.js";
@@ -6,8 +6,9 @@ import { getDesktopUpdateAction, getDesktopUpdateProgress } from "./contract.js"
 
 export function DesktopUpdateButton() {
   const { intl } = useZCodeIntl();
-  const { state, busy, activate } = useDesktopUpdates();
-  if (!state?.enabled || state.kind === "idle" || state.kind === "checking") return null;
+  const { state, busy, activate, dismissed, dismiss } = useDesktopUpdates();
+  if (dismissed || !state?.enabled || state.kind === "idle" || state.kind === "checking")
+    return null;
   // 无候选版本的检查错误只通过手动检查提示，避免启动时长期占用侧栏。
   if (state.kind === "error" && !state.version) return null;
   const progress = getDesktopUpdateProgress(state);
@@ -21,28 +22,43 @@ export function DesktopUpdateButton() {
           : "downloading";
   return (
     <div className="flex min-w-0 flex-col gap-1">
-      <Button
-        type="button"
-        variant="outline"
-        className="h-auto min-h-9 w-full justify-start px-2 py-2 text-ui-sm"
-        data-testid="desktop-update-action"
-        disabled={busy || !getDesktopUpdateAction(state)}
-        onClick={() => void activate()}
-      >
-        {busy ? (
-          <LoaderCircle className="size-4 animate-spin" />
-        ) : state.kind === "error" ? (
-          <RefreshCw className="size-4" />
-        ) : (
-          <Download className="size-4" />
-        )}
-        <span className="truncate">
-          {intl.formatMessage(
-            { id: `desktopUpdate.${message}` },
-            { version: "version" in state ? (state.version ?? "") : "", progress },
+      <div className="flex min-w-0 items-start gap-1">
+        <Button
+          type="button"
+          variant="outline"
+          className="h-auto min-h-9 min-w-0 flex-1 justify-start px-2 py-2 text-ui-sm"
+          data-testid="desktop-update-action"
+          disabled={busy || !getDesktopUpdateAction(state)}
+          onClick={() => void activate()}
+        >
+          {busy ? (
+            <LoaderCircle className="size-4 animate-spin" />
+          ) : state.kind === "error" ? (
+            <RefreshCw className="size-4" />
+          ) : (
+            <Download className="size-4" />
           )}
-        </span>
-      </Button>
+          <span className="truncate">
+            {intl.formatMessage(
+              { id: `desktopUpdate.${message}` },
+              { version: "version" in state ? (state.version ?? "") : "", progress },
+            )}
+          </span>
+        </Button>
+        {"version" in state && state.version ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0"
+            aria-label={intl.formatMessage({ id: "desktopUpdate.dismiss" })}
+            data-testid="desktop-update-dismiss"
+            onClick={() => void dismiss()}
+          >
+            <X className="size-4" />
+          </Button>
+        ) : null}
+      </div>
       <div
         data-testid="desktop-update-status"
         role="status"

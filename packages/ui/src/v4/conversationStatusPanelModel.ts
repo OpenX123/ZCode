@@ -27,6 +27,7 @@ export interface ConversationStatusPanelGitModel {
 }
 
 export interface ConversationStatusPanelPlanModel {
+  document?: PlanState["document"];
   items: PlanState["items"];
   displayItems: PlanState["items"];
   completedCount: number;
@@ -180,11 +181,12 @@ function buildGitModel({
 }
 
 function buildPlanModel(plan: PlanState | null | undefined) {
-  if (!plan || plan.items.length === 0) {
+  if (!plan || (plan.items.length === 0 && !plan.document)) {
     return null;
   }
   const completed = plan.items.filter((item) => item.status === "completed");
   return {
+    document: plan.document,
     items: plan.items,
     // 按状态重新分组会让 Todo 完成时从原位置跳到列表末尾，破坏 TodoWrite
     // snapshot 的权威顺序。这里完整保留原数组，只由 renderer 负责滚动和状态样式。

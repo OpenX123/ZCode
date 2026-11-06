@@ -150,6 +150,7 @@ import {
   createSelectionSideConversation,
   forkConversationBeforeMessage,
   forkStableConversationAtMessage,
+  exportConversationFork,
 } from "./session-fork.js";
 import { loadCheckpointMessagePreviews } from "./workspace-checkpoints.js";
 import { applyWorkspaceFileRewind, previewWorkspaceFileRewind } from "./file-rewind.js";
@@ -351,6 +352,7 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.listWorkspaceCheckpoints = listWorkspaceCheckpoints;
   proto.forkWorkspaceFromCheckpoint = forkWorkspaceFromCheckpoint;
   proto.forkStableConversationAtMessage = forkStableConversationAtMessage;
+  proto.exportConversationFork = exportConversationFork;
   proto.createSelectionSideConversation = createSelectionSideConversation;
   proto.forkConversationBeforeMessage = forkConversationBeforeMessage;
   proto.loadCheckpointMessagePreviews = loadCheckpointMessagePreviews;

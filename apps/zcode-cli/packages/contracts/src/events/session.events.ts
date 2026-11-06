@@ -90,6 +90,8 @@ export const SessionEventType = {
   ExternalEngineUsageUpdated: "external_engine_usage_updated",
   ExternalEngineCommandsUpdated: "external_engine_commands_updated",
   ExternalEngineConfigUpdated: "external_engine_config_updated",
+  ExternalEnginePlanUpdated: "external_engine_plan_updated",
+  ExternalEngineFailureUpdated: "external_engine_failure_updated",
   SessionModeChanged: "session_mode_changed",
   SessionEnded: "session_ended",
   TurnStarted: "turn_started",
@@ -737,6 +739,16 @@ export interface ExternalEngineConfigUpdatedPayload {
   engineConfigError?: import("@zcode/shared").EngineConnectionFailure;
 }
 
+export interface ExternalEnginePlanUpdatedPayload {
+  plan: import("@zcode/shared/zcode-protocol-v4").PlanState | null;
+}
+
+export interface ExternalEngineFailureUpdatedPayload {
+  failure: import("@zcode/shared").EngineConnectionFailure | null;
+  retrying?: boolean;
+  attempt?: number;
+}
+
 export interface ModelRequestPayload {
   messages: ModelMessage[];
   providerId: string;
@@ -1345,6 +1357,8 @@ export type SessionEventPayload =
   | ExternalEngineUsageUpdatedPayload
   | ExternalEngineCommandsUpdatedPayload
   | ExternalEngineConfigUpdatedPayload
+  | ExternalEnginePlanUpdatedPayload
+  | ExternalEngineFailureUpdatedPayload
   | ModelRequestPayload
   | ModelSelectedPayload
   | TurnExecutionModelFallbackPayload

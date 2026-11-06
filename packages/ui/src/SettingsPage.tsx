@@ -1,4 +1,4 @@
-import { EngineSettings } from "@/external-engine/index.js";
+import { DefaultEngineSetting, EngineSettings } from "@/external-engine/index.js";
 import { SettingsMachinesProvider } from "@/settings/SettingsMachine.js";
 import { getWorkspaceSourceServerId } from "@/conversation-workspace-target/sourceIdentity.js";
 import { RemoteConnectionNavigationDot } from "@/remote-connection/RemoteConnectionNavigationDot.js";
@@ -1248,6 +1248,7 @@ export function SettingsPage({
                           ) : activeSection === "agentEngines" ? (
                             <ServiceProvider services={localHostServices}>
                               {/* 引擎安装属于本机 Host；远端 workspace 不能改变设置页的服务所有者。 */}
+                              <DefaultEngineSetting />
                               <EngineSettings />
                             </ServiceProvider>
                           ) : activeSection === "memory" ? (

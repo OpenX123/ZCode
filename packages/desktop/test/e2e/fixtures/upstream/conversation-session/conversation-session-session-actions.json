@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-session-actions",
+  "spec": "./test/e2e/conversation-session/conversation-session-session-actions.test.ts",
+  "fixtures": [
+    {
+      "id": "session-actions-title",
+      "description": "会话菜单首发的独立标题响应。",
+      "metadata": {
+        "kind": "common",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "菜单操作只需稳定完成的历史，使用独立合成响应隔离供应商波动，不断言真实模型。"
+      },
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["Generate a concise title", "E2E_SESSION_ACTION_"]
+      },
+      "response": {
+        "statusCode": 200,
+        "statusMessage": "OK",
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "text": "{\"title\":\"Session Actions E2E\"}"
+      }
+    },
+    {
+      "id": "session-actions-turn",
+      "description": "完整历史供同目录及新工作树 Fork 继承。",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "菜单操作只需稳定完成的历史，使用独立合成响应隔离供应商波动，不断言真实模型。"
+      },
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_SESSION_ACTION_"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "statusMessage": "OK",
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "text": "upstream-e2e-ok"
+      }
+    }
+  ]
+}

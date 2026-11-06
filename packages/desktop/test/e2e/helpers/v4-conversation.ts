@@ -357,7 +357,7 @@ export async function getV4ConversationState(): Promise<V4ConversationStateSnaps
 
 /**
  * v4 composer 输入（M5 起为 Lexical contenteditable）：写入走
- * setInputValueByTestIdDom 的 __zcodeLexicalInputE2E bridge 分支（驱动真实 editor state）。
+ * 当前 pane 的 __zcodeLexicalInputE2E bridge（驱动真实 editor state）。
  */
 export async function sendV4Prompt(prompt: string) {
   await setV4ComposerText(prompt);
@@ -520,10 +520,43 @@ export async function sendV4PromptAndWaitAccepted(
 
 /** 只写入 v4 composer，不触发发送。 */
 export async function setV4ComposerText(text: string) {
-  await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, text, {
-    timeout: 15000,
-    timeoutMsg: "v4 composer 输入框没有出现或不可输入",
-  });
+  await setV4ComposerTextInPane(await resolveV4PaneId(), text);
+}
+
+async function setV4ComposerTextInPane(paneId: string, text: string) {
+  // 分屏时每个 pane 都有同一个 composer testid；必须按当前焦点 pane 收口，
+  // 否则写入第一个 DOM pane 后 sendV4Prompt 会在另一个 focused pane 上等待发送。
+  const paneShellTestId = testId(TID_V4_PANE_SHELL, paneId);
+  await browser.waitUntil(
+    async () =>
+      browser.execute(
+        (shellTestId, inputTestId, nextValue) => {
+          const shell = document.querySelector<HTMLElement>(`[data-testid="${shellTestId}"]`);
+          const element = shell?.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
+          if (!element) return false;
+          const bridge = (
+            element as HTMLElement & {
+              __zcodeLexicalInputE2E?: {
+                focus: () => void;
+                getText: () => string;
+                setText: (text: string) => void;
+              };
+            }
+          ).__zcodeLexicalInputE2E;
+          if (!bridge) return false;
+          bridge.focus();
+          bridge.setText(nextValue);
+          return bridge.getText() === nextValue;
+        },
+        paneShellTestId,
+        TID_V4_COMPOSER_INPUT,
+        text,
+      ),
+    {
+      timeout: 15000,
+      timeoutMsg: "v4 composer 输入框没有出现或不可输入",
+    },
+  );
 }
 
 export async function waitForV4ComposerText(expected: string, timeoutMsg: string, timeout = 10000) {
@@ -1992,38 +2025,7 @@ export async function waitForV4PaneById(
 /** pane 作用域内写 composer 文本并点发送（同 sendV4Prompt，但按 paneId 收口）。 */
 export async function sendV4PromptInPane(paneId: string, prompt: string) {
   const paneShellTestId = testId(TID_V4_PANE_SHELL, paneId);
-  // M5：composer 为 Lexical contenteditable——写入走编辑器挂载的 __zcodeLexicalInputE2E
-  // bridge（驱动真实 editor state）；bridge.focus() 同时驱动 Focus 层 → composer 归属该 pane。
-  await browser.waitUntil(
-    async () =>
-      browser.execute(
-        (shellTestId, inputTestId, nextValue) => {
-          const shell = document.querySelector<HTMLElement>(`[data-testid="${shellTestId}"]`);
-          const element = shell?.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
-          if (!element) return false;
-          const bridge = (
-            element as HTMLElement & {
-              __zcodeLexicalInputE2E?: {
-                focus: () => void;
-                getText: () => string;
-                setText: (text: string) => void;
-              };
-            }
-          ).__zcodeLexicalInputE2E;
-          if (!bridge) return false;
-          bridge.focus();
-          bridge.setText(nextValue);
-          return bridge.getText() === nextValue;
-        },
-        paneShellTestId,
-        TID_V4_COMPOSER_INPUT,
-        prompt,
-      ),
-    {
-      timeout: 15000,
-      timeoutMsg: `pane ${paneId} 的 composer 输入框没有出现或不可输入`,
-    },
-  );
+  await setV4ComposerTextInPane(paneId, prompt);
   await browser.waitUntil(
     async () =>
       browser.execute(
@@ -2376,21 +2378,37 @@ export async function approveV4PermissionAlways() {
 
 /** 读取 composer 当前文本（Lexical E2E bridge）。bridge 未挂载返回 null。 */
 export function getV4ComposerText(): Promise<string | null> {
-  return browser.execute((inputTestId) => {
-    const element = document.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
-    const bridge = (
-      element as (HTMLElement & { __zcodeLexicalInputE2E?: { getText: () => string } }) | null
-    )?.__zcodeLexicalInputE2E;
-    return bridge ? bridge.getText() : null;
-  }, TID_V4_COMPOSER_INPUT);
+  return resolveV4PaneId().then((paneId) =>
+    browser.execute(
+      (paneShellTestId, inputTestId) => {
+        const shell = document.querySelector<HTMLElement>(`[data-testid="${paneShellTestId}"]`);
+        const element = shell?.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
+        const bridge = (
+          element as (HTMLElement & { __zcodeLexicalInputE2E?: { getText: () => string } }) | null
+        )?.__zcodeLexicalInputE2E;
+        return bridge ? bridge.getText() : null;
+      },
+      testId(TID_V4_PANE_SHELL, paneId),
+      TID_V4_COMPOSER_INPUT,
+    ),
+  );
 }
 
 /** composer 本体或其 Lexical 子节点当前是否持有焦点。 */
 export function isV4ComposerFocused(): Promise<boolean> {
-  return browser.execute((inputTestId) => {
-    const element = document.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
-    return Boolean(element && document.activeElement && element.contains(document.activeElement));
-  }, TID_V4_COMPOSER_INPUT);
+  return resolveV4PaneId().then((paneId) =>
+    browser.execute(
+      (paneShellTestId, inputTestId) => {
+        const shell = document.querySelector<HTMLElement>(`[data-testid="${paneShellTestId}"]`);
+        const element = shell?.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
+        return Boolean(
+          element && document.activeElement && element.contains(document.activeElement),
+        );
+      },
+      testId(TID_V4_PANE_SHELL, paneId),
+      TID_V4_COMPOSER_INPUT,
+    ),
+  );
 }
 
 /** 读取 composer 附件卡片的可观察文件名与 ready 状态。 */

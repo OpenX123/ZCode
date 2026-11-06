@@ -1,6 +1,5 @@
 import { access, mkdir, symlink, realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -17,26 +16,9 @@ import {
 } from "@zcode/shared";
 import { spawnAcpProcess } from "../exec/acp-process.js";
 import { AcpConnection } from "./connection.js";
+import { resolveExternalEngineCli, resolveExternalEngineLaunch } from "@zcode/shared/node";
+import { resolveEngineConnection } from "./connection-profile.js";
 import type { ExternalEngineAdapterOptions } from "./contract.js";
-async function officialExecutable(
-  command: string,
-  env: NodeJS.ProcessEnv,
-): Promise<string | undefined> {
-  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
-  const extensions = process.platform === "win32" ? [".exe", ".EXE"] : [""];
-  for (const directory of (env[pathKey ?? "PATH"] ?? "").split(delimiter).filter(Boolean))
-    for (const extension of extensions) {
-      const candidate = join(directory, command + extension);
-      try {
-        await access(candidate, process.platform === "win32" ? constants.F_OK : constants.X_OK);
-        return candidate;
-      } catch {
-        /* 仅探测可执行路径，不运行登录。 */
-      }
-    }
-  return undefined;
-}
-
 export function createExternalEnginePort(
   options: ExternalEngineAdapterOptions = {},
 ): ExternalEnginePort {
@@ -69,24 +51,31 @@ export function createExternalEnginePort(
       } catch {
         throw new ExternalEngineConnectionError({ code: "not_ready" });
       }
-      const childEnv: NodeJS.ProcessEnv = {
+      let childEnv: NodeJS.ProcessEnv = {
         ...env,
         // Electron Helper 默认进入桌面模式；ACP 和其 Node 子进程必须显式沿用 Node 模式。
         ELECTRON_RUN_AS_NODE: "1",
         ...(home ? { HOME: home, USERPROFILE: home } : {}),
       };
+      // 上游 adapter 的原始帧日志包含 Authorization，任何连接模式都不能继承开启。
+      for (const key of Object.keys(childEnv))
+        if (key.toUpperCase() === "APP_SERVER_LOGS") delete childEnv[key];
       for (const key of runtime.strippedEnvVars)
         for (const actualKey of Object.keys(childEnv))
           if (actualKey.toUpperCase() === key.toUpperCase()) delete childEnv[actualKey];
       for (const key of Object.keys(childEnv))
         if (key.toUpperCase() === runtime.officialExecutableEnvVar.toUpperCase())
           delete childEnv[key];
-      const official = await officialExecutable(runtime.officialCliCommand, childEnv);
+      const official = await resolveExternalEngineLaunch(
+        runtime,
+        childEnv,
+        join(root, managedAdapterInstallDirName(runtime)),
+      );
       if (official) childEnv[runtime.officialExecutableEnvVar] = official;
       else delete childEnv[runtime.officialExecutableEnvVar];
       // 桌面可能只有 Electron Node 模式，npm 的 env node 入口会以 127 退出。
       // 只补 ACP 子进程 PATH，保持官方 CLI 与当前运行时，不依赖用户另装 Node。
-      if (process.platform !== "win32" && !(await officialExecutable("node", childEnv))) {
+      if (process.platform !== "win32" && !(await resolveExternalEngineCli("node", childEnv))) {
         const executable = options.executable ?? process.execPath;
         const runtimeKey = createHash("sha256").update(executable).digest("hex").slice(0, 16);
         const bin = join(root, ".node-runtime", runtimeKey);
@@ -102,18 +91,29 @@ export function createExternalEnginePort(
         const pathKey = Object.keys(childEnv).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
         childEnv[pathKey] = [bin, childEnv[pathKey]].filter(Boolean).join(delimiter);
       }
+      const resolved = await resolveEngineConnection(root, input, childEnv);
+      childEnv = resolved.env;
       // 路径探测含异步 IO；关闭会话后不能由迟到的探测重新创建进程。
       input.signal.throwIfAborted();
       connection = new AcpConnection(
         spawnAcpProcess(options.executable ?? process.execPath, [entry], input.cwd, childEnv),
+        resolved.setup,
       );
       sessions.set(input.sessionId, connection);
     }
     try {
       return await operation(connection);
     } catch (error) {
-      sessions.delete(input.sessionId);
-      await connection.close();
+      // 网关请求拒绝不等于进程断联；保留健康会话，不能重发已提交的 prompt。
+      const requestFailed =
+        connection.healthy &&
+        error instanceof ExternalEngineConnectionError &&
+        error.failure.method === "session/prompt" &&
+        ["provider", "authentication", "request"].includes(error.failure.code);
+      if (!requestFailed) {
+        sessions.delete(input.sessionId);
+        await connection.close();
+      }
       throw error;
     }
   };
@@ -160,6 +160,30 @@ export function createExternalEnginePort(
   };
   return {
     prepareSession,
+    async forkSession(input) {
+      if (sessions.has(input.sessionId) || preparations.has(input.sessionId))
+        throw new ExternalEngineConnectionError({ code: "configuration", method: "session/fork" });
+      const controller = new AbortController();
+      const forkInput = {
+        ...input,
+        externalSessionId: undefined,
+        connectionProfileId: input.connectionProfileId ?? "inherit",
+        signal: AbortSignal.any([input.signal, controller.signal]),
+      };
+      // session/fork 已发出后可能已创建 child；响应丢失时不能自行重试制造第二份上下文。
+      const preparing = { controller, promise: Promise.resolve() };
+      preparations.set(input.sessionId, preparing);
+      const pending = execute(forkInput, (connection) =>
+        connection.fork(forkInput, input.parentExternalSessionId),
+      );
+      preparing.promise = pending.then(() => {});
+      void preparing.promise.catch(() => {});
+      try {
+        return await pending;
+      } finally {
+        if (preparations.get(input.sessionId) === preparing) preparations.delete(input.sessionId);
+      }
+    },
     async runTurn(input) {
       await prepareSession(input);
       // 连接就绪后只提交一次 prompt；响应丢失也不能自行重发用户操作。

@@ -1,5 +1,10 @@
 # External engine service
 
+2026-11-06：ready 表示本地可启动，不等同于账号已登录。getStatus 按引擎合并并发并缓存 60 秒；refreshStatus 显式失效。Host 独占连接配置的写入，凭据复用 CredentialService。Codex 的管理连接使用独立 ID/CODEX_HOME，旧配置保留，官方 login 可取消，不改用户 CLI 配置。
+
+Codex 状态诊断使用当前连接的身份环境；API Key 模式只检查该 profile 的凭据是否存在，不执行原用户的 login status，也不验证供应商。官方 login 只做无子进程的可启动性预检。
+检测失效按引擎切换代次：旧在途请求不阻挡新检测，迟到结果不回填缓存或发布状态广播。
+
 执行 Host 上的外部 Agent 引擎安装与就绪检测服务（`IExternalEngineService`）。
 
 - `getStatus` / `listStatuses` 只读：检测 YCode 管理目录中的锁定版 adapter、PATH 中的官方 CLI（缺失时用 adapter 安装树内的官方 CLI），并调用官方 CLI 的登录状态命令。不读写 `~/.claude`、`~/.codex` 下的凭据文件。

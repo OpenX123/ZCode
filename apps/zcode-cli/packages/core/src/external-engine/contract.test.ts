@@ -2,72 +2,14 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, test, vi } from "vitest";
 import {
   createRootTraceContext,
-  createSessionId,
-  createTurnId,
-  createMessageId,
   SessionEventType,
   ExternalEngineConnectionError,
   type ExternalEnginePort,
   parseCompletedToolPartMetadata,
-  type MessagePart,
 } from "@zcode/contracts";
-import { TurnMachineImpl } from "../runtime/deps.js";
-import type { AgentRuntimeInternal } from "../runtime/internal.js";
 import { runExternalEngineTurn, selectExternalPermissionOption } from "./turn.js";
-function setup(updates: Record<string, unknown>[]) {
-  const parts = new Map<string, MessagePart>();
-  const events: Record<string, unknown>[] = [];
-  const runtime = {
-    sessionId: createSessionId(),
-    config: { engine: "codex" },
-    engineConfigOptions: [],
-    sessionPersisted: true,
-    workingDirectory: "/workspace",
-    isRemoteWorkspace: () => false,
-    sessionStore: { updateSession: vi.fn() },
-    createEvent: (type: string, payload: unknown) => ({ type, payload }),
-    appendEvent: vi.fn(async (event: Record<string, unknown>) => {
-      events.push(event);
-    }),
-    persistAssistantMessage: vi.fn(),
-    persistPart: vi.fn(async (part: MessagePart) => {
-      parts.set(String(part.id), structuredClone(part));
-    }),
-    externalEnginePort: {
-      async runTurn(
-        input: Parameters<NonNullable<AgentRuntimeInternal["externalEnginePort"]>["runTurn"]>[0],
-      ) {
-        await input.onSession("external-example");
-        await input.onConfigOptions([]);
-        for (const update of updates) await input.onUpdate(update);
-        return { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 3 } };
-      },
-    },
-  } as unknown as AgentRuntimeInternal;
-  const traceContext = createRootTraceContext();
-  const turnId = createTurnId();
-  return {
-    parts,
-    events,
-    runtime,
-    input: {
-      input: "example",
-      attachments: [],
-      turnId,
-      userMessageId: createMessageId(),
-      traceContext,
-      signal: new AbortController().signal,
-      events: [],
-      turnMachine: TurnMachineImpl.create(
-        runtime.sessionId,
-        0,
-        "example",
-        traceContext.traceId,
-        turnId,
-      ),
-    },
-  };
-}
+import { setup } from "../../tests/helpers/external-engine-runtime.js";
+
 describe("外部引擎事件与 transcript", () => {
   test.each(["claude", "codex"])("%s 脱敏真实帧保留diff直到终态并可冷恢复", async (engine) => {
     const updates = JSON.parse(
@@ -148,7 +90,8 @@ test.each([
   expect(prepareSession).toHaveBeenCalledWith(
     expect.objectContaining({ externalSessionId: "original-session" }),
   );
-  expect(prepareSession.mock.calls[0]?.[0]?.signal.aborted).toBe(false);
+  expect(prepareSession).toHaveBeenCalledTimes(2);
+  expect(prepareSession.mock.calls[1]?.[0]?.signal.aborted).toBe(false);
   expect(runtime.engineConfigState).toBe("ready");
   expect(
     events
@@ -161,19 +104,21 @@ test.each([
 test.each(["恢复失败", "正在关闭", "正常运行故障"])("停止恢复边界：%s", async (scenario) => {
   const { runtime, input } = setup([]);
   runtime.config.externalSessionId = "original-session";
-  runtime.shuttingDown = scenario === "正在关闭";
   const abort = new AbortController();
   input.signal = abort.signal;
-  const prepareSession = vi.fn<ExternalEnginePort["prepareSession"]>(async () => {
-    throw new ExternalEngineConnectionError({ code: "authentication" });
-  });
+  const prepareSession = vi
+    .fn<ExternalEnginePort["prepareSession"]>(async () => {
+      throw new ExternalEngineConnectionError({ code: "authentication" });
+    })
+    .mockResolvedValueOnce();
   runtime.externalEnginePort!.prepareSession = prepareSession;
   runtime.externalEnginePort!.runTurn = vi.fn(async () => {
+    runtime.shuttingDown = scenario === "正在关闭";
     if (scenario !== "正常运行故障") abort.abort();
     throw new ExternalEngineConnectionError({ code: "transport", method: "session/prompt" });
   });
   await expect(runExternalEngineTurn(runtime, input)).rejects.toThrow();
-  expect(prepareSession).toHaveBeenCalledTimes(scenario === "恢复失败" ? 1 : 0);
+  expect(prepareSession).toHaveBeenCalledTimes(scenario === "恢复失败" ? 2 : 1);
   if (scenario !== "正在关闭") expect(runtime.engineConfigState).toBe("error");
 });
 

@@ -222,6 +222,44 @@ function assertForkBundleChildLocal(bundle: ForkCommitBundle): void {
   }
 }
 
+function assertNoForkBundleIdentityConflicts(db: DatabaseSync, bundle: ForkCommitBundle): void {
+  // saveMessage/savePart/saveSessionEntry 都是 upsert；导入若复用另一会话的 ID 会静默改绑正文。
+  // 在事务内先检查全库和 bundle 内的身份，确保坏传输只能整体回滚。
+  const assertUnique = (values: readonly string[], label: string) => {
+    const seen = new Set<string>();
+    for (const value of values) {
+      if (seen.has(value)) throw new Error(`Fork bundle duplicate ${label} id: ${value}`);
+      seen.add(value);
+    }
+  };
+  const assertAbsent = (
+    table: string,
+    column: string,
+    values: readonly string[],
+    label: string,
+  ) => {
+    const lookup = db.prepare(`select 1 from ${table} where ${column} = ?`);
+    for (const value of values)
+      if (lookup.get(value)) throw new Error(`Fork bundle ${label} id already exists: ${value}`);
+  };
+  const messageIds = bundle.messages.map((message) => String(message.info.id));
+  const partIds = bundle.messages.flatMap((message) =>
+    message.parts.map((part) => String(part.id)),
+  );
+  const entryIds = [
+    ...bundle.entries.map((entry) => String(entry.id)),
+    `v4_command_fact:child:${bundle.commandFact.parentSessionId}:${bundle.commandFact.sourceCommandId}`,
+  ];
+  const inputIds = bundle.initialInput ? [String(bundle.initialInput.id)] : [];
+  assertUnique(messageIds, "message");
+  assertUnique(partIds, "part");
+  assertUnique(entryIds, "entry");
+  assertAbsent("message", "id", messageIds, "message");
+  assertAbsent("part", "id", partIds, "part");
+  assertAbsent("session_entry", "id", entryIds, "entry");
+  assertAbsent("session_input", "id", inputIds, "input");
+}
+
 export class SqliteSessionStore
   implements
     SessionStorePort,
@@ -396,12 +434,13 @@ export class SqliteSessionStore
     ) {
       throw new Error("Fork commit bundle identity is invalid");
     }
+    const factSessionId = commandFact.scope === "child" ? child.id : child.parentID;
     const entryId = `v4_command_fact:child:${commandFact.parentSessionId}:${commandFact.sourceCommandId}`;
     this.db.exec("begin immediate");
     try {
       const existing = sessionEntryRepository
         .sessionEntries(this.db, {
-          sessionID: child.parentID,
+          sessionID: factSessionId,
           type: "v4/command_fact",
         })
         .find((entry) => entry.id === entryId);
@@ -415,7 +454,10 @@ export class SqliteSessionStore
         return existingChild;
       }
 
+      if (sessionRepository.getSession(this.db, child.id))
+        throw new Error("Fork child exists without matching command fact");
       assertForkBundleChildLocal(bundle);
+      assertNoForkBundleIdentityConflicts(this.db, bundle);
       const persistedChild = sessionRepository.createSession(this.db, child);
       this.maybeThrowForkCommitFault("afterChild");
       for (const message of bundle.messages) {
@@ -454,7 +496,7 @@ export class SqliteSessionStore
       const now = Date.now();
       sessionEntryRepository.saveSessionEntry(this.db, {
         id: entryId,
-        sessionID: child.parentID,
+        sessionID: factSessionId,
         type: "v4/command_fact",
         time: { created: now, updated: now },
         data: {
@@ -659,6 +701,11 @@ export class SqliteSessionStore
   async saveSessionEntry(input: SessionEntryInfo): Promise<void> {
     this.throwBeforeWrite();
     return sessionEntryRepository.saveSessionEntry(this.db, input);
+  }
+
+  async saveSessionEntryIfAbsent(input: SessionEntryInfo): Promise<boolean> {
+    this.throwBeforeWrite();
+    return sessionEntryRepository.saveSessionEntryIfAbsent(this.db, input);
   }
 
   async sessionEntries(input: {

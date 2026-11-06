@@ -282,6 +282,7 @@ export const PlatformChannels = {
   OpenWorkspace: "zcode:open-workspace",
   /** Main → Renderer：deep link 直接打开指定本地工作区目录 */
   OpenWorkspacePath: "zcode:open-workspace-path",
+  OpenSession: "zcode:open-session",
   /** Main → Renderer：窗口全屏状态变化 */
   WindowFullscreenChanged: "zcode:window-fullscreen-changed",
   /** Renderer → Main：读取窗口最大化状态与系统原生圆角能力 */
@@ -687,6 +688,10 @@ export interface PlatformChannelMap {
   };
   [PlatformChannels.OpenWorkspacePath]: {
     request: string;
+    response: void;
+  };
+  [PlatformChannels.OpenSession]: {
+    request: import("./session-navigation/contract.js").SessionLocator;
     response: void;
   };
   [PlatformChannels.ConnectRemote]: {

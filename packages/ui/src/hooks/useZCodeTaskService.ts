@@ -1,7 +1,8 @@
 import { useServices } from "@/hooks/useServices.js";
+import { useSyncExternalStore } from "react";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import type { IZCodeTaskService } from "@zcode/services";
-import type { ZCodeTaskSnapshot } from "@zcode/shared";
+import { createUuid, type ZCodeTaskSnapshot } from "@zcode/shared";
 import { uiMemoryDiagnosticsRegistry } from "@/lib/memoryDiagnostics.js";
 
 type GetTaskSnapshotParams = Parameters<IZCodeTaskService["getTaskSnapshot"]>[0];
@@ -183,11 +184,7 @@ function readPersistedSnapshotEntry(key: string) {
   return { etag: entry.etag, snapshot: entry.snapshot };
 }
 
-function writePersistedSnapshotEntry(
-  key: string,
-  etag: string,
-  snapshot: ZCodeTaskSnapshot,
-): void {
+function writePersistedSnapshotEntry(key: string, etag: string, snapshot: ZCodeTaskSnapshot): void {
   ensurePersistedSnapshotCacheLoaded();
   const serializedSnapshot = JSON.stringify(snapshot);
   const sizeBytes = new TextEncoder().encode(serializedSnapshot).byteLength;
@@ -263,11 +260,7 @@ function createZCodeTaskServiceProxy(service: IZCodeTaskService): IZCodeTaskServ
                 snapshot: fallbackResult.snapshot,
               };
               snapshotCache.set(requestKey, nextEntry);
-              writePersistedSnapshotEntry(
-                requestKey,
-                fallbackResult.etag,
-                fallbackResult.snapshot,
-              );
+              writePersistedSnapshotEntry(requestKey, fallbackResult.etag, fallbackResult.snapshot);
             }
             return fallbackResult.snapshot;
           }
@@ -277,11 +270,7 @@ function createZCodeTaskServiceProxy(service: IZCodeTaskService): IZCodeTaskServ
               snapshot: firstResult.snapshot,
             };
             snapshotCache.set(requestKey, nextEntry);
-            writePersistedSnapshotEntry(
-              requestKey,
-              firstResult.etag,
-              firstResult.snapshot,
-            );
+            writePersistedSnapshotEntry(requestKey, firstResult.etag, firstResult.snapshot);
           } else if (!firstResult.snapshot) {
             snapshotCache.delete(requestKey);
             deletePersistedSnapshotEntry(requestKey);
@@ -320,4 +309,93 @@ export function useZCodeTaskService(
   const nextProxy = createZCodeTaskServiceProxy(rawService);
   zcodeTaskServiceProxyCache.set(rawService, nextProxy);
   return nextProxy;
+}
+
+type SessionForkMode = Parameters<IZCodeTaskService["forkTask"]>[0]["mode"];
+type SessionForkResult = Awaited<ReturnType<IZCodeTaskService["forkTask"]>>;
+interface ForkOperation {
+  operationId: string;
+  mode: SessionForkMode;
+  promise?: Promise<SessionForkResult>;
+  result?: SessionForkResult;
+}
+const forkOperations = new WeakMap<IZCodeTaskService, Map<string, ForkOperation>>();
+const forkListeners = new Set<() => void>();
+function subscribeForks(listener: () => void) {
+  forkListeners.add(listener);
+  return () => {
+    forkListeners.delete(listener);
+  };
+}
+function notifyForks() {
+  for (const listener of forkListeners) listener();
+}
+
+/** 分叉是 Host 事务；菜单重挂载、重复点击和失败重试不得重复创建 child。 */
+export function useSessionForkAction(
+  scope: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    remoteSessionId?: string;
+  },
+  taskId: string | null,
+) {
+  const service = useZCodeTaskService(
+    scope.workspacePath,
+    scope.remoteSessionId,
+    scope.workspaceIdentity,
+  );
+  const key = JSON.stringify([scope.workspaceIdentity?.trim() || scope.workspacePath, taskId]);
+  const pending = useSyncExternalStore(
+    subscribeForks,
+    () => Boolean(forkOperations.get(service)?.get(key)?.promise),
+    () => false,
+  );
+  return {
+    pending,
+    fork: (mode: SessionForkMode): Promise<SessionForkResult> => {
+      if (!taskId) return Promise.reject(new Error("Cannot fork an unsent draft"));
+      let entries = forkOperations.get(service);
+      if (!entries) {
+        entries = new Map();
+        forkOperations.set(service, entries);
+      }
+      let operation = entries.get(key);
+      if (operation?.promise) return operation.promise;
+      if (operation?.result && operation.mode === mode) return Promise.resolve(operation.result);
+      if (!operation || operation.mode !== mode) {
+        operation = { operationId: createUuid(), mode };
+        entries.set(key, operation);
+      }
+      const active = operation;
+      const request = Promise.resolve()
+        .then(() =>
+          service.forkTask({
+            taskId,
+            workspacePath: scope.workspacePath,
+            workspaceIdentity: scope.workspaceIdentity,
+            remoteSessionId: scope.remoteSessionId,
+            operationId: active.operationId,
+            mode,
+          }),
+        )
+        .then((result) => {
+          active.result = result;
+          return result;
+        })
+        .finally(() => {
+          active.promise = undefined;
+          notifyForks();
+        });
+      active.promise = request;
+      notifyForks();
+      return request;
+    },
+    complete: () => {
+      const entries = forkOperations.get(service);
+      if (!entries?.get(key)?.result) return;
+      entries.delete(key);
+      notifyForks();
+    },
+  };
 }

@@ -1,5 +1,36 @@
 # 外部 Agent 引擎（Claude Code / Codex）
 
+## 2026-11-06 连接与认证规则
+
+Host 的 ready 仅表示 adapter 与官方 CLI 可启动；真实执行就绪归 Runtime 的原生握手，login status 是诊断信息，不能阻止无需官方账号的网关。状态检测按引擎 single-flight 并缓存 60 秒，设置页显式刷新与安装完成使缓存失效，版本和登录诊断并行，不在每次发送重复启动两个进程。失效会切换该引擎的检测代次，新请求不复用旧在途诊断；旧结果只能回复原调用者，不得回填缓存或广播覆盖新身份状态。
+
+发送与冷启动门禁使用 `isLaunchReady`，只检查 adapter 安装元数据及官方 CLI 路径，不启动版本或登录查询。结果在同一 Host 内复用；健康续聊不增加文件或 CLI 检测。显式刷新、配置保存、安装、登录结束及界面收到配置／认证失败时仅使缓存失效；下次需要时重新检查，完整诊断继续由设置页发起。
+
+Codex 设置支持沿用 CLI、官方登录和 API Key 三种连接方式。Host 是连接配置的唯一写者，密钥进入既有 CredentialService，返回 UI 的配置只含 hasApiKey。API Key 使用官方 URL或 Responses 兼容网关，模型可显式填写。YCode 管理的连接各有固定 CODEX_HOME；真实 HOME 不变，用户原有 ~/.codex 不修改。官方登录按钮运行同一官方 CLI 的 login 命令并支持取消；API Key 只通过私有 ACP providers/set 传递，不进普通会话命令、argv、快照或日志。禁用继承的 APP_SERVER_LOGS，避免原生 JSON-RPC 日志泄露 Authorization。
+
+Codex 登录诊断与当前连接身份一致：inherit 查询原 CLI 环境，official 查询专用 CODEX_HOME 并去除继承的网关覆盖，API Key 只检查对应凭据是否存在，不查询原用户的官方登录状态。该诊断不验证上游 Key 是否有效，也不承担发送门禁。点击官方登录只做可启动性预检，不先执行版本与登录状态命令。
+
+每个新会话准备连接时绑定当前配置 ID，随既有 external_engine_config entry 持久化；旧原生会话缺省绑定 inherit，不能随设置切换认证目录。fork 继承配置 ID。连接模式不可原地改写，编辑 URL/模型/密钥产生新配置 ID，已有会话继续使用旧配置。连接目录与旧配置不自动清理。
+
+```mermaid
+flowchart TD
+  A[设置选择连接方式] --> B{沿用 CLI?}
+  B -->|是| C[保留原 CLI 环境]
+  B -->|否| D[创建独立连接 ID 和 CODEX_HOME]
+  D --> E{认证方式}
+  E -->|官方登录| F[官方 CLI login 打开浏览器]
+  E -->|API Key| G[凭据服务保存密钥]
+  C --> H[新会话绑定连接 ID]
+  F --> H
+  G --> H
+  H --> I[Runtime 握手与恢复原生会话]
+  I --> J{连接成功?}
+  J -->|是| K[发布 ready 并复用健康连接]
+  J -->|否| L[保留草稿与历史并展示错误]
+```
+
+回归：无 auth.json 的网关不被 Host 拒绝；并发与重复发送不重复检测；Windows .cmd 与原生二进制检测/执行一致；三种模式、密钥不回显、取消登录、重启恢复、切换默认后旧会话与 fork 保持原连接。真实 Windows 和供应商请求须独立验收。
+
 客户端图标：Codex 使用 `@lobehub/icons` 的 `OpenAI` 单色标识，浅色主题黑色、深色主题白色；Claude Code 使用 `Claude.Color` 原始品牌色标识。两款图标均保存为本地透明 SVG，复用现有 `TaskClientLogo` 入口，不依赖在线图标服务；资源目录保留库版本、来源、校验值及许可证。
 
 ### Claude 新会话的默认权限模式
@@ -39,9 +70,11 @@ sequenceDiagram
   - Claude Code：`@agentclientprotocol/claude-agent-acp`（封装 `@anthropic-ai/claude-agent-sdk`）。
   - Codex：`@agentclientprotocol/codex-acp`（驱动 `codex app-server`）。
 - 优先使用用户 PATH 中的官方 CLI 二进制：Claude 通过 `CLAUDE_CODE_EXECUTABLE`，Codex 通过 `CODEX_PATH` 指定。未安装时才回退到 adapter 自带副本。
-- YCode 不读写 `~/.claude/.credentials.json`、`~/.codex/auth.json`，不实现任何 OAuth 或设备码登录，不伪造请求头，不新增遥测。登录一律引导用户在终端执行官方命令：`claude auth login` 或 `codex login`。
+- Windows 的 Claude npm `.cmd` / `.bat` 包装入口必须解析为该包装文件实际引用的 JavaScript 文件，再将同一路径用于检测和连接；不能把批处理文件交给不支持 shell 的 Claude SDK 直接启动。未能识别的包装入口视为不可用，继续寻找可执行文件或已安装 adapter 的官方副本。Codex adapter 自带 cross-spawn，保留其 `.cmd` 执行能力。
+- PATH 无可用入口时，Claude 使用锁定 SDK 的平台原生 optional 包（Linux 按 libc 选择），Codex 使用安装树中的官方 JavaScript 入口；Host 与 adapter 通过同一解析器选择同一文件，不依赖已退役的 Claude SDK `cli.js`。
+- YCode 不读写用户原有 `~/.claude/.credentials.json`、`~/.codex/auth.json`，不自行实现 OAuth 或设备码登录，不新增遥测。Claude 引导用户运行 `claude auth login`；Codex 可沿用已有 CLI 配置，或在设置页发起专用身份目录内的官方 `codex login`，API Key 连接通过原生 provider 接口配置。
 - 不启用 claude-agent-acp 的 `--hide-claude-auth`。该开关的作用是拒绝走 claude.ai 订阅，与本功能目标相反。
-- 启动 Claude 子进程时清除继承来的 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`，确保使用用户的官方登录，不被宿主环境中的密钥意外改成 API 计费。Codex 完全沿用用户 `~/.codex/config.toml` 中的 provider 与沙箱设置，YCode 不改写。
+- 启动 Claude 子进程时清除继承来的 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`，确保使用用户的官方登录，不被宿主环境中的密钥意外改成 API 计费。Codex 的 inherit 连接沿用原配置；管理连接使用独立 CODEX_HOME 与显式 provider，不能混入宿主环境的其他 API Key 或 provider 覆盖。
 - adapter 只能由用户在设置页显式安装，打开会话不会隐式安装。安装使用 npm 官方 registry，并锁定版本。Claude Agent SDK 为 Anthropic 专有许可（`SEE LICENSE IN README.md`），因此不打进安装包、不再分发。
 - 一期范围：本地桌面 workspace。SSH、WSL、Docker 远程 workspace 放到二期。
 - 一期在外部引擎会话中禁用以下能力，并通过 `sessionActionAvailability` 灰显、给出原因：rewind、编辑重发、retry、文件回滚，以及 ZCode 自有的 compact。`/compact` 作为 slash command 透传给引擎。
@@ -91,7 +124,7 @@ sequenceDiagram
 - 能力降级复用现有字段，不新增协议：
   - 外部引擎会话不下发 row actions 中的 `canEdit` / `canRetry`。
   - session availability 中 `fork`、`compact`、`switchModelConfig` 为 `{allowed:false, reasonCode:"external_engine_unsupported"}`。
-- 安装布局：Host 启动 CLI 时注入 `ZCODE_EXTERNAL_ENGINES_DIR=<YCode 数据目录>/.zcode/engines`。adapter 安装在 `<dir>/<engine>@<version>/`（`npm install --prefix`）。Host 另注入 `ZCODE_EXTERNAL_ENGINE_USER_HOME=<真实用户目录>`；CLI 只在启动外部 adapter 时恢复该 `HOME`（Windows 同时恢复 `USERPROFILE`），缺省时沿用当前用户目录，空值或非绝对路径拒绝启动；内置 Agent 的数据目录隔离不变。确保官方 CLI 能读到 `~/.claude`、`~/.codex`。PATH 无官方 CLI 时，Host 通过描述符 `bundledOfficialCliEntry` 定位安装树中的官方 CLI JS，用同一 Node 和真实 HOME 只读检测，adapter 沿用自身 fallback。
+- 安装布局：Host 启动 CLI 时注入 `ZCODE_EXTERNAL_ENGINES_DIR=<YCode 数据目录>/.zcode/engines`。adapter 安装在 `<dir>/<engine>@<version>/`（`npm install --prefix`）。Host 另注入 `ZCODE_EXTERNAL_ENGINE_USER_HOME=<真实用户目录>`；CLI 只在启动外部 adapter 时恢复该 `HOME`（Windows 同时恢复 `USERPROFILE`），缺省时沿用当前用户目录，空值或非绝对路径拒绝启动；内置 Agent 的数据目录隔离不变。确保官方 CLI 能读到 `~/.claude`、`~/.codex`。PATH 无官方 CLI 时，Host 与 adapter 通过描述符 `bundledOfficialCli` 定位锁定安装树内的官方 CLI；Claude 使用 SDK 平台原生包，Codex 的 JavaScript 入口由同一 Node 执行，并保留真实 HOME。
 - Host 服务：受管模块 `external-engine-service`（`packages/services/src/external-engine/`）提供 `IExternalEngineService`，方法为 `getStatus`、`listStatuses`、`installAdapter`、`onStatusChanged`。`IServiceAccessor.externalEngineService` 为可选字段，未提供该服务的 host 中，UI 隐藏外部引擎入口。
 - Host 执行门禁通过 `session/list {sessionIds, includeDrafts:true}` 读取 CLI 权威的 engine；该选项只允许精确读取已驻留草稿，不激活 runtime，不把草稿加入普通任务索引。冷恢复读取 SQLite 的 engine，不能按 Provider 值或 UI 当前草稿推断。
 - 登录检测直接调用官方 CLI 的状态命令（`claude auth status`、`codex login status`），只提取身份类别，丢弃账号和密钥片段。
@@ -154,18 +187,18 @@ sequenceDiagram
 
 - 已创建会话的引擎不可切换，输入框只展示 16px 灰色 Logo，容器固定 28px，无文字、下拉箭头、按钮语义或点击动作；复用 `TaskClientLogo` 的本地图标、可访问名称与悬停标题。仅输入框对图标去色并降低强调，任务列表仍使用原品牌外观。新建草稿的引擎选择器保持可切换。
 - 引擎选择和原生配置触发器静止时背景透明、无可见边框；保留当前文字、下拉箭头、悬停和键盘聚焦反馈。
-- 模型、模式、fast 等枚举配置点击一次直接展开全部选项，当前值右侧打勾，不使用子菜单、分页或滚动区域。菜单按视口可用高度分列，保持引擎提供的选项顺序，不以隐藏滚动条代替完整展示。
+- 模型、模式、fast 等枚举配置点击一次直接展开完整目录，当前值右侧打勾，不使用子菜单或分页。菜单沿用共享下拉层提供的视口可用高度和滚动能力，保持引擎提供的选项顺序；窄视口可滚动访问全部选项，菜单自身不得越出视口。
 - `effort`、`reasoning_effort`（含连字符形式）、`thought_level` 配置使用独立深度弹层：上方显示当前档位与当前模型名，下方为带档位圆点的原生离散滑动条。档位及顺序完全来自引擎，不猜测额外档位或默认值；单一档位只展示，不允许调节。
 - 拖动期间只在控件内预览，释放指针或方向键后沿现有 `onConfigChange` 提交一次原始 value；Escape 放弃尚未提交的预览。配置事实仍归 snapshot 所有，打开弹层不写配置。禁用时不允许修改。
 - 释放后等待确认期间，滑块保持所选位置，不得先退回旧确认值再跳到新值；提交回调返回异步接受结果（`false` 表示失败）。确认配置回流后由 snapshot 接管，失败或关闭弹层时丢弃局部显示；较早请求的失败不得清掉后续手势。目录或确认值变化仍以新 snapshot 为准，不新增配置缓存或写入路径。
 - 配置弹层在同一工具栏内互斥；旧弹层退出动画结束时，若用户已打开另一弹层，不得回焦旧触发器或关闭新弹层。保留键盘打开、方向键调节、Home/End 和 Escape 关闭能力。
 - 窄工具栏复用 `useComposerToolbarFit` 的布局裁决：配置入口收为有可访问名称的图标，只读引擎 Logo 保持固定小尺寸，避免外层 `shrink-0` 裁切选项。不新建第二套宽度检测或业务状态。
-- 验收：两家引擎的模式和模型一次展开，全部选项可见且无滚动容器；深度拖动及键盘调节正确回传原始值；单档、未知当前值、禁用、切换模型后的档位变化均不产生隐式配置写入。覆盖深浅主题、窄视口及减少动态效果。
+- 验收：两家引擎的模式和模型一次展开完整目录；菜单不溢出视口，窄视口允许滚动，每项均能滚动到达、点击并保存选择。深度拖动及键盘调节正确回传原始值；单档、未知当前值、禁用、切换模型后的档位变化均不产生隐式配置写入。覆盖深浅主题、窄视口及减少动态效果。
 
 ```mermaid
 flowchart TD
   A[点击无边框触发器] --> B{配置类型}
-  B -->|模型与普通枚举| C[按可用高度完整展示选项]
+  B -->|模型与普通枚举| C[按可用高度展示并滚动访问完整目录]
   B -->|思考深度| D[预览原生离散档位]
   C --> E[选择原始 value]
   D --> F{结束手势}
@@ -194,7 +227,7 @@ flowchart TD
 - 页面可见性由本地 Host 的 `externalEngineService` 能力决定；无服务时隐藏导航，历史偏好或跳转意图回退到常规设置。远端 workspace 激活时，该页仍管理本机引擎，不改用远端服务。
 - 设置导航和上次停留位置继续由现有 `SettingsPage` / `settingsNavigation` 管理；引擎状态仍由 Host 服务提供，页面不新增持久化事实源。未就绪引导直达 `agentEngines`，供应商配置入口继续直达 `modelProvider`。
 - 使用共享设置页标题、内容宽度、主题 token 和紧凑列表：默认展示名称、就绪状态、CLI 版本、登录状态和安装操作；登录命令可复制；adapter 包名与锁定版本折叠到「技术详情」。检测和安装期间提供加载反馈。
-- 打开、刷新、切换页面均只读检测；只有点击安装按钮才调用安装。复制命令只写剪贴板，不执行登录。
+- 打开、刷新、切换页面均只读检测；只有点击安装按钮才调用安装。复制命令只写剪贴板；只有显式点击浏览器登录按钮才启动官方登录，期间可取消。
 
 ```mermaid
 flowchart TD
@@ -212,19 +245,19 @@ flowchart TD
 
 2026-10-25 验证：设置导航、能力过滤与引擎组件定向单测 31/31；隔离 macOS 桌面 E01/E03 候选 1/1，通过独立入口跳转、导航顺序、技术详情展开、模型页卸载引擎与分区记忆断言。报告：`packages/desktop/.e2e-artifacts/desktop-e2e-20261025043018995-p3513-566c0dd819dbe6ee/summary.md`。实际开发应用经浏览器检查 Zai Dark / Zai Light，1280×880、375×812、812×375，20px 界面字体及 reduced-motion 下无横向溢出，键盘可展开技术详情。根类型检查、E2E 类型检查与架构检查通过；Lint 94 warnings / 0 errors。候选保持 pending，未安装 adapter、未调用真实模型，不作为登录或供应商调用验收。
 
-| ID  | 前置与操作                                      | 断言                                                                 | 证据             |
-| --- | ----------------------------------------------- | -------------------------------------------------------------------- | ---------------- |
-| E01 | 未安装 adapter，新建 Claude Code 会话并发送     | 返回 `engine_not_ready`，引导到设置页，保留草稿；不隐式安装          | UI、协议         |
-| E02 | 设置页安装 Claude adapter                       | 安装锁定版本到 YCode 管理目录；优先使用 PATH 中的官方 `claude`       | 文件、日志       |
-| E03 | 官方 CLI 未登录时发送                           | 提示在终端执行官方登录命令；YCode 不读写凭据文件                     | UI、文件访问记录 |
-| E04 | 发送会写文件的任务，允许或拒绝权限              | 权限卡与 ZCode 一致；允许后文件写入、diff 展示；拒绝后不写           | UI、文件、协议   |
-| E05 | 运行中点击停止                                  | `session/cancel` 送达，turn 以 cancelled 结束，可继续发送            | UI、协议         |
-| E06 | 空闲回收或重启 App 后续聊                       | 历史可见；`session/resume` 续上引擎上下文                            | UI、协议         |
-| E07 | 外部引擎会话中尝试 rewind、编辑重发、文件回滚   | 入口灰显并说明原因                                                   | UI               |
-| E08 | 桌面与自托管 Web 同时订阅外部引擎会话，断线重连 | 两条链路收敛到同一 snapshot                                          | 协议             |
-| E09 | App 退出                                        | 无残留 adapter、claude、codex 进程（macOS / Windows / Linux）        | 进程表           |
-| E10 | 启动与空闲                                      | 未选择外部引擎时不联网；显式选择可初始化官方连接，发送或安装按需联网 | 网络记录         |
-| E11 | Codex 会话按 E04–E06 重复                       | 同上；初始模式沿用用户 `config.toml`                                 | UI、协议         |
+| ID  | 前置与操作                                      | 断言                                                                                 | 证据             |
+| --- | ----------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------- |
+| E01 | 未安装 adapter，新建 Claude Code 会话并发送     | 返回 `engine_not_ready`，引导到设置页，保留草稿；不隐式安装                          | UI、协议         |
+| E02 | 设置页安装 Claude adapter                       | 安装锁定版本到 YCode 管理目录；优先使用 PATH 中的官方 `claude`                       | 文件、日志       |
+| E03 | 官方 CLI 未登录时发送                           | 不据登录状态阻止网关；原生握手鉴权失败时展示诊断与连接设置入口，原有身份文件不被改写 | UI、文件访问记录 |
+| E04 | 发送会写文件的任务，允许或拒绝权限              | 权限卡与 ZCode 一致；允许后文件写入、diff 展示；拒绝后不写                           | UI、文件、协议   |
+| E05 | 运行中点击停止                                  | `session/cancel` 送达，turn 以 cancelled 结束，可继续发送                            | UI、协议         |
+| E06 | 空闲回收或重启 App 后续聊                       | 历史可见；`session/resume` 续上引擎上下文                                            | UI、协议         |
+| E07 | 外部引擎会话中尝试 rewind、编辑重发、文件回滚   | 入口灰显并说明原因                                                                   | UI               |
+| E08 | 桌面与自托管 Web 同时订阅外部引擎会话，断线重连 | 两条链路收敛到同一 snapshot                                                          | 协议             |
+| E09 | App 退出                                        | 无残留 adapter、claude、codex 进程（macOS / Windows / Linux）                        | 进程表           |
+| E10 | 启动与空闲                                      | 未选择外部引擎时不联网；显式选择可初始化官方连接，发送或安装按需联网                 | 网络记录         |
+| E11 | Codex 会话按 E04–E06 重复                       | 同上；初始模式沿用用户 `config.toml`                                                 | UI、协议         |
 
 ## 验证记录
 
@@ -374,11 +407,11 @@ sequenceDiagram
 
 ### 运行中断后的配置状态（2026-10-28）
 
-- 非用户停止的 `runTurn` 抛错时，adapter 会清理该会话连接；Runtime 必须同步发布 `engineConfigState=error`，保留已确认配置和原 `externalSessionId`，不能继续发布或沿用 ready。用户停止走下述自动恢复路径。
+- 非用户停止的 `runTurn` 发生连接、协议或超时故障时，adapter 清理该会话连接；Runtime 同步发布 `engineConfigState=error`，保留已确认配置和原 `externalSessionId`。`session/prompt` 的供应商 HTTP/认证/业务拒绝若连接仍健康，则单独发布请求失败并保留配置 ready，不自动重发 prompt。用户停止走下述自动恢复路径。
 - 正常返回 `stopReason=cancelled` 的停止仍可复用连接，不因用户停止而显示连接失败。配置 RPC 的业务拒绝同样保留 ready；连接故障在空闲时先自动恢复，仍失败才进入已有错误与重试入口。
 - ACP prompt 响应中的 `usage: null` 与缺省用量都表示本轮没有用量数据，不是协议故障；停止后保留健康连接。
 - 用户停止时若 runTurn 抛错导致 adapter 回收连接（包括连接、协议、超时或取消回调异常），Runtime 自动调用既有 prepareSession，按原 externalSessionId 恢复上次确认配置；恢复期间投影 connecting，成功后 ready，无须手动重连。恢复使用独立于已取消 turn 的 signal，应用关闭时由 closeSession 中止，不创建新会话或重发 prompt。恢复失败仍保留历史、配置及草稿，发布错误并保留手动重试入口。
-- 回归：两家引擎的空用量停止、停止时真实断联自动恢复、恢复失败及关闭边界；原生会话 ID 不变且 prompt 不重发；非停止的 prompt 异常仍投影 error，健康停止及配置业务拒绝保持可用。
+- 回归：两家引擎的空用量停止、停止时真实断联自动恢复、恢复失败及关闭边界；原生会话 ID 不变且 prompt 不重发；非停止的传输故障投影配置 error，健康停止、配置业务拒绝及网关请求拒绝保持原生配置可用。
 - 停止成功后才退出的进程可在下一次配置操作中被发现。空闲 Runtime 收到结构化连接故障后，通过同一 prepareSession 恢复原会话，并对幂等的 set_config_option 重试一次；不重试业务拒绝，不重发 prompt，运行中或正在关闭时不另建恢复链路。
 
 ```mermaid
@@ -419,7 +452,8 @@ sequenceDiagram
 - 初始化协商恢复能力：优先 session/resume；对明确不支持该方法且声明 loadSession 的 adapter，使用 session/load 恢复同一个 externalSessionId。load 的历史正文/工具通知只用于原生加载，不能重复追加至 YCode transcript。
 - 不静默新建替代原生会话、不更换模型/权限/思考档位；已确认的 externalSessionId 在后续尝试中复用。session/new 已发送但未确认 id 时不自动重发，避免制造多个未知会话。
 - runTurn 仅在 prompt 之前复用 prepare 的重试；prompt 提交后发生错误绝不自动重发。关闭会话或取消准备时中止退避与在途请求，迟到结果不得启动新连接。
-- Runtime 继续拥有 connecting/ready/error 投影。失败事件与快照附加经过 schema 校验的错误分类、ACP 方法和数值错误码；不携带原始 stderr、RPC message/data、身份或用户内容。UI 按分类提供本地化处理说明；旧快照保留原有通用提示。
+- Runtime 继续拥有 connecting/ready/error 投影。失败事件与快照附加经过 schema 校验的错误分类、ACP 方法、数值错误码、HTTP 状态、request id 与边界脱敏的短摘要；不携带原始 stderr、RPC message/data、身份或用户内容。UI 按分类提供本地化处理说明及可复制诊断；旧快照保留原有通用提示。
+- ACP 响应的 error/result 先校验再移除在途请求；畸形响应立即以 protocol 失败拒绝对应 promise 并关闭连接，不能让没有请求超时的 session/prompt 悬挂。
 - 现场根因：桌面 PATH 可找到 npm 的 Codex 入口，却没有 node，脚本以 127 退出，adapter 将其报告为 initialize / RPC 1001。PATH 缺 node 时，仅为 ACP 子进程补充指向当前运行时的托管 Node 入口，并保持 Electron 的 Node 模式；不修改系统 PATH。Host 检测到官方 CLI 是 JavaScript 入口时，用当前运行时直接执行版本和登录状态查询，避免把启动失败误判为未登录。
 - 验收：覆盖两家引擎的临时失败后成功、重试耗尽、不可恢复错误不重试、同会话 single-flight、关闭/取消终止重试、session/load 能力回退与历史去重，以及 prompt 错误不重发；真实桌面验证原失败会话恢复后历史仍在。
 
@@ -454,3 +488,25 @@ sequenceDiagram
 - ACP adapter 定向 2 文件 24/24、Host 状态检测 8/8 通过，包含真实子进程、缺 Node 的 npm 入口、并发准备、退避取消、load 去重及 prompt 不重发。此前 Runtime/投影及 UI/协议定向回归也通过。
 - Electron 隔离候选 1/1 通过：Claude Code 与 Codex 冷重启后前两次 resume 故障、第三次自动恢复，原会话 ID、未发送草稿、持久化正文和 prompt 次数保持一致；恢复后可调整配置并续聊。报告：`packages/desktop/.e2e-artifacts/desktop-e2e-20261025084459994-p65325-b89a7216764e7a7f/summary.md`。供应商为受控 ACP 夹具，候选保持 pending，不表示人工转正或 CI 准入。
 - 根与 CLI 类型检查、桌面 E2E 类型检查通过；架构检查 0 violations。根 Lint 为 94 warnings、0 errors；CLI Lint 仍受 4 个 max-lines 错误阻塞：runner-stream、transcript-hydration、product-projection 和 contracts/model，其中 product-projection 是本轮触及的原有超长文件。
+
+## 默认引擎偏好（2026-11-06）
+
+- 本机 `AppSettings.defaultSessionEngine` 保存用户最近一次显式选择；输入框选择器与引擎设置页共用该字段，未设置时使用 YCode。选择立即改变当前草稿，保存失败保留草稿并可见提示。
+- 全新草稿在模型目录、readiness 与预热之前读取本机设置并固定引擎；设置尚未读取完成时不启动错误引擎。远程项目也读本机偏好，不写远端设置。
+- 导航为新 Tab 预写的空正文与项目归属只表示草稿占位，不算旧版引擎意图；没有正文、编辑状态和模型/模式配置的占位仍须使用本机默认引擎。
+- 已有草稿（含旧版隐式 YCode 草稿）与已创建会话不随全局偏好改变；未就绪的默认引擎仍保留选择并引导配置，不静默换引擎。
+- 本机设置提交后通过现有 SettingsChanged 广播刷新所有窗口；以后创建的新草稿采用新值，不重置已经打开的独立草稿。
+- 回归覆盖：跨项目/重启继承、设置迟到不启动内置引擎、旧草稿与已有会话不变、本机/SSH 设置隔离、偏好保存失败可见。
+
+```mermaid
+flowchart TD
+    A[新草稿] --> B{已有草稿引擎?}
+    B -- 是 --> C[保留草稿选择]
+    B -- 否 --> D[读取本机默认引擎]
+    D --> E[固定本草稿引擎]
+    C --> F[按选定引擎预热]
+    E --> F
+    G[用户显式改选] --> H[更新本草稿并回收旧预热]
+    H --> I[保存本机偏好并广播其他窗口]
+    I --> J[后续新草稿继承]
+```

@@ -31,11 +31,22 @@ const readline=require('node:readline'), fs=require('node:fs'), path=require('no
 const recoveryPath=path.join(__dirname,'recovery-attempts.json');
 const promptPath=path.join(__dirname,'prompt-count.json');
 const configControlPath=path.join(__dirname,'config-control.json');
+const planDecisionPath=path.join(__dirname,'plan-decisions.json');
+const retryReleasePath=path.join(__dirname,'retry-release.json');
 const send=f=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...f})+'\n');
-let mode='ENGINE_ID'==='claude-code'?'default':'safe', model='fixture-0', effort='low', turns=0, pendingPrompt; const sid='fixture-session';
-const options=()=>[{id:'fast',name:'Fast mode',currentValue:'off',options:[{value:'off',name:'Off'},{value:'reject',name:'Rejected fast'}]},{id:'mode',name:'Mode',currentValue:mode,options:[{value:'default',name:'Manual'},{value:'auto',name:'Auto'},{value:'safe',name:'Safe'},{value:'full',name:'Full'}]},{id:'model',name:'Model',currentValue:model,options:Array.from({length:18},(_,i)=>({value:'fixture-'+i,name:'Fixture model '+i}))},{id:'EFFORT_ID',name:'Effort',currentValue:effort,options:[{value:'low',name:'Low'},{value:'medium',name:'Medium'},{value:'high',name:'High'}]}];
+let mode='ENGINE_ID'==='claude-code'?'default':'safe', model='fixture-0', effort='low', turns=0, pendingPrompt, pendingPlan, planRequestId; const sid='fixture-session';
+const options=()=>[{id:'fast',name:'Fast mode',currentValue:'off',options:[{value:'off',name:'Off'},{value:'reject',name:'Rejected fast'}]},{id:'mode',name:'Mode',currentValue:mode,options:[{value:'default',name:'Manual'},{value:'auto',name:'Auto'},{value:'plan',name:'Plan'},{value:'safe',name:'Safe'},{value:'full',name:'Full'}]},{id:'model',name:'Model',currentValue:model,options:Array.from({length:18},(_,i)=>({value:'fixture-'+i,name:'Fixture model '+i}))},{id:'EFFORT_ID',name:'Effort',currentValue:effort,options:[{value:'low',name:'Low'},{value:'medium',name:'Medium'},{value:'high',name:'High'}]}];
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const f=JSON.parse(line), result=value=>send({id:f.id,result:value});
+ if(!f.method && f.id===planRequestId && pendingPlan){
+  const decisions=fs.existsSync(planDecisionPath)?JSON.parse(fs.readFileSync(planDecisionPath,'utf8')):[];
+  decisions.push(f.result?.outcome);fs.writeFileSync(planDecisionPath,JSON.stringify(decisions));
+  const approved=f.result?.outcome?.optionId==='implement_plan';
+  if(approved)mode='full';
+  send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'config_option_update',configOptions:options()}}});
+  send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:approved?'E2E_PLAN_IMPLEMENTED':'E2E_PLAN_REVISED'}}}});
+  send({id:pendingPlan.id,result:{stopReason:'end_turn'}});pendingPlan=undefined;planRequestId=undefined;return;
+ }
  if(f.method==='session/resume' && fs.existsSync(recoveryPath)){
   const count=JSON.parse(fs.readFileSync(recoveryPath,'utf8'))+1;fs.writeFileSync(recoveryPath,JSON.stringify(count));
   if(count<=2){send({id:f.id,error:{code:-32603,message:'E2E_TEMPORARY_RESUME_FAILURE'}});return;}
@@ -62,6 +73,23 @@ if(f.params.configId==='mode')mode=f.params.value;else if(f.params.configId==='m
  }
  else if(f.method==='session/prompt'){
   fs.writeFileSync(promptPath,JSON.stringify((fs.existsSync(promptPath)?JSON.parse(fs.readFileSync(promptPath,'utf8')):0)+1));
+  if(f.params.prompt[0].text==='E2E_PLAN'){
+   pendingPlan=f;planRequestId=70001;
+   const markdown='# E2E_NATIVE_PLAN\n\n先检查连接，再验证修改。';
+   const update=u=>send({method:'session/update',params:{sessionId:sid,update:u}});
+   update({sessionUpdate:'plan',entries:[{content:'E2E_PLAN_CHECK_CONNECTION',status:'pending',priority:'high'}]});
+   update({sessionUpdate:'plan_update',plan:{type:'markdown',planId:'fixture-native-plan',content:markdown}});
+   send({id:planRequestId,method:'session/request_permission',params:{sessionId:sid,toolCall:{toolCallId:'plan-review:fixture-native-plan',kind:'switch_mode',title:'Implement this plan?',rawInput:{plan:markdown}},options:[{optionId:'implement_plan',kind:'allow_once',name:'Implement'},{optionId:'revise_plan',kind:'reject_once',name:'Revise'}]}});return;
+  }
+  if(f.params.prompt[0].text==='E2E_RETRY_502'){
+   if(fs.existsSync(retryReleasePath))fs.unlinkSync(retryReleasePath);
+   const update=u=>send({method:'session/update',params:{sessionId:sid,update:u}});
+   const watcher=fs.watch(__dirname,(_event,filename)=>{
+    if(String(filename)!=='retry-release.json'||!fs.existsSync(retryReleasePath))return;
+    watcher.close();update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'E2E_502_RECOVERED'}});result({stopReason:'end_turn'});
+   });
+   update({sessionUpdate:'session_info_update',_meta:{codex:{error:{message:'unexpected status 502 Bad Gateway; request id: fixture-request; https://fixture.invalid/responses?api_key=fixture-secret',codexErrorInfo:{httpConnectionFailed:{httpStatusCode:502}},willRetry:true}}}});return;
+  }
   if(f.params.prompt[0].text==='E2E_HTML_PREVIEW'){
    const htmlPath=path.join(process.cwd(),'E2E-preview-login.html');
    const assets=path.join(process.cwd(),'E2E-preview-assets');fs.mkdirSync(assets,{recursive:true});
@@ -186,6 +214,164 @@ async function displayed(selector: string) {
 }
 
 describe("外部引擎首发前配置与同会话续聊", () => {
+  afterEach(async function () {
+    if (this.currentTest?.state !== "failed") return;
+    const diagnostics = await browser.execute(() => ({
+      modelMenus: [
+        ...document.querySelectorAll<HTMLElement>('[data-testid="engine-config-menu-model"]'),
+      ].map((element) => ({
+        visible: element.getClientRects().length > 0,
+        rect: element.getBoundingClientRect().toJSON(),
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+        items: [...element.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].map((item) => ({
+          text: item.innerText,
+          rect: item.getBoundingClientRect().toJSON(),
+        })),
+      })),
+      selectors: [
+        ...document.querySelectorAll<HTMLElement>('[data-testid="session-engine-select"]'),
+      ].map((element) => ({
+        text: element.innerText,
+        visible: element.getClientRects().length > 0,
+      })),
+      panes: [...document.querySelectorAll<HTMLElement>('[data-testid^="v4-session-pane-"]')].map(
+        (element) => ({
+          id: element.dataset.testid,
+          sessionId: element.dataset.sessionId,
+          visible: element.getClientRects().length > 0,
+        }),
+      ),
+      drafts: Object.keys(localStorage)
+        .filter((key) => key.startsWith("zcode-v4-composer-drafts:v1:"))
+        .map((key) => ({ key, value: localStorage.getItem(key) })),
+      text: document.body.innerText.slice(-6000),
+    }));
+    const caseKey = this.currentTest?.title.startsWith("原生计划")
+      ? "native-plan"
+      : "engine-config";
+    await writeFile(
+      join(process.env.ZCODE_E2E_ARTIFACT_DIR!, `external-engine-${caseKey}-failure.json`),
+      JSON.stringify(diagnostics, null, 2),
+    );
+  });
+
+  it("原生计划审批静态等待且只实施一次，首次502重试可见并恢复", async () => {
+    await installExternalEngineFixtures();
+    await startNewV4Draft();
+    await prepareV4ConversationE2E({ skipProvider: true, skipShellReady: true });
+    const paneId = await getV4FocusedPaneId();
+    if (!paneId) throw new Error("缺少原生计划回归的当前 pane");
+    const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
+    await (await displayed(`${paneSelector} [data-testid="session-engine-select"]`)).click();
+    await $('[role="option"]=Codex').click();
+    const mode = () => displayed(`${paneSelector} [data-testid="engine-config-mode"]`);
+    await (await mode()).waitForEnabled({ timeout: 30000 });
+    const entry = join(
+      resolveE2EStorageRoot(),
+      "engines",
+      managedAdapterInstallDirName(EXTERNAL_ENGINE_RUNTIMES.codex),
+      ...managedAdapterEntrySegments(EXTERNAL_ENGINE_RUNTIMES.codex),
+    );
+    const promptPath = join(dirname(entry), "prompt-count.json");
+    const decisionPath = join(dirname(entry), "plan-decisions.json");
+    await writeFile(decisionPath, "[]");
+    const promptCount = async () =>
+      JSON.parse(await readFile(promptPath, "utf8").catch(() => "0")) as number;
+    const before = await promptCount();
+    for (const start of [true, false]) {
+      await (await mode()).click();
+      await $('[role="menuitemradio"]=Plan').click();
+      await browser.waitUntil(async () => (await (await mode()).getText()) === "Plan");
+      await sendV4PromptInPane(paneId, "E2E_PLAN");
+      const card = await displayed(`${paneSelector} [data-testid="native-plan-approval"]`);
+      expect(await card.getText()).toContain("E2E_PLAN_CHECK_CONNECTION");
+      expect(await card.getText()).toContain("E2E_NATIVE_PLAN");
+      expect(await $(`${paneSelector} [data-testid="chat-loading"]`).isExisting()).toBe(false);
+      if (start) await (await card.$('[data-testid="native-plan-start"]')).doubleClick();
+      else await (await card.$('[data-testid="native-plan-revise"]')).click();
+      await waitForV4AssistantMessageContaining(
+        start ? "E2E_PLAN_IMPLEMENTED" : "E2E_PLAN_REVISED",
+      );
+      await card.waitForDisplayed({ reverse: true });
+      await waitForV4ConversationState(
+        (snapshot) => snapshot.state === "idle",
+        "计划审批原生轮结束",
+      );
+      if (!start) {
+        expect(await (await mode()).getText()).toBe("Plan");
+        await browser.waitUntil(
+          async () =>
+            browser.execute(
+              (selector) => document.activeElement?.closest(selector) !== null,
+              `${paneSelector} [data-testid="v4-composer-input"]`,
+            ),
+          { timeoutMsg: "继续修改后焦点应回到当前输入框" },
+        );
+      }
+    }
+    expect(JSON.parse(await readFile(decisionPath, "utf8"))).toEqual([
+      { outcome: "selected", optionId: "implement_plan" },
+      { outcome: "selected", optionId: "revise_plan" },
+    ]);
+    expect(await promptCount()).toBe(before + 2);
+    await sendV4PromptInPane(paneId, "E2E_RETRY_502");
+    const retry = await displayed(`${paneSelector} [data-zcode-chat-loading-slot="true"]`);
+    await browser.waitUntil(async () => (await retry.getText()).includes("HTTP 502"));
+    expect(await retry.getText()).toContain("第 1 次");
+    await (await retry.$("summary=错误详情")).click();
+    expect(await retry.getText()).toContain("fixture-request");
+    expect(await retry.getText()).not.toContain("fixture-secret");
+    expect(await retry.getText()).not.toContain("fixture.invalid");
+    await writeFile(join(dirname(entry), "retry-release.json"), "{}");
+    await waitForV4AssistantMessageContaining("E2E_502_RECOVERED");
+    await waitForV4ConversationState(
+      (snapshot) => snapshot.state === "idle",
+      "502恢复后原生轮结束",
+    );
+    await retry.waitForDisplayed({ reverse: true });
+    expect(await promptCount()).toBe(before + 3);
+  });
+
+  it("默认引擎在显式选择后由新草稿继承，重启后仍保持本机偏好", async () => {
+    await installExternalEngineFixtures();
+    await prepareV4ConversationE2E({ skipProvider: true });
+    for (const [name, engine] of [
+      ["Claude Code", "claude-code"],
+      ["Codex", "codex"],
+    ] as const) {
+      await (await displayed('[data-testid="session-engine-select"]')).click();
+      await (await displayed(`[role="option"]=${name}`)).click();
+      await browser.waitUntil(
+        async () =>
+          (await (await displayed('[data-testid="engine-config-model"]')).getText()).includes(
+            `${engine} fixture model`,
+          ),
+        { timeout: 30000, timeoutMsg: `${name} 选择后必须连接对应引擎` },
+      );
+      await startNewV4Draft();
+      await browser.waitUntil(
+        async () =>
+          (await (await displayed('[data-testid="session-engine-select"]')).getText()).includes(
+            name,
+          ),
+        { timeout: 30000, timeoutMsg: `${name} 显式选择后新草稿必须继承引擎` },
+      );
+    }
+    await reloadElectronSessionPreservingBrowserProfile(browser);
+    await startNewV4Draft();
+    expect(await (await displayed('[data-testid="session-engine-select"]')).getText()).toContain(
+      "Codex",
+    );
+    await browser.waitUntil(
+      async () =>
+        (await (await displayed('[data-testid="engine-config-model"]')).getText()).includes(
+          "codex fixture model",
+        ),
+      { timeout: 30000, timeoutMsg: "重启后新草稿必须使用默认 Codex 并连接配置" },
+    );
+  });
+
   it("两家引擎都先展示配置，首发使用所选模式且续聊复用进程", async () => {
     await installExternalEngineFixtures();
     await prepareV4ConversationE2E({ skipProvider: true });
@@ -194,34 +380,33 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       ["Codex", "codex"],
     ] as const) {
       if (name === "Codex") await startNewV4Draft();
-      await $('[data-testid="session-engine-select"]').click();
-      await $(`[role="option"]=${name}`).click();
-      await $('[data-testid="engine-config-model"]').waitForDisplayed({
-        timeout: 30000,
-      });
+      await (await displayed('[data-testid="session-engine-select"]')).click();
+      await (await displayed(`[role="option"]=${name}`)).click();
+      await displayed('[data-testid="engine-config-model"]');
       await browser.waitUntil(
         async () =>
-          (await $('[data-testid="engine-config-model"]').getText()).includes(
+          (await (await displayed('[data-testid="engine-config-model"]')).getText()).includes(
             `${engine} fixture model`,
           ),
         { timeout: 30000, timeoutMsg: "配置必须属于当前引擎" },
       );
       // 原生 Claude 缺省返回 Manual，客户端须在首发前确认 Auto；Codex 保留原生 Safe。
-      expect(await $('[data-testid="engine-config-mode"]').getText()).toBe(
+      expect(await (await displayed('[data-testid="engine-config-mode"]')).getText()).toBe(
         engine === "claude-code" ? "Auto" : "Safe",
       );
       if (engine === "claude-code") {
-        await $('[data-testid="engine-config-mode"]').click();
-        await $('[role="menuitemradio"]=Manual').click();
+        await (await displayed('[data-testid="engine-config-mode"]')).click();
+        await (await displayed('[role="menuitemradio"]=Manual')).click();
         await browser.waitUntil(
-          async () => (await $('[data-testid="engine-config-mode"]').getText()) === "Manual",
+          async () =>
+            (await (await displayed('[data-testid="engine-config-mode"]')).getText()) === "Manual",
           { timeoutMsg: "用户显式选择 Manual 后不能被新会话默认值覆盖" },
         );
       }
-      await $('[data-testid="engine-config-mode"]').click();
-      await $('[role="menuitemradio"]=Full').click();
-      await $('[data-testid="engine-config-model"]').click();
-      await $('[data-testid="engine-config-menu-model"]').waitForDisplayed();
+      await (await displayed('[data-testid="engine-config-mode"]')).click();
+      await (await displayed('[role="menuitemradio"]=Full')).click();
+      await (await displayed('[data-testid="engine-config-model"]')).click();
+      await (await displayed('[data-testid="engine-config-menu-model"]')).waitForDisplayed();
       await browser.waitUntil(
         async () =>
           browser.execute(() => {
@@ -230,23 +415,38 @@ describe("外部引擎首发前配置与同会话续聊", () => {
             );
             if (!menu) return false;
             const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+            const rect = menu.getBoundingClientRect();
             return (
               items.length === 18 &&
-              menu.scrollHeight <= menu.clientHeight &&
-              items.every((item) => {
-                const r = item.getBoundingClientRect();
-                return (
-                  r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth
-                );
-              })
+              rect.top >= 0 &&
+              rect.bottom <= innerHeight &&
+              rect.left >= 0 &&
+              rect.right <= innerWidth
             );
           }),
-        { timeoutMsg: "完整模型目录必须一次可见且无滚动区域" },
+        { timeoutMsg: "完整模型目录必须保留18项且菜单不溢出视口" },
       );
-      await $(`[role="menuitemradio"]=${engine} fixture model 17`).click();
+      // 手机宽度允许菜单滚动；逐项实际到达、选择并确认，不能用扩大窗口掩盖溢出。
+      for (let index = 0; index < 18; index++) {
+        if (index > 0) {
+          await $('[data-testid="engine-config-menu-model"]').waitForExist({ reverse: true });
+          await (await displayed('[data-testid="engine-config-model"]')).click();
+        }
+        const modelName = `${engine} fixture model ${index}`;
+        const option = await displayed(`[role="menuitemradio"]=${modelName}`);
+        await option.scrollIntoView({ block: "nearest" });
+        expect(await option.isDisplayed({ withinViewport: true })).toBe(true);
+        await option.click();
+        await browser.waitUntil(
+          async () =>
+            (await (await displayed('[data-testid="engine-config-model"]')).getText()) ===
+            modelName,
+          { timeoutMsg: `模型 ${modelName} 必须可选且保存选择` },
+        );
+      }
       const effortId = engine === "codex" ? "reasoning_effort" : "effort";
-      await $(`[data-testid="engine-config-${effortId}"]`).click();
-      const slider = await $(`[data-testid="engine-effort-slider-${effortId}"]`);
+      await (await displayed(`[data-testid="engine-config-${effortId}"]`)).click();
+      const slider = await displayed(`[data-testid="engine-effort-slider-${effortId}"]`);
       await slider.waitForDisplayed();
       // 原生 range 的 End 在 keyup 提交，真实配置必须进入后续 prompt 的 ACP 夹具。
       await browser.waitUntil(
@@ -259,7 +459,8 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       );
       await browser.keys("End");
       await browser.waitUntil(
-        async () => (await $('[data-testid="engine-effort-value"]').getText()) === "High",
+        async () =>
+          (await (await displayed('[data-testid="engine-effort-value"]')).getText()) === "High",
       );
       await browser.keys("Escape");
       await sendV4Prompt("E2E_EXTERNAL_PREWARM first");
@@ -287,12 +488,14 @@ describe("外部引擎首发前配置与同会话续聊", () => {
           ),
         { timeoutMsg: "历史会话必须显示实际客户端的本地图标" },
       );
-      await $(rowSelector).moveTo();
-      await $(
-        `${rowSelector} button[aria-label="Pin task"], ${rowSelector} button[aria-label="置顶任务"]`,
+      await (await displayed(rowSelector)).moveTo();
+      await (
+        await displayed(
+          `${rowSelector} button[aria-label="Pin task"], ${rowSelector} button[aria-label="置顶任务"]`,
+        )
       ).click();
       const unpinSelector = `${rowSelector} button[aria-label="Unpin task"], ${rowSelector} button[aria-label="取消置顶任务"]`;
-      await $(unpinSelector).waitForDisplayed();
+      await (await displayed(unpinSelector)).waitForDisplayed();
       expect((await getV4PaneSnapshot()).sessionId).toBe(taskId);
       expect(
         await browser.execute((selector) => {
@@ -329,8 +532,17 @@ describe("外部引擎首发前配置与同会话续聊", () => {
           join(logoArtifactDir, `${engine}-history-logo-pinned-${theme}.png`),
         );
       }
-      await $(unpinSelector).click();
-      await browser.waitUntil(async () => !(await $(unpinSelector).isExisting()));
+      await (await displayed(rowSelector)).moveTo();
+      await (await displayed(unpinSelector)).click();
+      // 取消置顶后按钮会卸载；不能用等待“可见”的 helper 再检查它不存在。
+      await browser.waitUntil(
+        async () => browser.execute((selector) => !document.querySelector(selector), unpinSelector),
+        { timeoutMsg: "取消置顶后，该会话的 Unpin 按钮必须消失" },
+      );
+      await (await displayed(rowSelector)).moveTo();
+      await displayed(
+        `${rowSelector} button[aria-label="Pin task"], ${rowSelector} button[aria-label="置顶任务"]`,
+      );
       expect((await getV4PaneSnapshot()).sessionId).toBe(taskId);
       await sendV4Prompt("E2E_EXTERNAL_PREWARM continue");
       await waitForV4AssistantMessageContaining("E2E_ENGINE_REPLY_full_fixture-17_high_2");
@@ -339,24 +551,27 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       // E14：由配置提交释放受控 prompt，不用固定等待掩盖运行中配置的时序。
       await sendV4Prompt("E2E_EXTERNAL_RUNNING");
       await waitForV4AssistantMessageContaining("E2E_RUNNING_CHECKING");
-      const modeControl = $('[data-testid="engine-config-mode"]');
+      const modeControl = await displayed('[data-testid="engine-config-mode"]');
       expect(await modeControl.isEnabled()).toBe(true);
       await modeControl.click();
-      await $('[role="menuitemradio"]=Safe').click();
-      await $('[data-testid="engine-config-model"]').click();
-      await $(`[role="menuitemradio"]=${engine} fixture model 1`).click();
-      await $('[data-testid="engine-config-fast"]').click();
-      await $('[role="menuitemradio"]=Rejected fast').click();
+      await (await displayed('[role="menuitemradio"]=Safe')).click();
+      await (await displayed('[data-testid="engine-config-model"]')).click();
+      await (await displayed(`[role="menuitemradio"]=${engine} fixture model 1`)).click();
+      await (await displayed('[data-testid="engine-config-fast"]')).click();
+      await (await displayed('[role="menuitemradio"]=Rejected fast')).click();
       await browser.waitUntil(async () =>
         browser.execute(() =>
           /配置修改未生效|Configuration was not changed/.test(document.body.innerText),
         ),
       );
-      expect(await $('[data-testid="engine-config-fast"]').getText()).toContain("Off");
-      await $(`[data-testid="engine-config-${effortId}"]`).click();
+      expect(await (await displayed('[data-testid="engine-config-fast"]')).getText()).toContain(
+        "Off",
+      );
+      await (await displayed(`[data-testid="engine-config-${effortId}"]`)).click();
       await browser.keys("ArrowLeft");
       await browser.waitUntil(
-        async () => (await $('[data-testid="engine-effort-value"]').getText()) === "Medium",
+        async () =>
+          (await (await displayed('[data-testid="engine-effort-value"]')).getText()) === "Medium",
       );
       await browser.keys("Escape");
       await waitForV4AssistantMessageContaining("E2E_RUNNING_FINAL_safe_fixture-1_medium");
@@ -380,7 +595,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         await browser.execute(() => document.body.innerText.includes("E2E_RUNNING_CHECKING")),
       ).toBe(true);
       // E15：真实卡片展开验证命令、输出和父子过程，DOM 文本不能来自主回答。
-      const terminal = $(`[data-testid="tool-summary-trigger-${engine}-fixture-bash"]`);
+      const terminal = await displayed(
+        `[data-testid="tool-summary-trigger-${engine}-fixture-bash"]`,
+      );
       await terminal.waitForDisplayed();
       await expandTool(`${engine}-fixture-bash`);
       await browser.waitUntil(async () =>
@@ -405,11 +622,13 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       await browser.waitUntil(async () =>
         browser.execute(() => document.body.innerText.includes("E2E_CHILD_OUTPUT")),
       );
-      const usage = $('[data-testid="chat-context-usage-trigger"]');
+      const usage = await displayed('[data-testid="chat-context-usage-trigger"]');
       await usage.waitForDisplayed();
       expect(await usage.getAttribute("aria-label")).toContain("1,234");
       expect(await usage.getAttribute("aria-label")).toContain("10,000");
-      await $(`[data-testid="tool-summary-trigger-${engine}-fixture-agent"]`).scrollIntoView();
+      await (
+        await displayed(`[data-testid="tool-summary-trigger-${engine}-fixture-agent"]`)
+      ).scrollIntoView();
       await browser.saveScreenshot(join(artifactDir, `${engine}-agent-details.png`));
       // E16：真正重启 Electron/Host/CLI，恢复原生配置后才能发送，草稿不可丢失。
       const draft = `E2E_RESTORE_DRAFT_${engine}`;
@@ -436,7 +655,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       await waitForV4ComposerText(draft, "冷恢复必须保留未发送草稿");
       await browser.waitUntil(
         async () => {
-          const model = $('[data-testid="engine-config-model"]');
+          const model = await displayed('[data-testid="engine-config-model"]');
           return (
             (await model.isEnabled()) &&
             (await model.getText()).includes(`${engine} fixture model 1`)
@@ -451,10 +670,13 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       expect((await getV4PaneSnapshot()).sessionId).toBe(taskId);
       expect(persistedHistory(taskId)).toEqual(beforeRecovery);
       expect(JSON.parse(await readFile(promptPath, "utf8"))).toBe(promptsBeforeRecovery);
-      expect(await $('[data-testid="engine-config-mode"]').getText()).toContain("Safe");
-      await $(`[data-testid="engine-config-${effortId}"]`).click();
+      expect(await (await displayed('[data-testid="engine-config-mode"]')).getText()).toContain(
+        "Safe",
+      );
+      await (await displayed(`[data-testid="engine-config-${effortId}"]`)).click();
       await browser.waitUntil(
-        async () => (await $('[data-testid="engine-effort-value"]').getText()) === "Medium",
+        async () =>
+          (await (await displayed('[data-testid="engine-effort-value"]')).getText()) === "Medium",
         { timeoutMsg: "恢复的思考深度必须显示为 Medium" },
       );
       await browser.waitUntil(
@@ -467,7 +689,8 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       );
       await browser.keys("End");
       await browser.waitUntil(
-        async () => (await $('[data-testid="engine-effort-value"]').getText()) === "High",
+        async () =>
+          (await (await displayed('[data-testid="engine-effort-value"]')).getText()) === "High",
       );
       await browser.keys("Escape");
       await setV4ComposerText("");
@@ -476,6 +699,16 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       await waitForV4ConversationState((s) => s.state === "idle", "冷恢复后继续同一会话");
       await browser.saveScreenshot(join(artifactDir, `${engine}-restored-settings.png`));
     }
+    // 最后一次显式选择成为本机默认；新草稿及重启后新草稿都继承 Codex。
+    await startNewV4Draft();
+    await expect(await displayed('[data-testid="session-engine-select"]')).toHaveText(
+      expect.stringContaining("Codex"),
+    );
+    await reloadElectronSessionPreservingBrowserProfile(browser);
+    await startNewV4Draft();
+    await expect(await displayed('[data-testid="session-engine-select"]')).toHaveText(
+      expect.stringContaining("Codex"),
+    );
   });
 
   it("停止后自动恢复原会话并直接调节思考深度", async () => {

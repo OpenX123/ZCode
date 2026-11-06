@@ -62,6 +62,68 @@ afterEach(() => {
 });
 
 describe("desktopOAuthDeepLink workspace open routing", () => {
+  it("会话链接在无窗口时请求唤起主窗口，缓存请求仅投递一次", async () => {
+    electronMocks.getFocusedWindow.mockReturnValue(null);
+    electronMocks.getAllWindows.mockReturnValue([]);
+    const { buildSessionDeepLink } = await import("@zcode/shared/session-navigation");
+    const { deliverPendingDeepLink, handleDeepLink } =
+      await import("../src/main/desktopOAuthDeepLink.js");
+    const target = { taskId: "sess_no_window", workspacePath: "/existing/work" };
+    const onSessionWindowMissing = vi.fn();
+    expect(
+      handleDeepLink(
+        buildSessionDeepLink(target),
+        { info: vi.fn(), warn: vi.fn() },
+        {
+          onSessionWindowMissing,
+        },
+      ),
+    ).toBe(true);
+    expect(onSessionWindowMissing).toHaveBeenCalledTimes(1);
+    expect(fsMocks.statSync).not.toHaveBeenCalled();
+    const window = createMockWindow(18);
+    deliverPendingDeepLink(window.webContents);
+    deliverPendingDeepLink(window.webContents);
+    expect(window.webContents.send).toHaveBeenCalledExactlyOnceWith(
+      PlatformChannels.OpenSession,
+      target,
+    );
+  });
+
+  it("会话链接在窗口 ready 前缓存且不探测目录，ready 后顺序投递", async () => {
+    const targetWindow = createMockWindow(17);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    electronMocks.getFocusedWindow.mockReturnValue(targetWindow);
+    electronMocks.getAllWindows.mockReturnValue([targetWindow]);
+    const { buildSessionDeepLink } = await import("@zcode/shared/session-navigation");
+    const { deliverPendingDeepLink, handleDeepLink } =
+      await import("../src/main/desktopOAuthDeepLink.js");
+    const first = { taskId: "sess_first", workspacePath: "C:\\项目 & 示例" };
+    const second = {
+      taskId: "sess_second",
+      workspacePath: "/remote/work",
+      workspaceIdentity: "remote:server:s:/remote/work",
+    };
+    expect(handleDeepLink(buildSessionDeepLink(first), logger)).toBe(true);
+    expect(handleDeepLink(buildSessionDeepLink(second), logger)).toBe(true);
+    expect(targetWindow.webContents.send).not.toHaveBeenCalled();
+    expect(fsMocks.statSync).not.toHaveBeenCalled();
+    expect(electronMocks.showMessageBoxSync).not.toHaveBeenCalled();
+    deliverPendingDeepLink(targetWindow.webContents);
+    expect(targetWindow.webContents.send).toHaveBeenNthCalledWith(
+      1,
+      PlatformChannels.OpenSession,
+      first,
+    );
+    expect(targetWindow.webContents.send).toHaveBeenNthCalledWith(
+      2,
+      PlatformChannels.OpenSession,
+      second,
+    );
+    deliverPendingDeepLink(targetWindow.webContents);
+    expect(targetWindow.webContents.send).toHaveBeenCalledTimes(2);
+  });
+
   it("缓存冷启动时命中未就绪窗口的 workspace open 请求，等 renderer ready 后再投递", async () => {
     const workspacePath = createTempWorkspace();
     const targetWindow = createMockWindow(7);

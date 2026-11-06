@@ -1,12 +1,18 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { createElement } from "react";
-import type { IPlatformService, UpdateStatePayload } from "@zcode/shared";
+import type { AppSettings, IPlatformService, UpdateStatePayload } from "@zcode/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useDesktopUpdates } from "../src/hooks/desktop-updates/index.js";
 import { DesktopUpdateButton } from "../src/desktop-updates/DesktopUpdateButton.js";
 
 const mocks = vi.hoisted(() => ({ platform: {} as IPlatformService, toast: vi.fn() }));
+const preferences = vi.hoisted(() => ({
+  settings: {} as AppSettings,
+  update: vi.fn(async (_patch: Partial<AppSettings>) => {}),
+}));
+vi.mock("@/hooks/useWorkspaceServices.js", () => ({ useBaseWorkspaceServices: () => ({}) }));
+vi.mock("@/hooks/useSettingService.js", () => ({ useSettings: () => preferences }));
 vi.mock("@/hooks/usePlatform.js", () => ({ usePlatform: () => mocks.platform }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({ intl: { formatMessage: ({ id }: { id: string }) => id } }),
@@ -16,6 +22,7 @@ vi.mock("@/components/ui/toast.js", () => ({ toast: mocks.toast }));
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  preferences.settings = {} as AppSettings;
 });
 
 function createPlatform() {
@@ -46,6 +53,44 @@ function createPlatform() {
 }
 
 describe("桌面更新 hook", () => {
+  it("关闭只写隐藏版本，重挂载保持隐藏，新版本重新显示", async () => {
+    const platform = createPlatform();
+    const view = render(createElement(DesktopUpdateButton));
+    act(() => platform.emit({ kind: "update-available", enabled: true, version: "1.0.6" }));
+    await act(async () => fireEvent.click(screen.getByTestId("desktop-update-dismiss")));
+    expect(preferences.update).toHaveBeenCalledWith({ dismissedDesktopUpdateVersion: "1.0.6" });
+    expect(platform.downloadUpdate).not.toHaveBeenCalled();
+    preferences.settings = { dismissedDesktopUpdateVersion: "1.0.6" } as AppSettings;
+    view.unmount();
+    render(createElement(DesktopUpdateButton));
+    act(() => platform.emit({ kind: "update-available", enabled: true, version: "1.0.6" }));
+    expect(screen.queryByTestId("desktop-update-action")).toBeNull();
+    act(() => platform.emit({ kind: "update-available", enabled: true, version: "1.0.7" }));
+    expect(screen.getByTestId("desktop-update-action")).toBeTruthy();
+  });
+
+  it("手动检查隐藏的版本重新显露并反馈", async () => {
+    const platform = createPlatform();
+    preferences.settings = { dismissedDesktopUpdateVersion: "1.0.6" } as AppSettings;
+    platform.checkForUpdates.mockResolvedValueOnce({ kind: "available", version: "1.0.6" });
+    const { result } = renderHook(() => useDesktopUpdates());
+    await act(() => result.current.check());
+    expect(preferences.update).toHaveBeenCalledWith({ dismissedDesktopUpdateVersion: null });
+    expect(mocks.toast).toHaveBeenCalledWith("desktopUpdate.found", expect.any(Object));
+  });
+
+  it("关闭偏好保存失败时保留更新操作并显示提示", async () => {
+    const platform = createPlatform();
+    preferences.update.mockRejectedValueOnce(new Error("disk unavailable"));
+    render(createElement(DesktopUpdateButton));
+    act(() => platform.emit({ kind: "update-available", enabled: true, version: "1.0.6" }));
+    await act(async () => fireEvent.click(screen.getByTestId("desktop-update-dismiss")));
+    expect(screen.getByTestId("desktop-update-action")).toBeTruthy();
+    expect(mocks.toast).toHaveBeenCalledWith("desktopUpdate.preferenceSaveFailed", {
+      variant: "warning",
+    });
+  });
+
   it("侧栏隐藏未知版本的检查失败，保留已知版本的下载失败重试", () => {
     const platform = createPlatform();
     render(createElement(DesktopUpdateButton));

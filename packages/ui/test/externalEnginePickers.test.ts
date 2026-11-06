@@ -39,6 +39,20 @@ it("模型一次展开完整目录，未知当前值不隐式选模，选择回�
   expect(screen.queryByRole("menu")).toBeNull();
 });
 
+it("模型菜单沿用共享视口滚动约束，不覆盖可用高度", () => {
+  const options = Array.from({ length: 18 }, (_, i) => ({
+    value: `native-${i}`,
+    name: `Model ${i}`,
+  }));
+  render(tree([{ id: "model", name: "Model", currentValue: options[0].value, options }]));
+  fireEvent.keyDown(screen.getByRole("button", { name: "Model" }), { key: "ArrowDown" });
+  const menu = screen.getByTestId("engine-config-menu-model");
+  expect(menu.className).toContain("overflow-y-auto");
+  expect(menu.className).not.toContain("max-h-none");
+  expect(menu.className).not.toContain("overflow-visible");
+  expect(screen.getAllByRole("menuitemradio")).toHaveLength(18);
+});
+
 it("深度拖动仅预览，释放后提交一次；键盘也提交引擎原始档位", () => {
   const onChange = vi.fn();
   const view = render(tree([effort], onChange));
@@ -227,4 +241,28 @@ it("恢复失败显示登录处理命令与安全诊断，重试仍沿现有回�
   expect(screen.getByRole("alert").textContent).toContain("session/resume, RPC -32000");
   fireEvent.click(screen.getByRole("button", { name: "重新连接" }));
   expect(onRetry).toHaveBeenCalledOnce();
+});
+
+it("网关502显示服务错误、HTTP状态和可复制request id", () => {
+  render(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN",
+      children: createElement(EngineControls, {
+        engine: "codex",
+        connectionFailure: {
+          code: "provider",
+          method: "session/prompt",
+          httpStatus: 502,
+          message: "Bad Gateway",
+          requestId: "fixture-request",
+        },
+      }),
+    }),
+  );
+  const alert = screen.getByRole("alert");
+  expect(alert.textContent).toContain("模型请求失败");
+  expect(alert.textContent).toContain("HTTP 502");
+  expect(alert.textContent).toContain("Bad Gateway");
+  expect(alert.textContent).toContain("fixture-request");
+  expect(screen.getByRole("button", { name: "复制错误详情", hidden: true })).toBeDefined();
 });

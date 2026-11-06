@@ -1,6 +1,6 @@
 # External engine protocol
 
-会话引擎（`zcode` / `claude-code` / `codex`）的值域、引擎配置项 schema、外部引擎运行时描述与就绪状态契约。只含 schema、常量与纯函数，不含 IO。
+会话引擎（`zcode` / `claude-code` / `codex`）的值域、引擎配置项 schema、外部引擎运行时描述与就绪状态契约。domain 层只含 schema、常量与纯函数；Node-only 的 `node/cli.ts` 供 Host 与 adapter 共用 PATH/PATHEXT 解析，不从浏览器入口导出。
 
 - 会话引擎在创建时选定、之后不可变；缺省（含旧快照）经 `resolveSessionEngine` 视为 `zcode`。
 - `EXTERNAL_ENGINE_RUNTIMES` 是 adapter 包名、锁定版本、官方 CLI 与环境变量规则的唯一来源；安装、检测与启动方都从这里读取。

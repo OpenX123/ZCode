@@ -1,11 +1,17 @@
 import { persistGeneratedSessionTitle } from "../runtime/methods/session-title.js";
-import { engineConfigOptionSchema, isExternalSessionEngine } from "@zcode/shared";
+import {
+  engineConfigOptionSchema,
+  isExternalSessionEngine,
+  readExternalEngineFailure,
+} from "@zcode/shared";
+import { planStateSchema, type PlanState } from "@zcode/shared/zcode-protocol-v4";
 import {
   SessionEventType,
   ExternalEngineConnectionError,
   type ExternalEngineSessionInput,
   type SessionEvent,
   type TraceContext,
+  type SessionEntryInfo,
 } from "@zcode/contracts";
 import type { AgentRuntimeInternal } from "../runtime/internal.js";
 import type { EngineConfigOption } from "@zcode/shared";
@@ -14,6 +20,103 @@ function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+const plans = new WeakMap<AgentRuntimeInternal, PlanState>();
+const retries = new WeakMap<AgentRuntimeInternal, number>();
+const handoffs = new WeakMap<AgentRuntimeInternal, SessionEntryInfo | null>();
+
+function restoreHandoff(
+  runtime: AgentRuntimeInternal,
+  entries: SessionEntryInfo[] | undefined,
+): void {
+  const entry = entries?.findLast((item) => item.type === "external_engine_handoff");
+  const data = record(entry?.data);
+  handoffs.set(
+    runtime,
+    entry &&
+      typeof data.context === "string" &&
+      data.context.trim() &&
+      typeof data.consumedAt !== "number"
+      ? entry
+      : null,
+  );
+}
+
+export async function readExternalEngineHandoff(
+  runtime: AgentRuntimeInternal,
+): Promise<string | undefined> {
+  if (!handoffs.has(runtime))
+    restoreHandoff(
+      runtime,
+      await runtime.sessionStore?.sessionEntries?.({ sessionID: runtime.sessionId }),
+    );
+  const context = record(handoffs.get(runtime)?.data).context;
+  return typeof context === "string" ? context : undefined;
+}
+
+export async function completeExternalEngineHandoff(runtime: AgentRuntimeInternal): Promise<void> {
+  const entry = handoffs.get(runtime);
+  if (!entry || !runtime.config.externalSessionId) return;
+  const now = Date.now();
+  await runtime.sessionStore?.saveSessionEntry?.({
+    ...entry,
+    touchSession: false,
+    time: { ...entry.time, updated: now },
+    data: {
+      ...record(entry.data),
+      consumedAt: now,
+      nativeSessionId: runtime.config.externalSessionId,
+    },
+  });
+  handoffs.set(runtime, null);
+}
+
+async function publishPlan(
+  runtime: AgentRuntimeInternal,
+  plan: PlanState,
+  traceContext: TraceContext,
+  events?: SessionEvent[],
+): Promise<void> {
+  plans.set(runtime, plan);
+  await persistExternalPlan(runtime);
+  const event = runtime.createEvent(
+    SessionEventType.ExternalEnginePlanUpdated,
+    { plan },
+    traceContext,
+  );
+  await runtime.appendEvent(event, traceContext);
+  events?.push(event);
+}
+
+/** 真实进度和终态结束活动重试，清单 pending 不参与运行态判定。 */
+export async function clearExternalEngineRetry(
+  runtime: AgentRuntimeInternal,
+  traceContext: TraceContext,
+  events?: SessionEvent[],
+): Promise<void> {
+  if (!retries.has(runtime)) return;
+  retries.delete(runtime);
+  const event = runtime.createEvent(
+    SessionEventType.ExternalEngineFailureUpdated,
+    { failure: null },
+    traceContext,
+  );
+  await runtime.appendEvent(event, traceContext);
+  events?.push(event);
+}
+
+function planItems(entries: unknown): PlanState["items"] {
+  if (!Array.isArray(entries)) throw new Error("Invalid ACP plan entries");
+  return entries
+    .map((value, index) => {
+      const item = record(value);
+      return {
+        id: typeof item.id === "string" ? item.id : `external-plan-${index}`,
+        content: item.content,
+        status: item.status === "in_progress" ? "inProgress" : item.status,
+      };
+    })
+    .map((item) => planStateSchema.shape.items.element.parse(item));
 }
 export async function publishExternalEngineSessionUpdate(
   runtime: AgentRuntimeInternal,
@@ -30,6 +133,38 @@ export async function publishExternalEngineSessionUpdate(
     events?.push(event);
   };
   const kind = update.sessionUpdate;
+  const nativeError = record(record(record(update._meta).codex).error);
+  if (kind === "session_info_update" && typeof nativeError.message === "string") {
+    const attempt = (retries.get(runtime) ?? 0) + 1;
+    if (nativeError.willRetry === true) retries.set(runtime, attempt);
+    else retries.delete(runtime);
+    await emit(SessionEventType.ExternalEngineFailureUpdated, {
+      failure: readExternalEngineFailure(nativeError),
+      retrying: nativeError.willRetry === true,
+      attempt,
+    });
+  }
+  if (kind === "plan" || kind === "plan_update" || kind === "plan_removed") {
+    const previous = plans.get(runtime) ?? { items: [], updatedAt: Date.now() };
+    let plan = { ...previous, updatedAt: Date.now() };
+    if (kind === "plan") plan.items = planItems(update.entries);
+    else if (kind === "plan_update") {
+      const document = record(update.plan);
+      if (
+        document.type === "markdown" &&
+        typeof document.planId === "string" &&
+        typeof document.content === "string"
+      )
+        plan.document = { id: document.planId, markdown: document.content };
+      else if (document.type === "items") plan.items = planItems(document.items);
+      // 不读取外部引擎提供的任意 file URI；仅消费结构化内容。
+      else return;
+    } else if (previous.document?.id === update.planId) delete plan.document;
+    else return;
+    await clearExternalEngineRetry(runtime, traceContext, events);
+    await publishPlan(runtime, planStateSchema.parse(plan), traceContext, events);
+    return;
+  }
   if (kind === "session_info_update" && typeof update.title === "string") {
     await persistGeneratedSessionTitle.call(runtime, {
       messageID: undefined,
@@ -75,6 +210,11 @@ export function externalEngineSessionInput(
     sessionId: runtime.sessionId,
     engine,
     externalSessionId: runtime.config.externalSessionId,
+    connectionProfileId: runtime.engineConnectionProfileId,
+    async onConnectionProfile(id) {
+      runtime.engineConnectionProfileId = id;
+      await persistExternalEngineConfig(runtime);
+    },
     configValues: runtime.engineConfigOptions.map(({ id, currentValue }) => ({
       id,
       value: currentValue,
@@ -164,6 +304,21 @@ async function publishExternalEngineConfigState(
 }
 
 const CONFIG_ENTRY_TYPE = "external_engine_config";
+const PLAN_ENTRY_TYPE = "external_engine_plan";
+
+async function persistExternalPlan(runtime: AgentRuntimeInternal): Promise<void> {
+  const plan = plans.get(runtime);
+  if (!plan || !runtime.sessionPersisted) return;
+  const now = Date.now();
+  await runtime.sessionStore?.saveSessionEntry?.({
+    id: `${runtime.sessionId}:external-engine-plan`,
+    sessionID: runtime.sessionId,
+    type: PLAN_ENTRY_TYPE,
+    touchSession: false,
+    time: { created: now, updated: now },
+    data: plan,
+  });
+}
 
 export async function persistExternalEngineConfig(
   runtime: AgentRuntimeInternal,
@@ -177,17 +332,33 @@ export async function persistExternalEngineConfig(
     type: CONFIG_ENTRY_TYPE,
     touchSession: false,
     time: { created: now, updated: now },
-    data: { engine: runtime.config.engine, engineConfigOptions: options },
+    data: {
+      engine: runtime.config.engine,
+      engineConfigOptions: options,
+      connectionProfileId: runtime.engineConnectionProfileId,
+    },
   });
+  await persistExternalPlan(runtime);
 }
 
-export async function restoreExternalEngineConfig(runtime: AgentRuntimeInternal): Promise<void> {
-  const entries = await runtime.sessionStore?.sessionEntries?.({
-    sessionID: runtime.sessionId,
-    type: CONFIG_ENTRY_TYPE,
-  });
-  const saved = record(entries?.at(-1)?.data);
-  if (saved.engine !== runtime.config.engine) return;
-  // 只恢复已确认值；实际可选目录和就绪状态仍由原生 resume 决定。
-  runtime.engineConfigOptions = engineConfigOptionSchema.array().parse(saved.engineConfigOptions);
+export async function restoreExternalEngineConfig(
+  runtime: AgentRuntimeInternal,
+  traceContext?: TraceContext,
+): Promise<void> {
+  const entries = await runtime.sessionStore?.sessionEntries?.({ sessionID: runtime.sessionId });
+  restoreHandoff(runtime, entries);
+  const saved = record(entries?.findLast((entry) => entry.type === CONFIG_ENTRY_TYPE)?.data);
+  if (saved.engine === runtime.config.engine) {
+    runtime.engineConnectionProfileId =
+      typeof saved.connectionProfileId === "string" ? saved.connectionProfileId : undefined;
+    // 只恢复已确认值；实际可选目录和就绪状态仍由原生 resume 决定。
+    runtime.engineConfigOptions = engineConfigOptionSchema.array().parse(saved.engineConfigOptions);
+  }
+  const plan = planStateSchema.safeParse(
+    entries?.findLast((entry) => entry.type === PLAN_ENTRY_TYPE)?.data,
+  );
+  if (plan.success) {
+    plans.set(runtime, plan.data);
+    if (traceContext) await publishPlan(runtime, plan.data, traceContext);
+  }
 }

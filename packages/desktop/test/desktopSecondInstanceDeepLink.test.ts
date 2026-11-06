@@ -62,6 +62,45 @@ afterEach(() => {
 });
 
 describe("desktop second-instance workspace deep link routing", () => {
+  it("第二实例会话链接通过安全参数投递原会话，不打开未知目录", async () => {
+    const targetWindow = createMockWindow(30);
+    electronMocks.getFocusedWindow.mockReturnValue(targetWindow);
+    electronMocks.getAllWindows.mockReturnValue([targetWindow]);
+    const { buildSessionDeepLink } = await import("@zcode/shared/session-navigation");
+    const {
+      createDeepLinkSingleInstanceData,
+      deliverPendingDeepLink,
+      handleDeepLink,
+      handleSecondInstanceWorkspaceRequest,
+    } = await importHarness();
+    const target = { taskId: "sess_second", workspacePath: "C:\\项目目录" };
+    const handleOpenWorkspacePath = vi.fn(() => true);
+    deliverPendingDeepLink(targetWindow.webContents);
+    targetWindow.webContents.send.mockClear();
+    expect(
+      handleSecondInstanceWorkspaceRequest({
+        additionalData: createDeepLinkSingleInstanceData([
+          "YCode",
+          "--",
+          buildSessionDeepLink(target),
+        ]),
+        argv: ["YCode"],
+        forceUpdateBlocked: false,
+        focusForceUpdateGateWindow: vi.fn(),
+        handleDeepLink: (url, options) =>
+          handleDeepLink(url, { info: vi.fn(), warn: vi.fn() }, options),
+        handleOpenWorkspacePath,
+        logger: { warn: vi.fn() },
+      }),
+    ).toBe(true);
+    expect(targetWindow.webContents.send).toHaveBeenCalledExactlyOnceWith(
+      PlatformChannels.OpenSession,
+      target,
+    );
+    expect(handleOpenWorkspacePath).not.toHaveBeenCalled();
+    expect(fsMocks.statSync).not.toHaveBeenCalled();
+  });
+
   it("第二实例 workspace deep link 用户确认后投递到已就绪窗口", async () => {
     const workspacePath = createTempWorkspace();
     const targetWindow = createMockWindow(31);

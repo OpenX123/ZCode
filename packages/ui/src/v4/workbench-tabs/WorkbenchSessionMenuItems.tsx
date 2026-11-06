@@ -1,4 +1,11 @@
 import type { ComponentType, ReactNode } from "react";
+import { buildSessionDeepLink } from "@zcode/shared/session-navigation";
+import { useSessionForkAction } from "@/hooks/useZCodeTaskService.js";
+import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
+import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
+import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { toast } from "@/components/ui/toast.js";
+import { logger } from "@/logger.js";
 import {
   ContextMenuSub,
   ContextMenuSubContent,
@@ -7,6 +14,7 @@ import {
 import { useV4SplitPaneEntry } from "@/v4/splitPaneEntryContext.js";
 import { workbenchWorkspaceKey, type WorkbenchSessionBinding } from "./contract.js";
 import { useWorkbenchTabsStore } from "./store.js";
+import { openSessionNavigation } from "./openSessionNavigation.js";
 
 interface MenuItemProps {
   children: ReactNode;
@@ -16,7 +24,7 @@ interface MenuItemProps {
   title?: string;
 }
 
-/** 列表、置顶和分组菜单共用视图命令；不触发任务事实或 Runtime 操作。 */
+/** 列表、置顶、分组和标题菜单共用会话动作；布局与 CLI 事实分属各自所有者。 */
 export function WorkbenchSessionMenuItems({
   binding,
   intl,
@@ -24,6 +32,7 @@ export function WorkbenchSessionMenuItems({
   Separator,
   disabled = false,
   disabledReason,
+  showLayoutActions = true,
 }: {
   binding: WorkbenchSessionBinding;
   intl: { formatMessage: (desc: { id: string }) => string };
@@ -31,8 +40,11 @@ export function WorkbenchSessionMenuItems({
   Separator: ComponentType<{ key?: string }>;
   disabled?: boolean;
   disabledReason?: string;
+  showLayoutActions?: boolean;
 }) {
   const enabled = useV4SplitPaneEntry().enabled;
+  const forkAction = useSessionForkAction(binding.workspaceScope, binding.sessionId);
+  const addTab = useOptionalTabStore((state) => state.addTab);
   const tabs = useWorkbenchTabsStore((state) => state.tabs);
   const groups = useWorkbenchTabsStore((state) => state.groups);
   const workspaceKey = workbenchWorkspaceKey(binding.workspaceScope);
@@ -42,62 +54,151 @@ export function WorkbenchSessionMenuItems({
       workbenchWorkspaceKey(item.workspaceScope) === workspaceKey,
   );
   const groupIndex = tab ? groups.findIndex((group) => group.tabIds.includes(tab.id)) : -1;
-  if (!enabled || !binding.sessionId) return null;
+  if (!binding.sessionId) return null;
   const open = (side: "left" | "right") => {
     if (!disabled) useWorkbenchTabsStore.getState().openSession(binding, side);
   };
+  const copyLink = async () => {
+    try {
+      const scope = binding.workspaceScope;
+      const remote = useRemoteWorkspaceSessionStore.getState();
+      const endpoint = scope.remoteSessionId
+        ? remote.sessionsById[scope.remoteSessionId]
+        : Object.values(remote.sessionsById).find(
+            (session) =>
+              scope.workspaceIdentity && session.workspaceIdentity === scope.workspaceIdentity,
+          );
+      const link = buildSessionDeepLink({
+        taskId: binding.sessionId!,
+        workspacePath: scope.workspacePath,
+        ...(scope.workspaceIdentity ? { workspaceIdentity: scope.workspaceIdentity } : {}),
+        ...(endpoint?.sourceServerId ? { sourceServerId: endpoint.sourceServerId } : {}),
+      });
+      await navigator.clipboard.writeText(link);
+      toast(intl.formatMessage({ id: "sessionAction.linkCopied" }));
+    } catch (error) {
+      logger.warn("[session-actions] 复制会话链接失败", error);
+      toast(
+        `${intl.formatMessage({ id: "sessionAction.copyFailed" })}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
+  const fork = async (mode: "same-directory" | "worktree") => {
+    if (disabled || binding.readOnly || forkAction.pending) return;
+    try {
+      const result = await forkAction.fork(mode);
+      useZCodeSessionStore
+        .getState()
+        .bumpTaskListVersion(result.workspacePath, result.workspaceIdentity);
+      openSessionNavigation(
+        {
+          workspaceScope: {
+            workspacePath: result.workspacePath,
+            workspaceIdentity: result.workspaceIdentity,
+            remoteSessionId: binding.workspaceScope.remoteSessionId,
+          },
+          sessionId: result.taskId,
+        },
+        addTab,
+        enabled,
+      );
+      forkAction.complete();
+      if (result.forkKind === "handoff")
+        toast(intl.formatMessage({ id: "sessionAction.handoffCreated" }));
+    } catch (error) {
+      logger.warn("[session-actions] 分叉会话失败", error);
+      toast(
+        `${intl.formatMessage({ id: "sessionAction.forkFailed" })}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
   return (
     <>
-      <ContextMenuSub>
-        <ContextMenuSubTrigger data-testid="workbench-submenu">
-          {intl.formatMessage({ id: "workbench.layoutMenu" })}
-        </ContextMenuSubTrigger>
-        <ContextMenuSubContent className="w-52">
-          <Item
-            data-testid="workbench-open-in-left"
-            disabled={disabled}
-            title={disabledReason}
-            onSelect={() => open("left")}
-          >
-            {intl.formatMessage({ id: "workbench.openInLeft" })}
-          </Item>
-          <Item
-            data-testid="workbench-open-in-right"
-            disabled={disabled}
-            title={disabledReason}
-            onSelect={() => open("right")}
-          >
-            {intl.formatMessage({ id: "workbench.openInRight" })}
-          </Item>
-          {tab ? (
-            <Item
-              data-testid="workbench-move-to-other-group"
-              disabled={disabled}
-              title={disabledReason}
-              onSelect={() => open(groupIndex === 1 ? "left" : "right")}
-            >
-              {intl.formatMessage({ id: "workbench.moveToOtherGroup" })}
-            </Item>
-          ) : null}
-          {groups.length === 2 ? (
-            <Item
-              data-testid="workbench-swap-groups"
-              onSelect={() => useWorkbenchTabsStore.getState().swapGroups()}
-            >
-              {intl.formatMessage({ id: "workbench.swapGroups" })}
-            </Item>
-          ) : null}
-          {tab ? (
-            <Item
-              data-testid="workbench-close-view"
-              onSelect={() => useWorkbenchTabsStore.getState().closeTab(tab.id)}
-            >
-              {intl.formatMessage({ id: "workbench.closeView" })}
-            </Item>
-          ) : null}
-        </ContextMenuSubContent>
-      </ContextMenuSub>
+      <Item
+        data-testid="session-copy-link"
+        onSelect={() => {
+          void copyLink();
+        }}
+      >
+        {intl.formatMessage({ id: "sessionAction.copyLink" })}
+      </Item>
+      <Item
+        data-testid="session-fork-same-directory"
+        disabled={disabled || binding.readOnly || forkAction.pending}
+        title={disabledReason}
+        onSelect={() => {
+          void fork("same-directory");
+        }}
+      >
+        {intl.formatMessage({
+          id: forkAction.pending ? "sessionAction.forking" : "sessionAction.forkSameDirectory",
+        })}
+      </Item>
+      <Item
+        data-testid="session-fork-worktree"
+        disabled={disabled || binding.readOnly || forkAction.pending}
+        title={disabledReason}
+        onSelect={() => {
+          void fork("worktree");
+        }}
+      >
+        {intl.formatMessage({ id: "sessionAction.forkWorktree" })}
+      </Item>
       <Separator />
+      {enabled && showLayoutActions ? (
+        <>
+          <ContextMenuSub>
+            <ContextMenuSubTrigger data-testid="workbench-submenu">
+              {intl.formatMessage({ id: "workbench.layoutMenu" })}
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent className="w-52">
+              <Item
+                data-testid="workbench-open-in-left"
+                disabled={disabled}
+                title={disabledReason}
+                onSelect={() => open("left")}
+              >
+                {intl.formatMessage({ id: "workbench.openInLeft" })}
+              </Item>
+              <Item
+                data-testid="workbench-open-in-right"
+                disabled={disabled}
+                title={disabledReason}
+                onSelect={() => open("right")}
+              >
+                {intl.formatMessage({ id: "workbench.openInRight" })}
+              </Item>
+              {tab ? (
+                <Item
+                  data-testid="workbench-move-to-other-group"
+                  disabled={disabled}
+                  title={disabledReason}
+                  onSelect={() => open(groupIndex === 1 ? "left" : "right")}
+                >
+                  {intl.formatMessage({ id: "workbench.moveToOtherGroup" })}
+                </Item>
+              ) : null}
+              {groups.length === 2 ? (
+                <Item
+                  data-testid="workbench-swap-groups"
+                  onSelect={() => useWorkbenchTabsStore.getState().swapGroups()}
+                >
+                  {intl.formatMessage({ id: "workbench.swapGroups" })}
+                </Item>
+              ) : null}
+              {tab ? (
+                <Item
+                  data-testid="workbench-close-view"
+                  onSelect={() => useWorkbenchTabsStore.getState().closeTab(tab.id)}
+                >
+                  {intl.formatMessage({ id: "workbench.closeView" })}
+                </Item>
+              ) : null}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+          <Separator />
+        </>
+      ) : null}
     </>
   );
 }

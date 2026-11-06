@@ -195,6 +195,39 @@ it("准备阶段订阅只观察原输入，重复阶段保留独立区间且结�
   expect(() => beginLocalTurnPreparation(trace, "hooks")()).not.toThrow();
 });
 
+it("外部引擎准备与原生prompt交付分开，首输出不包含启动耗时", async () => {
+  const { beginLocalTurnPreparation } = await import("@zcode/contracts");
+  let now = performance.timeOrigin + performance.now();
+  const recorder = createRecorder(() => now);
+  recorder.receive(
+    {
+      commandId: "external-input",
+      clientId: "c",
+      sessionId: "s",
+      type: "sendText",
+      payload: {},
+      issuedAt: 0,
+      ttft: { version: 1, observationId: "e0b15fc2-3a50-4d73-854d-61fa148cbfd0" },
+    },
+    false,
+  );
+  recorder.admitted("external-input");
+  const trace = { queryId: "external-input", sessionId: "s", turnId: "t" };
+  beginLocalTurnPreparation(trace, "execution")();
+  const endPreparation = beginLocalTurnPreparation(trace, "engine_prepare");
+  endPreparation();
+  beginLocalTurnPreparation(trace, "request")();
+  const before = recorder.forSession("s")!;
+  expect(before.requestAt).toBeGreaterThanOrEqual(before.details![0]!.end!);
+  expect(before.details).toEqual([
+    expect.objectContaining({ stage: "engine_prepare", outcome: "completed" }),
+  ]);
+  now = before.requestAt! + 250;
+  recorder.output("s", "t", "text");
+  const finished = recorder.forSession("s")!;
+  expect(finished.outputAt! - finished.requestAt!).toBe(250);
+});
+
 it("立即引导独立分类，压缩模型不抢记用户输出", async () => {
   const { SessionEventType, createSessionEvent, createSessionId, createTurnId } =
     await import("@zcode/contracts");

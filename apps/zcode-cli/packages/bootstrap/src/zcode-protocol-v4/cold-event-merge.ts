@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 冷恢复合并集中裁决持久事实、内存补充与 turn 边界顺序；本次仅补事件分类，保留已有原子归并算法。 */
 import {
   SessionEventType,
   selectActiveConversationBranch,
@@ -156,6 +157,11 @@ const LIVE_ONLY_EVENT_TYPES = new Set<string>([
 ]);
 
 const MEMORY_ONLY_EVENT_TYPES = new Set<string>([
+  SessionEventType.ExternalEnginePlanUpdated,
+  SessionEventType.ExternalEngineFailureUpdated,
+  SessionEventType.ExternalEngineConfigUpdated,
+  SessionEventType.ExternalEngineCommandsUpdated,
+  SessionEventType.ExternalEngineUsageUpdated,
   SessionEventType.SessionResumed,
   SessionEventType.SessionTitleUpdated,
   SessionEventType.SessionModeChanged,

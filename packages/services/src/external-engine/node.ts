@@ -1,13 +1,19 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, mkdir, readFile, realpath } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
+import {
+  resolveExternalEngineCli,
+  resolveExternalEngineLaunch,
+  atomicWritePrivateTextFile,
+} from "@zcode/shared/node";
 import { Emitter } from "@zcode/rpc";
 import {
   EXTERNAL_ENGINE_RUNTIMES,
   managedAdapterEntrySegments,
   managedAdapterInstallDirName,
   type ExternalEngineStatus,
+  type ExternalEngineConnectionProfile,
   type ExternalSessionEngine,
 } from "@zcode/shared/external-engine";
 import {
@@ -15,6 +21,8 @@ import {
   shouldSpawnInDetachedProcessGroup,
 } from "../process/processTreeTerminator.js";
 import type { IExternalEngineService } from "./contract.js";
+import type { ICredentialService } from "../credential/credential.js";
+import { createEngineConnections } from "./connections.js";
 
 interface CommandResult {
   code: number | null;
@@ -29,6 +37,8 @@ interface CommandOptions {
 export interface ExternalEngineServiceOptions {
   enginesDir: string;
   env: NodeJS.ProcessEnv;
+  credentials?: ICredentialService;
+  now?: () => number;
   runCommand?: (
     command: string,
     args: readonly string[],
@@ -128,19 +138,6 @@ async function exists(path: string, executable = false): Promise<boolean> {
   }
 }
 
-async function commandOnPath(command: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
-  const path = env.PATH ?? env.Path ?? "";
-  const extensions =
-    process.platform === "win32" ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";") : [""];
-  for (const dir of path.split(delimiter).filter(Boolean)) {
-    for (const extension of extensions) {
-      const candidate = join(dir, `${command}${extension}`);
-      if (await exists(candidate, true)) return candidate;
-    }
-  }
-  return undefined;
-}
-
 function versionFromOutput(output: string): string | undefined {
   return output.match(/\b\d+\.\d+\.\d+(?:[-+][\w.-]+)?\b/)?.[0];
 }
@@ -188,21 +185,73 @@ export function createExternalEngineService(
   const commands = new Set<Promise<CommandResult>>();
   const previous = new Map<ExternalSessionEngine, string>();
   const env = { ...options.env };
+  const connections = createEngineConnections(options.enginesDir, options.credentials);
+  const statusCache = new Map<
+    ExternalSessionEngine,
+    { value: ExternalEngineStatus; expires: number }
+  >();
+  const detections = new Map<ExternalSessionEngine, Promise<ExternalEngineStatus>>();
+  const launchChecks = new Map<ExternalSessionEngine, Promise<boolean>>();
+  const generations = new Map<ExternalSessionEngine, number>();
+  let loginAbort: AbortController | undefined;
+  let loginPending: Promise<void> | undefined;
   let disposed = false;
   const execute = (
     command: string,
     args: readonly string[],
     timeoutMs = 10_000,
     commandEnv = env,
+    signal = abort.signal,
   ) => {
-    const pending = run(command, args, { env: commandEnv, signal: abort.signal, timeoutMs });
+    const pending = run(command, args, { env: commandEnv, signal, timeoutMs });
     commands.add(pending);
     void pending.finally(() => commands.delete(pending)).catch(() => {});
     return pending;
   };
   const installDir = (engine: ExternalSessionEngine) =>
     join(options.enginesDir, managedAdapterInstallDirName(EXTERNAL_ENGINE_RUNTIMES[engine]));
-  const detect = async (engine: ExternalSessionEngine): Promise<ExternalEngineStatus> => {
+  const managedConnectionEnv = async (
+    engine: ExternalSessionEngine,
+    selected?: ExternalEngineConnectionProfile,
+  ): Promise<{
+    env: NodeJS.ProcessEnv;
+    profile?: ExternalEngineConnectionProfile;
+  }> => {
+    if (engine !== "codex") return { env: { ...env }, profile: undefined };
+    const profiles = selected ? undefined : await connections.read();
+    const profile =
+      selected ?? profiles?.profiles.find((item) => item.id === profiles.activeProfileId);
+    if (!profile) throw new Error("external_engine_connection_invalid");
+    if (profile.mode === "inherit") return { env: { ...env }, profile };
+    const childEnv: NodeJS.ProcessEnv = { ...env, CODEX_HOME: connections.home(profile.id) };
+    // 管理连接不能看到宿主的网关、密钥或原始 ACP 日志开关。
+    for (const key of Object.keys(childEnv))
+      if (
+        [
+          "APP_SERVER_LOGS",
+          "DEFAULT_AUTH_REQUEST",
+          "CODEX_CONFIG",
+          "MODEL_PROVIDER",
+          "OPENAI_API_KEY",
+          "OPENAI_BASE_URL",
+          "CODEX_API_KEY",
+        ].includes(key.toUpperCase())
+      )
+        delete childEnv[key];
+    return { env: childEnv, profile };
+  };
+  const invalidateStatus = (engine: ExternalSessionEngine) => {
+    // 只删已完成缓存仍会复用旧在途请求，配置切换后必须隔离迟到的身份诊断。
+    generations.set(engine, (generations.get(engine) ?? 0) + 1);
+    statusCache.delete(engine);
+    launchChecks.delete(engine);
+    detections.delete(engine);
+  };
+  const detect = async (
+    engine: ExternalSessionEngine,
+    diagnostics = true,
+    generation = generations.get(engine) ?? 0,
+  ): Promise<ExternalEngineStatus> => {
     if (disposed) throw new Error("external_engine_service_disposed");
     const runtime = EXTERNAL_ENGINE_RUNTIMES[engine];
     const directory = installDir(engine);
@@ -221,9 +270,14 @@ export function createExternalEngineService(
         "version" in metadata &&
         metadata.version === runtime.adapterVersion;
     }
-    const pathCli = await commandOnPath(runtime.officialCliCommand, env);
-    const bundledCli = join(directory, ...runtime.bundledOfficialCliEntry.split("/"));
-    const cli = pathCli ?? (installed && (await exists(bundledCli)) ? bundledCli : undefined);
+    const diagnosticContext = diagnostics
+      ? await managedConnectionEnv(engine)
+      : { env, profile: undefined };
+    const cli = await resolveExternalEngineLaunch(
+      runtime,
+      diagnosticContext.env,
+      installed ? directory : undefined,
+    );
     const status: ExternalEngineStatus = {
       engine,
       adapter: installed
@@ -233,23 +287,34 @@ export function createExternalEngineService(
       auth: { state: "unknown" },
       ready: false,
     };
-    if (cli) {
-      const cliEnv = { ...env };
+    if (cli && diagnostics) {
+      const cliEnv = diagnosticContext.env;
       for (const key of runtime.strippedEnvVars)
         for (const actualKey of Object.keys(cliEnv))
           if (actualKey.toUpperCase() === key.toUpperCase()) delete cliEnv[actualKey];
       try {
         // npm 的官方入口依赖 env node；桌面 PATH 缺 node 时用当前运行时执行脚本。
-        const nodeEntry = !pathCli || /\.(?:[cm]?js)$/i.test(await realpath(cli));
+        const nodeEntry = /\.(?:[cm]?js)$/i.test(await realpath(cli));
         const command = nodeEntry ? process.execPath : cli;
         const prefix = nodeEntry ? [cli] : [];
         if (nodeEntry) cliEnv.ELECTRON_RUN_AS_NODE = "1";
-        const version = await execute(command, [...prefix, "--version"], 10_000, cliEnv);
-        status.officialCli.version = versionFromOutput(version.stdout);
-        status.auth = authStatus(
-          engine,
-          await execute(command, [...prefix, ...runtime.authStatusArgs], 10_000, cliEnv),
-        );
+        const version = execute(command, [...prefix, "--version"], 10_000, cliEnv);
+        const auth =
+          diagnosticContext.profile?.mode === "apiKey"
+            ? undefined
+            : execute(command, [...prefix, ...runtime.authStatusArgs], 10_000, cliEnv);
+        const [versionResult, authResult] = await Promise.all([
+          version,
+          auth ?? Promise.resolve(undefined),
+        ]);
+        status.officialCli.version = versionFromOutput(versionResult.stdout);
+        if (diagnosticContext.profile?.mode === "apiKey") {
+          const key =
+            diagnosticContext.profile.credentialKey && options.credentials
+              ? await options.credentials.load(diagnosticContext.profile.credentialKey)
+              : null;
+          status.auth = key ? { state: "loggedIn", label: "apiKey" } : { state: "loggedOut" };
+        } else if (authResult) status.auth = authStatus(engine, authResult);
       } catch (error) {
         if (
           !(error instanceof Error) ||
@@ -261,25 +326,132 @@ export function createExternalEngineService(
         status.error = "external_engine_status_failed";
       }
     }
-    status.ready = installed && status.auth.state === "loggedIn";
+    // 第三方 provider 可无需 OpenAI 账号；可启动性不能由登录文案决定。
+    status.ready = installed && status.officialCli.found;
     const serialized = JSON.stringify(status);
-    if (!disposed && previous.get(engine) !== serialized) {
+    if (
+      diagnostics &&
+      !disposed &&
+      generation === (generations.get(engine) ?? 0) &&
+      previous.get(engine) !== serialized
+    ) {
       previous.set(engine, serialized);
       emitter.fire(status);
     }
     return status;
   };
+  const getStatus = (engine: ExternalSessionEngine): Promise<ExternalEngineStatus> => {
+    if (disposed) return Promise.reject(new Error("external_engine_service_disposed"));
+    const active = detections.get(engine);
+    if (active) return active;
+    const cached = statusCache.get(engine);
+    if (cached && cached.expires > (options.now ?? Date.now)())
+      return Promise.resolve(structuredClone(cached.value));
+    const generation = generations.get(engine) ?? 0;
+    const pending = detect(engine, true, generation)
+      .then((value) => {
+        if (!disposed && generation === (generations.get(engine) ?? 0))
+          statusCache.set(engine, { value, expires: (options.now ?? Date.now)() + 60_000 });
+        return value;
+      })
+      .finally(() => {
+        if (detections.get(engine) === pending) detections.delete(engine);
+      });
+    detections.set(engine, pending);
+    return pending;
+  };
   return {
-    getStatus: detect,
+    getStatus,
+    isLaunchReady(engine) {
+      if (disposed) return Promise.reject(new Error("external_engine_service_disposed"));
+      const active = launchChecks.get(engine);
+      if (active) return active;
+      const pending = detect(engine, false).then((status) => {
+        // 缺少 CLI 后用户可能在终端安装；失败结果不缓存，重试无需重启应用。
+        if (!status.ready && launchChecks.get(engine) === pending) launchChecks.delete(engine);
+        return status.ready;
+      });
+      launchChecks.set(engine, pending);
+      void pending.catch(() => {
+        if (launchChecks.get(engine) === pending) launchChecks.delete(engine);
+      });
+      return pending;
+    },
+    async invalidateStatus(engine) {
+      invalidateStatus(engine);
+    },
+    refreshStatus(engine) {
+      invalidateStatus(engine);
+      return getStatus(engine);
+    },
+    getConnectionProfiles: connections.read,
+    async saveConnectionProfile(input) {
+      try {
+        return await connections.save(input);
+      } finally {
+        invalidateStatus("codex");
+      }
+    },
+    login(profileId) {
+      if (disposed) return Promise.reject(new Error("external_engine_service_disposed"));
+      if (loginAbort) return Promise.reject(new Error("external_engine_login_running"));
+      const controller = new AbortController();
+      loginAbort = controller;
+      const pending = (async () => {
+        try {
+          const profile = (await connections.read()).profiles.find((item) => item.id === profileId);
+          if (!profile || profile.mode !== "official")
+            throw new Error("external_engine_connection_invalid");
+          // 只检查 adapter/CLI 是否可启动；登录按钮不应先等待版本和身份诊断。
+          const status = await detect("codex", false);
+          if (!status?.ready || !status.officialCli.path) throw new Error("engine_not_ready");
+          const home = connections.home(profile.id);
+          await mkdir(home, { recursive: true });
+          // 强制原生凭据写入专用目录，不能覆盖用户系统钥匙串中的 CLI 身份。
+          await atomicWritePrivateTextFile(
+            join(home, "config.toml"),
+            'cli_auth_credentials_store = "file"\n',
+          );
+          const cli = status.officialCli.path;
+          const nodeEntry = /\.(?:[cm]?js)$/i.test(await realpath(cli));
+          const { env: loginEnv } = await managedConnectionEnv("codex", profile);
+          if (nodeEntry) loginEnv.ELECTRON_RUN_AS_NODE = "1";
+          const result = await execute(
+            nodeEntry ? process.execPath : cli,
+            [...(nodeEntry ? [cli] : []), "login"],
+            180_000,
+            loginEnv,
+            AbortSignal.any([abort.signal, controller.signal]),
+          );
+          if (result.code !== 0) throw new Error("external_engine_login_failed");
+        } finally {
+          loginAbort = undefined;
+          invalidateStatus("codex");
+        }
+      })();
+      loginPending = pending;
+      void pending
+        .finally(() => {
+          if (loginPending === pending) loginPending = undefined;
+        })
+        .catch(() => {});
+      return pending;
+    },
+    async cancelLogin() {
+      loginAbort?.abort();
+    },
     listStatuses: () =>
-      Promise.all((Object.keys(EXTERNAL_ENGINE_RUNTIMES) as ExternalSessionEngine[]).map(detect)),
+      Promise.all(
+        (Object.keys(EXTERNAL_ENGINE_RUNTIMES) as ExternalSessionEngine[]).map(getStatus),
+      ),
     installAdapter(engine) {
       if (disposed) return Promise.reject(new Error("external_engine_service_disposed"));
       const active = installs.get(engine);
       if (active) return active;
+      invalidateStatus(engine);
       const pending = (async () => {
         const runtime = EXTERNAL_ENGINE_RUNTIMES[engine];
-        const npm = await commandOnPath("npm", env);
+        const npm = await resolveExternalEngineCli("npm", env);
         if (!npm) throw new Error("external_engine_npm_not_found");
         await mkdir(installDir(engine), { recursive: true });
         let result: CommandResult;
@@ -302,7 +474,8 @@ export function createExternalEngineService(
           throw new Error("external_engine_install_failed");
         }
         if (result.code !== 0) throw new Error("external_engine_install_failed");
-        const status = await detect(engine);
+        invalidateStatus(engine);
+        const status = await getStatus(engine);
         if (!status.adapter.installed) throw new Error("external_engine_install_incomplete");
         return status;
       })();
@@ -322,7 +495,11 @@ export function createExternalEngineService(
     },
     async disposeAllAndWait() {
       this.disposeAll();
-      await Promise.allSettled([...installs.values(), ...commands]);
+      await Promise.allSettled([
+        ...installs.values(),
+        ...commands,
+        ...(loginPending ? [loginPending] : []),
+      ]);
     },
   };
 }

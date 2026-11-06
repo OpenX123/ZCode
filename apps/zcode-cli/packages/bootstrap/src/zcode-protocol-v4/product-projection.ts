@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 既有权威 reducer 集中维护跨事件行序、交互和终态单调性；本次只扩展既有分支，不拆分其共享状态与归约顺序。 */
 import {
   isExternalSessionEngine,
   sessionEngineSchema,
@@ -8,7 +9,7 @@ import {
   type SessionEngine,
   type EngineConfigOption,
 } from "@zcode/shared/external-engine";
-import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@zcode/shared/zcode-protocol-v4";
+import { PERMISSION_FULL_ACCESS_OPTION_ID, planStateSchema } from "@zcode/shared/zcode-protocol-v4";
 // ProductProjection —— CLI 权威投影第二 reducer。
 // 输入：CLI 事件日志（SessionEvent，权威事实源）；输出：ConversationDelta[]。
 // 快照推进复用协议规范 apply（applyConversationDeltas）——投影演进与 delta 流
@@ -1417,6 +1418,50 @@ export class ProductProjection {
   private reduce(fact: CanonicalConversationFact): ConversationDelta[] {
     const event = fact.event;
     switch (event.type) {
+      case SessionEventType.ExternalEnginePlanUpdated: {
+        const payload = event.payload as { plan: unknown };
+        return [
+          { op: "state.updated", patch: { plan: planStateSchema.nullable().parse(payload.plan) } },
+        ];
+      }
+      case SessionEventType.ExternalEngineFailureUpdated: {
+        if (!this.acceptsActiveModelEvent(event)) return [];
+        const payload = event.payload as { failure: unknown; retrying?: boolean; attempt?: number };
+        const failure = engineConnectionFailureSchema.nullable().parse(payload.failure);
+        if (!failure) return this.setApiRetry(null);
+        if (payload.retrying)
+          return this.setApiRetry({
+            attempt: positiveInteger(payload.attempt ?? 1, 1),
+            // ACP 不提供重试上限；0 表示未知，不虚构剩余次数。
+            maxAttempts: 0,
+            nextRetryAt: this.ms(event),
+            reasonCode: `external_engine.${failure.code}`,
+            httpStatus: failure.httpStatus,
+            message: failure.message,
+            requestId: failure.requestId,
+          });
+        return [
+          {
+            op: "state.updated",
+            patch: this.controlPatch({
+              apiRetry: null,
+              lastError: {
+                code: `external_engine.${failure.code}`,
+                message:
+                  failure.message ??
+                  `External engine request failed${failure.httpStatus ? ` (HTTP ${failure.httpStatus})` : ""}`,
+                recoverable: failure.retryable ?? false,
+                at: this.ms(event),
+                source:
+                  failure.code === "provider" || failure.code === "authentication"
+                    ? "provider"
+                    : "network",
+                ...(failure.requestId ? { detail: `Request ID: ${failure.requestId}` } : {}),
+              },
+            }),
+          },
+        ];
+      }
       case SessionEventType.ExternalEngineUsageUpdated: {
         const payload = event.payload as { used: number; size: number };
         if (
@@ -2706,7 +2751,10 @@ export class ProductProjection {
         current.attempt === apiRetry.attempt &&
         current.maxAttempts === apiRetry.maxAttempts &&
         current.nextRetryAt === apiRetry.nextRetryAt &&
-        current.reasonCode === apiRetry.reasonCode)
+        current.reasonCode === apiRetry.reasonCode &&
+        current.httpStatus === apiRetry.httpStatus &&
+        current.message === apiRetry.message &&
+        current.requestId === apiRetry.requestId)
     ) {
       return [];
     }

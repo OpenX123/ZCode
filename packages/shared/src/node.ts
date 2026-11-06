@@ -4,6 +4,10 @@
  * This subpath must not be imported by renderer/browser bundles.
  */
 export { acquireFileLock } from "./node/atomicFileLock.js";
+export {
+  resolveExternalEngineCli,
+  resolveExternalEngineLaunch,
+} from "./external-engine/node/cli.js";
 export { createNodeNetworkCapture, withoutNetworkCapture } from "./node/networkCapture.js";
 export {
   GEN_UI_OUTPUT_ROOT_ENV,

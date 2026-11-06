@@ -68,6 +68,7 @@ export interface AgentRuntimeInternal
   sessionId: SessionId;
   turnNumber: number;
   config: AgentRuntimeConfig;
+  engineConnectionProfileId?: string;
   externalEnginePort?: ExternalEnginePort;
   engineConfigOptions: EngineConfigOption[];
   engineConfigState?: import("@zcode/shared").EngineConfigState;

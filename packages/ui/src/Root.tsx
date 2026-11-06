@@ -155,6 +155,9 @@ function RootInner({
 }: RootProps) {
   useEffect(() => {
     setMcpStorePlatform(platform);
+    // Main 只有收到 RendererReady 后才会投递缓存的深链；Root 常驻后立即报告，
+    // 避免运行中的第二实例或 open-url 请求永久停留在 Main 队列。
+    platform.notifyRendererReady?.();
     return () => setMcpStorePlatform(null);
   }, [platform]);
   useDynamicWorkflowAvailabilityLoader(services.settingService);
@@ -666,6 +669,7 @@ function RootInner({
     isBootstrappingInitialWorkspace: isBootstrappingInitialWorkspace || isCreatingFallbackWorkspace,
   });
   useRootPlatformEffects({
+    services,
     clientMode: "desktop-continuous",
     initialWorkspaceAbsPath,
     initialWorkspaceIdentity,

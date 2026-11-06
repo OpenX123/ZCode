@@ -89,6 +89,7 @@ export class LocalTtftRecorder {
         record.sessionId = fact.sessionId;
         record.turnId = fact.turnId;
         if (fact.stage === "execution") record.executionAt ??= fact.start;
+        else if (fact.stage === "request") record.requestAt ??= fact.start;
         else {
           const details = (record.details ??= []);
           const index = details.findIndex((detail) => detail.id === fact.id);

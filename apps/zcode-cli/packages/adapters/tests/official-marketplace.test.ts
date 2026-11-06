@@ -78,7 +78,7 @@ describe("ZCode official marketplace partitions", () => {
       },
       storageRoot,
     });
-    writeBundledOfficialMarketplacePartitionSync({
+    const reseeded = writeBundledOfficialMarketplacePartitionSync({
       manifest: {
         name: "zcode-plugins-official",
         plugins: [{ name: "bundled-v2", source: "sea", version: "2.0.0" }],
@@ -93,7 +93,8 @@ describe("ZCode official marketplace partitions", () => {
         "utf8",
       ),
     ) as { plugins: Array<{ name: string }> };
-    expect(merged.plugins.map((plugin) => plugin.name)).toEqual(["bundled-v2"]);
+    expect(merged.plugins.map((plugin) => plugin.name)).toEqual(["remote", "bundled-v2"]);
+    expect(reseeded).toEqual(merged);
     expect(
       await readFile(
         join(storageRoot, "marketplaces", "zcode-plugins-official", "cdn-marketplace.json"),
@@ -152,7 +153,9 @@ describe("ZCode official marketplace partitions", () => {
       storageRoot,
     });
 
+    let requestCount = 0;
     const server = createServer((_request, response) => {
+      requestCount += 1;
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
         JSON.stringify({
@@ -191,13 +194,25 @@ describe("ZCode official marketplace partitions", () => {
         pluginCount: 2,
       });
 
+      // 刷新后其他 CLI 再次启动会播种内置目录，不能把已刷新的社区目录覆盖掉。
+      for (let startup = 0; startup < 2; startup += 1) {
+        writeBundledOfficialMarketplacePartitionSync({
+          manifest: {
+            name: "zcode-plugins-official",
+            plugins: [{ name: "bundled-v2", source: "filesystem" }],
+          },
+          storageRoot,
+        });
+      }
+
       const merged = JSON.parse(
         await readFile(
           join(storageRoot, "marketplaces", "zcode-plugins-official", "marketplace.json"),
           "utf8",
         ),
       ) as { plugins: Array<{ name: string }> };
-      expect(merged.plugins.map((plugin) => plugin.name)).toEqual(["remote", "bundled"]);
+      expect(merged.plugins.map((plugin) => plugin.name)).toEqual(["remote", "bundled-v2"]);
+      expect(requestCount).toBe(1);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

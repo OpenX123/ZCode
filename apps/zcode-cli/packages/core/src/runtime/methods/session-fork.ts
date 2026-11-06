@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- 稳定历史克隆的身份重映射、目标边界和原子 bundle 必须共用一套实现；本次导出复用既有算法，不复制正文持久化路径。 */
+import { ExternalEngineConnectionError } from "@zcode/contracts";
 import { randomUUID } from "node:crypto";
 import { isHighspeedProviderId, resolveExecutionState, type ExecutionState } from "@zcode/shared";
 import { buildExecutionStateEntry, readRuntimeExecutionState } from "../execution-state.js";
@@ -44,9 +46,12 @@ import {
   formatConversationForkNoticeBody,
   slugify,
 } from "../helpers/index.js";
+import { externalEngineSessionInput } from "../../external-engine/session.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { buildSyntheticUserNoticePartMetadata } from "./synthetic-notice-metadata.js";
 import type {
+  ConversationForkExportOptions,
+  ConversationForkExport,
   StableConversationForkChildMetadata,
   StableConversationForkGoalBoundary,
   StableConversationForkOptions,
@@ -586,6 +591,7 @@ async function commitAtomicConversationFork(
   runtime: AgentRuntimeInternal,
   options: {
     commandFact?: ForkCommitBundle["commandFact"];
+    prepareOnly?: boolean;
     modelSelection?: ModelSelection;
     forkedSessionId?: SessionId;
     goalBoundary: StableConversationForkGoalBoundary;
@@ -745,7 +751,7 @@ async function commitAtomicConversationFork(
           status: options.goalBoundary.target.status,
         }
       : undefined;
-  const committedChild = await store.commitForkBundle({
+  const bundle: ForkCommitBundle = {
     child: buildForkedSessionInput(runtime, options.parentSession, childSessionId, kind),
     messages: copiedMessages,
     copySources: {
@@ -767,7 +773,19 @@ async function commitAtomicConversationFork(
     ...(goal ? { goal } : {}),
     ...(options.initialInput ? { initialInput: options.initialInput } : {}),
     commandFact,
-  });
+  };
+  if (options.prepareOnly) {
+    return {
+      preparedBundle: bundle,
+      copiedMessageCount: options.messages.length,
+      forkedSessionId: childSessionId,
+      parentSessionId: runtime.sessionId,
+      targetMessageId: options.targetMessageId,
+      restoredFiles: [],
+      response: "Prepared immutable conversation fork.",
+    };
+  }
+  const committedChild = await store.commitForkBundle(bundle);
   const forkedSessionId = committedChild.id;
   if (kind !== "selection_side_chat") {
     const forkedEvent = runtime.createEvent(
@@ -1055,6 +1073,252 @@ export async function forkConversationFromMessage(
     restoredFiles: [],
     response: `Forked session ${forkedSessionId} from message ${options.targetMessageId}: copied ${copiedMessageCount} messages.`,
   };
+}
+
+const forkExportsInFlight = new WeakMap<
+  AgentRuntimeInternal,
+  Map<string, { target: string; promise: Promise<ConversationForkExport> }>
+>();
+
+/**
+ * 会话级分叉的唯一导出入口。持久操作记录冻结历史及 native id，ACK 丢失后仍复用
+ * 同一 child；目标库导入前不创建本地 child，不把源 cwd 创建后再改绑到工作树。
+ */
+export async function exportConversationFork(
+  this: AgentRuntimeInternal,
+  options: ConversationForkExportOptions,
+): Promise<ConversationForkExport> {
+  let pending = forkExportsInFlight.get(this);
+  if (!pending) {
+    pending = new Map();
+    forkExportsInFlight.set(this, pending);
+  }
+  const target = JSON.stringify(options);
+  const existing = pending.get(options.operationId);
+  if (existing) {
+    if (existing.target !== target) throw stableForkError("Fork operation target changed");
+    return existing.promise;
+  }
+  const promise = (async () => {
+    // 已提交的操作重放只读冻结结果；父会话后来进入运行态也不阻止恢复 child 导航。
+    const completed = await readConversationForkExport(this, options);
+    if (completed) return completed;
+    const leaseId = `fork-export:${options.operationId}`;
+    const lease = this.acquireForegroundPromotionLease({
+      leaseId,
+      mode: "idle-only",
+      promotedInputId: leaseId,
+    });
+    if (lease.kind !== "acquired") throw stableForkError("Cannot fork while the session is busy");
+    try {
+      return await performConversationForkExport.call(this, options);
+    } finally {
+      this.releaseForegroundPromotionLease(leaseId);
+    }
+  })();
+  pending.set(options.operationId, { target, promise });
+  try {
+    return await promise;
+  } finally {
+    pending.delete(options.operationId);
+  }
+}
+
+async function readConversationForkExport(
+  runtime: AgentRuntimeInternal,
+  options: ConversationForkExportOptions,
+): Promise<ConversationForkExport | undefined> {
+  const store = runtime.sessionStore;
+  if (!store?.saveSessionEntry || !store.sessionEntries)
+    throw stableForkError("Fork export store is unavailable");
+  const entryId = `${runtime.sessionId}:fork-export:${options.operationId}`;
+  const previous = (
+    await store.sessionEntries({ sessionID: runtime.sessionId, type: "session/fork_export" })
+  ).find((entry) => entry.id === entryId);
+  if (!previous) return undefined;
+  const data = previous.data as {
+    target: ConversationForkExportOptions;
+    phase?: "nativePending" | "complete";
+    result: ConversationForkExport;
+  };
+  if (JSON.stringify(data.target) !== JSON.stringify(options))
+    throw stableForkError("Fork operation target changed");
+  if (data.phase === "nativePending")
+    throw stableForkError("上次原生分叉结果未知；为避免重复创建，请检查引擎历史后重新发起分叉。", {
+      operationId: options.operationId,
+    });
+  return data.result;
+}
+
+async function performConversationForkExport(
+  this: AgentRuntimeInternal,
+  options: ConversationForkExportOptions,
+): Promise<ConversationForkExport> {
+  const store = this.sessionStore;
+  if (!store?.saveSessionEntry || !store.saveSessionEntryIfAbsent || !store.sessionEntries)
+    throw stableForkError("Fork export store is unavailable");
+  const entryId = `${this.sessionId}:fork-export:${options.operationId}`;
+  const previous = await readConversationForkExport(this, options);
+  if (previous) return previous;
+  if (this.activeTurn) throw stableForkError("Cannot fork while a prompt is running");
+  const parentSession = await store.getSession(this.sessionId);
+  if (!parentSession || parentSession.time.deleted !== undefined)
+    throw stableForkError("Fork source session is unavailable");
+  const active = forkSourceMessagesForSession(
+    await store.messages({ sessionID: this.sessionId }),
+    parentSession,
+  );
+  const stableIndex = active.findLastIndex(
+    (message) =>
+      message.info.role === "assistant" &&
+      message.info.time.completed !== undefined &&
+      !message.info.error,
+  );
+  const messages =
+    stableIndex >= 0
+      ? active.slice(0, stableIndex + 1)
+      : active.filter((message) => message.info.role === "user");
+  const boundary = messages.at(-1);
+  const prepared = await commitAtomicConversationFork(this, {
+    prepareOnly: true,
+    goalBoundary: boundary?.info.anchor?.goalBoundary ?? { kind: "none" },
+    messages,
+    parentSession,
+    sourceCommandId: options.operationId,
+    targetMessageId: boundary?.info.id ?? createMessageId(),
+    traceContext: this.rootTraceContext,
+  });
+  const bundle = prepared.preparedBundle!;
+  delete bundle.copySources;
+  bundle.commandFact.scope = "child";
+  bundle.child.engine = parentSession.engine;
+  bundle.child.directory = options.targetDirectory;
+  bundle.child.path = options.targetDirectory;
+  bundle.child.workspaceID = options.targetWorkspaceId as never;
+  bundle.child.projectID = options.targetProjectId as never;
+  if (bundle.goal) bundle.goal.status = "paused";
+  let claimedNative = false;
+  let forkKind: ConversationForkExport["forkKind"] = "history";
+  const config = (
+    await store.sessionEntries({ sessionID: this.sessionId, type: "external_engine_config" })
+  ).at(-1);
+  if (config)
+    bundle.entries.push({
+      ...config,
+      id: `${bundle.child.id}:external-engine-config`,
+      sessionID: bundle.child.id,
+    });
+  if (parentSession.engine && parentSession.engine !== "zcode") {
+    forkKind = "handoff";
+    // native fork 复制引擎当前全部上下文。失败/取消尾部不属于稳定投影，必须使用
+    // 冻结背景交接，避免子会话实际知道的内容超出用户看到的分叉边界。
+    if (
+      messages.length === active.length &&
+      parentSession.externalSessionId &&
+      this.externalEnginePort?.forkSession
+    ) {
+      const startedAt = Date.now();
+      // 同一持久操作可由不同窗口的 Runtime 同时进入；数据库唯一键抢占先于原生副作用。
+      claimedNative = await store.saveSessionEntryIfAbsent({
+        id: entryId,
+        sessionID: this.sessionId,
+        type: "session/fork_export",
+        touchSession: false,
+        time: { created: startedAt, updated: startedAt },
+        data: { target: options, phase: "nativePending", result: { bundle, forkKind } },
+      });
+      if (!claimedNative) return await requireConversationForkExport(this, options);
+      const input = externalEngineSessionInput(
+        this,
+        new AbortController().signal,
+        this.rootTraceContext,
+      );
+      try {
+        bundle.child.externalSessionId = await this.externalEnginePort.forkSession({
+          ...input,
+          sessionId: bundle.child.id,
+          cwd: options.targetDirectory,
+          externalSessionId: undefined,
+          parentExternalSessionId: parentSession.externalSessionId,
+          onSession: async () => {},
+          onConnectionProfile: async () => {},
+          onConfigOptions: async () => {},
+          onUpdate: async () => {},
+        });
+        forkKind = "native";
+      } catch (error) {
+        if (
+          !(error instanceof ExternalEngineConnectionError) ||
+          error.failure.code !== "unsupported" ||
+          error.failure.method !== "session/fork"
+        )
+          throw error;
+      } finally {
+        // 原生 child 已创建时，关闭临时连接失败不能丢弃成功结果或再次创建 child。
+        await this.externalEnginePort.closeSession(bundle.child.id).catch(() => {
+          this.logger?.warn("Native fork connection cleanup failed", {
+            sessionId: bundle.child.id,
+            operationId: options.operationId,
+          });
+        });
+      }
+    }
+    if (forkKind === "handoff") {
+      const context = messages
+        .map(
+          (message) =>
+            `${message.info.role}: ${message.parts
+              .map((part) =>
+                part.type === "text"
+                  ? part.text
+                  : part.type === "tool"
+                    ? `[${part.tool}] ${JSON.stringify(part.state)}`
+                    : "",
+              )
+              .filter(Boolean)
+              .join("\n")}`,
+        )
+        .join("\n\n");
+      const now = Date.now();
+      bundle.entries.push({
+        id: `${bundle.child.id}:external-engine-handoff`,
+        sessionID: bundle.child.id,
+        type: "external_engine_handoff",
+        time: { created: now, updated: now },
+        data: { context },
+      });
+      bundle.child.title = `上下文交接 · ${parentSession.title}`;
+      // 展示和模型背景明确标注降级，绝不把复制的正文称作原生历史。
+      for (const message of bundle.messages)
+        for (const part of message.parts) {
+          if (part.type === "text" && part.metadata?.forkContext)
+            part.text = `上下文交接：引擎不支持原生分叉。父会话背景已冻结，将随首次输入交给模型。\n${part.text}`;
+        }
+    }
+  }
+  const result = { bundle, forkKind };
+  const now = Date.now();
+  const completedEntry: SessionEntryInfo = {
+    id: entryId,
+    sessionID: this.sessionId,
+    type: "session/fork_export",
+    touchSession: false,
+    time: { created: now, updated: now },
+    data: { target: options, phase: "complete", result },
+  };
+  if (claimedNative) await store.saveSessionEntry(completedEntry);
+  else if (!(await store.saveSessionEntryIfAbsent(completedEntry)))
+    return await requireConversationForkExport(this, options);
+  return result;
+}
+
+async function requireConversationForkExport(
+  runtime: AgentRuntimeInternal,
+  options: ConversationForkExportOptions,
+): Promise<ConversationForkExport> {
+  const result = await readConversationForkExport(runtime, options);
+  if (!result) throw stableForkError("Fork operation record is unavailable");
+  return result;
 }
 
 /** V4 running stable fork 公共入口：纯 transcript copy，不读取/恢复 workspace checkpoint。 */

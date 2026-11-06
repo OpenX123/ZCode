@@ -7,6 +7,7 @@ import type { WorkspacePurpose } from "./workspacePurpose.js";
 import type { DynamicWorkflowMode } from "./dynamic-workflow-feature.js";
 import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-metadata.js";
 import type { AppToolSearchMode } from "./app-runtime-preferences.js";
+import type { SessionEngine } from "./external-engine/contract.js";
 
 // ── Domain types ──
 
@@ -253,6 +254,10 @@ export interface ResourceUsageSnapshot {
 }
 
 export interface AppSettings {
+  /** 本机最近显式选择的会话引擎；仅初始化之后创建的草稿。 */
+  defaultSessionEngine?: SessionEngine;
+  /** 仅隐藏对应版本的侧栏更新提示；null 表示用户手动恢复展示。 */
+  dismissedDesktopUpdateVersion?: string | null;
   /** 当前 App/Host 不再显示提交前体验套餐推荐；不改变任何入口的模型选择。 */
   startPlanRecommendationDismissed?: boolean;
   recentProjects: string[]; // 最近项目列表，最多保留 10 个

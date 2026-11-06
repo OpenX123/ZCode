@@ -25,6 +25,7 @@ import {
   pendingUserInputToViewModel,
 } from "@/v4/pendingInteractionAdapter.js";
 import { V4UserInputDialog } from "@/v4/V4UserInputDialog.js";
+import { NativePlanApprovalCard } from "@/v4/NativePlanApprovalCard.js";
 import { useV4Conversation } from "@/v4/V4ConversationContext.js";
 
 export interface V4InteractionDialogsProps {
@@ -367,6 +368,40 @@ export function V4InteractionDialogs({
             permissionResponseFlight.current = null;
             setPermissionResponse({ interactionId, pending: false, failed: !accepted });
           });
+        }}
+      />
+    );
+  }
+
+  const planInput =
+    pending.payload.input !== null && typeof pending.payload.input === "object"
+      ? (pending.payload.input as Record<string, unknown>)
+      : {};
+  const planMarkdown =
+    typeof planInput.plan === "string"
+      ? planInput.plan
+      : (currentSnapshot?.plan?.document?.markdown ?? "");
+  if (
+    pending.payload.toolName?.toLowerCase() === "exitplanmode" &&
+    (planMarkdown || currentSnapshot?.plan?.items.length)
+  ) {
+    return (
+      <NativePlanApprovalCard
+        key={pending.interactionId}
+        markdown={planMarkdown}
+        items={currentSnapshot?.plan?.items ?? []}
+        workspacePath={workspacePath}
+        autoFocus={focused}
+        onResolve={async (start) => {
+          const accepted = await resolveInteraction(
+            pending.interactionId,
+            start ? { optionId: "allowOnce" } : { action: "decline" },
+          );
+          if (accepted) {
+            removeElicitationDraft(pending.interactionId);
+            onPlanInteractionAccepted?.(pending.interactionId);
+          }
+          return accepted;
         }}
       />
     );

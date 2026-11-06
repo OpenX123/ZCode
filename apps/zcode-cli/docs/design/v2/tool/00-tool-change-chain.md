@@ -1,5 +1,13 @@
 # Tool Change Chain Spec
 
+## 外部原生计划与错误投影
+
+ACP plan/plan_update → Runtime 校验与唯一发布 → V4 plan 投影 → 原生清单与计划审批卡。
+Codex plan-review 与 Claude ExitPlanMode 归一到既有 ExitPlanMode 审批，保留原生调用和选项；
+resolveInteraction ACK → broker → 原生选项回执 → adapter 续跑，不另发实现提示。
+计划等待停止转圈，清单完成度不决定 turn 终态。RPC 与流中重试错误在 adapter 边界脱敏，
+首次重试可见，真实进度和终态清场。契约及验收见根 `docs/desktop/native-plan-errors-spec.md`。
+
 ## Bash 临时输出路径隔离
 
 主应用及 workflow 子运行时装配 tmp 父目录 → execution adapter 实际准备具名输出文件 →

@@ -20,9 +20,8 @@ export function writeBundledOfficialMarketplacePartitionSync(input: {
     manifest: input.manifest,
     version: 1,
   } satisfies BundledMarketplacePartition);
-  // 启动 seed 仅激活随包目录；旧 CDN 分片留在磁盘，不覆盖本地资产。
-  writeJsonFileSync(partitionPath(input.storageRoot, MERGED_MARKETPLACE_FILE), input.manifest);
-  return input.manifest;
+  // 新 CLI 启动也会播种；必须复用刷新时的合并路径，避免把社区目录覆盖成仅内置插件。
+  return rebuildOfficialMarketplaceSync(input.storageRoot);
 }
 
 export function writeCdnOfficialMarketplacePartitionSync(input: {

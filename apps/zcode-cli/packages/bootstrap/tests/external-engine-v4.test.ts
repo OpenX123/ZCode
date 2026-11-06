@@ -58,6 +58,94 @@ function command(type: CommandEnvelope["type"], payload = {}): CommandEnvelope {
 }
 
 describe("外部引擎 V4 接线", () => {
+  it("原生计划保留未执行清单，首次502重试可见并由真实进度收口", () => {
+    const projection = new ProductProjection("s1", "native-plan-errors");
+    projection.seedConfig({ engine: "codex", engineConfigOptions: [] });
+    projection.applyEvent(
+      event(SessionEventType.TurnStarted, { turnNumber: 1, input: "制定计划" }, 1),
+    );
+    projection.applyEvent(
+      event(
+        SessionEventType.ExternalEnginePlanUpdated,
+        {
+          plan: {
+            items: [{ id: "one", content: "检查连接", status: "pending" }],
+            document: { id: "native-plan", markdown: "# 实施计划" },
+            updatedAt: 2000,
+          },
+        },
+        2,
+      ),
+    );
+    expect(projection.getSnapshot().plan).toMatchObject({
+      items: [{ status: "pending" }],
+      document: { markdown: "# 实施计划" },
+    });
+    projection.applyEvent(
+      event(
+        SessionEventType.ExternalEngineFailureUpdated,
+        {
+          failure: {
+            code: "provider",
+            httpStatus: 502,
+            message: "Bad Gateway",
+            requestId: "fixture-request",
+          },
+          retrying: true,
+          attempt: 1,
+        },
+        3,
+      ),
+    );
+    expect(projection.getSnapshot().control.apiRetry).toMatchObject({
+      attempt: 1,
+      maxAttempts: 0,
+      httpStatus: 502,
+      message: "Bad Gateway",
+      requestId: "fixture-request",
+    });
+    projection.applyEvent(
+      event(SessionEventType.ExternalEngineFailureUpdated, { failure: null }, 4),
+    );
+    expect(projection.getSnapshot().control.apiRetry).toBeNull();
+    expect(projection.getSnapshot().plan?.items[0]?.status).toBe("pending");
+  });
+
+  it("网关终态保留诊断，运行终止后的旧重试不能复活", () => {
+    const projection = new ProductProjection("s1", "terminal-provider-error");
+    projection.applyEvent(event(SessionEventType.TurnStarted, { turnNumber: 1, input: "test" }, 1));
+    projection.applyEvent(
+      event(
+        SessionEventType.ExternalEngineFailureUpdated,
+        {
+          failure: {
+            code: "provider",
+            httpStatus: 502,
+            message: "Bad Gateway",
+            requestId: "fixture-request",
+            retryable: true,
+          },
+          retrying: false,
+        },
+        2,
+      ),
+    );
+    expect(projection.getSnapshot().control.lastError).toMatchObject({
+      source: "provider",
+      message: "Bad Gateway",
+      detail: "Request ID: fixture-request",
+    });
+    projection.applyEvent(event(SessionEventType.TurnComplete, { duration: 1, success: false }, 3));
+    projection.applyEvent(
+      event(
+        SessionEventType.ExternalEngineFailureUpdated,
+        { failure: { code: "provider", httpStatus: 502 }, retrying: true },
+        4,
+      ),
+    );
+    expect(projection.getSnapshot().control.apiRetry).toBeNull();
+  });
+
   it("ACP 配置事件进入实时投影并在后续运行态变化后仍禁用历史改写", () => {
     const projection = new ProductProjection("s1", "epoch");
     projection.seedConfig({ engine: "claude-code", engineConfigOptions: [] });

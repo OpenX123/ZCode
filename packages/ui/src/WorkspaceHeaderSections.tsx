@@ -560,6 +560,19 @@ export function WorkspaceHeaderTitleSection({
               ) : null}
               <TaskActionMenuContent
                 intl={intl}
+                workbenchSession={
+                  resolvedTaskActionTaskId
+                    ? {
+                        workspaceScope: {
+                          workspacePath: workspaceAbsPath,
+                          workspaceIdentity: workspaceIdentity ?? undefined,
+                          remoteSessionId: remoteSessionId ?? undefined,
+                        },
+                        sessionId: resolvedTaskActionTaskId,
+                      }
+                    : undefined
+                }
+                showWorkbenchLayoutActions={false}
                 isPinned={isPinned}
                 fileManagerLabel={fileManagerLabel}
                 taskSessionFile={taskSessionFile}

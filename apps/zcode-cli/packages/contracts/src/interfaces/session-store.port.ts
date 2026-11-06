@@ -242,6 +242,8 @@ export interface ForkCommitBundle {
     payload: { text: string; [key: string]: unknown };
   };
   commandFact: {
+    /** 跨库导入时幂等事实属于 child，不能向不存在的 parent 写外键。 */
+    scope?: "child";
     parentSessionId: string;
     sourceCommandId: string;
     ack: {
@@ -1145,6 +1147,8 @@ export interface SessionStorePort {
   }): Promise<MessageWithParts | null>;
   messages(input: { sessionID: SessionId }): Promise<MessageWithParts[]>;
   saveSessionEntry?(input: SessionEntryInfo): Promise<void>;
+  /** 全库 entry id 原子占位：仅首次插入返回 true，冲突时不覆盖内容或触碰会话。 */
+  saveSessionEntryIfAbsent?(input: SessionEntryInfo): Promise<boolean>;
   sessionEntries?(input: {
     sessionID: SessionId;
     type?: SessionEntryType | string;

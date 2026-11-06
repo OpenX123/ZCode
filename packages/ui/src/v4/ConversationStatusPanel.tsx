@@ -76,6 +76,7 @@ import { formatBackgroundTaskElapsedLabel } from "@/BackgroundTaskElapsedLabel.j
 import { GitActionMenu } from "@/GitActionMenu.js";
 import { GitBranchSwitcher } from "@/GitBranchSwitcher.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { MessageResponse } from "@/components/ai-elements/message.js";
 import type {
   OpenPlanDetailSideTabRequest,
   OpenSubagentDirectorySideTabRequest,
@@ -913,6 +914,16 @@ function PlanStatusSection({
         plan={plan}
         popoverSide={popoverSide}
       />
+      {plan.document ? (
+        <details className="px-2 pb-2 text-ui-sm">
+          <summary className="cursor-pointer text-foreground-subtle">
+            {intl.formatMessage({ id: "chat.nativePlan.view" })}
+          </summary>
+          <div className="mt-2 max-h-96 overflow-y-auto">
+            <MessageResponse streaming={false}>{plan.document.markdown}</MessageResponse>
+          </div>
+        </details>
+      ) : null}
     </StatusSection>
   );
 }

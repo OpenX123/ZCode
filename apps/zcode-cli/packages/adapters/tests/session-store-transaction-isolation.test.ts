@@ -56,6 +56,22 @@ describe("connection-wide transaction isolation", () => {
     });
   });
 
+  it("跨库导入的 child 幂等事实不要求目标库存在 parent，重启后仍可重放", async () => {
+    const { store, directory, dbPath } = await openStore();
+    const bundle = forkBundle(directory);
+    bundle.commandFact.scope = "child";
+    await store.commitForkBundle(bundle);
+    expect(await store.getSession(PARENT_ID)).toBeNull();
+    expect((await store.sessionEntries({ sessionID: CHILD_ID, type: "v4/command_fact" }))).toHaveLength(1);
+    expect((await store.messages({ sessionID: CHILD_ID }))[0]?.parts[0]).toMatchObject({ text: HISTORY_MARKER });
+    store.close();
+    stores.splice(stores.indexOf(store), 1);
+    const reopened = await createSqliteSessionStore({ dbPath });
+    stores.push(reopened);
+    expect((await reopened.commitForkBundle(bundle)).id).toBe(CHILD_ID);
+    expect(await reopened.messages({ sessionID: CHILD_ID })).toHaveLength(1);
+  });
+
   it("同时发起的成功 fork 各自提交，重启后 child 历史仍在", async () => {
     const { store, directory, dbPath } = await openStore();
     await store.createSession(sessionInput(PARENT_ID, directory));

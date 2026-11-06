@@ -4,6 +4,7 @@ import { isPathInWorkspaceScope, normalizeGitPath, toWorkspaceRelativeGitPath } 
 import { filterCommitMessageFilesByCurrentSession } from "./commitMessageFileScope.js";
 import type { IGitService } from "./git.js";
 import type { GitCommitMessageGenerator } from "./gitCommitMessageGenerator.js";
+import { createGitSessionWorktreeManager } from "./session-worktree/index.js";
 import {
   createGitCliRepo,
   type GitBranchComparisonChange,
@@ -172,8 +173,12 @@ export function createGitService(options?: {
   commitMessageGenerator?: GitCommitMessageGenerator;
 }): IGitService {
   const repo = options?.repo ?? createGitCliRepo();
+  const worktrees = createGitSessionWorktreeManager(repo);
 
   return {
+    getSessionWorktreePreparation: worktrees.getPreparation,
+    prepareSessionWorktree: worktrees.prepare,
+    rollbackSessionWorktree: worktrees.rollback,
     async getRepositorySummary(params) {
       const status = await repo.getStatus(params.workspacePath);
       return status.summary;

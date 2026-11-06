@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- 跨端 platform contract 集中声明 renderer 能力；OAuth 与 browser lifecycle 必须保持 desktop/web 类型合同，本 MR 不拆分平台边界。 */
 import type { BrowserViewportSize } from "./browser-use/command-metadata.js";
+import type { SessionLocator } from "./session-navigation/contract.js";
 import type {
   CuaAccessibilitySettingsResult,
   OpenCuaPermissionOnboardingOptions,
@@ -967,6 +968,9 @@ export interface IPlatformService {
 
   /** 注册 main 进程通过 deep link 直接打开本地工作区目录的回调，返回 disposer */
   onOpenWorkspacePath?(handler: (path: string) => void): () => void;
+
+  /** 已校验的会话链接；业务方仍需精确验证会话存在性。 */
+  onOpenSession?(handler: (target: SessionLocator) => void): () => void;
 
   /** 注册窗口全屏状态变化回调，返回 disposer */
   onWindowFullscreenChanged(handler: (isFullscreen: boolean) => void): () => void;

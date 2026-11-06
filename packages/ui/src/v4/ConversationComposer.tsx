@@ -26,6 +26,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -625,7 +626,14 @@ function ConversationComposerImpl({
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const configPickerScopeKey = `${workspaceKey}\0${draftScopeId}`;
   const [text, setText] = useState("");
-  const [pending, setPending] = useState(false);
+  const [pendingSubmission, setPendingSubmission] = useState<{
+    text: string;
+    ttft?: ComposerTimingSeed["localTtft"];
+  } | null>(null);
+  const pending = pendingSubmission !== null;
+  useLayoutEffect(() => {
+    if (pendingSubmission?.ttft) getLocalTtftObserver()?.optimisticRendered(pendingSubmission.ttft);
+  }, [pendingSubmission]);
   const [configPickerState, setConfigPickerState] = useState<{
     scopeKey: string;
     activePicker: V4ComposerConfigPicker | null;
@@ -1230,6 +1238,14 @@ function ConversationComposerImpl({
     requestComposerFocus();
   }, [draftFocusVersion, requestComposerFocus]);
 
+  const previousBlockingRequestRef = useRef(blockingRequestId);
+  useEffect(() => {
+    const wasBlocked = previousBlockingRequestRef.current !== null;
+    previousBlockingRequestRef.current = blockingRequestId;
+    // 审批卡清场后编辑器已重新显示，复用既有聚焦意图，避免“继续修改”后焦点丢在已卸载按钮上。
+    if (wasBlocked && blockingRequestId === null) requestComposerFocus();
+  }, [blockingRequestId, requestComposerFocus]);
+
   // 切到需连接的会话时 disabled=true，聚焦意图 defer；连接完成 disabled→false 时兑现一次。
   useEffect(() => {
     flushPendingFocus();
@@ -1366,7 +1382,6 @@ function ConversationComposerImpl({
       }
 
       pendingRef.current = true;
-      setPending(true);
       // Bug 根因：草稿 intent 只保存用户显式改动，正常继承模型位于冻结初始化 config。
       // prewarm snapshot 尚未到达时若只读 draftConfig，send_btn 会错误落成空模型/glm。
       let telemetrySeed: ComposerTimingSeed;
@@ -1392,6 +1407,7 @@ function ConversationComposerImpl({
         telemetrySeed = freshSeed;
         sendTriggerRef.current = "shortcut";
       }
+      setPendingSubmission({ text: trimmed, ttft: telemetrySeed.localTtft });
       let promptHistoryBeforeSend: readonly string[] | null = null;
       let promptHistoryAfterAppend: readonly string[] | null = null;
       let promptHistoryWasPersisted = false;
@@ -1633,7 +1649,7 @@ function ConversationComposerImpl({
         logger.warn(`[v4-composer] 发送失败: ${String(error)}`);
       } finally {
         pendingRef.current = false;
-        setPending(false);
+        setPendingSubmission(null);
       }
     },
     [
@@ -2445,6 +2461,23 @@ function ConversationComposerImpl({
         className="hidden"
         onChange={attachmentsApi.handleAttachmentInputChange}
       />
+      {pendingSubmission ? (
+        <div
+          data-testid="composer-submission-preview"
+          role="status"
+          className="mb-3 flex items-start gap-2 rounded-lg border border-border/50 bg-surface px-3 py-2 text-ui-sm text-foreground-subtle"
+        >
+          <Spinner className="mt-0.5 size-3.5 shrink-0" />
+          <div className="min-w-0">
+            <div>{intl.formatMessage({ id: "chat.submission.sending" })}</div>
+            {pendingSubmission.text ? (
+              <div className="line-clamp-2 whitespace-pre-wrap break-words text-foreground">
+                {pendingSubmission.text}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       {engineNotReadyContent}
       {visibleError ? (
         // 仅展示附件错误会漏掉会话级 lastError，任务失败后也应在输入框上方显示原因。

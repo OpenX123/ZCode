@@ -6,7 +6,7 @@ import type {
 
 /**
  * 等待用户操作时，弹窗/问答卡已经是唯一进度反馈，不能再显示 loading。
- * 这里只识别权限确认与 AskUserQuestion；ExitPlanMode 等其它 userInput 语义保持独立。
+ * 权限、问答和计划审批都属于静态等待，不代表模型仍在生成。
  * 软门禁后 workspaceHookReview 不再阻塞聊天。
  */
 export function hasChatLoadingBlockingInteraction(
@@ -16,7 +16,9 @@ export function hasChatLoadingBlockingInteraction(
     (interaction) =>
       interaction.payload.kind === "permission" ||
       (interaction.payload.kind === "userInput" &&
-        interaction.payload.toolName === "AskUserQuestion"),
+        ["askuserquestion", "exitplanmode"].includes(
+          interaction.payload.toolName?.toLowerCase() ?? "",
+        )),
   );
 }
 

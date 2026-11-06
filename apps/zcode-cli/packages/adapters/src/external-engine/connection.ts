@@ -8,6 +8,7 @@ import {
 } from "@zcode/contracts";
 import {
   engineConfigOptionSchema,
+  readExternalEngineFailure,
   type EngineConfigOption,
   type EngineConnectionFailure,
 } from "@zcode/shared";
@@ -46,6 +47,7 @@ export class AcpConnection {
   private externalSessionId?: string;
   private sessionReady = false;
   private loadingHistory = false;
+  private forking = false;
   private initialUpdates: Array<{ sessionId: unknown; update: JsonObject }> = [];
   get healthy(): boolean {
     return !this.failure;
@@ -61,14 +63,25 @@ export class AcpConnection {
         "available_commands_update",
         "session_info_update",
         "usage_update",
+        "plan",
+        "plan_update",
+        "plan_removed",
       ].includes(String(update.sessionUpdate))
     )
       return;
     if (update.sessionUpdate === "config_option_update")
       await this.active.onConfigOptions(configOptions(update.configOptions));
-    else await this.active.onUpdate(update);
+    else {
+      // load/fork 回放的旧请求错误不是本轮重试；保留标题等历史事实，不恢复活动诊断。
+      if (this.loadingHistory && update.sessionUpdate === "session_info_update")
+        delete update._meta;
+      await this.active.onUpdate(update);
+    }
   }
-  constructor(child: ChildProcessWithoutNullStreams) {
+  constructor(
+    child: ChildProcessWithoutNullStreams,
+    private readonly setup?: (connection: AcpConnection) => Promise<void>,
+  ) {
     this.child = child;
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => this.read(chunk));
@@ -152,10 +165,15 @@ export class AcpConnection {
         } else if (typeof frame.id === "number") {
           const request = this.pending.get(frame.id);
           if (!request) continue;
+          const hasError = Object.hasOwn(frame, "error");
+          if (hasError === Object.hasOwn(frame, "result")) throw new Error("Invalid ACP response");
+          // 先校验再删除在途项；否则畸形响应抛错后 fail 无法拒绝无超时的 prompt。
+          const response = hasError
+            ? this.requestError(request.method, object(frame.error))
+            : object(frame.result);
           this.pending.delete(frame.id);
-          if (frame.error)
-            request.reject(this.requestError(request.method, object(frame.error).code));
-          else request.resolve(object(frame.result));
+          if (response instanceof ExternalEngineConnectionError) request.reject(response);
+          else request.resolve(response);
         } else throw new Error("Invalid ACP frame");
       } catch {
         this.fail(new ExternalEngineConnectionError({ code: "protocol" }, "Invalid ACP frame"));
@@ -167,7 +185,14 @@ export class AcpConnection {
     method: EngineConnectionFailure["method"],
     value: unknown,
   ): ExternalEngineConnectionError {
-    const rpcCode = typeof value === "number" && Number.isInteger(value) ? value : undefined;
+    const source = object(value);
+    if (
+      typeof source.code !== "number" ||
+      !Number.isInteger(source.code) ||
+      typeof source.message !== "string"
+    )
+      throw new ExternalEngineConnectionError({ code: "protocol", method });
+    const rpcCode = source.code;
     const code =
       rpcCode === -32000
         ? "authentication"
@@ -178,11 +203,12 @@ export class AcpConnection {
             : rpcCode === -32602
               ? "configuration"
               : "request";
-    return new ExternalEngineConnectionError({ code, method, rpcCode });
+    const failure = readExternalEngineFailure(source, { code, method, rpcCode });
+    return new ExternalEngineConnectionError(failure, failure.message);
   }
   private async permission(frame: JsonObject): Promise<void> {
     const params = object(frame.params);
-    if (!this.active || params.sessionId !== this.externalSessionId) {
+    if (this.forking || !this.active || params.sessionId !== this.externalSessionId) {
       this.send({ jsonrpc: "2.0", id: frame.id, result: { outcome: { outcome: "cancelled" } } });
       return;
     }
@@ -249,15 +275,25 @@ export class AcpConnection {
   async prepare(input: ExternalEngineSessionInput): Promise<void> {
     await this.execute(input);
   }
+  async fork(input: ExternalEngineSessionInput, parentExternalSessionId: string): Promise<string> {
+    if (this.externalSessionId)
+      throw new ExternalEngineConnectionError({ code: "configuration", method: "session/fork" });
+    await this.execute(input, undefined, parentExternalSessionId);
+    if (!this.externalSessionId)
+      throw new ExternalEngineConnectionError({ code: "protocol", method: "session/fork" });
+    return this.externalSessionId;
+  }
   async run(input: ExternalEngineTurnInput): Promise<ExternalEngineTurnResult> {
     return (await this.execute(input, input.prompt))!;
   }
   private async execute(
     input: ExternalEngineSessionInput,
     prompt?: ExternalEngineTurnInput["prompt"],
+    parentExternalSessionId?: string,
   ): Promise<ExternalEngineTurnResult | undefined> {
     if (this.active) throw new Error("Concurrent ACP turn");
     this.active = input;
+    this.forking = Boolean(parentExternalSessionId);
     let cancellationTimer: ReturnType<typeof setTimeout> | undefined;
     const cancel = () => {
       if (!prompt) {
@@ -303,23 +339,33 @@ export class AcpConnection {
         try {
           const initialized = await this.request("initialize", {
             protocolVersion: 1,
-            clientCapabilities: {},
+            clientCapabilities: { plan: {} },
             clientInfo: { name: "ycode", version: "1" },
           });
+          await this.setup?.(this);
           const capabilities = initialized.agentCapabilities as
-            | { loadSession?: boolean; sessionCapabilities?: { resume?: unknown } }
+            | { loadSession?: boolean; sessionCapabilities?: { resume?: unknown; fork?: unknown } }
             | undefined;
-          let method: NonNullable<EngineConnectionFailure["method"]> = !input.externalSessionId
-            ? "session/new"
-            : capabilities?.loadSession && !capabilities.sessionCapabilities?.resume
-              ? "session/load"
-              : "session/resume";
+          if (parentExternalSessionId && !capabilities?.sessionCapabilities?.fork)
+            throw new ExternalEngineConnectionError({
+              code: "unsupported",
+              method: "session/fork",
+            });
+          let method: NonNullable<EngineConnectionFailure["method"]> = parentExternalSessionId
+            ? "session/fork"
+            : !input.externalSessionId
+              ? "session/new"
+              : capabilities?.loadSession && !capabilities.sessionCapabilities?.resume
+                ? "session/load"
+                : "session/resume";
           const params = {
             cwd: input.cwd,
             mcpServers: [],
-            ...(input.externalSessionId ? { sessionId: input.externalSessionId } : {}),
+            ...(parentExternalSessionId || input.externalSessionId
+              ? { sessionId: parentExternalSessionId ?? input.externalSessionId }
+              : {}),
           };
-          this.loadingHistory = method === "session/load";
+          this.loadingHistory = method === "session/load" || method === "session/fork";
           let response: JsonObject;
           try {
             response = await this.request(method, params);
@@ -338,6 +384,11 @@ export class AcpConnection {
           }
           const id = response.sessionId ?? input.externalSessionId;
           if (typeof id !== "string") throw new Error("ACP session id missing");
+          if (parentExternalSessionId && id === parentExternalSessionId)
+            throw new ExternalEngineConnectionError(
+              { code: "protocol", method: "session/fork" },
+              "ACP fork reused parent session",
+            );
           if (input.externalSessionId && id !== input.externalSessionId)
             throw new ExternalEngineConnectionError(
               { code: "protocol" },
@@ -352,6 +403,7 @@ export class AcpConnection {
           // 复用原生配置 RPC，并接纳其模型限制后的实际值；已有会话和用户选择继续走恢复路径。
           if (
             input.engine === "claude-code" &&
+            !parentExternalSessionId &&
             !input.externalSessionId &&
             !input.configValues?.some((saved) => saved.id === "mode") &&
             restoredOptions.some(
@@ -435,6 +487,7 @@ export class AcpConnection {
       input.signal.removeEventListener("abort", cancel);
       clearTimeout(cancellationTimer);
       this.active = undefined;
+      this.forking = false;
     }
   }
   private async initialConfigOptions(options: EngineConfigOption[]): Promise<EngineConfigOption[]> {

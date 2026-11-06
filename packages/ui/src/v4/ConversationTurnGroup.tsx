@@ -104,46 +104,76 @@ interface CronAutomationTurnCard {
   automation: CronCreateAutomationSummary;
 }
 
-const MIN_VISIBLE_API_RETRY_ATTEMPT = 3;
-
 function toRetryStatus(apiRetry: ApiRetryState): ZCodeApiRetryStatus {
   const attempt = Math.max(1, Math.floor(apiRetry.attempt));
   // v4 maxAttempts 包含首次请求，而展示口径是重试次数；直接展示会把
   // 默认 10 次重试写成 1/11。
-  const maxRetries = Math.max(Math.floor(apiRetry.maxAttempts) - 1, attempt);
+  const maxRetries =
+    apiRetry.maxAttempts > 0 ? Math.max(Math.floor(apiRetry.maxAttempts) - 1, attempt) : 0;
   return {
     kind: "api_retry",
     attempt,
     maxRetries,
     retryDelayMs: 0,
-    errorStatus: null,
-    error: apiRetry.reasonCode,
+    errorStatus: apiRetry.httpStatus ?? null,
+    error: apiRetry.message ?? apiRetry.reasonCode,
   };
+}
+
+function externalEngineWaitPhase(
+  unit: ConversationTurnRenderUnit,
+  context: ConversationRowRenderContext,
+): ConversationRowRenderContext["externalEngineWaitPhase"] {
+  const hasContent =
+    unit.assistantTextRows.some((row) => row.text.trim()) ||
+    unit.assistantWorkRows.some((row) =>
+      row.kind === "reasoning"
+        ? Boolean(row.text.trim())
+        : row.kind === "toolCall" || row.kind === "subagent",
+    );
+  return hasContent ? undefined : context.externalEngineWaitPhase;
 }
 
 function TurnChatLoadingSlot({
   apiRetry,
   eligible,
+  phase,
 }: {
+  phase?: "connecting" | "ready";
   apiRetry: ApiRetryState | null;
   eligible: boolean;
 }) {
   const { intl, locale } = useZCodeIntl();
   const retryStatus = useMemo(() => (apiRetry ? toRetryStatus(apiRetry) : null), [apiRetry]);
-  // 前两次短暂恢复对用户等价于普通加载；保留 apiRetry 运行态，但只在
-  // 第三次重试开始后显示计数。必须在 retry/loading 分支前收敛，否则会留下空 slot，
-  // 而不是回退到 ChatLoading。
-  const visibleRetryStatus =
-    retryStatus && retryStatus.attempt >= MIN_VISIBLE_API_RETRY_ATTEMPT ? retryStatus : null;
+  // 第一次已知重试立即可见，避免网关故障时只有持续转圈。
+  const visibleRetryStatus = retryStatus;
   if (!visibleRetryStatus && !eligible) return null;
   return (
     <div data-zcode-chat-loading-slot="true" className="min-h-5">
       {visibleRetryStatus ? (
-        <ChatApiRetryStatus apiRetry={visibleRetryStatus} intl={intl} locale={locale} />
+        <ChatApiRetryStatus
+          apiRetry={visibleRetryStatus}
+          intl={intl}
+          locale={locale}
+          requestId={apiRetry?.requestId}
+          showError={Boolean(apiRetry?.message || apiRetry?.httpStatus)}
+        />
       ) : (
         // running 是 ChatLoading 的权威事实；额外静默计时会让 projection
         // 更新反复重启可见性，并使 UI 晚于真实状态。
-        <ChatLoading loading data-testid={TID_CHAT_LOADING} size="sm" />
+        <div className="flex items-center gap-2 text-ui-sm text-foreground-subtle">
+          <ChatLoading loading data-testid={TID_CHAT_LOADING} size="sm" />
+          {phase ? (
+            <span data-testid="engine-wait-phase">
+              {intl.formatMessage({
+                id:
+                  phase === "connecting"
+                    ? "chat.submission.startingEngine"
+                    : "chat.submission.waitingModel",
+              })}
+            </span>
+          ) : null}
+        </div>
       )}
     </div>
   );
@@ -757,7 +787,11 @@ function ConversationTurnFlow({
           stageTailIsRunning={unit.isRunning}
           assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
         />
-        <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
+        <TurnChatLoadingSlot
+          apiRetry={apiRetry}
+          eligible={showLoading}
+          phase={externalEngineWaitPhase(unit, context)}
+        />
       </div>
     );
   }
@@ -830,7 +864,11 @@ function ConversationTurnFlow({
           canRetryLatestAssistant={canRetryLatestAssistant}
         />
       ))}
-      <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
+      <TurnChatLoadingSlot
+        apiRetry={apiRetry}
+        eligible={showLoading}
+        phase={externalEngineWaitPhase(unit, context)}
+      />
     </div>
   );
 }
@@ -1037,7 +1075,11 @@ function ConversationBackgroundResultWork({
           assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
         />
       ) : null}
-      <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
+      <TurnChatLoadingSlot
+        apiRetry={apiRetry}
+        eligible={showLoading}
+        phase={externalEngineWaitPhase(unit, context)}
+      />
     </div>
   );
 }

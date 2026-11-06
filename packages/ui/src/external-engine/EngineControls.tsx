@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select.js";
 import { ENGINE_LABELS, type EngineControlsProps } from "./contract.js";
 import { TaskClientLogo } from "./TaskClientLogo.js";
+import { ErrorDiagnostics } from "@/components/ai-elements/error-diagnostics.js";
 import {
   EngineConfigMenu,
   EngineEffortPicker,
@@ -38,7 +39,8 @@ export function EngineControls({
         },
       )
     : error;
-  const diagnostic = connectionFailure?.method
+  const diagnostic = connectionFailure ? JSON.stringify(connectionFailure, null, 2) : "";
+  const methodSummary = connectionFailure?.method
     ? ` (${connectionFailure.method}${connectionFailure.rpcCode !== undefined ? `, RPC ${connectionFailure.rpcCode}` : ""})`
     : "";
   const [activePicker, setActivePicker] = useState<string | null>(null);
@@ -103,9 +105,19 @@ export function EngineControls({
         </span>
       ) : null}
       {failureMessage ? (
-        <span role="alert" className="px-2 text-ui-sm text-destructive">
-          {intl.formatMessage({ id: "engine.connectionFailed" })}: {failureMessage}
-          {diagnostic}
+        <div role="alert" className="min-w-0 px-2 text-ui-sm text-destructive">
+          {intl.formatMessage({
+            id:
+              connectionFailure?.code === "provider"
+                ? "engine.requestFailed"
+                : "engine.connectionFailed",
+          })}
+          : {failureMessage}
+          {connectionFailure?.httpStatus ? ` · HTTP ${connectionFailure.httpStatus}` : ""}
+          {methodSummary}
+          {connectionFailure?.message ? (
+            <p className="select-text break-words">{connectionFailure.message}</p>
+          ) : null}
           {onRetry ? (
             <button
               type="button"
@@ -116,7 +128,14 @@ export function EngineControls({
               {intl.formatMessage({ id: "engine.retryConnection" })}
             </button>
           ) : null}
-        </span>
+          {diagnostic ? (
+            <ErrorDiagnostics
+              text={diagnostic}
+              label={intl.formatMessage({ id: "engine.errorDetails" })}
+              copyLabel={intl.formatMessage({ id: "engine.copyErrorDetails" })}
+            />
+          ) : null}
+        </div>
       ) : null}
       {options.map((option) => {
         const picker = `config:${option.id}`;

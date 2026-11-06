@@ -1,3 +1,4 @@
+import { zcodeSessionForkTransferSchema, zcodeSessionImportForkResultSchema } from "@zcode/shared";
 import {
   isExternalSessionEngine,
   resolveSessionEngine,
@@ -3050,7 +3051,9 @@ export function createZCodeAgentService(
     try {
       ready =
         supported && requireReady
-          ? (await options?.externalEngineService?.getStatus(engine))?.ready === true
+          ? options?.externalEngineService?.isLaunchReady
+            ? await options.externalEngineService.isLaunchReady(engine)
+            : (await options?.externalEngineService?.getStatus(engine))?.ready === true
           : false;
       // 登录检测可能晚于工作区释放返回；与内置 Provider 等待共用取消入口，防止旧请求复活 runtime。
       if (pending.cancelled) throw createRuntimeUnavailableError(params);
@@ -3457,6 +3460,35 @@ export function createZCodeAgentService(
         V4_METHODS.conversationUsage,
         { sessionId: params.sessionId },
         v4ConversationUsageResultSchema,
+      );
+    },
+
+    async exportSessionFork(params) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.sessionExportFork,
+        {
+          sessionId: params.sessionId,
+          operationId: params.operationId,
+          workspace: params.targetWorkspace,
+        },
+        zcodeSessionForkTransferSchema,
+      );
+    },
+
+    async importSessionFork(params) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.sessionImportFork,
+        {
+          transfer: params.transfer,
+          workspace: {
+            workspacePath: params.workspacePath,
+            workspaceIdentity: params.workspaceIdentity,
+            workspaceKey: resolveWorkspaceKey(params),
+          },
+        },
+        zcodeSessionImportForkResultSchema,
       );
     },
 

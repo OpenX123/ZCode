@@ -4320,7 +4320,7 @@ E01–E11 产品规则已获用户确认，详见 [规格](../desktop/external-a
 
 - 候选 `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-external-engine-prewarm.test.ts`：隔离的 ACP/官方状态夹具，选择后配置在首发前可见，切换模式后首发与续聊复用同一引擎会话，切换两家引擎不串配置。夹具不调用真实供应商；真实账号桌面另列证据。
 
-- E13（accepted，复用该候选）：模型目录一次展开且所有项目可见，无滚动容器；选择模型、提交深度后首发与续聊使用相同原始配置。用受控 ACP 响应断言实际回传，不调用真实账号；状态保留 manual-review/pending。
+- E13（accepted，复用该候选）：模型目录一次展开；共享下拉层在窄窗口按可用高度限高并滚动，18 个项目逐个可达；选择模型、提交深度后首发与续聊使用相同原始配置。用受控 ACP 响应断言实际回传，不调用真实账号；状态保留 manual-review/pending。
 - E13 深度回跳回归（2026-10-28）：延迟 ACP 配置确认，两家引擎在指针释放、按键释放后持续显示所选档位，不先回到旧值；确认值回流后仍一致。拒绝配置时恢复原确认值并提示失败，不隐式提交 prompt；候选保持 pending。
 
 ### E14 外部引擎运行中配置与工具分段（accepted）
@@ -4344,3 +4344,11 @@ E01–E11 产品规则已获用户确认，详见 [规格](../desktop/external-a
 ## 2026-10-30 停止与 HTML 预览回归候选
 
 既有 `conversation-session-external-engine-prewarm.test.ts` 增补：Claude Code/Codex 健康空用量停止、停止中协议故障及进程退出后自动恢复原会话，保留配置且不重发 prompt；HTML 文件链接的静态显示、阻止脚本/meta refresh 登录跳转、源码切换。状态 accepted/manual-review/pending，隔离供应商，不自动转正或准入 CI。
+
+### E18/E19 原生计划与502恢复（2026-11-06）
+
+扩展同一 pending 候选的受控 ACP 分支：E18 断言原生清单/文档、等待不转圈、双击只答一次原生允许选项且无额外 prompt、拒绝实施后保留 Plan 并恢复输入焦点；E19 断言首次 HTTP 502 和 request id 可见、正文恢复后清重试。核心/投影/UI 定向测试提供已运行证据，Electron 场景的实际执行结果另行记录；不宣称真实 Windows 或上游网关已验收。
+
+### SFA01–03 会话菜单链接与分叉（2026-11-06）
+
+候选 `conversation-session/manual-review/pending/conversation-session-session-actions.test.ts` 对应 [会话链接与分叉规格](../desktop/session-links-and-forks-spec.md)。SFA01 复制稳定深链；SFA02 当前目录分叉的 child、继承历史、空输入和零排队；SFA03 真实 Git 工作树分叉的新目录/分支、HEAD 祖先、未提交文件以及源 index 不变。使用隔离文件与 case-local provider 回放，实际执行证据单独记录，保持 pending。

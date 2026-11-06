@@ -2,6 +2,17 @@ version: 1
 
 # 存量模块先标记为 legacy；新模块或完成迁移的模块设置 managed: true。
 modules:
+  - id: git-session-worktree
+    roots: [packages/services/src/git/session-worktree]
+    managed: true
+    requires: [services, shared]
+    publicEntrypoints:
+      [
+        packages/services/src/git/session-worktree/index.ts,
+        packages/services/src/git/session-worktree/contract.ts,
+      ]
+    layers: { adapters: . }
+    owner: conversation
   - id: rpc
     roots: [packages/rpc/src]
     managed: false
@@ -258,15 +269,17 @@ modules:
     layers: { domain: "." }
     owner: conversation
   - id: external-engine-protocol
-    roots: [packages/shared/src/external-engine]
+    roots: [packages/shared/src/external-engine, packages/shared/src/feedbackPrivacy.ts]
     managed: true
     requires: []
     publicEntrypoints:
       [
         packages/shared/src/external-engine/index.ts,
         packages/shared/src/external-engine/contract.ts,
+        packages/shared/src/external-engine/node/cli.ts,
+        packages/shared/src/feedbackPrivacy.ts,
       ]
-    layers: { domain: "." }
+    layers: { domain: ".", adapters: node }
     owner: conversation
   - id: cli-external-engine-contract
     roots: [apps/zcode-cli/packages/contracts/src/external-engine]
@@ -303,13 +316,21 @@ modules:
     owner: conversation
 
   - id: external-engine-ui
-    roots: [packages/ui/src/external-engine, packages/ui/src/hooks/external-engine]
+    roots:
+      [
+        packages/ui/src/external-engine,
+        packages/ui/src/hooks/external-engine,
+        packages/ui/src/v4/NativePlanApprovalCard.tsx,
+        packages/ui/src/components/ai-elements/error-diagnostics.tsx,
+      ]
     managed: true
     requires: [ui, shared, services, external-engine-protocol, external-engine-service, mobile-ui]
     publicEntrypoints:
       - packages/ui/src/external-engine/index.ts
       - packages/ui/src/external-engine/contract.ts
       - packages/ui/src/hooks/external-engine/index.ts
+      - packages/ui/src/v4/NativePlanApprovalCard.tsx
+      - packages/ui/src/components/ai-elements/error-diagnostics.tsx
     layers: { ui: "." }
     owner: conversation
 
@@ -731,7 +752,7 @@ modules:
     roots:
       - packages/ui/src/v4/workbench-tabs
     managed: true
-    requires: [ui, shared, external-engine-ui]
+    requires: [ui, shared, external-engine-ui, session-navigation]
     publicEntrypoints:
       - packages/ui/src/v4/workbench-tabs/index.ts
       - packages/ui/src/v4/workbench-tabs/contract.ts
@@ -749,6 +770,17 @@ modules:
       - packages/ui/src/components/ai-elements/mermaid-rendering/contract.ts
     layers:
       ui: .
+    owner: conversation
+  - id: session-navigation
+    roots:
+      - packages/shared/src/session-navigation
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/shared/src/session-navigation/index.ts
+      - packages/shared/src/session-navigation/contract.ts
+    layers:
+      domain: .
     owner: conversation
 
 global:
@@ -927,8 +959,12 @@ exceptions:
     paths:
       - packages/desktop/src/renderer/src/localTtftBootstrap.ts
       - packages/ui/src/v4/telemetry/localTtftObserver.ts
+      - packages/ui/src/v4/telemetry/localTtftRecord.ts
+      - packages/shared/src/localTtft.ts
+      - apps/zcode-cli/packages/contracts/src/tracing/local-turn-preparation.ts
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/local-ttft.ts
       - packages/ui/src/v4/conversationTurnRenderUnitTypes.ts
-    reason: 三个文件均为当前分支已存在实现；本轮只移除官方遥测导出与云分享字段，保留本地计时和对话渲染所有权。精确准入既有文件，不接管整个 Renderer 或 V4，也不增加架构 baseline。
+    reason: 文件均为当前分支已存在实现；移除官方遥测导出与云分享字段，并在同一本地 TTFT 链路补充提交预览、命令准入及引擎准备明细，保留 Renderer 点击时钟与 CLI 阶段事实所有权。精确准入既有文件，不接管整个 Renderer 或 V4，也不增加架构 baseline。
 
   - id: standalone-existing-model-adapter-edit
     rule: unmanaged-new-file

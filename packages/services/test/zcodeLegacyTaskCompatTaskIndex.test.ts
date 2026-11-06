@@ -1,3 +1,4 @@
+import type { IGitService } from "../src/git/git.js";
 import { seedTaskIndex } from "./helpers/taskIndexFixture.js";
 import { readTrustedZCodeAgentV4Connection } from "#src/zcode-agent/zcodeAgentConnectionScope.js";
 import {
@@ -266,6 +267,29 @@ function createAgentMock() {
       protocolVersion: 1,
       transportKind: "stdio",
     })),
+    exportSessionFork: vi.fn(
+      async (params: Parameters<IZCodeAgentService["exportSessionFork"]>[0]) => ({
+        version: 1 as const,
+        operationId: params.operationId,
+        sourceSessionId: params.sessionId,
+        childSessionId: "fork-child",
+        workspace: params.targetWorkspace,
+        forkKind: "history" as const,
+        payload: "{}",
+        sha256: "a".repeat(64),
+      }),
+    ),
+    importSessionFork: vi.fn(
+      async (params: { workspacePath: string; workspaceIdentity?: string }) => {
+        const snapshot = makeSnapshot({
+          sessionId: "fork-child",
+          workspacePath: params.workspacePath,
+          workspaceIdentity: params.workspaceIdentity,
+        });
+        snapshots.set("fork-child", snapshot);
+        return { snapshot, forkKind: "history" as const };
+      },
+    ),
     createSession: vi.fn(async (params: ZCodeAgentCreateSessionParams) => {
       const sessionId = params.sessionId ?? `sess_${snapshots.size + 1}`;
       const snapshot = makeSnapshot({
@@ -447,6 +471,10 @@ function createAgentMock() {
 }
 
 function createService(options?: {
+  gitService?: Pick<
+    IGitService,
+    "getSessionWorktreePreparation" | "prepareSessionWorktree" | "rollbackSessionWorktree"
+  >;
   settings?: Partial<AppSettings>;
   cuaProductMcpServerResolver?: CuaProductMcpServerResolver;
 }) {
@@ -478,6 +506,7 @@ function createService(options?: {
     zcodeAgentService: agent,
     taskIndexRepo,
     taskIndexSyncer,
+    ...(options?.gitService ? { gitService: options.gitService } : {}),
     ...(settingService ? { settingService } : {}),
     ...(options?.cuaProductMcpServerResolver
       ? { cuaProductMcpServerResolver: options.cuaProductMcpServerResolver }
@@ -488,6 +517,83 @@ function createService(options?: {
   disposables.push(service);
   return { agent, eventEmitter, indexFrameEmitter, service, taskIndexRepo };
 }
+
+describe("会话级 Fork Host 编排", () => {
+  it("双击同一操作只导出/导入一次，登记 child 后返回准确工作区", async () => {
+    const { service, agent, taskIndexRepo } = createService();
+    await seedIndexedTask(taskIndexRepo, { taskId: "parent", provider: "glm" });
+    const params = {
+      taskId: "parent",
+      workspacePath: "/repo",
+      operationId: "fork-host-once",
+      mode: "same-directory" as const,
+    };
+    const results = await Promise.all([service.forkTask(params), service.forkTask(params)]);
+    expect(results[0]).toEqual(results[1]);
+    expect(results[0]).toMatchObject({
+      taskId: "fork-child",
+      workspacePath: "/repo",
+      forkKind: "history",
+    });
+    expect(agent.exportSessionFork).toHaveBeenCalledTimes(1);
+    expect(agent.importSessionFork).toHaveBeenCalledTimes(1);
+    expect(
+      await taskIndexRepo.getTaskMeta({ workspacePath: "/repo", taskId: "fork-child" }),
+    ).not.toBeNull();
+    expect(agent.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it.each(["export", "import"] as const)(
+    "%s 响应失败保留工作树，同操作重试复用 child 而不清理已可能提交的目录",
+    async (stage) => {
+      const gitService = {
+        getSessionWorktreePreparation: vi.fn(
+          async () =>
+            undefined as Awaited<ReturnType<IGitService["getSessionWorktreePreparation"]>>,
+        ),
+        prepareSessionWorktree: vi.fn(async (params: { operationId: string }) => ({
+          operationId: params.operationId,
+          workspacePath: "/managed/worktree",
+          worktreeRoot: "/managed/worktree",
+          branchName: "ycode/fork-test",
+          headOid: "a".repeat(40),
+        })),
+        rollbackSessionWorktree: vi.fn(async () => ({ removed: true })),
+      };
+      const { service, agent, taskIndexRepo } = createService({ gitService });
+      await seedIndexedTask(taskIndexRepo, { taskId: "parent", provider: "glm" });
+      if (stage === "export")
+        vi.mocked(agent.exportSessionFork).mockRejectedValueOnce(new Error("response lost"));
+      else vi.mocked(agent.importSessionFork).mockRejectedValueOnce(new Error("response lost"));
+      const params = {
+        taskId: "parent",
+        workspacePath: "/repo",
+        operationId: "fork-worktree-once",
+        mode: "worktree" as const,
+      };
+      await expect(service.forkTask(params)).rejects.toThrow("response lost");
+      expect(gitService.rollbackSessionWorktree).not.toHaveBeenCalled();
+      gitService.getSessionWorktreePreparation.mockResolvedValueOnce(
+        await gitService.prepareSessionWorktree(params),
+      );
+      vi.mocked(agent.readSession).mockImplementationOnce(async () => {
+        throw new Error("busy parent must not be read again");
+      });
+      expect(await service.forkTask(params)).toMatchObject({
+        taskId: "fork-child",
+        workspacePath: "/managed/worktree",
+      });
+      expect(agent.importSessionFork).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          workspacePath: "/managed/worktree",
+          transfer: expect.objectContaining({ childSessionId: "fork-child" }),
+        }),
+      );
+      expect(agent.sendPrompt).not.toHaveBeenCalled();
+      expect(agent.readSession).toHaveBeenCalledTimes(1);
+    },
+  );
+});
 
 async function flushMicrotasks(times = 5): Promise<void> {
   for (let index = 0; index < times; index += 1) {

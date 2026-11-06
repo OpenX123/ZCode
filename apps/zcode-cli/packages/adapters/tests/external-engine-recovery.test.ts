@@ -83,7 +83,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  const calls=fs.readFileSync(log,'utf8').trim().split('\n').map(x=>JSON.parse(x));
  if(f.method===settings.exitMethod){process.exit(7);}
  if(f.method===settings.failMethod && calls.filter(x=>x.method===f.method).length<=(settings.failures??99)){
-  send({id:f.id,error:{code:settings.code,message:'test-private-token-must-not-leak',data:{private:'test-private-account'}}});return;
+  send({id:f.id,error:{code:settings.code,message:'Provider rejected request. Authorization: Bearer test-private-token-must-not-leak',data:{private:'test-private-account'}}});return;
  }
  if(f.method==='initialize')send({id:f.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true,sessionCapabilities:settings.loadOnly?{}:{resume:{}}}}});
  else if(f.method==='session/resume' && settings.resumeUnsupported)send({id:f.id,error:{code:-32601,message:'unsupported'}});
@@ -168,6 +168,30 @@ describe("Claude 新会话权限模式", () => {
 });
 
 describe("连接恢复的重试与协议边界", () => {
+  test("502请求失败保留健康原生连接，不自动重发prompt", async () => {
+    const fixture = recoveryFixture({
+      failMethod: "session/prompt",
+      code: -32603,
+      failures: 1,
+    }).replace("Provider rejected request.", "HTTP 502 Bad Gateway.");
+    const { port, root } = await setup("codex", fixture);
+    const input = turn("codex", [], []);
+    await port.prepareSession(input);
+    await expect(port.runTurn(input)).rejects.toMatchObject({
+      failure: { code: "provider", httpStatus: 502, method: "session/prompt" },
+    });
+    expect(
+      (await recoveryCalls(root)).filter(({ method }) => method === "session/prompt"),
+    ).toHaveLength(1);
+    await port.setConfigOption(input.sessionId, "mode", "safe");
+    await port.runTurn(input);
+    expect(
+      (await recoveryCalls(root)).filter(({ method }) => method === "initialize"),
+    ).toHaveLength(1);
+    expect(
+      (await recoveryCalls(root)).filter(({ method }) => method === "session/prompt"),
+    ).toHaveLength(2);
+  });
   test.skipIf(process.platform === "win32")(
     "桌面 PATH 缺 node 时仍可启动 npm 官方 CLI",
     async () => {

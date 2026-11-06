@@ -145,6 +145,23 @@ export interface GitCreateBranchRequest extends GitRepositoryRequest {
   startPoint?: string;
 }
 
+export interface GitSessionWorktreeRequest extends GitRepositoryRequest {
+  operationId: string;
+}
+
+export interface GitSessionWorktreeResult {
+  operationId: string;
+  workspacePath: string;
+  worktreeRoot: string;
+  branchName: string;
+  headOid: string;
+}
+
+export interface GitSessionWorktreeRollbackResult {
+  removed: boolean;
+  reason?: "modified" | "not-found";
+}
+
 export interface GitChangesRequest extends GitRepositoryRequest {
   sourceId: Extract<GitRepositoryChangeSourceId, "unstaged" | "staged">;
 }

@@ -4,6 +4,7 @@ import {
   TID_COMPOSER_WORKSPACE_TRIGGER,
   TID_TASK_ITEM,
   TID_V4_COMPOSER_INPUT,
+  TID_V4_PANE_SHELL,
   TID_V4_SESSION_PANE,
   TID_VIRTUAL_PROJECT_CREATE_TASK,
   TID_VIRTUAL_PROJECT_FILES,
@@ -256,12 +257,25 @@ export async function startDraftFromProject(
   await browser.waitUntil(
     () =>
       browser.execute(
-        (inputId, panePrefix, workspaceTriggerId, projectName, identity, key, previousVersion) => {
-          const inputs = document.querySelectorAll(`[data-testid="${panePrefix}-workspace-main"] [data-testid="${inputId}"]`);
-          const pane = inputs[0]?.closest<HTMLElement>(`[data-testid^="${panePrefix}-"]`);
-          const trigger = document.querySelector<HTMLElement>(
-            `[data-testid="${workspaceTriggerId}"]`,
+        (
+          inputId,
+          panePrefix,
+          workspaceTriggerId,
+          projectName,
+          identity,
+          key,
+          previousVersion,
+          shellPrefix,
+        ) => {
+          // 工作台给每个 Tab 分配稳定 paneId；新建后应检查当前焦点栏，不能继续等待旧 workspace-main。
+          const focused = document.querySelector<HTMLElement>(
+            `[data-testid^="${shellPrefix}-"][data-focused="true"]`,
           );
+          const pane =
+            focused?.querySelector<HTMLElement>(`[data-testid^="${panePrefix}-"]`) ??
+            document.querySelector<HTMLElement>(`[data-testid="${panePrefix}-workspace-main"]`);
+          const inputs = pane?.querySelectorAll(`[data-testid="${inputId}"]`) ?? [];
+          const trigger = pane?.querySelector<HTMLElement>(`[data-testid="${workspaceTriggerId}"]`);
           const activeIdentity = identity
             ? (
                 window as Window & {
@@ -294,6 +308,7 @@ export async function startDraftFromProject(
         options.workspaceIdentity,
         draftKey,
         previousDraftVersion,
+        TID_V4_PANE_SHELL,
       ),
     { timeout: 30_000, timeoutMsg: `项目 ${workspacePath} 的新任务输入框尚未就绪` },
   );

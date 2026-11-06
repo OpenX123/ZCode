@@ -1,4 +1,4 @@
-/** 仅用于用户反馈的排障材料；不得应用到模型请求或认证载荷。 */
+/** 用于反馈材料和界面错误诊断；不得应用到模型请求或认证载荷。 */
 const REDACTED = "[REDACTED]";
 const sensitiveKey =
   /(?:password|passwd|passphrase|secret|token|apikey|accesskey|privatekey|authorization|cookie|credential)/i;

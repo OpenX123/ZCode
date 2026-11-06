@@ -84,7 +84,7 @@ describe("ChatLoading", () => {
     expect(hasChatLoadingBlockingInteraction([interaction])).toBe(false);
   });
 
-  it("does not treat other userInput interactions as ChatLoading blockers", () => {
+  it("计划完成等待审批时停止ChatLoading，清单待实施不代表仍在生成", () => {
     const interaction: PendingInteraction = {
       interactionId: "plan-1",
       kind: "userInput",
@@ -99,7 +99,7 @@ describe("ChatLoading", () => {
       },
     };
 
-    expect(hasChatLoadingBlockingInteraction([interaction])).toBe(false);
+    expect(hasChatLoadingBlockingInteraction([interaction])).toBe(true);
   });
 
   it.each([

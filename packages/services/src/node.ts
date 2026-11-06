@@ -1752,6 +1752,7 @@ export function createLocalServices(options: {
       ? createExternalEngineService({
           enginesDir: externalEnginesDir,
           env: { ...process.env, HOME: externalEngineUserHome },
+          credentials: credentialService,
         })
       : undefined;
   const zcodeAgentService = createZCodeAgentService({
@@ -2015,6 +2016,7 @@ export function createLocalServices(options: {
   // task wrapper 由 ZCode task service adapter 提供；核心 session 状态由 ZCode agent server 维护。
   const zcodeTaskService = createZCodeTaskServiceAdapter({
     zcodeAgentService,
+    gitService,
     taskIndexRepo,
     taskIndexSyncer: zcodeTaskIndexSyncer,
     settingService,

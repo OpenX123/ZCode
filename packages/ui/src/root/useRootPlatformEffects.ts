@@ -1,8 +1,12 @@
+import { isRemoteWorkspaceIdentity } from "@zcode/shared";
 import type { CreateTaskOptions } from "@/app-shell/types.js";
 import { useComposerClientNamespace } from "@/hooks/useServices.js";
 import { matchesPrimaryShortcut } from "@/lib/keyboardShortcuts.js";
 import { isRendererReloadNavigation } from "@/lib/rendererNavigation.js";
 import { logger } from "@/logger.js";
+import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
+import { openSessionNavigation } from "@/v4/workbench-tabs/index.js";
+import type { IServiceAccessor } from "@zcode/services";
 import { isShortcutRecordingActive } from "@/shortcuts/bindings.js";
 import { isWorkspaceTab, type TabStoreState, type WindowTabState } from "@/store/tabStore.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
@@ -38,6 +42,7 @@ export function useRootPlatformEffects({
   activeWorkspacePath,
   activeWorkspaceIdentity,
   hasCompletedFullTabRestore = true,
+  services,
 }: {
   initialWorkspaceAbsPath?: string;
   initialWorkspaceIdentity?: string;
@@ -51,6 +56,7 @@ export function useRootPlatformEffects({
     options?: {
       workspaceIdentity?: string;
       workspacePurpose?: import("@zcode/shared").WorkspacePurpose;
+      remoteSessionId?: string;
     },
   ) => void;
   setIsBootstrappingInitialWorkspace: (value: boolean) => void;
@@ -77,9 +83,87 @@ export function useRootPlatformEffects({
   activeWorkspacePath?: string | null;
   activeWorkspaceIdentity?: string | null;
   hasCompletedFullTabRestore?: boolean;
+  services?: IServiceAccessor;
 }) {
   const didBootstrapInitialWorkspaceRef = useRef(false);
   const composerClientNamespace = useComposerClientNamespace();
+  useEffect(() => {
+    if (!hasCompletedFullTabRestore || !services || !platform.onOpenSession) return;
+    let disposed = false;
+    let pending = Promise.resolve();
+    const dispose = platform.onOpenSession((target) => {
+      // 顺序处理冷启动积压的链接；查索引之前不创建 tab 或启动未知目录的 Runtime。
+      pending = pending
+        .then(async () => {
+          if (disposed) return;
+          const remote = useRemoteWorkspaceSessionStore.getState();
+          const mappedSessionId = target.workspaceIdentity
+            ? remote.sessionIdByWorkspaceIdentity[target.workspaceIdentity]
+            : undefined;
+          const mappedSession = mappedSessionId ? remote.sessionsById[mappedSessionId] : undefined;
+          // 连接换代期间索引可能暂时落后；必须再次核对实体身份，不能把同路径另一 Host 当作目标。
+          const remoteSession =
+            target.workspaceIdentity && isRemoteWorkspaceIdentity(target.workspaceIdentity)
+              ? mappedSession?.workspaceIdentity === target.workspaceIdentity
+                ? mappedSession
+                : Object.values(remote.sessionsById).find(
+                    (session) => session.workspaceIdentity === target.workspaceIdentity,
+                  )
+              : undefined;
+          const remoteSessionId = remoteSession?.sessionId;
+          const requiresRemote = Boolean(
+            target.sourceServerId ||
+            (target.workspaceIdentity && isRemoteWorkspaceIdentity(target.workspaceIdentity)),
+          );
+          if (
+            requiresRemote &&
+            (!remoteSession ||
+              (target.sourceServerId && remoteSession.sourceServerId !== target.sourceServerId))
+          ) {
+            throw new Error(
+              locale === "zh-CN"
+                ? "目标设备尚未连接，请连接后重新打开会话链接。"
+                : "The target device is disconnected. Connect it and open the session link again.",
+            );
+          }
+          const owner = remoteSession?.services ?? services;
+          const meta = await owner.zcodeTaskService.getTaskMeta(target);
+          if (disposed) return;
+          if (
+            !meta ||
+            meta.taskId !== target.taskId ||
+            (meta.workspaceIdentity?.trim() || meta.workspacePath) !==
+              (target.workspaceIdentity?.trim() || target.workspacePath)
+          ) {
+            throw new Error(
+              locale === "zh-CN"
+                ? "会话不存在或已被删除。"
+                : "The session does not exist or was deleted.",
+            );
+          }
+          openSessionNavigation(
+            {
+              workspaceScope: {
+                workspacePath: meta.workspacePath,
+                workspaceIdentity: meta.workspaceIdentity,
+                remoteSessionId,
+              },
+              sessionId: meta.taskId,
+            },
+            addTab,
+          );
+          setWorkspaceActionError(null);
+        })
+        .catch((error: unknown) => {
+          if (!disposed)
+            setWorkspaceActionError(error instanceof Error ? error.message : String(error));
+        });
+    });
+    return () => {
+      disposed = true;
+      dispose();
+    };
+  }, [addTab, hasCompletedFullTabRestore, locale, platform, services, setWorkspaceActionError]);
   useEffect(() => {
     // 本地标签恢复和初始工作区注入串行完成，避免恢复期间抢先新建标签。
     if (!canBootstrapInitialWorkspace || didBootstrapInitialWorkspaceRef.current) {

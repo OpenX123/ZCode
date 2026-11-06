@@ -11,6 +11,7 @@ import { Snippet, SnippetCopyButton } from "@/components/ai-elements/snippet.js"
 import { SettingsGroupCard } from "@/settings/SettingsPageParts.js";
 import { SettingsResourceHeaderActions } from "@/settings/SettingsResourceHeaderActions.js";
 import { ENGINE_LABELS } from "./contract.js";
+import { EngineConnectionSettings } from "./EngineConnectionSettings.js";
 
 export function EngineSettings() {
   const service = useExternalEngineService();
@@ -23,7 +24,13 @@ export function EngineSettings() {
     setBusy(true);
     setError(null);
     try {
-      setStatuses(await service.listStatuses());
+      setStatuses(
+        service.refreshStatus
+          ? await Promise.all(
+              (["claude-code", "codex"] as const).map((engine) => service.refreshStatus!(engine)),
+            )
+          : await service.listStatuses(),
+      );
     } catch (error) {
       setError(String(error));
     } finally {
@@ -171,6 +178,7 @@ export function EngineSettings() {
                   {runtime.adapterPackage}@{runtime.adapterVersion}
                 </code>
               </details>
+              {engine === "codex" ? <EngineConnectionSettings /> : null}
               {status?.error ? (
                 <p role="alert" className="break-words text-ui-sm text-destructive">
                   {status.error}

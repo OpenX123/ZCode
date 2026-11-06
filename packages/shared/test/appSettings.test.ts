@@ -3,6 +3,28 @@ import { z } from "zod";
 import { appSettingsPatchSchema, appSettingsSchema } from "#src/validationAppSettings.js";
 
 describe("app settings", () => {
+  it("默认引擎和关闭更新偏好可往返，旧设置无需迁移", () => {
+    const original = appSettingsSchema.parse({});
+    expect(original.defaultSessionEngine).toBeUndefined();
+    expect(original.dismissedDesktopUpdateVersion).toBeUndefined();
+    for (const engine of ["zcode", "codex", "claude-code"] as const) {
+      const patch = appSettingsPatchSchema.parse({
+        defaultSessionEngine: engine,
+        dismissedDesktopUpdateVersion: "1.0.6",
+      });
+      expect(appSettingsSchema.parse({ ...original, ...patch })).toMatchObject(patch);
+    }
+    expect(appSettingsPatchSchema.safeParse({ defaultSessionEngine: "unknown" }).success).toBe(
+      false,
+    );
+    expect(
+      appSettingsSchema.parse({ defaultSessionEngine: "future-engine" }).defaultSessionEngine,
+    ).toBeUndefined();
+    expect(appSettingsPatchSchema.parse({ dismissedDesktopUpdateVersion: null })).toEqual({
+      dismissedDesktopUpdateVersion: null,
+    });
+  });
+
   it("自动归档默认关闭并保留 30 天，已有天数不覆盖", () => {
     expect(appSettingsSchema.parse({})).toMatchObject({
       taskAutoArchiveEnabled: false,

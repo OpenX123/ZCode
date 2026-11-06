@@ -1,9 +1,10 @@
 # 外部引擎 UI
 
 会话创建前由已有 Composer 草稿保存 engine 选择；创建后只读 snapshot.config.engine。
+本机 AppSettings.defaultSessionEngine 只给后续全新草稿提供种子；种子读取完成前不预热。输入框显式改选与独立设置页默认选择共用本机设置写入，其他窗口通过 SettingsChanged 刷新，旧草稿及已有会话不改写。
 创建后的输入框仅用固定小尺寸灰色 Logo 标识引擎，复用 TaskClientLogo 的可访问名称和悬停标题，不提供切换动作；草稿继续使用引擎选择器。
 历史会话行经公开 TaskClientLogo 消费 CLI 镜像的 task.engine，缺省使用应用自有 Logo；图标为本地资源，无网络请求或状态写入。
-引擎配置来自 snapshot.config.engineConfigOptions，选择原样回传 setEngineConfigOption。
+引擎配置来自 snapshot.config.engineConfigOptions，选择原样回传 setEngineConfigOption。模型与普通枚举菜单复用共享下拉层的可用高度、视口宽度和纵向滚动，保持目录顺序且菜单不越出视口，所有选项均可滚动到达并点击。
 组件经 hooks/external-engine 访问可选 Host 服务，服务缺失或远程 workspace 隐藏入口。
 未就绪拒绝不清空草稿；安装只能由设置页按钮触发，官方登录命令只展示给用户执行。
 

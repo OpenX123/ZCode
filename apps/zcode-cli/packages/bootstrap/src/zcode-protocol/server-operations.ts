@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isAuxiliarySessionKind, isReadonlyAgentSessionKind } from "@zcode/shared";
 /* eslint-disable max-lines -- ZCode Protocol 的 session/workspace 方法共享同一个 server context 与 snapshot helpers，迁移期先集中维护。 */
 import { observeSessionDebug } from "./session-debug.js";
@@ -20,6 +21,7 @@ import {
   parseRewindTriggeredPayload,
   RewindScope,
   RewindStrategy,
+  type ForkCommitBundle,
   type EventId,
   type ExecutionShellSelection,
   type MessageWithParts,
@@ -43,6 +45,7 @@ import {
 } from "@zcode/contracts";
 import {
   subagentRuntimeConfigSchema,
+  sessionEngineSchema,
   DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
   ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
   zcodeProtocolErrorCodes,
@@ -53,6 +56,9 @@ import {
   zcodeSessionCreateParamsSchema,
   zcodeSessionEventsParamsSchema,
   zcodeSessionForkParamsSchema,
+  zcodeSessionExportForkParamsSchema,
+  zcodeSessionImportForkParamsSchema,
+  zcodeSessionForkTransferSchema,
   zcodeSessionGoalParamsSchema,
   zcodeSessionListParamsSchema,
   zcodeSessionMessagesParamsSchema,
@@ -2338,6 +2344,110 @@ export async function goalSession(context: ZCodeProtocolAgentServerContext, rawP
     target,
     title: "Goal active",
   });
+}
+
+/** Host 编排的源端冻结：复用 runtime 克隆，不读取/写入另一工作区正文库。 */
+export async function exportSessionFork(
+  context: ZCodeProtocolAgentServerContext,
+  rawParams: unknown,
+) {
+  const params = parseParams(zcodeSessionExportForkParamsSchema, rawParams);
+  const { record } = await activateSessionForResume(context, { sessionId: params.sessionId });
+  // Runtime 先重放已冻结结果，再为新操作获取空闲 lease；父会话后来忙碌不应阻断恢复。
+  const workspaceKey = params.workspace.workspaceIdentity?.trim() || params.workspace.workspacePath;
+  const result = await record.app.runtime.exportConversationFork({
+    operationId: params.operationId,
+    targetDirectory: params.workspace.workspacePath,
+    targetWorkspaceId: workspaceKey,
+    targetProjectId: projectIdFromDirectory(params.workspace.workspacePath),
+  });
+  const payload = JSON.stringify(result.bundle);
+  return zcodeSessionForkTransferSchema.parse({
+    version: 1,
+    operationId: params.operationId,
+    sourceSessionId: params.sessionId,
+    childSessionId: result.bundle.child.id,
+    workspace: params.workspace,
+    forkKind: result.forkKind,
+    payload,
+    sha256: createHash("sha256").update(payload).digest("hex"),
+  });
+}
+
+/** 目标 CLI 原子导入并固定身份；恢复失败保留已提交 child，重试只完成登记。 */
+export async function importSessionFork(
+  context: ZCodeProtocolAgentServerContext,
+  rawParams: unknown,
+) {
+  const params = parseParams(zcodeSessionImportForkParamsSchema, rawParams);
+  const transfer = params.transfer;
+  if (
+    createHash("sha256").update(transfer.payload).digest("hex") !== transfer.sha256 ||
+    transfer.workspace.workspacePath !== params.workspace.workspacePath ||
+    (transfer.workspace.workspaceIdentity?.trim() || transfer.workspace.workspacePath) !==
+      (params.workspace.workspaceIdentity?.trim() || params.workspace.workspacePath)
+  ) {
+    throw new ProtocolRequestError(-32602, "Fork transfer target or checksum is invalid");
+  }
+  let bundle: ForkCommitBundle;
+  try {
+    bundle = JSON.parse(transfer.payload) as ForkCommitBundle;
+  } catch {
+    throw new ProtocolRequestError(-32602, "Fork transfer payload is invalid JSON");
+  }
+  const workspaceKey = params.workspace.workspaceIdentity?.trim() || params.workspace.workspacePath;
+  if (
+    !bundle ||
+    bundle.child?.id !== transfer.childSessionId ||
+    bundle.child.id === transfer.sourceSessionId ||
+    bundle.child.parentID !== transfer.sourceSessionId ||
+    bundle.child.directory !== params.workspace.workspacePath ||
+    bundle.child.path !== params.workspace.workspacePath ||
+    bundle.child.workspaceID !== workspaceKey ||
+    bundle.child.projectID !== projectIdFromDirectory(params.workspace.workspacePath) ||
+    bundle.commandFact?.sourceCommandId !== transfer.operationId ||
+    bundle.commandFact.scope !== "child" ||
+    bundle.commandFact.parentSessionId !== transfer.sourceSessionId ||
+    bundle.initialInput ||
+    bundle.copySources ||
+    !Array.isArray(bundle.messages) ||
+    !Array.isArray(bundle.entries)
+  ) {
+    throw new ProtocolRequestError(-32602, "Fork transfer bundle identity is invalid");
+  }
+  const engine = sessionEngineSchema.safeParse(bundle.child.engine ?? "zcode");
+  const nativeId =
+    typeof bundle.child.externalSessionId === "string" &&
+    Boolean(bundle.child.externalSessionId.trim());
+  const handoff = bundle.entries.some(
+    (entry) =>
+      entry?.type === "external_engine_handoff" &&
+      typeof (entry.data as { context?: unknown } | null)?.context === "string",
+  );
+  // ACK 的 child ID 决定重复请求的查找目标，必须在写库前与正文 owner 一致。
+  if (
+    !engine.success ||
+    bundle.commandFact.ack?.commandId !== transfer.operationId ||
+    bundle.commandFact.ack.status !== "accepted" ||
+    bundle.commandFact.ack.result?.type !== "forkAssistant" ||
+    bundle.commandFact.ack.result.sessionId !== bundle.child.id ||
+    (transfer.forkKind === "native" && (engine.data === "zcode" || !nativeId || handoff)) ||
+    (transfer.forkKind === "handoff" && (engine.data === "zcode" || nativeId || !handoff)) ||
+    (transfer.forkKind === "history" && (engine.data !== "zcode" || nativeId || handoff))
+  ) {
+    throw new ProtocolRequestError(-32602, "Fork transfer engine or command identity is invalid");
+  }
+  const store = context.deps.sessionStore;
+  if (!store?.commitForkBundle) throw new Error("Fork import store is unavailable");
+  const child = await store.commitForkBundle(bundle);
+  const activated = await activateSessionForResume(context, {
+    sessionId: child.id,
+    workspace: params.workspace,
+  });
+  return {
+    snapshot: await snapshot(context, activated.record, child),
+    forkKind: transfer.forkKind,
+  };
 }
 
 export async function forkSession(context: ZCodeProtocolAgentServerContext, rawParams: unknown) {

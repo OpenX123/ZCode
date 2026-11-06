@@ -1,5 +1,6 @@
 /* oxlint-disable eslint(max-lines) -- AppSettings schema 聚合历史迁移、默认值和 patch 校验，拆分会削弱设置迁移的单一入口。 */
 import { z } from "zod";
+import { sessionEngineSchema } from "./external-engine/contract.js";
 import { appToolSearchModeSchema } from "./app-runtime-preferences.js";
 import type { AppSettings } from "./protocol.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
@@ -502,6 +503,8 @@ function migrateLegacyWorkspaceSession(value: unknown): unknown {
 }
 
 const appSettingsObjectSchema = z.object({
+  defaultSessionEngine: sessionEngineSchema.optional().catch(undefined),
+  dismissedDesktopUpdateVersion: nonEmptyStringSchema.nullable().optional().catch(undefined),
   recentProjects: z.array(z.string()).default([]),
   locale: localeSchema.default("zh-CN"),
   // 快捷键用户覆盖（语义校验在 ui/src/shortcuts 生效表阶段容错，schema 只管形状）
@@ -605,6 +608,8 @@ export const appSettingsSchema = z.preprocess(
 );
 
 export const appSettingsPatchSchema = z.object({
+  defaultSessionEngine: sessionEngineSchema.optional(),
+  dismissedDesktopUpdateVersion: nonEmptyStringSchema.nullable().optional(),
   recentProjects: z.array(z.string()).optional(),
   locale: localeSchema.optional(),
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),

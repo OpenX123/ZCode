@@ -639,6 +639,7 @@ export interface ConversationRewindResult {
 }
 
 export interface WorkspaceForkResult {
+  preparedBundle?: ForkCommitBundle;
   checkpoint?: CheckpointCreatedPayload;
   copiedMessageCount: number;
   forkedSessionId: SessionId;
@@ -647,6 +648,19 @@ export interface WorkspaceForkResult {
   targetCheckpointId?: string;
   restoredFiles: WorkspaceRewindRestoredFile[];
   response: string;
+}
+
+/** Host 只转发不可变 bundle；正文克隆和目标身份在源 CLI 内一次确定。 */
+export interface ConversationForkExportOptions {
+  operationId: string;
+  targetDirectory: string;
+  targetWorkspaceId: string;
+  targetProjectId: string;
+}
+
+export interface ConversationForkExport {
+  bundle: ForkCommitBundle;
+  forkKind: "history" | "native" | "handoff";
 }
 
 /** V4 resolver 已固定的目标 product turn raw transcript segment。 */

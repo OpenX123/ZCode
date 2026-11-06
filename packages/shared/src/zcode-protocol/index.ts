@@ -2210,6 +2210,40 @@ export const zcodeSessionForkResultSchema = z
   .strict();
 export type ZCodeSessionForkResult = z.infer<typeof zcodeSessionForkResultSchema>;
 
+/** 跨工作区正文由源/目标 CLI 交接，Host 只转发带校验和的不透明快照。 */
+export const zcodeSessionForkTransferSchema = z
+  .object({
+    version: z.literal(1),
+    operationId: z.string().regex(/^[a-zA-Z0-9_-]{8,100}$/),
+    sourceSessionId: nonEmptyString,
+    childSessionId: nonEmptyString,
+    workspace: zcodeWorkspaceRefSchema,
+    forkKind: z.enum(["history", "native", "handoff"]),
+    payload: z.string().max(32 * 1024 * 1024),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+export type ZCodeSessionForkTransfer = z.infer<typeof zcodeSessionForkTransferSchema>;
+export const zcodeSessionExportForkParamsSchema = z
+  .object({
+    sessionId: nonEmptyString,
+    operationId: z.string().regex(/^[a-zA-Z0-9_-]{8,100}$/),
+    workspace: zcodeWorkspaceRefSchema,
+  })
+  .strict();
+export const zcodeSessionImportForkParamsSchema = z
+  .object({
+    transfer: zcodeSessionForkTransferSchema,
+    workspace: zcodeWorkspaceRefSchema,
+  })
+  .strict();
+export const zcodeSessionImportForkResultSchema = z
+  .object({
+    snapshot: zcodeSessionStateSnapshotSchema,
+    forkKind: z.enum(["history", "native", "handoff"]),
+  })
+  .strict();
+
 export const zcodeSessionCompactParamsSchema = z
   .object({
     sessionId: nonEmptyString,
@@ -3944,6 +3978,8 @@ export const zcodeProtocolMethods = {
   // forkSessionAtMessage 钩子直调 server-operations.forkSession op）。wire case 与
   // fork params/result schema 保留＝op 存活面；fork record 归 v4 原生重写。
   sessionFork: "session/fork",
+  sessionExportFork: "session/exportFork",
+  sessionImportFork: "session/importFork",
   sessionCompact: "session/compact",
   sessionGoal: "session/goal",
   sessionClose: "session/close",

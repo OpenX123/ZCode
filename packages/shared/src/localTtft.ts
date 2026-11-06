@@ -20,12 +20,21 @@ export const LOCAL_TTFT_PREPARATION_STAGES = [
   "mcp",
   "tools",
   "request_assembly",
+  "engine_prepare",
 ] as const;
 const diagnosticTime = z.number().finite().nonnegative();
 export const localTtftDetailSchema = z
   .object({
     id: z.string().min(1).max(128),
-    stage: z.enum([...LOCAL_TTFT_PREPARATION_STAGES, "attempt", "retry_wait", "user_confirmation"]),
+    stage: z.enum([
+      ...LOCAL_TTFT_PREPARATION_STAGES,
+      "attempt",
+      "retry_wait",
+      "user_confirmation",
+      "optimistic_render",
+      "command_received",
+      "command_admitted",
+    ]),
     start: diagnosticTime,
     end: diagnosticTime.optional(),
     outcome: z.enum(["completed", "failed", "cancelled", "first_output"]).optional(),

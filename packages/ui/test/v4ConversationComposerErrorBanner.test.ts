@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { createElement, type ComponentType, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -10,6 +12,8 @@ const captured = vi.hoisted(() => ({
   chatErrorBannerProps: null as Record<string, unknown> | null,
   chatPromptEditorProps: null as Record<string, unknown> | null,
   modelControlsProps: null as Record<string, unknown> | null,
+  installFocusApi: false,
+  focusRequests: 0,
 }));
 
 vi.mock("@/ChatErrorBanner.js", async () => {
@@ -47,9 +51,31 @@ vi.mock("@/prompt-editor/ChatPromptEditor.js", async () => {
       } & Record<string, unknown>,
     ) => {
       captured.chatPromptEditorProps = props;
+      const input = React.useRef<HTMLDivElement>(null);
+      React.useEffect(() => {
+        const apiRef = props.inputApiRef as { current: unknown } | undefined;
+        if (!captured.installFocusApi || !apiRef) return;
+        apiRef.current = {
+          focus: () => {
+            captured.focusRequests += 1;
+            input.current?.focus();
+          },
+          getEditorState: () => null,
+          clear: () => {},
+          setText: () => {},
+        };
+        return () => {
+          apiRef.current = null;
+        };
+      }, [props.inputApiRef]);
       return React.createElement(
         "form",
         { "data-testid": "mock-chat-prompt-editor" },
+        React.createElement("div", {
+          ref: input,
+          tabIndex: -1,
+          "data-testid": "mock-composer-input",
+        }),
         props.topContent,
         props.inputLeadingContent,
         props.leadingActions,
@@ -232,12 +258,54 @@ function renderBlockedComposer(): string {
 }
 
 afterEach(() => {
+  cleanup();
   captured.chatErrorBannerProps = null;
   captured.chatPromptEditorProps = null;
   captured.modelControlsProps = null;
+  captured.installFocusApi = false;
+  captured.focusRequests = 0;
+  vi.unstubAllGlobals();
 });
 
 describe("ConversationComposer error banner", () => {
+  it("发送等待ACK时立即显示冻结预览，失败后撤下预览并保留草稿", async () => {
+    const response = Promise.withResolvers<void>();
+    const onSendText = vi.fn(() => response.promise);
+    const updateComposerContent = vi.fn();
+    render(
+      createElement(ZCodeIntlProvider, {
+        initialLocale: "zh-CN",
+        children: createElement(AnyConversationComposer, {
+          snapshot: makeSnapshot(),
+          sessionId: "session-preview",
+          workspacePath: "/workspace",
+          onSendText,
+          onStop: vi.fn(),
+          onSelectModel: vi.fn(),
+          onSelectThought: vi.fn(),
+          onSwitchMode: vi.fn(),
+          updateComposerContent,
+          replaceComposerDraft: vi.fn(),
+          composerDraft: { text: "", updatedAt: 0 },
+        }),
+      }),
+    );
+    if (!captured.chatPromptEditorProps) throw new Error("编辑器必须挂载");
+    await act(async () =>
+      (captured.chatPromptEditorProps!.onChange as (text: string) => void)("冻结的输入"),
+    );
+    await act(async () => {
+      (captured.chatPromptEditorProps!.onSubmit as (text: string) => void)("冻结的输入");
+    });
+    expect(onSendText).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("composer-submission-preview").textContent).toContain("冻结的输入");
+    expect(screen.getByTestId("composer-submission-preview").textContent).toContain("正在发送");
+    await act(async () => response.reject(new Error("fixture request failure")));
+    expect(screen.queryByTestId("composer-submission-preview")).toBeNull();
+    expect(updateComposerContent).toHaveBeenLastCalledWith(
+      expect.objectContaining({ text: "冻结的输入" }),
+    );
+  });
   it("renders the session error banner above the prompt editor", () => {
     const html = renderComposerWithError("Provider rate limit exceeded.");
 
@@ -359,6 +427,58 @@ describe("ConversationComposer error banner", () => {
     expect(html).toMatch(
       /<div data-testid="v4-composer"[^>]*aria-hidden="true"[^>]*style="display:none"/,
     );
+  });
+
+  it.each([true, false])("审批清场后仅当前面板回焦，focused=%s", async (focused) => {
+    captured.installFocusApi = true;
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (frame: number) => {
+      frames.delete(frame);
+    });
+    const flushFrames = async () => {
+      await act(async () => {
+        for (const [id, callback] of frames) {
+          frames.delete(id);
+          callback(0);
+        }
+      });
+    };
+    const props = {
+      snapshot: makeSnapshot(),
+      sessionId: "session-focus",
+      workspacePath: "/workspace",
+      autoFocusEnabled: focused,
+      onSendText: vi.fn(),
+      onStop: vi.fn(),
+      onSelectModel: vi.fn(),
+      onSelectThought: vi.fn(),
+      onSwitchMode: vi.fn(),
+      updateComposerContent: vi.fn(),
+      replaceComposerDraft: vi.fn(),
+    };
+    const composer = (blockingRequestId: string | null, disabled = false) =>
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "zh-CN" },
+        createElement(AnyConversationComposer, { ...props, blockingRequestId, disabled }),
+      );
+    const view = render(composer("plan-review"));
+    await flushFrames();
+    await flushFrames();
+    captured.focusRequests = 0;
+    (document.activeElement as HTMLElement | null)?.blur();
+    view.rerender(composer(null, true));
+    await flushFrames();
+    expect(captured.focusRequests).toBe(0);
+    view.rerender(composer(null));
+    await flushFrames();
+    expect(captured.focusRequests).toBe(focused ? 1 : 0);
+    expect(document.activeElement === screen.getByTestId("mock-composer-input")).toBe(focused);
   });
 });
 

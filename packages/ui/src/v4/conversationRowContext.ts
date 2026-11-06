@@ -59,6 +59,8 @@ export interface ConversationRowRenderContext {
   chatLoadingBlockedByActiveWork?: boolean;
   /** 当前 session 正在等待权限确认或 AskUserQuestion 回答，隐藏底部 ChatLoading。 */
   chatLoadingBlockedByInteraction?: boolean;
+  /** 由既有 engineConfigState 派生，仅用于当前轮首内容前的阶段提示。 */
+  externalEngineWaitPhase?: "connecting" | "ready";
   /** 常规设置：是否在对话消息流中渲染 reasoning / thought 行。 */
   messageStreamShowReasoning?: boolean;
   /** 当前 assistant 轮次的第一条 reasoning row；关闭完整思考时仍需展示。 */

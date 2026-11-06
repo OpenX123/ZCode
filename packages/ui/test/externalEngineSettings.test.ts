@@ -30,6 +30,67 @@ function mount(service?: IExternalEngineService) {
 afterEach(cleanup);
 
 describe("Agent 引擎设置", () => {
+  it("API Key 保存后不回显，读取配置期间禁用编辑", async () => {
+    let complete!: (value: unknown) => void;
+    const getConnectionProfiles = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const saveConnectionProfile = vi.fn(async () => ({
+      id: "profile-a",
+      mode: "apiKey",
+      hasApiKey: true,
+    }));
+    const service = {
+      listStatuses: vi.fn(async () => [status]),
+      getConnectionProfiles,
+      saveConnectionProfile,
+      onStatusChanged: () => ({ dispose() {} }),
+    } as unknown as IExternalEngineService;
+    mount(service);
+    const mode = screen.getByLabelText("Codex 连接方式") as HTMLSelectElement;
+    expect(mode.disabled).toBe(true);
+    complete({
+      activeProfileId: "inherit",
+      profiles: [{ id: "inherit", mode: "inherit", hasApiKey: false }],
+    });
+    await waitFor(() => expect(mode.disabled).toBe(false));
+    fireEvent.change(mode, { target: { value: "apiKey" } });
+    fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "private-ui-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await screen.findByText("连接已保存，将用于新的 Codex 会话。");
+    expect(saveConnectionProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "apiKey", apiKey: "private-ui-key" }),
+    );
+    expect((screen.getByLabelText("API Key") as HTMLInputElement).value).toBe("");
+    expect(screen.getByLabelText("API Key").getAttribute("placeholder")).toContain("已保存");
+    expect(screen.queryByText("private-ui-key")).toBeNull();
+  });
+  it("连接配置失败显示可操作的安全原因，不回显异常中的密钥", async () => {
+    const service = {
+      listStatuses: vi.fn(async () => [status]),
+      getConnectionProfiles: vi.fn(async () => ({
+        activeProfileId: "inherit",
+        profiles: [{ id: "inherit", mode: "inherit", hasApiKey: false }],
+      })),
+      saveConnectionProfile: vi.fn(async () => {
+        throw new Error("external_engine_connection_url_invalid secret-ui-credential");
+      }),
+      onStatusChanged: () => ({ dispose() {} }),
+    } as unknown as IExternalEngineService;
+    mount(service);
+    const mode = screen.getByLabelText("Codex 连接方式") as HTMLSelectElement;
+    await waitFor(() => expect(mode.disabled).toBe(false));
+    fireEvent.change(mode, { target: { value: "apiKey" } });
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "secret-ui-credential" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("API 地址无效");
+    expect(screen.queryByText(/secret-ui-credential/)).toBeNull();
+  });
   it("服务缺失时隐藏入口", () => {
     mount();
     expect(screen.queryByTestId("agent-engine-settings")).toBeNull();

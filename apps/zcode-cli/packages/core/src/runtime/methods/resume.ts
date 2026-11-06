@@ -331,7 +331,7 @@ export async function resumeFromStore(
   });
 
   if (isExternalSessionEngine(this.config.engine)) {
-    await restoreExternalEngineConfig(this);
+    await restoreExternalEngineConfig(this, traceContext);
     // 原生连接失败不能抹掉可读历史；错误通过同一配置投影呈现并允许重试。
     try {
       await prepareExternalEngineSession(this, traceContext);

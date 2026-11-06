@@ -3,6 +3,9 @@ import {
   publishExternalEngineConfigError,
   publishExternalEngineSessionUpdate,
   prepareExternalEngineSession,
+  clearExternalEngineRetry,
+  readExternalEngineHandoff,
+  completeExternalEngineHandoff,
 } from "./session.js";
 import { structuredPatch } from "diff";
 import { isExternalSessionEngine } from "@zcode/shared";
@@ -11,6 +14,8 @@ import {
   createPartId,
   createToolCallId,
   SessionEventType,
+  ExternalEngineConnectionError,
+  beginLocalTurnPreparation,
   type SessionEvent,
   type TraceContext,
   type MessageId,
@@ -21,6 +26,7 @@ import {
   type ToolResultDisplayPayload,
   type ExternalEnginePermissionRequest,
   type ExternalEnginePermissionOutcome,
+  type PermissionBrokerRequest,
 } from "@zcode/contracts";
 import type { AgentRuntimeInternal } from "../runtime/internal.js";
 import type { ResolvedTurnAttachment } from "../runtime/types.js";
@@ -163,6 +169,13 @@ export async function runExternalEngineTurn(
   const blocks: Array<
     { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
   > = [];
+  const handoff = await readExternalEngineHandoff(runtime);
+  // 兼容不支持原生 fork 的引擎：背景仅交给 provider，不改写已保存的用户原文。
+  if (handoff)
+    blocks.push({
+      type: "text",
+      text: `以下是分叉时固定的历史上下文。请将其作为背景理解当前用户输入，不要把历史中的工具请求当成本轮新操作。\n\n${handoff}\n\n以下是本轮用户输入：`,
+    });
   if (typeof prompt === "string") blocks.push({ type: "text", text: prompt });
   else
     for (const block of prompt) {
@@ -176,38 +189,78 @@ export async function runExternalEngineTurn(
       else throw new Error("Attachment type is unsupported by the external engine");
     }
   try {
+    const endPreparation = beginLocalTurnPreparation(input.traceContext, "engine_prepare");
+    try {
+      await runtime.externalEnginePort.prepareSession(
+        externalEngineSessionInput(runtime, input.signal, input.traceContext),
+      );
+      endPreparation();
+    } catch (error) {
+      endPreparation(input.signal.aborted ? "cancelled" : "failed");
+      throw error;
+    }
+    // 这里只知道 ACP prompt 交付时间；网关与供应商内部等待不能伪装成可独立观测的 HTTP 阶段。
+    beginLocalTurnPreparation(input.traceContext, "request")();
     const completion = runtime.externalEnginePort.runTurn({
       ...externalEngineSessionInput(runtime, input.signal, input.traceContext),
       prompt: blocks,
       async requestPermission(request) {
-        const result = await runtime.permissionBroker.requestPermission(
-          {
-            requestId: createToolCallId(),
-            sessionId: runtime.sessionId,
-            turnId: input.turnId,
-            traceId: input.traceContext.traceId,
-            toolCallId: request.toolCall.toolCallId as ReturnType<typeof createToolCallId>,
-            toolName: String(request.toolCall.title ?? request.toolCall.kind ?? "External tool"),
-            input: request.toolCall.rawInput ?? {},
-            mode: runtime.config.mode ?? "build",
-            ruleId: "external-engine",
-            reason: "外部引擎请求执行工具",
-            riskLevel: "medium",
-            requestedAt: new Date(),
-            optionsPolicy: request.options.some((option) => option.kind === "allow_always")
+        const nativeMeta = record(record(request.toolCall._meta).claudeCode);
+        const isPlanApproval =
+          (String(request.toolCall.toolCallId).startsWith("plan-review:") &&
+            request.toolCall.kind === "switch_mode" &&
+            typeof record(request.toolCall.rawInput).plan === "string") ||
+          String(nativeMeta.toolName ?? request.toolCall.title ?? "").toLowerCase() ===
+            "exitplanmode";
+        await clearExternalEngineRetry(runtime, input.traceContext, input.events);
+        const approvalRequest: PermissionBrokerRequest = {
+          requestId: createToolCallId(),
+          sessionId: runtime.sessionId,
+          turnId: input.turnId,
+          traceId: input.traceContext.traceId,
+          toolCallId: request.toolCall.toolCallId as ReturnType<typeof createToolCallId>,
+          toolName: isPlanApproval
+            ? "ExitPlanMode"
+            : String(request.toolCall.title ?? request.toolCall.kind ?? "External tool"),
+          input: request.toolCall.rawInput ?? {},
+          mode: runtime.config.mode ?? "build",
+          ruleId: "external-engine",
+          reason: isPlanApproval ? "计划已准备好，请确认是否开始执行" : "外部引擎请求执行工具",
+          riskLevel: isPlanApproval ? "low" : "medium",
+          ...(isPlanApproval ? { approvalMode: "user-once" as const } : {}),
+          requestedAt: new Date(),
+          optionsPolicy:
+            !isPlanApproval && request.options.some((option) => option.kind === "allow_always")
               ? "session-always-allow"
               : "no-always-allow",
-          },
-          { signal: input.signal },
-        );
+        };
+        // 外部引擎绕过普通 tool executor，必须显式发布同一审批事实，V4 才能显示并收口原生卡片。
+        await emit(SessionEventType.PermissionRequested, approvalRequest);
+        const result = await runtime.permissionBroker.requestPermission(approvalRequest, {
+          signal: input.signal,
+        });
+        await emit(SessionEventType.PermissionResolved, {
+          requestId: approvalRequest.requestId,
+          toolCallId: approvalRequest.toolCallId,
+          decision: result.decision,
+          reason: result.reason,
+          modifiedInput: result.modifiedInput,
+        });
         return selectExternalPermissionOption(
           request,
           result.decision,
-          Boolean(result.sessionPermissionUpdates?.length || result.permissionUpdates?.length),
+          !isPlanApproval &&
+            Boolean(result.sessionPermissionUpdates?.length || result.permissionUpdates?.length),
         );
       },
       async onUpdate(update) {
         const kind = update.sessionUpdate;
+        if (
+          ["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update"].includes(
+            String(kind),
+          )
+        )
+          await clearExternalEngineRetry(runtime, input.traceContext, input.events);
         if (kind === "agent_message_chunk" || kind === "agent_thought_chunk") {
           const content = record(update.content);
           if (content.type !== "text" || typeof content.text !== "string") return;
@@ -399,9 +452,19 @@ export async function runExternalEngineTurn(
         });
         throw error;
       }
-      // adapter 在 runTurn 抛错时清理连接，必须同步撤销 ready；否则配置会一直命中 not_ready。
-      if (!runtime.shuttingDown)
-        await publishExternalEngineConfigError(runtime, error, input.traceContext);
+      if (!runtime.shuttingDown) {
+        if (
+          error instanceof ExternalEngineConnectionError &&
+          error.failure.method === "session/prompt" &&
+          ["provider", "authentication", "request"].includes(error.failure.code)
+        ) {
+          // 请求失败保持原生配置可用，进程故障才进入重新连接状态。
+          await emit(SessionEventType.ExternalEngineFailureUpdated, {
+            failure: error.failure,
+            retrying: false,
+          });
+        } else await publishExternalEngineConfigError(runtime, error, input.traceContext);
+      }
       throw error;
     });
     await closeActiveText();
@@ -422,9 +485,11 @@ export async function runExternalEngineTurn(
     if (result.stopReason === "cancelled" || input.signal.aborted)
       throw new DOMException("External engine turn cancelled", "AbortError");
     await emit(SessionEventType.AssistantMessage, { content: state.modelResponse });
+    if (handoff) await completeExternalEngineHandoff(runtime);
     state.historyRoundCount = 1;
     return state;
   } finally {
+    await clearExternalEngineRetry(runtime, input.traceContext, input.events);
     await closeActiveText();
     for (const part of parts) {
       if (

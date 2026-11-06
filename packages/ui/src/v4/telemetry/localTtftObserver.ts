@@ -57,7 +57,7 @@ export class LocalTtftObserver {
       sendMode: busy ? "queued" : "idle",
       visibility: this.isForeground ? "foreground" : "background",
       visibilityChanges: [{ at: this.now(), foreground: this.isForeground }],
-      confirmations: [],
+      rendererDetails: [],
     };
     this.emit(this.record(pending, "start", "success"));
     if (this.pending.size >= LOCAL_TTFT_MAX_PENDING) {
@@ -88,6 +88,24 @@ export class LocalTtftObserver {
     pending.sessionId ??= sessionId ?? undefined;
     this.emit(this.record(pending, "checkpoint", "success"));
     return context;
+  }
+  optimisticRendered(context: LocalTtftContext): void {
+    const pending = this.pending.get(context.observationId);
+    if (
+      !pending ||
+      pending.closed ||
+      pending.rendererDetails.some((detail) => detail.stage === "optimistic_render")
+    )
+      return;
+    pending.rendererDetails.push({
+      id: "renderer:optimistic",
+      stage: "optimistic_render",
+      start: pending.start,
+      end: this.now(),
+      source: "renderer",
+      outcome: "completed",
+    });
+    this.emit(this.record(pending, "checkpoint", "unclosed"));
   }
   ack(context: LocalTtftContext, status: string, excluded?: "capacity"): void {
     if (excluded) {
@@ -270,9 +288,9 @@ export class LocalTtftObserver {
     if (!pending) return;
     if (waiting) pending.confirmationStart ??= this.now();
     else if (pending.confirmationStart !== undefined) {
-      if (pending.confirmations.length < 32)
-        pending.confirmations.push({
-          id: `confirmation:${pending.confirmations.length}`,
+      if (pending.rendererDetails.length < 32)
+        pending.rendererDetails.push({
+          id: `confirmation:${pending.rendererDetails.length}`,
           stage: "user_confirmation",
           start: pending.confirmationStart,
           end: this.now(),

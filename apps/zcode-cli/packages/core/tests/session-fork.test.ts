@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   SessionGoal,
   MessageId,
@@ -32,6 +32,7 @@ import {
   createSelectionSideConversation,
   forkConversationBeforeMessage,
   forkStableConversationAtMessage,
+  exportConversationFork,
   selectionSideChatHistoryMessages,
   stableForkHistoryMessages,
 } from "../src/runtime/methods/session-fork.js";
@@ -185,7 +186,247 @@ function goalVerificationEntry(
   };
 }
 
+function externalForkHarness(messages: MessageWithParts[]) {
+  const entries = new Map<string, SessionEntryInfo>();
+  entries.set("config", {
+    id: "config",
+    sessionID: SESSION_ID,
+    type: "external_engine_config",
+    time: { created: 1, updated: 1 },
+    data: { connectionProfileId: "profile-parent", configValues: [] },
+  });
+  const forkSession = vi.fn(async () => "native-child");
+  const runtime = {
+    sessionId: SESSION_ID,
+    config: { engine: "codex", mode: "build" },
+    engineConnectionProfileId: "profile-parent",
+    engineConfigOptions: [],
+    workingDirectory: "/source",
+    isRemoteWorkspace: () => false,
+    acquireForegroundPromotionLease: vi.fn(() => ({ kind: "acquired" })),
+    releaseForegroundPromotionLease: vi.fn(),
+    rootTraceContext: { traceId: "trace_fork" },
+    getSessionModelSelection: () => undefined,
+    externalEnginePort: { forkSession, closeSession: vi.fn(async () => {}) },
+    sessionStore: {
+      getSession: async () => ({
+        id: SESSION_ID,
+        engine: "codex",
+        externalSessionId: "native-parent",
+        directory: "/source",
+        path: "/source",
+        slug: "source",
+        title: "parent",
+        version: "test",
+        time: { created: 1, updated: 1 },
+      }),
+      messages: async () => messages,
+      sessionEntries: async ({ type }: { type?: string }) =>
+        [...entries.values()].filter((e) => !type || e.type === type),
+      saveSessionEntry: async (entry: SessionEntryInfo) => {
+        entries.set(entry.id, structuredClone(entry));
+      },
+      saveSessionEntryIfAbsent: async (entry: SessionEntryInfo) => {
+        if (entries.has(entry.id)) return false;
+        entries.set(entry.id, structuredClone(entry));
+        return true;
+      },
+      commitForkBundle: async () => {
+        throw new Error("source must not commit child");
+      },
+    },
+  };
+  const options = {
+    operationId: "external-fork-once",
+    targetDirectory: "/target",
+    targetWorkspaceId: "/target",
+    targetProjectId: "target",
+  };
+  return { runtime, forkSession, entries, options };
+}
+
 describe("session fork history", () => {
+  it("跨工作区分叉冻结历史并幂等导出，创建前即固定 cwd 且不提交 child", async () => {
+    const entries: SessionEntryInfo[] = [];
+    const source = userMessage("msg_export_user" as MessageId, "冻结的父上下文", 1);
+    const parent = {
+      id: SESSION_ID,
+      engine: "zcode",
+      directory: "/source",
+      path: "/source",
+      workspaceID: "/source",
+      projectID: "source-project",
+      slug: "source",
+      title: "父会话",
+      version: "test",
+      time: { created: 1, updated: 1 },
+    } as SessionInfo;
+    let history = [source];
+    const runtime = {
+      sessionId: SESSION_ID,
+      activeTurn: null,
+      acquireForegroundPromotionLease: () => ({ kind: "acquired" }),
+      releaseForegroundPromotionLease: () => {},
+      config: { engine: "zcode", mode: "build" },
+      rootTraceContext: { traceId: "trace_export" },
+      getSessionModelSelection: () => undefined,
+      sessionStore: {
+        getSession: async () => parent,
+        messages: async () => history,
+        sessionEntries: async ({ type }: { type?: string }) =>
+          entries.filter((e) => !type || e.type === type),
+        saveSessionEntry: async (entry: SessionEntryInfo) => {
+          entries.push(entry);
+        },
+        saveSessionEntryIfAbsent: async (entry: SessionEntryInfo) => {
+          if (entries.some((item) => item.id === entry.id)) return false;
+          entries.push(structuredClone(entry));
+          return true;
+        },
+        commitForkBundle: async () => {
+          throw new Error("导出不应写目标正文库");
+        },
+      },
+    };
+    const options = {
+      operationId: "fork-export-once",
+      targetDirectory: "/target/中文",
+      targetWorkspaceId: "ssh:target",
+      targetProjectId: "target-project",
+    };
+    const first = await exportConversationFork.call(runtime as never, options as never);
+    history = [source, userMessage("msg_later" as MessageId, "导出之后的新内容", 2)];
+    const second = await exportConversationFork.call(runtime as never, options as never);
+    expect(second).toEqual(first);
+    expect(first.bundle.child).toMatchObject({
+      directory: "/target/中文",
+      path: "/target/中文",
+      workspaceID: "ssh:target",
+      engine: "zcode",
+      parentID: SESSION_ID,
+    });
+    expect(first.bundle.copySources).toBeUndefined();
+    expect(first.bundle.commandFact.scope).toBe("child");
+    expect(JSON.stringify(first.bundle)).toContain("冻结的父上下文");
+    expect(JSON.stringify(second.bundle)).not.toContain("导出之后的新内容");
+    expect(first.bundle.initialInput).toBeUndefined();
+    await expect(
+      exportConversationFork.call(
+        runtime as never,
+        { ...options, targetDirectory: "/other" } as never,
+      ),
+    ).rejects.toThrow(/target/i);
+  });
+
+  it("外部原生分叉只执行一次，继承profile并保存新native id与目标cwd", async () => {
+    const user = userMessage("native-user" as MessageId, "父上下文", 1);
+    const reply = assistantMessage("native-reply" as MessageId, user.info.id, "已完成", 2);
+    const f = externalForkHarness([user, reply]);
+    const [first, second] = await Promise.all([
+      exportConversationFork.call(f.runtime as never, f.options),
+      exportConversationFork.call(f.runtime as never, f.options),
+    ]);
+    expect(first).toEqual(second);
+    expect(first.forkKind).toBe("native");
+    expect(first.bundle.child).toMatchObject({
+      engine: "codex",
+      externalSessionId: "native-child",
+      directory: "/target",
+    });
+    expect(first.bundle.entries).toContainEqual(
+      expect.objectContaining({
+        type: "external_engine_config",
+        data: expect.objectContaining({ connectionProfileId: "profile-parent" }),
+      }),
+    );
+    expect(f.forkSession).toHaveBeenCalledTimes(1);
+    expect(f.forkSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parentExternalSessionId: "native-parent",
+        cwd: "/target",
+        connectionProfileId: "profile-parent",
+      }),
+    );
+    expect(f.runtime.releaseForegroundPromotionLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("原生分叉响应未知的重启重试不重复创建，也不伪装上下文交接", async () => {
+    const f = externalForkHarness([]);
+    f.forkSession.mockRejectedValueOnce(new Error("connection lost after native fork"));
+    await expect(exportConversationFork.call(f.runtime as never, f.options)).rejects.toThrow(
+      "connection lost",
+    );
+    await expect(exportConversationFork.call(f.runtime as never, f.options)).rejects.toThrow(
+      "结果未知",
+    );
+    expect(f.forkSession).toHaveBeenCalledTimes(1);
+    expect(f.runtime.releaseForegroundPromotionLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("不同runtime竞争同一操作时原子抢占只允许一次native分叉", async () => {
+    const f = externalForkHarness([]);
+    let release!: (id: string) => void;
+    f.forkSession.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const other = { ...f.runtime };
+    const pending = Promise.allSettled([
+      exportConversationFork.call(f.runtime as never, f.options),
+      exportConversationFork.call(other as never, f.options),
+    ]);
+    await vi.waitFor(() => expect(f.forkSession).toHaveBeenCalledTimes(1));
+    release("native-only-child");
+    const results = await pending;
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const replay = await exportConversationFork.call(other as never, f.options);
+    expect(replay.bundle.child.externalSessionId).toBe("native-only-child");
+    expect(f.forkSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("不同runtime并发导出纯历史时冻结同一个child", async () => {
+    const f = externalForkHarness([]);
+    const getParent = f.runtime.sessionStore.getSession;
+    f.runtime.sessionStore.getSession = async () => ({ ...(await getParent()), engine: "zcode" });
+    const results = await Promise.all([
+      exportConversationFork.call(f.runtime as never, f.options),
+      exportConversationFork.call({ ...f.runtime } as never, f.options),
+    ]);
+    expect(results[0]).toEqual(results[1]);
+    expect(results[0].forkKind).toBe("history");
+    expect(f.forkSession).not.toHaveBeenCalled();
+  });
+
+  it("已完成分叉在父会话变忙后仍可重放，连接清理失败不丢失native child", async () => {
+    const f = externalForkHarness([]);
+    f.runtime.externalEnginePort.closeSession.mockRejectedValueOnce(new Error("cleanup failed"));
+    const first = await exportConversationFork.call(f.runtime as never, f.options);
+    f.runtime.acquireForegroundPromotionLease.mockReturnValue({ kind: "busy" });
+    const replay = await exportConversationFork.call(f.runtime as never, f.options);
+    expect(first.forkKind).toBe("native");
+    expect(replay).toEqual(first);
+    expect(f.forkSession).toHaveBeenCalledTimes(1);
+    expect(f.runtime.acquireForegroundPromotionLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("失败尾轮超出稳定边界时冻结背景交接，不让native上下文越过可见分叉点", async () => {
+    const user = userMessage("stable-user" as MessageId, "稳定上下文", 1);
+    const reply = assistantMessage("stable-reply" as MessageId, user.info.id, "稳定回答", 2);
+    const later = userMessage("later-user" as MessageId, "失败轮输入", 3);
+    const f = externalForkHarness([user, reply, later]);
+    const result = await exportConversationFork.call(f.runtime as never, f.options);
+    expect(result.forkKind).toBe("handoff");
+    expect(f.forkSession).not.toHaveBeenCalled();
+    const handoff = result.bundle.entries.find((entry) => entry.type === "external_engine_handoff");
+    expect(JSON.stringify(handoff)).toContain("稳定上下文");
+    expect(JSON.stringify(handoff)).not.toContain("失败轮输入");
+    expect(result.bundle.child.externalSessionId).toBeUndefined();
+    expect(result.bundle.child.title).toContain("上下文交接");
+  });
+
   it("selection side chat 在生成中只复制稳定 user input 边界", () => {
     const stableUser = userMessage("msg_side_stable_user" as MessageId, "稳定问题", 1);
     const stableAssistant = assistantMessage(

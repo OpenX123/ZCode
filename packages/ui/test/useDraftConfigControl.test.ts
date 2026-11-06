@@ -2,6 +2,7 @@ import { act, createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ZCodeConfigOption } from "@zcode/shared";
+import type { AppSettings } from "@zcode/shared";
 import type { SessionConfigState } from "@zcode/shared/zcode-protocol-v4";
 import type { IModelSelectionService, ModelSelectionView } from "@zcode/services";
 import { resolveEffectiveModelSelection, type ProviderRegistryView } from "@zcode/provider";
@@ -85,8 +86,25 @@ vi.mock("@/hooks/useZCodeSessionService.js", () => ({
   useZCodeSessionService: () => ({ readWorkspacePresentation: vi.fn() }),
 }));
 
+const settingsMocks = vi.hoisted(() => ({
+  localServices: {},
+  settings: null as AppSettings | null,
+  loading: false,
+  update: vi.fn(async () => {}),
+  calls: [] as unknown[],
+}));
+vi.mock("@/hooks/useWorkspaceServices.js", () => ({
+  useBaseWorkspaceServices: () => settingsMocks.localServices,
+}));
 vi.mock("@/hooks/useSettingService.js", () => ({
-  useSettings: () => ({ settings: null }),
+  useSettings: (options?: { services?: unknown }) => {
+    settingsMocks.calls.push(options?.services);
+    return {
+      settings: settingsMocks.settings,
+      loading: settingsMocks.loading,
+      update: settingsMocks.update,
+    };
+  },
 }));
 
 vi.mock("@/components/ui/toast.js", () => ({
@@ -256,6 +274,98 @@ function installMinimalDom() {
 }
 
 describe("useDraftConfigControl slash command hydration", () => {
+  it("本机默认引擎先于目录读取固定，新默认不改已打开草稿", async () => {
+    const root = createRoot(installMinimalDom());
+    settingsMocks.loading = true;
+    const service = {
+      getView: vi.fn(),
+      onDidChange: vi.fn(() => ({ dispose() {} })),
+    } as unknown as IModelSelectionService;
+    let control!: ReturnType<typeof useActualDraftConfigControl>;
+    function Probe({ tabId = "first" }: { tabId?: string }) {
+      control = useActualDraftConfigControl({
+        workspacePath: "/preference",
+        workspaceIdentity: "ssh://host/preference",
+        sessionId: null,
+        draftTabId: tabId,
+        modelSelectionService: service,
+      });
+      return null;
+    }
+    await act(async () => root.render(createElement(Probe)));
+    expect(service.getView).not.toHaveBeenCalled();
+    expect(prepareWorkspaceMock).not.toHaveBeenCalled();
+    expect(control.modelReadiness.agentStartupAllowed).toBe(false);
+    settingsMocks.loading = false;
+    settingsMocks.settings = { defaultSessionEngine: "codex" } as AppSettings;
+    await act(async () => root.render(createElement(Probe)));
+    expect(control.composerDraft.engine).toBe("codex");
+    expect(service.getView).not.toHaveBeenCalled();
+    expect(settingsMocks.calls).toContain(settingsMocks.localServices);
+    settingsMocks.settings = { defaultSessionEngine: "claude-code" } as AppSettings;
+    await act(async () => root.render(createElement(Probe)));
+    expect(control.composerDraft.engine).toBe("codex");
+    await act(async () => root.render(createElement(Probe, { tabId: "second" })));
+    expect(control.composerDraft.engine).toBe("claude-code");
+    act(() => root.unmount());
+  });
+
+  it("旧草稿保持隐式 YCode，显式改选写入本机默认", async () => {
+    const workspacePath = "/legacy-engine";
+    const root = createRoot(installMinimalDom());
+    settingsMocks.settings = { defaultSessionEngine: "codex" } as AppSettings;
+    persistV4ComposerDraft(workspacePath, undefined, "__draft__", { text: "已有草稿" });
+    let control!: ReturnType<typeof useActualDraftConfigControl>;
+    function Probe() {
+      control = useActualDraftConfigControl({
+        workspacePath,
+        sessionId: null,
+        modelSelectionService: null,
+        agentStartupAllowed: false,
+      });
+      return null;
+    }
+    await act(async () => root.render(createElement(Probe)));
+    expect(control.composerDraft.engine).toBe("zcode");
+    await act(async () => control.handleDraftSelectEngine("claude-code"));
+    expect(control.composerDraft.engine).toBe("claude-code");
+    expect(settingsMocks.update).toHaveBeenCalledWith({ defaultSessionEngine: "claude-code" });
+    act(() => root.unmount());
+  });
+
+  it("新 Tab 预写的空归属占位等待本机默认引擎，不被识别为旧版选择", async () => {
+    const workspacePath = "/engine-placeholder";
+    const root = createRoot(installMinimalDom());
+    settingsMocks.loading = true;
+    persistV4ComposerDraft(workspacePath, undefined, "__draft__:tab:new", {
+      text: "",
+      projectId: null,
+      taskGroupId: null,
+    });
+    let control!: ReturnType<typeof useActualDraftConfigControl>;
+    function Probe() {
+      control = useActualDraftConfigControl({
+        workspacePath,
+        sessionId: null,
+        draftTabId: "new",
+        modelSelectionService: null,
+        agentStartupAllowed: false,
+      });
+      return null;
+    }
+    try {
+      await act(async () => root.render(createElement(Probe)));
+      expect(control.composerDraft.engine).toBeUndefined();
+      expect(control.modelReadiness.agentStartupAllowed).toBe(false);
+      settingsMocks.loading = false;
+      settingsMocks.settings = { defaultSessionEngine: "codex" } as AppSettings;
+      await act(async () => root.render(createElement(Probe)));
+      expect(control.composerDraft.engine).toBe("codex");
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
   it("同项目双草稿的引擎、正文和首发交接独立，不随全局新建重置", async () => {
     const workspacePath = "/two-tabs";
     const root = createRoot(installMinimalDom());
@@ -606,8 +716,8 @@ describe("useDraftConfigControl slash command hydration", () => {
       expect(readV4ComposerDraft(workspacePath, undefined, "__draft__")).toEqual(originalRoot);
       await act(async () => root.render(createElement(Probe, { sessionId: null })));
       // 导入仍保留空选择；回到从未选择模型的 Root 时，I24 允许补齐当前首选模型。
-      expect(control!.draftConfig).toEqual(
-        source === "empty-root"
+      expect(control!.draftConfig).toEqual({
+        ...(source === "empty-root"
           ? {
               ...imported,
               modelSelection: selection,
@@ -615,8 +725,9 @@ describe("useDraftConfigControl slash command hydration", () => {
               model: selection.modelId,
               thought: selection.options.reasoningLevel,
             }
-          : imported,
-      );
+          : imported),
+        engine: "zcode",
+      });
       expect(window.localStorage.getItem(`zcode-model-selection-recent-v1:${workspacePath}`)).toBe(
         recentBefore,
       );
@@ -706,6 +817,10 @@ describe("useDraftConfigControl slash command hydration", () => {
   });
 
   beforeEach(() => {
+    settingsMocks.settings = null;
+    settingsMocks.loading = false;
+    settingsMocks.update.mockClear();
+    settingsMocks.calls.length = 0;
     resetDynamicWorkflowAvailabilityStoreForTests();
     selectionServices.clear();
     prepareWorkspaceMock.mockReset();

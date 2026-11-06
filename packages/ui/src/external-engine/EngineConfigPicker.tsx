@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState } from "react";
+import { useState } from "react";
 import { BrainIcon, ChevronDownIcon, CpuIcon, Settings2Icon, ShieldIcon } from "lucide-react";
 import type { EngineConfigOption } from "@zcode/shared/external-engine";
 import { Button } from "@/components/ui/button.js";
@@ -42,35 +42,8 @@ export function EngineConfigMenu({
   onOpenChange,
   onValueChange,
 }: PickerProps) {
-  const [content, setContent] = useState<HTMLDivElement | null>(null);
-  const [rows, setRows] = useState(option.options.length || 1);
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    if (!content) return;
-    const update = () => {
-      // 按 Popper 实际可用高度分列，不裁切列表，也不靠隐藏滚动条掩盖遗漏的选项。
-      const available =
-        Number.parseFloat(
-          getComputedStyle(content).getPropertyValue(
-            "--radix-dropdown-menu-content-available-height",
-          ),
-        ) || window.innerHeight - 24;
-      setRows(Math.max(1, Math.floor((available - 40) / 34)));
-    };
-    update();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
-    observer?.observe(content);
-    window.addEventListener("resize", update);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", update);
-    };
-  }, [content, open, option.options.length]);
-
-  const columns = Math.max(1, Math.ceil(option.options.length / rows));
-  const rowCount = Math.max(1, Math.ceil(option.options.length / columns));
   const Icon = option.id === "model" ? CpuIcon : option.id === "mode" ? ShieldIcon : Settings2Icon;
+  // 自测高分列曾覆盖共享限高并让长目录越出视口；直接沿用下拉层的尺寸和滚动约束。
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
@@ -92,13 +65,11 @@ export function EngineConfigMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
-        ref={setContent}
         side="top"
         align="start"
         sideOffset={8}
         collisionPadding={12}
-        className="max-h-none max-w-[calc(100vw-1.5rem)] overflow-visible"
-        style={{ width: columns * 240 }}
+        className="w-60"
         data-testid={`engine-config-menu-${option.id}`}
         onCloseAutoFocus={(event) => {
           // 退出动画晚于新弹层打开时，旧菜单回焦会触发新弹层的 focusOutside 关闭。
@@ -112,11 +83,6 @@ export function EngineConfigMenu({
           value={option.currentValue}
           onValueChange={onValueChange}
           aria-label={option.name}
-          className="grid grid-flow-col gap-0.5"
-          style={{
-            gridTemplateRows: `repeat(${rowCount}, 2rem)`,
-            gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-          }}
         >
           {option.options.map((entry) => (
             <DropdownMenuRadioItem

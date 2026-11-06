@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { redactFeedbackText } from "../feedbackPrivacy.js";
 
 // 会话引擎：创建时选定、之后不可变。zcode = 现有 ZCode Agent；其余为经 ACP adapter
 // 驱动的官方 CLI（见 docs/desktop/external-agent-engines-spec.md）。
@@ -33,7 +34,7 @@ export type EngineConfigOption = z.infer<typeof engineConfigOptionSchema>;
 export const engineConfigStateSchema = z.enum(["connecting", "ready", "error"]);
 export type EngineConfigState = z.infer<typeof engineConfigStateSchema>;
 
-/** 安全诊断只携带固定分类与协议标识，不传播供应商原文。 */
+/** 安全诊断在输入边界脱敏，仅保留有界摘要与白名单协议字段。 */
 export const engineConnectionFailureSchema = z.object({
   code: z.enum([
     "not_ready",
@@ -45,20 +46,94 @@ export const engineConnectionFailureSchema = z.object({
     "transport",
     "request",
     "protocol",
+    "provider",
   ]),
   method: z
     .enum([
       "initialize",
       "session/new",
+      "session/fork",
       "session/resume",
       "session/load",
       "session/set_config_option",
       "session/prompt",
+      "providers/set",
     ])
     .optional(),
   rpcCode: z.number().int().optional(),
+  httpStatus: z.number().int().min(100).max(599).optional(),
+  message: z.string().max(320).optional(),
+  requestId: z
+    .string()
+    .max(128)
+    .regex(/^[a-zA-Z0-9_.:-]+$/)
+    .optional(),
+  retryable: z.boolean().optional(),
 });
 export type EngineConnectionFailure = z.infer<typeof engineConnectionFailureSchema>;
+
+/** 外部错误可能夹带认证URL与响应正文；同一边界同时用于RPC和流中诊断。 */
+export function readExternalEngineFailure(
+  value: unknown,
+  base: EngineConnectionFailure = { code: "request" },
+): EngineConnectionFailure {
+  const record = (item: unknown): Record<string, unknown> =>
+    item !== null && typeof item === "object" && !Array.isArray(item)
+      ? (item as Record<string, unknown>)
+      : {};
+  const source = record(value);
+  const data = record(source.data);
+  const info = record(source.codexErrorInfo ?? data.codexErrorInfo);
+  const details = Object.values(info).map(record);
+  const text =
+    typeof source.message === "string"
+      ? source.message
+      : typeof data.message === "string"
+        ? data.message
+        : "";
+  const rawStatus =
+    source.httpStatus ??
+    data.httpStatus ??
+    details.find((entry) => typeof entry.httpStatusCode === "number")?.httpStatusCode;
+  const parsedStatus =
+    typeof rawStatus === "number"
+      ? rawStatus
+      : Number(/(?:HTTP(?:\s+status)?|status(?:\s+code)?)\s*[:=]?\s*(\d{3})\b/i.exec(text)?.[1]);
+  const httpStatus =
+    Number.isInteger(parsedStatus) && parsedStatus >= 100 && parsedStatus <= 599
+      ? parsedStatus
+      : undefined;
+  const rawRequestId =
+    source.requestId ??
+    data.requestId ??
+    /request[ _-]?id\s*[:=]\s*([a-zA-Z0-9_.:-]+)/i.exec(text)?.[1];
+  const requestId =
+    typeof rawRequestId === "string" && /^[a-zA-Z0-9_.:-]{1,128}$/.test(rawRequestId)
+      ? rawRequestId
+      : undefined;
+  // 原始响应正文不是错误摘要。URL整段移除，不向界面或日志透露网关地址及鉴权参数。
+  const firstLine = text
+    .split(/\r?\n/, 1)[0]!
+    .split(/\b(?:body|payload|response|prompt|messages)\s*[:=]/i, 1)[0]!;
+  const message = redactFeedbackText(firstLine.replace(/https?:\/\/[^\s"'<>]+/gi, "[URL]"), {
+    diagnostic: true,
+  })
+    .replace(/\b(?:sk|sess|key)-[a-zA-Z0-9_-]{8,}/g, "[REDACTED]")
+    .trim()
+    .slice(0, 320);
+  return engineConnectionFailureSchema.parse({
+    ...base,
+    ...(httpStatus
+      ? {
+          httpStatus,
+          code: httpStatus === 401 || httpStatus === 403 ? "authentication" : "provider",
+          retryable: httpStatus === 408 || httpStatus === 429 || httpStatus >= 500,
+        }
+      : {}),
+    ...(message ? { message } : {}),
+    ...(requestId ? { requestId } : {}),
+  });
+}
 
 export const engineCommandSchema = z.object({
   name: z.string().min(1),
@@ -69,7 +144,7 @@ export type EngineCommand = z.infer<typeof engineCommandSchema>;
 
 // 外部 Agent 引擎（Claude Code / Codex）运行时描述与就绪状态契约。
 // 规则见 docs/desktop/external-agent-engines-spec.md：只驱动官方 CLI 与官方 ACP adapter，
-// YCode 不读写凭据、不实现登录；adapter 由用户显式安装到 YCode 管理目录并锁定版本。
+// YCode 通过既有凭据服务管理可选连接，原生 CLI 承担官方登录；adapter 显式安装并锁定版本。
 
 export type ExternalSessionEngine = Exclude<SessionEngine, "zcode">;
 
@@ -87,8 +162,10 @@ export interface ExternalEngineRuntimeDescriptor {
   /** 用户 PATH 中的官方 CLI 名，以及 adapter 识别的"官方可执行文件"环境变量。 */
   officialCliCommand: string;
   officialExecutableEnvVar: string;
-  /** adapter 安装树内的官方 CLI JS 入口；PATH 缺失时由 Node 执行。 */
-  bundledOfficialCliEntry: string;
+  /** PATH 缺失时使用锁定 adapter 安装树内的官方 CLI。 */
+  bundledOfficialCli:
+    | { kind: "javascript"; entry: string }
+    | { kind: "native"; package: string; binary: string };
   /** 官方 CLI 登录状态命令；只读调用，不触碰凭据文件。 */
   authStatusArgs: readonly string[];
   /** 引导用户在终端执行的官方登录命令。 */
@@ -108,7 +185,11 @@ export const EXTERNAL_ENGINE_RUNTIMES: Readonly<
     adapterNodeEngine: ">=22.0.0",
     officialCliCommand: "claude",
     officialExecutableEnvVar: "CLAUDE_CODE_EXECUTABLE",
-    bundledOfficialCliEntry: "node_modules/@anthropic-ai/claude-agent-sdk/cli.js",
+    bundledOfficialCli: {
+      kind: "native",
+      package: "@anthropic-ai/claude-agent-sdk",
+      binary: "claude",
+    },
     authStatusArgs: ["auth", "status"],
     loginCommand: ["claude", "auth", "login"],
     strippedEnvVars: ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"],
@@ -121,7 +202,7 @@ export const EXTERNAL_ENGINE_RUNTIMES: Readonly<
     adapterNodeEngine: ">=20.3.0",
     officialCliCommand: "codex",
     officialExecutableEnvVar: "CODEX_PATH",
-    bundledOfficialCliEntry: "node_modules/@openai/codex/bin/codex.js",
+    bundledOfficialCli: { kind: "javascript", entry: "node_modules/@openai/codex/bin/codex.js" },
     authStatusArgs: ["login", "status"],
     loginCommand: ["codex", "login"],
     // Codex 完全沿用用户 ~/.codex/config.toml 的 provider 设置，不改写其环境。
@@ -156,11 +237,38 @@ export const externalEngineStatusSchema = z.object({
     /** 官方 CLI 报告的身份类别（订阅 / API Key / 网关），不含账号或密钥。 */
     label: z.string().optional(),
   }),
-  /** adapter 已安装且官方 CLI 登录可用时为 true；是外部引擎会话的执行门禁。 */
+  /** 本地 adapter 与官方 CLI 可启动；真实认证与连接就绪由 Runtime 握手确认。 */
   ready: z.boolean(),
   error: z.string().optional(),
 });
 export type ExternalEngineStatus = z.infer<typeof externalEngineStatusSchema>;
+
+export const externalEngineConnectionProfileSchema = z.object({
+  id: z.string().regex(/^(?:inherit|[a-zA-Z0-9-]{1,80})$/),
+  mode: z.enum(["inherit", "official", "apiKey"]),
+  baseUrl: z.string().url().optional(),
+  model: z.string().trim().min(1).optional(),
+  credentialKey: z.string().optional(),
+  hasApiKey: z.boolean().default(false),
+});
+export type ExternalEngineConnectionProfile = z.infer<typeof externalEngineConnectionProfileSchema>;
+export const externalEngineConnectionsSchema = z.object({
+  activeProfileId: z.string(),
+  profiles: z.array(externalEngineConnectionProfileSchema),
+});
+export type ExternalEngineConnections = z.infer<typeof externalEngineConnectionsSchema>;
+export interface SaveExternalEngineConnection {
+  mode: ExternalEngineConnectionProfile["mode"];
+  baseUrl?: string;
+  model?: string;
+  apiKey?: string;
+}
+export const INHERITED_ENGINE_CONNECTION: ExternalEngineConnectionProfile = {
+  id: "inherit",
+  mode: "inherit",
+  hasApiKey: false,
+};
+export const EXTERNAL_ENGINE_CONNECTIONS_FILE = "connections.json";
 
 // ── 安装布局：Host 安装方与 CLI 启动方共用，保证"装在哪"与"从哪启动"一致 ──
 

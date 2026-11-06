@@ -133,6 +133,7 @@ import {
 import { spawnCronScheduler, type CronSchedulerHandle } from "./desktopCronScheduler.js";
 import {
   clearDeepLinkRoutesForWindow,
+  handleOpenWorkspacePath,
   handleDeepLink,
   registerDeepLinkProtocol,
   resolveExternalWorkspaceOpenDialogCopy,
@@ -146,6 +147,7 @@ import {
   extractOpenWorkspacePathFromArgs,
   isWorkspaceOpenUrl,
 } from "./desktopDeepLinkUrl.js";
+import { handleSecondInstanceWorkspaceRequest } from "./desktopSecondInstanceDeepLink.js";
 import { createRemoteWorkspaceSessionManager } from "./desktopRemoteSessions.js";
 import { resolveCanonicalWslTarget } from "./desktopWslTargetResolver.js";
 import { setBrowserUseGuestWebContentsIdsProvider } from "./resourceManagerWindow.js";
@@ -702,6 +704,13 @@ function syncImmediateAppSettings(patch: ReturnType<typeof appSettingsPatchSchem
     // 这里重建应用菜单 accelerator，并通知所有窗口刷新设置快照 —— 其他窗口的
     // useAppKeyboard 生效表与设置页跟随更新。先例：setAutoDownloadAndInstallUpdates 的全窗口广播。
     rebuildMenu();
+  }
+  if (
+    patch.shortcutBindings !== undefined ||
+    patch.defaultSessionEngine !== undefined ||
+    patch.dismissedDesktopUpdateVersion !== undefined
+  ) {
+    // 本机偏好落盘后统一通知窗口；远端工作区也不能把设备偏好写进远端设置。
     for (const win of getApplicationWindowsExcludingCuaIndicator()) {
       if (!win.isDestroyed()) {
         win.webContents.send(PlatformChannels.SettingsChanged);
@@ -1204,6 +1213,10 @@ app.on("open-url", (event, url) => {
   handleDeepLink(url, logger, {
     confirmationCopy: resolveExternalWorkspaceConfirmationCopy(),
     resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
+    onSessionWindowMissing: () => {
+      // macOS 驻留且无主窗口时，缓存的会话请求仍需要一个 renderer 承接。
+      if (app.isReady()) void primaryWindowCoordinator.ensurePrimaryWindow("open-url-session");
+    },
   });
 });
 const gotTheLock = app.requestSingleInstanceLock(createDeepLinkSingleInstanceData(process.argv));
@@ -1211,14 +1224,24 @@ if (!gotTheLock) {
   app.quit();
 }
 app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
-  const win = getApplicationWindowsExcludingCuaIndicator()[0];
-  if (win) {
-    if (win.isMinimized()) {
-      win.restore();
-    }
-    if (!win.isVisible()) {
-      win.show();
-    }
+  const win = getApplicationWindowsExcludingCuaIndicator()[0] ?? null;
+  const handled = handleSecondInstanceWorkspaceRequest({
+    additionalData,
+    argv,
+    forceUpdateBlocked: false,
+    focusForceUpdateGateWindow: () => win?.focus(),
+    handleDeepLink: (url, options) => handleDeepLink(url, logger, options),
+    handleOpenWorkspacePath: (path, options) => handleOpenWorkspacePath(path, logger, options),
+    logger,
+    workspaceConfirmationCopy: resolveExternalWorkspaceConfirmationCopy(),
+    resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
+  });
+  if (handled && !win) {
+    void primaryWindowCoordinator.ensurePrimaryWindow("second-instance-deep-link");
+  }
+  if (!handled && win) {
+    if (win.isMinimized()) win.restore();
+    if (!win.isVisible()) win.show();
     win.focus();
   }
 });

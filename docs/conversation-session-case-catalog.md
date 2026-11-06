@@ -4794,7 +4794,7 @@ E01–E11 产品规则已获用户确认，详见 [规格](desktop/external-agen
 
 - 候选 `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-external-engine-prewarm.test.ts`：隔离的 ACP/官方状态夹具，选择后配置在首发前可见，切换模式后首发与续聊复用同一引擎会话，切换两家引擎不串配置。夹具不调用真实供应商；真实账号桌面另列证据。
 
-- E13（accepted，复用该候选）：两家引擎的模型完整目录一次展开，菜单内无滚动区域；模型选择与深度滑动条提交的原始值在首发和续聊中生效。深浅主题和窄视口的几何可见性补充桌面浏览器证据，不能以 DOM 中存在所有选项代替可见性验收。
+- E13（accepted，复用该候选）：两家引擎的模型完整目录一次展开，菜单不溢出视口，窄屏允许滚动；逐项滚动到达、点击并保存选择，模型选择与深度滑动条提交的原始值在首发和续聊中生效。深浅主题和窄视口的几何可见性补充桌面浏览器证据，不能以 DOM 中存在所有选项代替可见性验收。
 - E13 深度回跳回归（2026-10-28）：延迟 ACP 配置确认，两家引擎在指针释放、按键释放后持续显示所选档位，不先回到旧值；确认值回流后仍一致。拒绝配置时恢复原确认值并提示失败，不隐式提交 prompt；候选保持 pending。
 
 ### E14 外部引擎运行中配置与工具分段（accepted）
@@ -4818,3 +4818,11 @@ E01–E11 产品规则已获用户确认，详见 [规格](desktop/external-agen
 ## 2026-10-30 HTML 静态预览与停止自动恢复
 
 扩展现有 `conversation-session-external-engine-prewarm.test.ts` 候选：两家引擎分别覆盖 usage:null 的健康停止、非法 session/update 和进程退出后的自动恢复，无须点击重连，原生会话 ID、已确认深度和 prompt 次数保持不变。HTML 文件链接打开静态预览，脚本与 meta refresh 不得跳转 /login，样式可见，源码/预览可切换。供应商使用隔离 ACP 夹具，候选保持 pending。
+
+### E18/E19 原生计划与502恢复（2026-11-06，accepted，候选保持 pending）
+
+E18：同一候选内使用原生 `plan` / `plan_update` / `plan-review` 权限请求。pending 清单显示为静态审批卡且停止聊天转圈；双击“开始执行”只返回一次原生允许选项，不额外提交 prompt；“继续修改”返回原生拒绝选项并保留 Plan 模式、恢复输入焦点。E19：首个流中 HTTP 502 重试显示状态和安全 request id，受控释放后正文继续且活动重试消失。协议与模型由隔离 ACP 夹具替代；真实 Windows/网关验收另记。
+
+### SFA01–03 会话菜单链接与分叉（2026-11-06，accepted，候选保持 pending）
+
+候选 `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-session-actions.test.ts`：SFA01 从标题菜单复制稳定会话链接；SFA02 当前目录 Fork 打开不同 child，继承完整历史且没有自动输入或发送；SFA03 新工作树 Fork 保留源 HEAD 祖先和未提交字节、新建分支及目录，源文件/index 不变，child 导航到新工作区且无自动发送。供应商使用 case-local 合成回放，文件使用隔离 HOME 内真实 Git 仓库；不宣称真实供应商或 Windows 整机覆盖。

@@ -30,7 +30,7 @@ export interface LocalTtftPending {
   visibility: "foreground" | "background" | "background_returned";
   visibilityChanges: { at: number; foreground: boolean }[];
   confirmationStart?: number;
-  confirmations: NonNullable<LocalTtftRecord["details"]>;
+  rendererDetails: NonNullable<LocalTtftRecord["details"]>;
   rows: Map<number, { turnId: string; kind: ConversationRow["kind"] }>;
 }
 
@@ -78,6 +78,27 @@ export function buildLocalTtftRecord(
     if (aligned && pending.firstAt !== undefined)
       interval("output_return", at(facts.outputAt), pending.firstAt, "aligned");
   }
+  const commandDetails: NonNullable<LocalTtftRecord["details"]> = [];
+  if (facts) {
+    if (aligned && pending.dispatch !== undefined && facts.receivedAt + offset >= pending.dispatch)
+      commandDetails.push({
+        id: "command:received",
+        stage: "command_received",
+        start: pending.dispatch,
+        end: facts.receivedAt + offset,
+        source: "renderer",
+        outcome: "completed",
+      });
+    if (facts.admittedAt !== undefined && facts.admittedAt >= facts.receivedAt)
+      commandDetails.push({
+        id: "command:admitted",
+        stage: "command_admitted",
+        start: facts.receivedAt + offset,
+        end: facts.admittedAt + offset,
+        source: "cli",
+        outcome: "completed",
+      });
+  }
   return {
     version: 1,
     observationId: pending.context.observationId,
@@ -101,12 +122,12 @@ export function buildLocalTtftRecord(
     sendMode: facts?.sendMode ?? pending.sendMode,
     visibility: pending.visibility,
     visibilityChanges: [...pending.visibilityChanges],
-    userWaitMs: pending.confirmations.reduce(
-      (sum, detail) => sum + (detail.end! - detail.start),
-      0,
-    ),
+    userWaitMs: pending.rendererDetails
+      .filter((detail) => detail.stage === "user_confirmation")
+      .reduce((sum, detail) => sum + (detail.end! - detail.start), 0),
     details: [
-      ...pending.confirmations,
+      ...pending.rendererDetails,
+      ...commandDetails,
       ...(facts?.details ?? []).map((detail) => ({
         ...detail,
         start: detail.start + offset,
@@ -115,7 +136,8 @@ export function buildLocalTtftRecord(
     ].slice(0, LOCAL_TTFT_MAX_DETAILS),
     truncated:
       facts?.truncated ||
-      (facts?.details?.length ?? 0) + pending.confirmations.length > LOCAL_TTFT_MAX_DETAILS,
+      (facts?.details?.length ?? 0) + pending.rendererDetails.length + commandDetails.length >
+        LOCAL_TTFT_MAX_DETAILS,
     timingReliable: !pending.clockInvalid,
     cliTimingReliable: facts?.clockInvalid !== true,
     ...(aligned && facts?.executionAt !== undefined && end >= facts.executionAt + offset

@@ -5,6 +5,8 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { toast } from "@/components/ui/toast.js";
 import { getDesktopUpdateAction } from "@/desktop-updates/contract.js";
 import { createDesktopUpdateProjection } from "./projection.js";
+import { useSettings } from "@/hooks/useSettingService.js";
+import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 
 const projections = new WeakMap<
   IPlatformService,
@@ -16,6 +18,8 @@ const emptySubscribe = () => () => {};
 export function useDesktopUpdates(isDesktop = true) {
   const platform = usePlatform();
   const { intl } = useZCodeIntl();
+  const localServices = useBaseWorkspaceServices();
+  const { settings, update } = useSettings({ services: localServices });
   let projection = projections.get(platform);
   if (!projection) {
     projection = createDesktopUpdateProjection(platform);
@@ -43,6 +47,24 @@ export function useDesktopUpdates(isDesktop = true) {
       } catch (error) {
         result = { kind: "error", message: error instanceof Error ? error.message : String(error) };
       }
+      if (["available", "ready", "downloading", "already-downloading"].includes(result.kind)) {
+        // 手动操作必须给出可执行反馈，不能因上次关闭侧栏而静默吞掉发现结果。
+        if (settings?.dismissedDesktopUpdateVersion) {
+          try {
+            await update({ dismissedDesktopUpdateVersion: null });
+          } catch {
+            toast(intl.formatMessage({ id: "desktopUpdate.preferenceSaveFailed" }), {
+              variant: "warning",
+            });
+          }
+        }
+        if (result.kind === "available" || result.kind === "ready") {
+          toast(intl.formatMessage({ id: "desktopUpdate.found" }, { version: result.version }), {
+            variant: "info",
+            dedupeKey: "desktop-update",
+          });
+        }
+      }
       if (
         result.kind === "up-to-date" ||
         result.kind === "dev-skipped" ||
@@ -61,12 +83,24 @@ export function useDesktopUpdates(isDesktop = true) {
         );
       }
     },
-    [supported, platform, intl],
+    [supported, platform, intl, settings?.dismissedDesktopUpdateVersion, update],
   );
+  const version = state && "version" in state ? state.version : undefined;
   return {
     state,
     supported,
     busy: state?.kind === "checking" || state?.kind === "download-progress",
+    dismissed: Boolean(version && settings?.dismissedDesktopUpdateVersion === version),
+    dismiss: async () => {
+      if (!version) return;
+      try {
+        await update({ dismissedDesktopUpdateVersion: version });
+      } catch {
+        toast(intl.formatMessage({ id: "desktopUpdate.preferenceSaveFailed" }), {
+          variant: "warning",
+        });
+      }
+    },
     check: () => run("check"),
     activate: () => {
       const action = getDesktopUpdateAction(state);

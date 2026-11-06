@@ -200,6 +200,21 @@ export interface IZCodeTaskService {
 
   // ---- Task/Session 管理 ----
 
+  /** 执行 Host 统一编排；不会自动发送输入或改变父会话目录。 */
+  forkTask(params: {
+    taskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    remoteSessionId?: string;
+    operationId: string;
+    mode: "same-directory" | "worktree";
+  }): Promise<{
+    taskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    forkKind: "history" | "native" | "handoff";
+  }>;
+
   /** 创建 ZCode session 并同步 task 索引。 */
   createTask(params: {
     projectId?: string | null;

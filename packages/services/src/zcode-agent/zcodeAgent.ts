@@ -1,3 +1,4 @@
+import type { ZCodeSessionForkTransfer, ZCodeWorkspaceRef } from "@zcode/shared";
 import type { PluginUiToolResultNotification } from "@zcode/shared/mcp-apps";
 import type {
   BackgroundBashOutputResult,
@@ -650,6 +651,13 @@ export interface IZCodeAgentService {
   getAppUsageStats(params: ZCodeAgentAppUsageParams): Promise<AppUsageSnapshot>;
   getTaskTokenUsage(params: ZCodeAgentTaskTokenUsageParams): Promise<ZCodeTaskTokenUsageResult>;
   readSession(params: ZCodeAgentReadSessionParams): Promise<ZCodeSessionStateSnapshot>;
+  exportSessionFork(
+    params: ZCodeAgentSessionTarget & { operationId: string; targetWorkspace: ZCodeWorkspaceRef },
+  ): Promise<ZCodeSessionForkTransfer>;
+  importSessionFork(
+    params: ZCodeAgentWorkspaceTarget & { transfer: ZCodeSessionForkTransfer },
+  ): Promise<{ snapshot: ZCodeSessionStateSnapshot; forkKind: "history" | "native" | "handoff" }>;
+
   readSessionMessages(
     params: ZCodeAgentReadSessionMessagesParams,
   ): Promise<ZCodeMessageWithParts[]>;

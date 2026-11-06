@@ -127,6 +127,9 @@ export const apiRetryStateSchema = z.object({
   maxAttempts: z.number(),
   nextRetryAt: timestampSchema,
   reasonCode: z.string(),
+  httpStatus: z.number().int().optional(),
+  message: z.string().optional(),
+  requestId: z.string().optional(),
 });
 export type ApiRetryState = z.infer<typeof apiRetryStateSchema>;
 
@@ -449,6 +452,7 @@ export type GoalState = z.infer<typeof goalStateSchema>;
 export const planStateSchema = z.object({
   items: z.array(planItemSchema),
   updatedAt: timestampSchema,
+  document: z.object({ id: z.string(), markdown: z.string() }).optional(),
 });
 export type PlanState = z.infer<typeof planStateSchema>;
 

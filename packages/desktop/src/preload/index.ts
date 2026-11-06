@@ -78,6 +78,8 @@ import {
 import { unwrapRemoteWorkspaceBindResult } from "./remoteWorkspaceBindBridge.js";
 const openWorkspacePathCallbacks = new Set<(path: string) => void>();
 const pendingOpenWorkspacePaths: string[] = [];
+const openSessionCallbacks = new Set<(target: import("@zcode/shared/session-navigation").SessionLocator) => void>();
+const pendingOpenSessions: import("@zcode/shared/session-navigation").SessionLocator[] = [];
 const MACOS_WINDOW_CONTROLS_BASE_LEFT_PADDING_PX = 96;
 const WINDOWS_WINDOW_CONTROLS_BASE_RIGHT_PADDING_PX = 136;
 const WINDOWS_TITLE_BAR_HEIGHT_PX = 48;
@@ -151,6 +153,11 @@ ipcRenderer.on(
     }
   },
 );
+
+ipcRenderer.on(PlatformChannels.OpenSession, (_event: unknown, target: import("@zcode/shared/session-navigation").SessionLocator) => {
+  if (!openSessionCallbacks.size) pendingOpenSessions.push(target);
+  else for (const callback of openSessionCallbacks) callback(target);
+});
 
 ipcRenderer.on(PlatformChannels.OpenWorkspacePath, (_event: unknown, path: string) => {
   if (openWorkspacePathCallbacks.size === 0) {
@@ -508,6 +515,11 @@ contextBridge.exposeInMainWorld("zcode", {
       }
     }
     return () => openWorkspacePathCallbacks.delete(callback);
+  },
+  onOpenSession: (callback: (target: import("@zcode/shared/session-navigation").SessionLocator) => void): (() => void) => {
+    openSessionCallbacks.add(callback);
+    while (pendingOpenSessions.length) callback(pendingOpenSessions.shift()!);
+    return () => openSessionCallbacks.delete(callback);
   },
   onOpenFeedbackDialog: (callback: () => void): (() => void) => {
     const handler = () => callback();

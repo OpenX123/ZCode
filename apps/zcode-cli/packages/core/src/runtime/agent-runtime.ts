@@ -131,6 +131,8 @@ import type {
   ResumeSessionResult,
   SelectionSideChatCreateOptions,
   StableConversationForkOptions,
+  ConversationForkExportOptions,
+  ConversationForkExport,
   StopActiveForegroundExecutionOptions,
   StopActiveForegroundExecutionResult,
   TurnResult,
@@ -159,6 +161,7 @@ export class AgentRuntime {
   private sessionId: SessionId;
   private turnNumber: number;
   private config: AgentRuntimeConfig;
+  private engineConnectionProfileId?: string;
   private externalEnginePort?: ExternalEnginePort;
   private engineConfigOptions: EngineConfigOption[] = [];
   private engineConfigState?: import("@zcode/shared").EngineConfigState;
@@ -773,6 +776,7 @@ export interface AgentRuntime {
     targetMessageId?: MessageId;
     traceContext?: TraceContext;
   }): Promise<WorkspaceForkResult>;
+  exportConversationFork(options: ConversationForkExportOptions): Promise<ConversationForkExport>;
   forkStableConversationAtMessage(
     options: StableConversationForkOptions,
   ): Promise<WorkspaceForkResult>;

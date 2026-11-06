@@ -21,6 +21,9 @@ export interface ExternalEngineSessionInput {
   sessionId: string;
   engine: ExternalSessionEngine;
   externalSessionId?: string;
+  /** 认证目录随会话固定，不能随应用默认连接变化。 */
+  connectionProfileId?: string;
+  onConnectionProfile?: (id: string) => Promise<void>;
   /** 仅在新连接初始化时恢复已确认的原生值，不作为可选目录。 */
   configValues?: Array<{ id: string; value: string }>;
   cwd: string;
@@ -48,6 +51,10 @@ export interface ExternalEngineTurnResult {
 /** 单一 session 进程所有者；runTurn 必须由调用方串行准入。 */
 export interface ExternalEnginePort {
   prepareSession(input: ExternalEngineSessionInput): Promise<void>;
+  /** 新连接沿用源身份，仅分叉原生上下文，不提交用户输入。 */
+  forkSession?(
+    input: ExternalEngineSessionInput & { parentExternalSessionId: string },
+  ): Promise<string>;
   runTurn(input: ExternalEngineTurnInput): Promise<ExternalEngineTurnResult>;
   setConfigOption(
     sessionId: string,
@@ -57,7 +64,7 @@ export interface ExternalEnginePort {
   closeSession(sessionId: string): Promise<void>;
 }
 
-/** 错误文本由本地生成，不保留可能含身份与用户内容的 ACP message/data。 */
+/** 仅保留输入边界脱敏后的摘要与诊断字段，不保存原始 ACP message/data。 */
 export class ExternalEngineConnectionError extends Error {
   readonly code: string;
   constructor(

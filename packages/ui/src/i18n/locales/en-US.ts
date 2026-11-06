@@ -1,13 +1,22 @@
 /** English translations */
 const enUS: Record<string, string> = {
+  "engine.default.title": "Default AI engine",
+  "engine.default.description":
+    "New sessions remember your last selection. Existing sessions and drafts keep their engine.",
+  "engine.preferenceSaveFailed":
+    "Could not save the default engine. Your current draft is preserved. Try again.",
+  "desktopUpdate.dismiss": "Dismiss this version's update notification",
+  "desktopUpdate.found": "Version v{version} is available. Continue updating from the sidebar.",
+  "desktopUpdate.preferenceSaveFailed":
+    "Could not save the update notification preference. Try again.",
   "engine.cliFound": "Official CLI detected",
   "engine.cliMissing": "Official CLI not detected. Install the official CLI in a terminal first.",
 
   "engine.retryConnection": "Reconnect",
   "engine.failure.not_ready":
-    "The engine is not ready. Check its adapter installation and official CLI login.",
+    "The engine is not ready. Check its adapter installation and Agent engine connection settings.",
   "engine.failure.authentication":
-    "Your official CLI login has expired. Run {command} in a terminal, then reconnect.",
+    "Authentication failed. Check the login or API key in Agent engine settings. When using the CLI configuration, run {command}.",
   "engine.failure.session_not_found":
     "The engine cannot find the original session. History and your draft are preserved. Check the official CLI session directory.",
   "engine.failure.unsupported":
@@ -22,14 +31,49 @@ const enUS: Record<string, string> = {
     "The engine rejected the recovery request. History and your draft are preserved. Reconnect to retry.",
   "engine.failure.protocol":
     "The engine returned an incompatible response. Check the adapter and official CLI versions.",
+  "engine.failure.provider":
+    "The model service could not complete this request. Check its status or try again later.",
+  "engine.requestFailed": "Model request failed",
+  "engine.errorDetails": "Error details",
+  "engine.copyErrorDetails": "Copy error details",
+  "chat.nativePlan.ready": "Plan ready for approval",
+  "chat.nativePlan.start": "Start implementation",
+  "chat.nativePlan.revise": "Continue planning",
+  "chat.nativePlan.view": "View full plan",
+  "chat.apiRetryStatusUnknown": "Retrying… attempt {attempt}",
   "engine.restoreFailed": "Session settings could not be restored. Reconnect to retry",
   "engine.connecting": "Connecting to engine…",
   "engine.connectionFailed": "Engine connection failed",
   "engine.configChangeFailed": "Configuration was not changed. Try again.",
   "engine.select": "Session engine",
   "engine.settings.title": "Agent engines",
+  "engine.connection.mode": "Codex connection",
+  "engine.connection.inherit": "Use existing CLI configuration",
+  "engine.connection.official": "Sign in with an official account",
+  "engine.connection.apiKey": "API key (official or third-party gateway)",
+  "engine.connection.url": "API URL (Responses compatible)",
+  "engine.connection.model": "Default model (optional)",
+  "engine.connection.keySaved": "Saved; leave blank to keep the current key",
+  "engine.connection.hint":
+    "New connections apply to new chats. Existing chats keep their connection. Account sign-in opens in your browser.",
+  "engine.connection.login": "Sign in with browser",
+  "engine.connection.saved": "Connection saved for new Codex chats.",
+  "engine.connection.loggedIn": "Signed in for new Codex chats.",
+  "engine.connection.invalidUrl":
+    "Enter an HTTP or HTTPS API URL without credentials or query parameters.",
+  "engine.connection.missingKey": "Enter an API key and save the connection again.",
+  "engine.connection.engineMissing":
+    "Install the Codex CLI and adapter, then refresh the engine status.",
+  "engine.connection.interrupted":
+    "Sign-in was cancelled or timed out. Start browser sign-in again.",
+  "engine.connection.loginFailed":
+    "Sign-in did not finish. Try again and complete browser authorization.",
+  "engine.connection.unreadable":
+    "Saved connection settings could not be read. Check file permissions and try again.",
+  "engine.connection.failed":
+    "Connection setup did not complete. Check the URL and key or try signing in again.",
   "engine.settings.description":
-    "Manage Claude Code and Codex on this device. After installation, log in through the official CLI in a terminal.",
+    "Manage Claude Code and Codex on this device, with account sign-in or API key connections.",
   "engine.copyLoginCommand": "Copy {engine} login command",
   "engine.technicalDetails": "Technical details",
   "engine.refresh": "Refresh status",
@@ -42,7 +86,7 @@ const enUS: Record<string, string> = {
   "engine.auth.loggedOut": "Logged out",
   "engine.auth.unknown": "Login status unknown",
   "engine.notReadyGuide":
-    "The engine is not ready. Install its adapter in Agent engines settings, then run the official login command in a terminal. Your draft is preserved.",
+    "The engine is not ready. Install its adapter in Agent engines settings and check its connection. Your draft is preserved.",
   "engine.openSettings": "Configure Agent engines",
 
   "zcode.error.modelSuspiciousEmpty":
@@ -560,6 +604,9 @@ const enUS: Record<string, string> = {
 
   "bots.group.provider.feishu": "Feishu",
   // Common
+  "chat.submission.sending": "Sending…",
+  "chat.submission.startingEngine": "Starting engine…",
+  "chat.submission.waitingModel": "Waiting for model…",
   "common.loading": "Loading...",
   "common.listSeparator": ", ",
   "common.generating": "Generating...",
@@ -6686,6 +6733,15 @@ const enUS: Record<string, string> = {
   "workbench.leftGroup": "Left column",
   "workbench.rightGroup": "Right column",
   "workbench.placementNotReady": "Conversation placement is not ready. Try again shortly.",
+  "sessionAction.copyLink": "Copy session link",
+  "sessionAction.linkCopied": "Session link copied",
+  "sessionAction.copyFailed": "Failed to copy session link",
+  "sessionAction.forkSameDirectory": "Fork in current directory",
+  "sessionAction.forkWorktree": "Fork in new worktree",
+  "sessionAction.forking": "Creating fork…",
+  "sessionAction.forkFailed": "Failed to create fork",
+  "sessionAction.handoffCreated":
+    "Context handoff fork created. Send your next message to continue.",
 };
 
 export default enUS;

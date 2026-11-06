@@ -37,6 +37,8 @@ import {
   compactSession,
   createSession,
   forkSession,
+  exportSessionFork,
+  importSessionFork,
   generateWorkspaceText,
   goalSession,
   getTaskTokenUsage,
@@ -663,6 +665,10 @@ export class ZCodeProtocolAgentServer {
         return await stopSession(this.context, request.params);
       case zcodeProtocolMethods.sessionCancelBackgroundTask:
         return await cancelBackgroundTask(this.context, request.params);
+      case zcodeProtocolMethods.sessionExportFork:
+        return await exportSessionFork(this.context, request.params);
+      case zcodeProtocolMethods.sessionImportFork:
+        return await importSessionFork(this.context, request.params);
       case zcodeProtocolMethods.sessionFork:
         return await forkSession(this.context, request.params);
       case zcodeProtocolMethods.sessionCompact:
