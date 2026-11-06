@@ -1088,6 +1088,8 @@ export interface PermissionRequestedPayload {
   display?: ToolResultDisplayPayload;
   fullAccessSupported?: boolean;
   optionsPolicy?: PermissionOptionsPolicy;
+  /** 外部引擎计划审批的原生选项（顺序同 adapter），界面回传精确 optionId。 */
+  nativeOptions?: import("@zcode/shared/zcode-protocol-v4").NativePermissionOption[];
 }
 
 /** 订阅者以 (scopeId, generation) 标识沙箱实例；renderer 只投递给 generation 一致的实例。 */
@@ -1259,6 +1261,11 @@ export interface ErrorPayload {
   retryable?: boolean;
   stack?: string;
   data?: unknown;
+  /**
+   * 外部引擎请求失败在 ACP adapter 边界脱敏后的结构化诊断（状态、URL、请求 ID、失败 ID 等），
+   * 投影到失败轮的行内错误行；内置引擎缺省，由投影读取 attribution。
+   */
+  failure?: import("@zcode/shared").EngineConnectionFailure;
 }
 
 /** 只承载可聚合的失败事实，不包含请求正文、凭据、URL 或监控策略。 */

@@ -1,5 +1,18 @@
 import { z } from "zod";
-import { redactFeedbackText } from "../feedbackPrivacy.js";
+
+// 连接失败的安全投影与脱敏规则集中在 failure-diagnostics.ts，这里只作为模块公开入口再导出。
+export {
+  engineConnectionFailureSchema,
+  FAILURE_MESSAGE_MAX_CHARS,
+  isRetryableHttpStatus,
+  readExternalEngineFailure,
+  readFailureHttpStatus,
+  readFailureRequestId,
+  readFailureUrl,
+  reduceFailureUrl,
+  sanitizeFailureMessage,
+  type EngineConnectionFailure,
+} from "./failure-diagnostics.js";
 
 // 会话引擎：创建时选定、之后不可变。zcode = 现有 ZCode Agent；其余为经 ACP adapter
 // 驱动的官方 CLI（见 docs/desktop/external-agent-engines-spec.md）。
@@ -33,107 +46,6 @@ export type EngineConfigOption = z.infer<typeof engineConfigOptionSchema>;
 
 export const engineConfigStateSchema = z.enum(["connecting", "ready", "error"]);
 export type EngineConfigState = z.infer<typeof engineConfigStateSchema>;
-
-/** 安全诊断在输入边界脱敏，仅保留有界摘要与白名单协议字段。 */
-export const engineConnectionFailureSchema = z.object({
-  code: z.enum([
-    "not_ready",
-    "authentication",
-    "session_not_found",
-    "unsupported",
-    "configuration",
-    "timeout",
-    "transport",
-    "request",
-    "protocol",
-    "provider",
-  ]),
-  method: z
-    .enum([
-      "initialize",
-      "session/new",
-      "session/fork",
-      "session/resume",
-      "session/load",
-      "session/set_config_option",
-      "session/prompt",
-      "providers/set",
-    ])
-    .optional(),
-  rpcCode: z.number().int().optional(),
-  httpStatus: z.number().int().min(100).max(599).optional(),
-  message: z.string().max(320).optional(),
-  requestId: z
-    .string()
-    .max(128)
-    .regex(/^[a-zA-Z0-9_.:-]+$/)
-    .optional(),
-  retryable: z.boolean().optional(),
-});
-export type EngineConnectionFailure = z.infer<typeof engineConnectionFailureSchema>;
-
-/** 外部错误可能夹带认证URL与响应正文；同一边界同时用于RPC和流中诊断。 */
-export function readExternalEngineFailure(
-  value: unknown,
-  base: EngineConnectionFailure = { code: "request" },
-): EngineConnectionFailure {
-  const record = (item: unknown): Record<string, unknown> =>
-    item !== null && typeof item === "object" && !Array.isArray(item)
-      ? (item as Record<string, unknown>)
-      : {};
-  const source = record(value);
-  const data = record(source.data);
-  const info = record(source.codexErrorInfo ?? data.codexErrorInfo);
-  const details = Object.values(info).map(record);
-  const text =
-    typeof source.message === "string"
-      ? source.message
-      : typeof data.message === "string"
-        ? data.message
-        : "";
-  const rawStatus =
-    source.httpStatus ??
-    data.httpStatus ??
-    details.find((entry) => typeof entry.httpStatusCode === "number")?.httpStatusCode;
-  const parsedStatus =
-    typeof rawStatus === "number"
-      ? rawStatus
-      : Number(/(?:HTTP(?:\s+status)?|status(?:\s+code)?)\s*[:=]?\s*(\d{3})\b/i.exec(text)?.[1]);
-  const httpStatus =
-    Number.isInteger(parsedStatus) && parsedStatus >= 100 && parsedStatus <= 599
-      ? parsedStatus
-      : undefined;
-  const rawRequestId =
-    source.requestId ??
-    data.requestId ??
-    /request[ _-]?id\s*[:=]\s*([a-zA-Z0-9_.:-]+)/i.exec(text)?.[1];
-  const requestId =
-    typeof rawRequestId === "string" && /^[a-zA-Z0-9_.:-]{1,128}$/.test(rawRequestId)
-      ? rawRequestId
-      : undefined;
-  // 原始响应正文不是错误摘要。URL整段移除，不向界面或日志透露网关地址及鉴权参数。
-  const firstLine = text
-    .split(/\r?\n/, 1)[0]!
-    .split(/\b(?:body|payload|response|prompt|messages)\s*[:=]/i, 1)[0]!;
-  const message = redactFeedbackText(firstLine.replace(/https?:\/\/[^\s"'<>]+/gi, "[URL]"), {
-    diagnostic: true,
-  })
-    .replace(/\b(?:sk|sess|key)-[a-zA-Z0-9_-]{8,}/g, "[REDACTED]")
-    .trim()
-    .slice(0, 320);
-  return engineConnectionFailureSchema.parse({
-    ...base,
-    ...(httpStatus
-      ? {
-          httpStatus,
-          code: httpStatus === 401 || httpStatus === 403 ? "authentication" : "provider",
-          retryable: httpStatus === 408 || httpStatus === 429 || httpStatus >= 500,
-        }
-      : {}),
-    ...(message ? { message } : {}),
-    ...(requestId ? { requestId } : {}),
-  });
-}
 
 export const engineCommandSchema = z.object({
   name: z.string().min(1),

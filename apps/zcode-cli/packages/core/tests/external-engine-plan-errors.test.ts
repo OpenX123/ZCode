@@ -84,25 +84,48 @@ describe("外部引擎原生计划与错误", () => {
   });
 
   test("Codex重试错误发布安全诊断，正文恢复时清除活动错误", async () => {
-    const { runtime, input, events } = setup([
-      {
-        sessionUpdate: "session_info_update",
-        _meta: {
-          codex: {
-            error: {
-              message: "unexpected status 502 Bad Gateway; request id: fixture-request",
-              codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 502 } },
-              willRetry: true,
-            },
-          },
+    const { runtime, input, events } = setup([]);
+    // 真实 Codex 帧把 "Reconnecting… n/m" 放在 message、状态行放在 additionalDetails；
+    // adapter 归一后经 onFailure 交付（见 adapters/tests/external-engine-failures.test.ts）。
+    runtime.externalEnginePort!.runTurn = vi.fn(async (turn) => {
+      const notice = {
+        severity: "warning" as const,
+        revision: 1,
+        failure: {
+          code: "provider" as const,
+          method: "session/prompt" as const,
+          httpStatus: 502,
+          attempt: 1,
+          maxAttempts: 5,
+          message: "unexpected status 502 Bad Gateway: Bad gateway",
+          url: "https://gateway.example.test/v1/responses",
+          requestId: "fixture-request",
+          failureId: "codex-turn:error",
         },
-      },
-      { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "已恢复" } },
-    ]);
+      };
+      await turn.onFailure!(notice);
+      // 同一 revision 重放不得产生第二条重试事件。
+      await turn.onFailure!(notice);
+      await turn.onUpdate({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "已恢复" },
+      });
+      return { stopReason: "end_turn" };
+    });
     await runExternalEngineTurn(runtime, input);
     const failures = events.filter((event) => event.type === "external_engine_failure_updated");
+    expect(failures).toHaveLength(2);
     expect(failures[0]).toMatchObject({
-      payload: { retrying: true, failure: { httpStatus: 502, requestId: "fixture-request" } },
+      payload: {
+        retrying: true,
+        attempt: 1,
+        failure: {
+          httpStatus: 502,
+          maxAttempts: 5,
+          requestId: "fixture-request",
+          url: "https://gateway.example.test/v1/responses",
+        },
+      },
     });
     expect(failures.at(-1)).toMatchObject({ payload: { failure: null } });
   });

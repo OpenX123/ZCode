@@ -60,6 +60,33 @@ export const turnWorkSegmentSchema = z.object({
 });
 export type TurnWorkSegment = z.infer<typeof turnWorkSegmentSchema>;
 
+// 轮次失败的行内诊断（docs/desktop/native-plan-errors-spec.md「行内错误行与横幅」）。
+// 外部引擎在 ACP adapter 边界脱敏，内置引擎由投影按同一规则收敛；这里只做有界校验。
+export const TURN_FAILURE_SUMMARY_MAX_CHARS = 2_000;
+export const turnFailureDiagnosticsSchema = z.object({
+  /** adapter 失败 ID（同一轮重试与终态共用），供幂等合并；内置引擎缺省。 */
+  failureId: z.string().min(1).max(200).optional(),
+  httpStatus: z.number().int().min(100).max(599).optional(),
+  /** 原生展示的第 n 次重试与上限；未知时缺省。 */
+  attempt: z.number().int().positive().optional(),
+  maxAttempts: z.number().int().positive().optional(),
+  /** 上游原文首行，已脱敏，最多 300 字（留少量余量）。 */
+  message: z.string().max(320).optional(),
+  /** 仅 scheme + host + path。 */
+  url: z.string().max(512).optional(),
+  requestId: z.string().max(128).optional(),
+  retryable: z.boolean().optional(),
+});
+export type TurnFailureDiagnostics = z.infer<typeof turnFailureDiagnosticsSchema>;
+export const turnFailureSchema = turnFailureDiagnosticsSchema.extend({
+  code: z.string().min(1).max(200),
+  /** 界面摘要；投影负责截断到上限。 */
+  summary: z.string().max(TURN_FAILURE_SUMMARY_MAX_CHARS),
+  source: z.enum(["provider", "runtime", "tool", "network"]),
+  traceId: z.string().optional(),
+});
+export type TurnFailure = z.infer<typeof turnFailureSchema>;
+
 // turnHeader：product turn 边界 + 权威工时 + 每轮文件摘要。
 // guide 产生的内部折叠边界由 workSegments 表达；行归属仍由 CLI 决定，客户端零归属逻辑。
 export const turnHeaderRowSchema = z.object({
@@ -106,6 +133,9 @@ export const turnHeaderRowSchema = z.object({
       state: z.enum(["active", "reverted"]).optional(),
     })
     .optional(),
+  // state === "failed" 时的行内错误行事实，随历史持久化（冷恢复由 TurnError 合成）。
+  // additive：旧 snapshot 缺省时界面不显示行内错误行；非法值降级为缺省，不拒整份快照。
+  failure: turnFailureSchema.optional().catch(undefined),
 });
 export type TurnHeaderRow = z.infer<typeof turnHeaderRowSchema>;
 

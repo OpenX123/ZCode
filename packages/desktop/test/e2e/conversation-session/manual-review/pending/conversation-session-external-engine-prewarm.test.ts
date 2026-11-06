@@ -34,14 +34,17 @@ const configControlPath=path.join(__dirname,'config-control.json');
 const planDecisionPath=path.join(__dirname,'plan-decisions.json');
 const retryReleasePath=path.join(__dirname,'retry-release.json');
 const send=f=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...f})+'\n');
-let mode='ENGINE_ID'==='claude-code'?'default':'safe', model='fixture-0', effort='low', turns=0, pendingPrompt, pendingPlan, planRequestId; const sid='fixture-session';
+let mode='ENGINE_ID'==='claude-code'?'default':'safe', model='fixture-0', effort='low', turns=0, pendingPrompt, pendingPlan, planRequestId, typedFailures=false, failSent=false; const sid='fixture-session';
+// 帧形状取自 codex-acp 2.2.2 / claude-agent-acp 0.95.0：声明 AIR sessionFailure 时用 typed 失败，否则回退原生形态。
+const failureDetails='unexpected status 502 Bad Gateway: Bad gateway, url: https://fixture.invalid/responses?api_key=fixture-secret, request id: fixture-request';
+const airFailure=(id,revision,severity,title)=>({jetbrains:{air:{version:1,sessionFailure:{id,revision,category:'connection',severity,title,actions:severity==='error'?['retry','new_session']:[]}}}});
 const options=()=>[{id:'fast',name:'Fast mode',currentValue:'off',options:[{value:'off',name:'Off'},{value:'reject',name:'Rejected fast'}]},{id:'mode',name:'Mode',currentValue:mode,options:[{value:'default',name:'Manual'},{value:'auto',name:'Auto'},{value:'plan',name:'Plan'},{value:'safe',name:'Safe'},{value:'full',name:'Full'}]},{id:'model',name:'Model',currentValue:model,options:Array.from({length:18},(_,i)=>({value:'fixture-'+i,name:'Fixture model '+i}))},{id:'EFFORT_ID',name:'Effort',currentValue:effort,options:[{value:'low',name:'Low'},{value:'medium',name:'Medium'},{value:'high',name:'High'}]}];
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const f=JSON.parse(line), result=value=>send({id:f.id,result:value});
  if(!f.method && f.id===planRequestId && pendingPlan){
   const decisions=fs.existsSync(planDecisionPath)?JSON.parse(fs.readFileSync(planDecisionPath,'utf8')):[];
   decisions.push(f.result?.outcome);fs.writeFileSync(planDecisionPath,JSON.stringify(decisions));
-  const approved=f.result?.outcome?.optionId==='implement_plan';
+  const approved=f.result?.outcome?.outcome==='selected'&&!['revise_plan','reject'].includes(f.result.outcome.optionId);
   if(approved)mode='full';
   send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'config_option_update',configOptions:options()}}});
   send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:approved?'E2E_PLAN_IMPLEMENTED':'E2E_PLAN_REVISED'}}}});
@@ -51,7 +54,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   const count=JSON.parse(fs.readFileSync(recoveryPath,'utf8'))+1;fs.writeFileSync(recoveryPath,JSON.stringify(count));
   if(count<=2){send({id:f.id,error:{code:-32603,message:'E2E_TEMPORARY_RESUME_FAILURE'}});return;}
  }
- if(f.method==='initialize')result({protocolVersion:1});
+ if(f.method==='initialize'){typedFailures=(f.params.clientCapabilities?._meta?.jetbrains?.air?.capabilities??[]).includes('sessionFailure');result({protocolVersion:1});}
  else if(f.method==='session/new'||f.method==='session/resume')result({sessionId:sid,configOptions:options()});
  else if(f.method==='session/cancel' && pendingPrompt){
   if(pendingPrompt.params.prompt[0].text==='E2E_EXTERNAL_STOP_EXIT')process.exit(7);
@@ -88,7 +91,19 @@ if(f.params.configId==='mode')mode=f.params.value;else if(f.params.configId==='m
     if(String(filename)!=='retry-release.json'||!fs.existsSync(retryReleasePath))return;
     watcher.close();update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'E2E_502_RECOVERED'}});result({stopReason:'end_turn'});
    });
-   update({sessionUpdate:'session_info_update',_meta:{codex:{error:{message:'unexpected status 502 Bad Gateway; request id: fixture-request; https://fixture.invalid/responses?api_key=fixture-secret',codexErrorInfo:{httpConnectionFailed:{httpStatusCode:502}},willRetry:true}}}});return;
+   update({sessionUpdate:'session_info_update',_meta:typedFailures?airFailure('fixture-retry:error',1,'warning','Reconnecting... 1/5'):{codex:{error:{message:'Reconnecting... 1/5',codexErrorInfo:{responseStreamDisconnected:{httpStatusCode:502}},additionalDetails:failureDetails,turnId:'fixture-retry',willRetry:true}}}});return;
+  }
+  if(f.params.prompt[0].text==='E2E_FAIL_502'){
+   if(failSent){send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'E2E_502_RESENT'}}}});result({stopReason:'end_turn'});return;}
+   failSent=true;
+   if(typedFailures)result({stopReason:'end_turn',usage:null,_meta:{quota:{token_count:null,model_usage:[]},...airFailure('fixture-fail:error',1,'error',failureDetails)}});
+   else send({id:f.id,error:{code:-32603,message:'Internal error: API Error: 502 {"type":"error","error":{"type":"api_error","message":"Bad Gateway"},"request_id":"fixture-request"} https://fixture.invalid/responses?api_key=fixture-secret',data:{errorKind:'server_error'}}});
+   return;
+  }
+  if(f.params.prompt[0].text==='E2E_CLAUDE_PLAN'){
+   pendingPlan=f;planRequestId=70002;
+   const markdown='# E2E_CLAUDE_PLAN\n\n先检查连接。';
+   send({id:planRequestId,method:'session/request_permission',params:{sessionId:sid,toolCall:{toolCallId:'toolu_fixture_plan',name:'ExitPlanMode',status:'pending',rawInput:{plan:markdown},title:'Approve Plan',kind:'switch_mode',content:[{type:'content',content:{type:'text',text:markdown}}]},options:[{optionId:'exit-plan-clear-auto',name:'Yes, clear context (12% used) and use auto mode',kind:'allow_always'},{optionId:'exit-plan-auto',name:'Yes, and use auto mode',kind:'allow_always'},{optionId:'exit-plan-bypass',name:'Yes, and bypass permissions',kind:'allow_always'},{optionId:'exit-plan-default',name:'Yes, manually approve edits',kind:'allow_once'},{optionId:'reject',name:'No, keep planning',kind:'reject_once'}]}});return;
   }
   if(f.params.prompt[0].text==='E2E_HTML_PREVIEW'){
    const htmlPath=path.join(process.cwd(),'E2E-preview-login.html');
@@ -316,13 +331,15 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     ]);
     expect(await promptCount()).toBe(before + 2);
     await sendV4PromptInPane(paneId, "E2E_RETRY_502");
-    const retry = await displayed(`${paneSelector} [data-zcode-chat-loading-slot="true"]`);
-    await browser.waitUntil(async () => (await retry.getText()).includes("HTTP 502"));
-    expect(await retry.getText()).toContain("第 1 次");
+    // Codex 声明 typed sessionFailure 后重试只带原生标题 "Reconnecting... 1/5"（无状态行），
+    // 行内错误行显示 n/m，详情可复制上游原文。
+    const retry = await displayed(
+      `${paneSelector} [data-testid="turn-failure-row"][data-variant="retry"]`,
+    );
+    await browser.waitUntil(async () => (await retry.getText()).includes("正在重新连接 1/5"));
     await (await retry.$("summary=错误详情")).click();
-    expect(await retry.getText()).toContain("fixture-request");
+    expect(await retry.getText()).toContain("Reconnecting... 1/5");
     expect(await retry.getText()).not.toContain("fixture-secret");
-    expect(await retry.getText()).not.toContain("fixture.invalid");
     await writeFile(join(dirname(entry), "retry-release.json"), "{}");
     await waitForV4AssistantMessageContaining("E2E_502_RECOVERED");
     await waitForV4ConversationState(
@@ -331,6 +348,71 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     );
     await retry.waitForDisplayed({ reverse: true });
     expect(await promptCount()).toBe(before + 3);
+  });
+
+  it("网关终态失败固定在失败轮末尾、点击才重新发送；Claude 计划卡按原生选项保留上下文开始执行", async () => {
+    await installExternalEngineFixtures();
+    for (const engine of ["codex", "claude-code"] as const) {
+      await startNewV4Draft();
+      await prepareV4ConversationE2E({ skipProvider: true, skipShellReady: true });
+      const paneId = await getV4FocusedPaneId();
+      if (!paneId) throw new Error("缺少错误行回归的当前 pane");
+      const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
+      await (await displayed(`${paneSelector} [data-testid="session-engine-select"]`)).click();
+      await $(`[role="option"]=${engine === "codex" ? "Codex" : "Claude Code"}`).click();
+      const mode = () => displayed(`${paneSelector} [data-testid="engine-config-mode"]`);
+      await (await mode()).waitForEnabled({ timeout: 30000 });
+      const entry = join(
+        resolveE2EStorageRoot(),
+        "engines",
+        managedAdapterInstallDirName(EXTERNAL_ENGINE_RUNTIMES[engine]),
+        ...managedAdapterEntrySegments(EXTERNAL_ENGINE_RUNTIMES[engine]),
+      );
+      const promptPath = join(dirname(entry), "prompt-count.json");
+      const promptCount = async () =>
+        JSON.parse(await readFile(promptPath, "utf8").catch(() => "0")) as number;
+      const before = await promptCount();
+      // Codex 走 typed 终态（prompt 结果 sessionFailure），Claude 走 JSON-RPC 502；两者都落在同一行内错误行。
+      await sendV4PromptInPane(paneId, "E2E_FAIL_502");
+      const failure = await displayed(
+        `${paneSelector} [data-testid="turn-failure-row"][data-variant="failure"]`,
+      );
+      await waitForV4ConversationState((snapshot) => snapshot.state !== "running", "失败轮结束");
+      expect(await failure.getText()).toContain("HTTP 502");
+      await (await failure.$("summary=错误详情")).click();
+      const details = await failure.getText();
+      expect(details).toContain("fixture-request");
+      expect(details).toContain("https://fixture.invalid/responses");
+      expect(details).not.toContain("fixture-secret");
+      expect(details).not.toContain("api_key");
+      // 横幅只承载与轮次无关的错误。
+      expect(await $(`${paneSelector} [data-testid="chat-error-banner"]`).isExisting()).toBe(false);
+      // 没有自动重发；用户点击后才经正常发送路径重发原文。
+      expect(await promptCount()).toBe(before + 1);
+      await (await failure.$('[data-testid="turn-failure-resend"]')).click();
+      await waitForV4AssistantMessageContaining("E2E_502_RESENT");
+      expect(await promptCount()).toBe(before + 2);
+      if (engine !== "claude-code") continue;
+      const decisionPath = join(dirname(entry), "plan-decisions.json");
+      await writeFile(decisionPath, "[]");
+      await (await mode()).click();
+      await $('[role="menuitemradio"]=Plan').click();
+      await browser.waitUntil(async () => (await (await mode()).getText()) === "Plan");
+      await sendV4PromptInPane(paneId, "E2E_CLAUDE_PLAN");
+      const card = await displayed(`${paneSelector} [data-testid="native-plan-approval"]`);
+      expect(await card.getText()).toContain("E2E_CLAUDE_PLAN");
+      await (await card.$('[data-testid="native-plan-more"]')).click();
+      const clearOption = await displayed('[data-testid="native-plan-option-exit-plan-clear-auto"]');
+      expect(await clearOption.getText()).toContain("清空上下文");
+      await browser.keys("Escape");
+      await (await card.$('[data-testid="native-plan-start"]')).click();
+      await waitForV4AssistantMessageContaining("E2E_PLAN_IMPLEMENTED");
+      await card.waitForDisplayed({ reverse: true });
+      // 进入 Plan 前是新 Claude 会话的 Auto：主按钮保留上下文并回到 Auto，从不选择清空上下文项。
+      expect(JSON.parse(await readFile(decisionPath, "utf8"))).toEqual([
+        { outcome: "selected", optionId: "exit-plan-auto" },
+      ]);
+    }
   });
 
   it("默认引擎在显式选择后由新草稿继承，重启后仍保持本机偏好", async () => {

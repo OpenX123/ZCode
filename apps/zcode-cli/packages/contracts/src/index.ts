@@ -113,6 +113,7 @@ export type {
   ExternalEnginePermissionRequest,
   ExternalEnginePermissionOutcome,
   ExternalEnginePermissionOption,
+  ExternalEngineFailureNotice,
 } from "./external-engine/contract.js";
 
 export { ExternalEngineConnectionError } from "./external-engine/contract.js";

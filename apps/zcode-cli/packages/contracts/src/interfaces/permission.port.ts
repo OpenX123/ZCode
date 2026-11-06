@@ -69,10 +69,14 @@ export interface PermissionBrokerRequest {
   optionsPolicy?: PermissionOptionsPolicy;
   requestedAt: Date;
   origin?: InteractionRequestOrigin;
+  /** 外部引擎计划审批的原生选项；应答可回传其中一个精确 optionId。 */
+  nativeOptions?: import("@zcode/shared/zcode-protocol-v4").NativePermissionOption[];
 }
 
 export interface PermissionBrokerResult {
   decision: PermissionDecision;
+  /** 用户在原生选项中选择的精确 optionId；仅当它属于请求的 nativeOptions 时由 broker 回传。 */
+  nativeOptionId?: string;
   reason?: string;
   /** V4 permission feedback 需要保留 provider-visible 原文；只由 broker 结果携带。 */
   preserveReasonFormatting?: boolean;

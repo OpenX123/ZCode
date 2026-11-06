@@ -419,6 +419,7 @@ async function requestExitPlanModeApproval(
   request: PermissionBrokerRequest,
   options?: RegisteredRequestOptions,
 ): Promise<PermissionBrokerResult> {
+  let nativeOptionId: string | undefined;
   const response = await raceClientRequestWithV4Interaction(
     context,
     request.requestId,
@@ -443,12 +444,22 @@ async function requestExitPlanModeApproval(
       ),
     // v4 答 plan approval：allow 类 optionId = 批准；freeText = 计划反馈
     // （planApprovalResponseToBrokerResult 走 plan_approval_feedback deny）；否则 decline。
-    (answer) => v4AnswerToPlanApprovalResponse(answer),
+    // 外部引擎的原生 optionId 按其 kind 映射批准/拒绝，并原样回传给 Runtime。
+    (answer): ZCodeUserInputResponse => {
+      const native = request.nativeOptions?.find((option) => option.optionId === answer.optionId);
+      if (native) nativeOptionId = native.optionId;
+      return native
+        ? native.kind === "allow_once" || native.kind === "allow_always"
+          ? { action: "accept", content: { answer: EXIT_PLAN_MODE_APPROVAL_APPROVE } }
+          : { action: "decline" }
+        : v4AnswerToPlanApprovalResponse(answer);
+    },
     createInteractionRegistrationOptions(request, "other"),
     options?.onRegistered,
   );
 
-  return planApprovalResponseToBrokerResult(response);
+  const result = planApprovalResponseToBrokerResult(response);
+  return nativeOptionId ? { ...result, nativeOptionId } : result;
 }
 
 function v4AnswerToPlanApprovalResponse(answer: V4InteractionAnswer): ZCodeUserInputResponse {

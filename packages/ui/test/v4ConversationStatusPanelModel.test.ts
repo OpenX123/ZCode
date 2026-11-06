@@ -108,6 +108,21 @@ function sessionPlan(rowId: number, overrides: Partial<ToolCallRow> = {}): ToolC
 }
 
 describe("buildConversationStatusPanelModel", () => {
+  it("外部引擎原生计划（plan/plan_update 投影的 snapshot.plan）进入状态胶囊的“计划”项", () => {
+    const model = buildConversationStatusPanelModel({
+      plan: planState({
+        document: { id: "native-plan", markdown: "# 计划" },
+        startWithoutReview: { configId: "collaboration_mode", value: "default" },
+      }),
+    });
+    expect(model.hasContent).toBe(true);
+    expect(model.plan).toMatchObject({
+      document: { markdown: "# 计划" },
+      completedCount: 1,
+      totalCount: 3,
+    });
+  });
+
   it("aggregates git, goal, todo, and running background work", () => {
     const model = buildConversationStatusPanelModel({
       gitSummary: gitSummary(),

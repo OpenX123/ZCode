@@ -149,6 +149,7 @@ export function createExternalEnginePort(
   };
   return {
     prepareSession,
+    isSessionConnected: (sessionId) => sessions.get(sessionId)?.healthy === true,
     async forkSession(input) {
       if (sessions.has(input.sessionId) || preparations.has(input.sessionId))
         throw new ExternalEngineConnectionError({ code: "configuration", method: "session/fork" });

@@ -129,7 +129,7 @@ it.each([true, false])("原生计划start=%s只提交既有交互回执，不另
     ),
   );
   expect(captured.nativePlanProps?.markdown).toBe("# 原生计划");
-  await captured.nativePlanProps?.onResolve(start);
+  await captured.nativePlanProps?.onResolve?.({ start });
   expect(captured.sendCommand).toHaveBeenCalledTimes(1);
   expect(captured.sendCommand).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -138,6 +138,48 @@ it.each([true, false])("原生计划start=%s只提交既有交互回执，不另
         interactionId: "plan-request-1",
         answer: start ? { optionId: "allowOnce" } : { action: "decline" },
       },
+    }),
+  );
+});
+
+it("外部引擎原生选项透传给计划卡，回执携带精确原生 optionId", async () => {
+  captured.sendCommand.mockImplementation(async (envelope: CommandEnvelope) => ({
+    commandId: envelope.commandId,
+    status: "accepted",
+    revisionAtDecision: 1,
+  }));
+  const snapshot = makePlanSnapshot();
+  const interaction = snapshot.pendingInteractions[0]!;
+  const nativeOptions = [
+    {
+      optionId: "exit-plan-auto",
+      label: "Yes, and use auto mode",
+      kind: "allow_always" as const,
+      recommended: true,
+    },
+    { optionId: "reject", label: "No, keep planning", kind: "reject_once" as const },
+  ];
+  if (interaction.payload.kind === "userInput") {
+    interaction.payload.input = { plan: "# 原生计划" };
+    interaction.payload.nativeOptions = nativeOptions;
+  }
+  renderToStaticMarkup(
+    createElement(
+      ZCodeIntlProvider,
+      { initialLocale: "zh-CN" },
+      createElement(V4InteractionDialogs, {
+        sessionId: "session-plan",
+        workspacePath: "/workspace",
+        snapshot,
+      }),
+    ),
+  );
+  expect(captured.nativePlanProps?.nativeOptions).toEqual(nativeOptions);
+  await captured.nativePlanProps?.onResolve?.({ start: true, optionId: "exit-plan-auto" });
+  expect(captured.sendCommand).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "resolveInteraction",
+      payload: { interactionId: "plan-request-1", answer: { optionId: "exit-plan-auto" } },
     }),
   );
 });

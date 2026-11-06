@@ -13,6 +13,11 @@ import {
   type EngineConnectionFailure,
 } from "@zcode/shared";
 import { closeAcpProcess } from "../exec/acp-process.js";
+import {
+  AIR_SESSION_FAILURE_CAPABILITY_META,
+  readPromptResultFailure,
+  readSessionInfoFailure,
+} from "./failure.js";
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const CANCEL_GRACE_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 30000;
@@ -21,6 +26,18 @@ function object(value: unknown): JsonObject {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new ExternalEngineConnectionError({ code: "protocol" }, "Invalid ACP object");
   return value as JsonObject;
+}
+/**
+ * typed failure 扩展挂在 JetBrains AIR 客户端标记下，声明即被 adapter 视为 AIR 客户端
+ * （核查见 docs/desktop/native-plan-errors-spec.md「能力声明」）：
+ * - Codex 只改变工具行呈现；同时声明非 AIR 专属的 terminal_output_delta，让终端输出仍按
+ *   既有 `_meta.terminal_output_delta` 追加，避免 AIR 下命令输出整段丢失。
+ * - Claude 的 AIR 会去掉审批预览/读取结果正文并切换子智能体协议，本里程碑不声明。
+ */
+function clientCapabilities(engine: ExternalEngineSessionInput["engine"]): JsonObject {
+  return engine === "codex"
+    ? { plan: {}, _meta: { ...AIR_SESSION_FAILURE_CAPABILITY_META, terminal_output_delta: true } }
+    : { plan: {} };
 }
 function configOptions(value: unknown): EngineConfigOption[] {
   if (value === undefined) return [];
@@ -72,9 +89,13 @@ export class AcpConnection {
     if (update.sessionUpdate === "config_option_update")
       await this.active.onConfigOptions(configOptions(update.configOptions));
     else {
-      // load/fork 回放的旧请求错误不是本轮重试；保留标题等历史事实，不恢复活动诊断。
-      if (this.loadingHistory && update.sessionUpdate === "session_info_update")
+      if (update.sessionUpdate === "session_info_update") {
+        // load/fork 回放的旧请求错误不是本轮重试；保留标题等历史事实，不恢复活动诊断。
+        const notice = this.loadingHistory ? undefined : readSessionInfoFailure(update);
+        // 失败元数据在此归一脱敏后单独交付；Runtime 只从 session_info_update 读取标题。
         delete update._meta;
+        if (notice) await this.active.onFailure?.(notice);
+      }
       await this.active.onUpdate(update);
     }
   }
@@ -339,7 +360,7 @@ export class AcpConnection {
         try {
           const initialized = await this.request("initialize", {
             protocolVersion: 1,
-            clientCapabilities: { plan: {} },
+            clientCapabilities: clientCapabilities(input.engine),
             clientInfo: { name: "ycode", version: "1" },
           });
           await this.setup?.(this);
@@ -470,8 +491,11 @@ export class AcpConnection {
       if (this.failure) throw this.failure;
       // Codex 在尚无 token 统计时返回 usage:null；这不是断联，不能因此回收已停止的健康会话。
       const usage = result.usage == null ? undefined : object(result.usage);
+      // typed 终态失败随 stopReason=end_turn 返回，必须交给 Runtime 按请求失败收尾。
+      const failure = readPromptResultFailure(result);
       return {
         stopReason: String(result.stopReason),
+        ...(failure ? { failure } : {}),
         ...(usage
           ? {
               usage: {

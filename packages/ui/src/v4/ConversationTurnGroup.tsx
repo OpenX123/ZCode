@@ -5,7 +5,6 @@ import { ConnectedBotGroupDeliveryAction } from "@/v4/BotGroupDeliveryAction.js"
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronRightIcon } from "lucide-react";
-import { type ZCodeApiRetryStatus } from "@zcode/shared";
 import {
   TID_CHAT_ASSISTANT_HISTORY_CONTENT,
   TID_CHAT_ASSISTANT_HISTORY_TRIGGER,
@@ -21,7 +20,8 @@ import type {
   ConversationRowTarget,
 } from "@zcode/shared/zcode-protocol-v4";
 import { ChatLoading } from "@/components/ai-elements/chat-loading.js";
-import { ChatApiRetryStatus } from "@/chat-input-toolbar/display.js";
+import { TurnFailureRow } from "@/components/ai-elements/error-diagnostics.js";
+import { resolveChatErrorBannerDisplayMessage } from "@/ChatErrorBanner.js";
 import { cn } from "@/components/lib/utils.js";
 import { MessageActions } from "@/components/ai-elements/message.js";
 import {
@@ -104,34 +104,90 @@ interface CronAutomationTurnCard {
   automation: CronCreateAutomationSummary;
 }
 
-function toRetryStatus(apiRetry: ApiRetryState): ZCodeApiRetryStatus {
+function toRetryProgress(apiRetry: ApiRetryState): { attempt: number; maxRetries: number } {
   const attempt = Math.max(1, Math.floor(apiRetry.attempt));
   // v4 maxAttempts 包含首次请求，而展示口径是重试次数；直接展示会把
-  // 默认 10 次重试写成 1/11。
+  // 默认 10 次重试写成 1/11。0 表示上限未知。
   const maxRetries =
     apiRetry.maxAttempts > 0 ? Math.max(Math.floor(apiRetry.maxAttempts) - 1, attempt) : 0;
-  return {
-    kind: "api_retry",
-    attempt,
-    maxRetries,
-    retryDelayMs: 0,
-    errorStatus: apiRetry.httpStatus ?? null,
-    error: apiRetry.message ?? apiRetry.reasonCode,
-  };
+  return { attempt, maxRetries };
+}
+
+function hasTurnOutput(unit: ConversationTurnRenderUnit): boolean {
+  return (
+    unit.assistantTextRows.some((row) => row.text.trim()) ||
+    unit.assistantWorkRows.some((row) =>
+      row.kind === "reasoning"
+        ? Boolean(row.text.trim())
+        : row.kind === "toolCall" || row.kind === "subagent",
+    )
+  );
+}
+
+/**
+ * 失败轮末尾的行内错误行。“重新发送”只在最新失败轮、没有助手输出与工具执行、
+ * 原始输入不含附件时提供，经正常发送路径重发原始用户文本；任何路径都不自动重发。
+ */
+function TurnFailureTail({
+  unit,
+  context,
+}: {
+  unit: ConversationTurnRenderUnit;
+  context: ConversationRowRenderContext;
+}) {
+  const { intl } = useZCodeIntl();
+  const failure = unit.header?.state === "failed" ? unit.header.failure : undefined;
+  // 与横幅共用同一本地化裁决：稳定错误码按界面语言重写，其余保留已脱敏的原文摘要。
+  const summary = useMemo(
+    () =>
+      failure
+        ? resolveChatErrorBannerDisplayMessage(
+            { code: failure.code, message: failure.summary },
+            intl,
+          )
+        : "",
+    [failure, intl],
+  );
+  const resendText = useMemo(() => {
+    const input = unit.visibleUserInputs[0];
+    if (!failure || !input || input.attachments?.length) return undefined;
+    const text = (
+      input.epilogueStart === undefined ? input.text : input.text.slice(0, input.epilogueStart)
+    ).trim();
+    return text || undefined;
+  }, [failure, unit.visibleUserInputs]);
+  const onResendFailedTurn = context.onResendFailedTurn;
+  const resend = useCallback(async () => {
+    if (resendText && onResendFailedTurn) await onResendFailedTurn(resendText);
+  }, [onResendFailedTurn, resendText]);
+  if (!failure) return null;
+  const canResend =
+    unit.isLastTurn &&
+    !unit.isRunning &&
+    resendText !== undefined &&
+    onResendFailedTurn !== undefined &&
+    !hasTurnOutput(unit);
+  return (
+    <TurnFailureRow
+      kind="failure"
+      summary={summary}
+      fields={{
+        message: failure.message,
+        httpStatus: failure.httpStatus,
+        url: failure.url,
+        requestId: failure.requestId,
+        traceId: failure.traceId,
+      }}
+      {...(canResend ? { onResend: resend } : {})}
+    />
+  );
 }
 
 function externalEngineWaitPhase(
   unit: ConversationTurnRenderUnit,
   context: ConversationRowRenderContext,
 ): ConversationRowRenderContext["externalEngineWaitPhase"] {
-  const hasContent =
-    unit.assistantTextRows.some((row) => row.text.trim()) ||
-    unit.assistantWorkRows.some((row) =>
-      row.kind === "reasoning"
-        ? Boolean(row.text.trim())
-        : row.kind === "toolCall" || row.kind === "subagent",
-    );
-  return hasContent ? undefined : context.externalEngineWaitPhase;
+  return hasTurnOutput(unit) ? undefined : context.externalEngineWaitPhase;
 }
 
 function TurnChatLoadingSlot({
@@ -143,20 +199,23 @@ function TurnChatLoadingSlot({
   apiRetry: ApiRetryState | null;
   eligible: boolean;
 }) {
-  const { intl, locale } = useZCodeIntl();
-  const retryStatus = useMemo(() => (apiRetry ? toRetryStatus(apiRetry) : null), [apiRetry]);
+  const { intl } = useZCodeIntl();
+  const retryProgress = useMemo(() => (apiRetry ? toRetryProgress(apiRetry) : null), [apiRetry]);
   // 第一次已知重试立即可见，避免网关故障时只有持续转圈。
-  const visibleRetryStatus = retryStatus;
-  if (!visibleRetryStatus && !eligible) return null;
+  if (!retryProgress && !eligible) return null;
   return (
     <div data-zcode-chat-loading-slot="true" className="min-h-5">
-      {visibleRetryStatus ? (
-        <ChatApiRetryStatus
-          apiRetry={visibleRetryStatus}
-          intl={intl}
-          locale={locale}
-          requestId={apiRetry?.requestId}
-          showError={Boolean(apiRetry?.message || apiRetry?.httpStatus)}
+      {retryProgress && apiRetry ? (
+        <TurnFailureRow
+          kind="retry"
+          attempt={retryProgress.attempt}
+          maxRetries={retryProgress.maxRetries}
+          fields={{
+            message: apiRetry.message,
+            httpStatus: apiRetry.httpStatus,
+            url: apiRetry.url,
+            requestId: apiRetry.requestId,
+          }}
         />
       ) : (
         // running 是 ChatLoading 的权威事实；额外静默计时会让 projection
@@ -1404,6 +1463,8 @@ function ConversationTurnGroupImpl({
           assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
         />
       )}
+      {/* 终态失败固定在失败轮末尾并随历史保留；输入框横幅只承载与轮次无关的错误。 */}
+      <TurnFailureTail unit={unit} context={context} />
       {unit.topicPreparations?.length ? (
         <BotTopicPreparation items={unit.topicPreparations} />
       ) : null}

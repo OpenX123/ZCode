@@ -565,6 +565,7 @@ sequenceDiagram
 - 不静默新建替代原生会话、不更换模型/权限/思考档位；已确认的 externalSessionId 在后续尝试中复用。session/new 已发送但未确认 id 时不自动重发，避免制造多个未知会话。
 - runTurn 仅在 prompt 之前复用 prepare 的重试；prompt 提交后发生错误绝不自动重发。关闭会话或取消准备时中止退避与在途请求，迟到结果不得启动新连接。
 - Runtime 继续拥有 connecting/ready/error 投影。失败事件与快照附加经过 schema 校验的错误分类、ACP 方法、数值错误码、HTTP 状态、request id 与边界脱敏的短摘要；不携带原始 stderr、RPC message/data、身份或用户内容。UI 按分类提供本地化处理说明及可复制诊断；旧快照保留原有通用提示。
+- 2026-11-07 起，网关请求失败的结构化诊断（typed failure 能力声明、重试 n/m、URL 仅保留 scheme + host + path、失败 ID 幂等、行内错误行与“重新发送”规则）以 [native-plan-errors-spec.md](native-plan-errors-spec.md)「结构化失败」为准；本节其余连接恢复规则不变。runTurn 发现没有健康连接而重新准备时同样投影 connecting → ready / error。
 - ACP 响应的 error/result 先校验再移除在途请求；畸形响应立即以 protocol 失败拒绝对应 promise 并关闭连接，不能让没有请求超时的 session/prompt 悬挂。
 - 现场根因：桌面 PATH 可找到 npm 的 Codex 入口，却没有 node，脚本以 127 退出，adapter 将其报告为 initialize / RPC 1001。PATH 缺 node 时，仅为 ACP 子进程补充指向当前运行时的托管 Node 入口，并保持 Electron 的 Node 模式；不修改系统 PATH。Host 检测到官方 CLI 是 JavaScript 入口时，用当前运行时直接执行版本和登录状态查询，避免把启动失败误判为未登录。
 - 验收：覆盖两家引擎的临时失败后成功、重试耗尽、不可恢复错误不重试、同会话 single-flight、关闭/取消终止重试、session/load 能力回退与历史去重，以及 prompt 错误不重发；真实桌面验证原失败会话恢复后历史仍在。

@@ -1998,6 +1998,13 @@ export function SessionPane({
     // 被挡下（会话忙着确认别的、队列暂停待确认）就不是「已交给 ZCode」：抛回弹层，让它留在原处。
     if (result !== "sent") throw new Error(`workflow save request not sent: ${result}`);
   }, []);
+  // 行内错误行的“重新发送”：同一条正常发送路径，用户点击才发送；被挡下时抛回错误行提示。
+  const handleResendFailedTurn = useCallback(async (text: string) => {
+    const send = sendTextRef.current;
+    if (send === null) throw new Error("send path not mounted");
+    const result = await send(text);
+    if (result !== "sent") throw new Error(`failed turn resend not sent: ${result}`);
+  }, []);
 
   const rowContext = useMemo<ConversationRowRenderContext>(
     () => ({
@@ -2067,6 +2074,8 @@ export function SessionPane({
               handler: handleSendWorkflowSaveRequest,
             })
           : undefined,
+      onResendFailedTurn:
+        runtimeReady && sessionId && !readOnly ? handleResendFailedTurn : undefined,
       workflowSaveCandidatesByRunId,
       ...(workflowSessionModel === undefined ? {} : { workflowSessionModel }),
       workflowRunByToolCallId,
@@ -2130,6 +2139,7 @@ export function SessionPane({
       handleResumeWorkflowRun,
       handleAmendWorkflowRunSettings,
       handleSendWorkflowSaveRequest,
+      handleResendFailedTurn,
       workflowSaveCandidatesByRunId,
       workflowSessionModel,
       workflowRunByToolCallId,
@@ -3113,6 +3123,21 @@ export function SessionPane({
     },
     [dispatchCommand, sessionId],
   );
+  // 引擎写完计划却未请求审批：先经既有配置屏障切出原生 Plan，确认后再以用户身份发送可见消息；
+  // 切换失败不发送，计划卡保留并提示（docs/desktop/native-plan-errors-spec.md）。
+  const handleStartPlanWithoutReview = useCallback(
+    async (configId: string, value: string): Promise<boolean> => {
+      const accepted = await configCommandBarrier.enqueue(async () => {
+        const ack = await dispatchConfigCas("setEngineConfigOption", { configId, value });
+        return ack?.status === "accepted" || ack?.status === "noop";
+      });
+      if (!accepted) return false;
+      const send = sendTextRef.current;
+      if (send === null) return false;
+      return (await send(intl.formatMessage({ id: "chat.nativePlan.startMessage" }))) === "sent";
+    },
+    [configCommandBarrier, dispatchConfigCas, intl],
+  );
   const ensureDraftPrewarmConfigBeforeSend = useCallback(
     async (targetSessionId: string) => {
       // followupMode 仍是 Session 行为设置；模型与模式属于本次 Submission，随 sendText
@@ -3730,7 +3755,12 @@ export function SessionPane({
     : statusPanelVariant === "auto"
       ? "auto"
       : "inline";
-  const controlLastError = snapshot?.control.lastError ?? null;
+  // 轮次失败已固定在失败轮末尾的行内错误行（turnHeader.failure）；输入框横幅只承载与轮次无关的错误。
+  // 旧快照的 lastError 没有 turnId，维持原横幅。
+  const controlLastError =
+    snapshot?.control.lastError && !snapshot.control.lastError.turnId
+      ? snapshot.control.lastError
+      : null;
   const controlLastErrorKey = controlLastError
     ? createSessionErrorKey(snapshot?.sessionId ?? sessionId, controlLastError)
     : null;
@@ -4078,6 +4108,9 @@ export function SessionPane({
           snapshot={snapshot}
           onPlanInteractionAccepted={
             compactForRemoteControl ? handleMobilePlanInteractionAccepted : undefined
+          }
+          onStartPlanWithoutReview={
+            externalEngine && runtimeReady && !readOnly ? handleStartPlanWithoutReview : undefined
           }
         />
       ) : null}

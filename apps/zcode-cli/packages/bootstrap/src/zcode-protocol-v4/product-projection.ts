@@ -6,10 +6,20 @@ import {
   engineConfigOptionSchema,
   engineConfigStateSchema,
   engineConnectionFailureSchema,
+  readFailureRequestId,
+  reduceFailureUrl,
+  sanitizeFailureMessage,
   type SessionEngine,
   type EngineConfigOption,
 } from "@zcode/shared/external-engine";
-import { PERMISSION_FULL_ACCESS_OPTION_ID, planStateSchema } from "@zcode/shared/zcode-protocol-v4";
+import {
+  nativePermissionOptionSchema,
+  PERMISSION_FULL_ACCESS_OPTION_ID,
+  planStateSchema,
+  TURN_FAILURE_SUMMARY_MAX_CHARS,
+  turnFailureSchema,
+  type TurnFailure,
+} from "@zcode/shared/zcode-protocol-v4";
 // ProductProjection —— CLI 权威投影第二 reducer。
 // 输入：CLI 事件日志（SessionEvent，权威事实源）；输出：ConversationDelta[]。
 // 快照推进复用协议规范 apply（applyConversationDeltas）——投影演进与 delta 流
@@ -423,6 +433,69 @@ function streamRecoveryReasonCode(
 
 function positiveInteger(value: number, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+/** 内置引擎重试的行内诊断：状态码、脱敏原因、上游请求 ID 与仅 scheme+host+path 的 URL。 */
+function builtinRetryDiagnostics(
+  payload: Extract<ModelNetworkStatusPayload, { type: "model_retry_scheduled" }>,
+): Pick<ApiRetryState, "httpStatus" | "message" | "requestId" | "url"> {
+  const httpStatus =
+    typeof payload.statusCode === "number" &&
+    Number.isInteger(payload.statusCode) &&
+    payload.statusCode >= 100 &&
+    payload.statusCode <= 599
+      ? payload.statusCode
+      : undefined;
+  const message = sanitizeFailureMessage(payload.providerErrorMessage ?? payload.message);
+  const requestId = readFailureRequestId(payload.providerRequestId);
+  const url = reduceFailureUrl(payload.baseURL);
+  return {
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+    ...(message ? { message } : {}),
+    ...(requestId ? { requestId } : {}),
+    ...(url ? { url } : {}),
+  };
+}
+
+/**
+ * TurnError → 行内错误行事实：外部引擎读 adapter 已脱敏的 failure，内置引擎读归因状态码。
+ * live 事件携带 error.failure；冷恢复由 transcript 合成的 TurnError 把 assistant.error.data
+ * 原样放在 error.data，诊断位于 data.failure，两者经同一 schema 校验。
+ */
+function turnFailureFromError(
+  error: TurnErrorPayload["error"],
+  traceId: string,
+): TurnFailure | undefined {
+  const persisted =
+    error.data !== null && typeof error.data === "object" && !Array.isArray(error.data)
+      ? (error.data as { failure?: unknown }).failure
+      : undefined;
+  const engineFailure = engineConnectionFailureSchema.safeParse(error.failure ?? persisted);
+  const external = engineFailure.success ? engineFailure.data : undefined;
+  const code = external
+    ? `external_engine.${external.code}`
+    : (error.code ?? error.type ?? "fault.runtime.unknown");
+  const httpStatus = external?.httpStatus ?? error.attribution?.statusCode;
+  const retryable = external?.retryable ?? error.attribution?.retryable ?? error.retryable;
+  const parsed = turnFailureSchema.safeParse({
+    code: code.slice(0, 200),
+    summary: (external?.message ?? error.message ?? code).slice(0, TURN_FAILURE_SUMMARY_MAX_CHARS),
+    source: external
+      ? external.code === "provider" || external.code === "authentication"
+        ? "provider"
+        : "network"
+      : (error.attribution?.source ?? "runtime"),
+    traceId,
+    ...(external?.failureId ? { failureId: external.failureId } : {}),
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+    ...(external?.attempt !== undefined ? { attempt: external.attempt } : {}),
+    ...(external?.maxAttempts !== undefined ? { maxAttempts: external.maxAttempts } : {}),
+    ...(external?.message ? { message: external.message } : {}),
+    ...(external?.url ? { url: external.url } : {}),
+    ...(external?.requestId ? { requestId: external.requestId } : {}),
+    ...(retryable !== undefined ? { retryable } : {}),
+  });
+  return parsed.success ? parsed.data : undefined;
 }
 
 function nonNegativeInteger(value: number, fallback: number): number {
@@ -1428,39 +1501,22 @@ export class ProductProjection {
         if (!this.acceptsActiveModelEvent(event)) return [];
         const payload = event.payload as { failure: unknown; retrying?: boolean; attempt?: number };
         const failure = engineConnectionFailureSchema.nullable().parse(payload.failure);
-        if (!failure) return this.setApiRetry(null);
-        if (payload.retrying)
-          return this.setApiRetry({
-            attempt: positiveInteger(payload.attempt ?? 1, 1),
-            // ACP 不提供重试上限；0 表示未知，不虚构剩余次数。
-            maxAttempts: 0,
-            nextRetryAt: this.ms(event),
-            reasonCode: `external_engine.${failure.code}`,
-            httpStatus: failure.httpStatus,
-            message: failure.message,
-            requestId: failure.requestId,
-          });
-        return [
-          {
-            op: "state.updated",
-            patch: this.controlPatch({
-              apiRetry: null,
-              lastError: {
-                code: `external_engine.${failure.code}`,
-                message:
-                  failure.message ??
-                  `External engine request failed${failure.httpStatus ? ` (HTTP ${failure.httpStatus})` : ""}`,
-                recoverable: failure.retryable ?? false,
-                at: this.ms(event),
-                source:
-                  failure.code === "provider" || failure.code === "authentication"
-                    ? "provider"
-                    : "network",
-                ...(failure.requestId ? { detail: `Request ID: ${failure.requestId}` } : {}),
-              },
-            }),
-          },
-        ];
+        // 终态诊断随 TurnError 落到失败轮的 turnHeader.failure（行内错误行、随历史持久化）；
+        // 这里只维护当前轮的活动重试，终态与清除事件都收口重试。
+        if (!failure || !payload.retrying) return this.setApiRetry(null);
+        const attempt = positiveInteger(failure.attempt ?? payload.attempt ?? 1, 1);
+        return this.setApiRetry({
+          attempt,
+          // v4 maxAttempts 含首次请求；ACP 只给出原生展示的重试上限，未知时为 0，不虚构剩余次数。
+          maxAttempts: failure.maxAttempts ? Math.max(failure.maxAttempts, attempt) + 1 : 0,
+          nextRetryAt: this.ms(event),
+          reasonCode: `external_engine.${failure.code}`,
+          httpStatus: failure.httpStatus,
+          message: failure.message,
+          requestId: failure.requestId,
+          url: failure.url,
+          failureId: failure.failureId,
+        });
       }
       case SessionEventType.ExternalEngineUsageUpdated: {
         const payload = event.payload as { used: number; size: number };
@@ -2576,16 +2632,24 @@ export class ProductProjection {
             pauseReason: "error" as const,
           }
         : undefined;
+    const failedHeader = this.turnHeaderForEvent(event);
+    const turnFailure = turnFailureFromError(payload.error, String(event.traceId));
+    // 失败诊断固定在失败轮的 turnHeader 上，随历史持久化；横幅据 lastError.turnId 让位给行内错误行。
+    const headerDeltas = this.upsertTurnHeader(
+      event,
+      "failed",
+      undefined,
+      undefined,
+      this.highspeedTimingForTurn(this.turnIdOf(event)),
+    ).map((delta) =>
+      delta.op === "row.upserted" && delta.row.kind === "turnHeader" && turnFailure
+        ? { ...delta, row: { ...delta.row, failure: turnFailure } }
+        : delta,
+    );
     return [
       ...this.closeStreamingRows("interrupted"),
       ...this.closeOpenToolRows(event, "error"),
-      ...this.upsertTurnHeader(
-        event,
-        "failed",
-        undefined,
-        undefined,
-        this.highspeedTimingForTurn(this.turnIdOf(event)),
-      ),
+      ...headerDeltas,
       {
         op: "state.updated",
         patch: this.controlPatch(
@@ -2613,6 +2677,7 @@ export class ProductProjection {
                 ? { underlyingErrorDetail: payload.error.underlyingErrorDetail }
                 : {}),
               ...(payload.error.attribution ? { attribution: payload.error.attribution } : {}),
+              ...(failedHeader && turnFailure ? { turnId: failedHeader.turnId } : {}),
             },
             // 同 onTurnComplete：终态是重试生命周期的兜底清理边界。
             apiRetry: null,
@@ -2657,6 +2722,9 @@ export class ProductProjection {
           maxAttempts,
           nextRetryAt: this.ms(event) + nonNegativeInteger(payload.delayMs, 0),
           reasonCode: modelRetryReasonCode(payload.reason),
+          // 修复原因：内置引擎的重试事件已带状态码与原因，旧投影丢弃后行内错误行只剩“重试中”。
+          // 与外部引擎共用同一脱敏规则：摘要最多 300 字、URL 仅 scheme+host+path。
+          ...builtinRetryDiagnostics(payload),
         });
       }
       case "model_request_started":
@@ -2759,7 +2827,9 @@ export class ProductProjection {
         current.reasonCode === apiRetry.reasonCode &&
         current.httpStatus === apiRetry.httpStatus &&
         current.message === apiRetry.message &&
-        current.requestId === apiRetry.requestId)
+        current.requestId === apiRetry.requestId &&
+        current.url === apiRetry.url &&
+        current.failureId === apiRetry.failureId)
     ) {
       return [];
     }
@@ -3624,6 +3694,9 @@ export class ProductProjection {
       };
     }
     if (isExitPlanModeToolName(payload.toolName)) {
+      // 外部引擎原生选项原样透出，计划卡据此提供“更多”并回传精确 optionId；
+      // 非法事件只降级为无原生选项的计划卡，不能让投影整体抛错。
+      const nativeOptions = nativePermissionOptionSchema.array().safeParse(payload.nativeOptions);
       // ExitPlanMode 复用 userInput/elicitation 通道承载计划审批反馈；
       // 普通 permission payload 无法表达 approve/custom feedback 的业务语义。
       return {
@@ -3642,6 +3715,9 @@ export class ProductProjection {
           schema: { interaction: "plan_approval", toolName: payload.toolName },
           questions: [createExitPlanModeApprovalQuestion(payload.reason)],
           ...(payload.origin ? { origin: payload.origin } : {}),
+          ...(nativeOptions.success && nativeOptions.data.length
+            ? { nativeOptions: nativeOptions.data }
+            : {}),
         },
       };
     }

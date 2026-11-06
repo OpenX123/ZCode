@@ -135,6 +135,11 @@ export interface ConversationRowRenderContext {
    */
   onSendWorkflowSaveRequest?: (text: string) => Promise<void>;
   /**
+   * 行内错误行的“重新发送”：经正常发送路径重发失败轮的原始用户文本（docs/desktop/native-plan-errors-spec.md）。
+   * 只读会话与运行时未就绪时缺席，错误行不显示按钮。
+   */
+  onResendFailedTurn?: (text: string) => Promise<void>;
+  /**
    * runId → 转写里认领过这次 run 的 SaveWorkflow 候选（`workflowRunCardJoin.buildWorkflowSaveCandidatesByRunId`），
    * 由宿主从行窗口一遍建立。它是「模型另起名字存下的那份定义」与这次 run 之间仅有的联系
    * （模型不会用 run 名当工作流名），所以必须从转写里读。
