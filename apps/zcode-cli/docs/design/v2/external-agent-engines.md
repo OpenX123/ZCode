@@ -26,3 +26,5 @@ sequenceDiagram
 验收：双引擎 new/resume、文本/思考/工具/diff/usage、拒绝权限原 id、取消、退出拒绝 pending、非法帧、旧 session migration，连续 turn 不启动 Provider。远程工作区一期明确拒绝。
 
 外部引擎运行中不可 steer；guide 请求归一为普通 queue 并复用既有 admission intent 与队列持久化，下一轮串行执行，不保留无法消费的 guide。
+
+结构化失败与计划审批（2026-11，细则见根仓 docs/desktop/native-plan-errors-spec.md）：adapter 在边界把 typed sessionFailure（仅为 Codex 声明 AIR `sessionFailure` 与 `terminal_output_delta`）、Codex 非 typed `_meta.codex.error`（含 additionalDetails）及 prompt RPC 错误归一脱敏为 EngineConnectionFailure，经 onFailure / 结果 failure 交付；Runtime 按失败 ID 与 revision 幂等发布重试，终态失败抛出 session/prompt 请求失败并把诊断写入 assistant.error.data.failure，冷恢复据此还原失败轮。计划审批按 Claude `name`/“Approve Plan”/计划输入识别，原生选项与推荐项随 PermissionRequested 投影，broker 回传精确 nativeOptionId；停止、断联或收尾时取消在途审批并先发布 PermissionResolved(cancelled)。runTurn 无健康连接时先投影 connecting。
