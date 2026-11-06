@@ -4,9 +4,14 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useDesktopUpdates } from "@/hooks/desktop-updates/index.js";
 import { getDesktopUpdateAction, getDesktopUpdateProgress } from "./contract.js";
 
-export function DesktopUpdateButton() {
+export function DesktopUpdateButton({
+  isWindowsDesktop = false,
+}: {
+  /** 应用外壳注入的桌面平台；Windows 打开安装程序，macOS 自动安装并重启。 */
+  isWindowsDesktop?: boolean;
+}) {
   const { intl } = useZCodeIntl();
-  const { state, busy, activate, dismissed, dismiss } = useDesktopUpdates();
+  const { state, busy, activate, dismissible, dismissed, dismiss } = useDesktopUpdates();
   if (dismissed || !state?.enabled || state.kind === "idle" || state.kind === "checking")
     return null;
   // 无候选版本的检查错误只通过手动检查提示，避免启动时长期占用侧栏。
@@ -45,7 +50,8 @@ export function DesktopUpdateButton() {
             )}
           </span>
         </Button>
-        {"version" in state && state.version ? (
+        {/* 下载开始后进度与就绪状态必须持续可见，只在发现新版与下载失败时允许关闭。 */}
+        {dismissible ? (
           <Button
             type="button"
             variant="ghost"
@@ -71,7 +77,9 @@ export function DesktopUpdateButton() {
               id:
                 state.kind === "update-downloaded"
                   ? "desktopUpdate.readyHint"
-                  : "desktopUpdate.downloadHint",
+                  : isWindowsDesktop
+                    ? "desktopUpdate.downloadHint.windows"
+                    : "desktopUpdate.downloadHint.mac",
             })}
       </div>
       {state.kind === "download-progress" ? (

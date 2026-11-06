@@ -43,6 +43,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   onThemeChange,
   onSettingsButtonClick,
   isDesktop = false,
+  isWindowsDesktop = false,
   className,
 }: {
   theme: Theme;
@@ -55,6 +56,8 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   workspaceRemoteSessionId?: string;
   activeTaskId?: string | null;
   isDesktop?: boolean;
+  /** 应用外壳注入的平台信息；更新提示按平台说明安装方式。 */
+  isWindowsDesktop?: boolean;
   className?: string;
 }) {
   const { intl } = useZCodeIntl();
@@ -106,7 +109,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
 
   return (
     <footer className={cn("flex shrink-0 flex-col gap-2.5 px-4 pt-2 pb-4", className)}>
-      {isDesktop ? <DesktopUpdateButton /> : null}
+      {isDesktop ? <DesktopUpdateButton isWindowsDesktop={isWindowsDesktop} /> : null}
       <div className="flex min-w-0 gap-2">
         {/* 主入口直接导航，快捷偏好单独使用滑杆图标，避免两个齿轮都被理解为设置页。 */}
         <Button

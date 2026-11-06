@@ -3,7 +3,7 @@ import type { IPlatformService, UpdateCheckResultPayload } from "@zcode/shared";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { toast } from "@/components/ui/toast.js";
-import { getDesktopUpdateAction } from "@/desktop-updates/contract.js";
+import { getDesktopUpdateAction, isDesktopUpdateDismissible } from "@/desktop-updates/contract.js";
 import { createDesktopUpdateProjection } from "./projection.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
@@ -86,13 +86,19 @@ export function useDesktopUpdates(isDesktop = true) {
     [supported, platform, intl, settings?.dismissedDesktopUpdateVersion, update],
   );
   const version = state && "version" in state ? state.version : undefined;
+  // 原因：旧实现对所有带版本的状态套用隐藏偏好，已开始下载的进度与就绪安装包会因此消失。
+  // 隐藏只作用于“发现新版”和已知版本的下载失败，下载中与已就绪状态始终展示。
+  const dismissible = isDesktopUpdateDismissible(state);
   return {
     state,
     supported,
     busy: state?.kind === "checking" || state?.kind === "download-progress",
-    dismissed: Boolean(version && settings?.dismissedDesktopUpdateVersion === version),
+    dismissible,
+    dismissed: Boolean(
+      dismissible && version && settings?.dismissedDesktopUpdateVersion === version,
+    ),
     dismiss: async () => {
-      if (!version) return;
+      if (!dismissible || !version) return;
       try {
         await update({ dismissedDesktopUpdateVersion: version });
       } catch {

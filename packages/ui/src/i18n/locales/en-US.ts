@@ -2102,8 +2102,9 @@ const enUS: Record<string, string> = {
   "desktopUpdate.ready": "Install v{version}",
   "desktopUpdate.retry": "Update failed. Retry",
   "desktopUpdate.downloading": "Downloading {progress}%",
-  "desktopUpdate.downloadHint":
+  "desktopUpdate.downloadHint.mac":
     "Download, verify, and install the update; macOS restarts automatically",
+  "desktopUpdate.downloadHint.windows": "Download and verify, then open the installer",
   "desktopUpdate.readyHint": "Installer ready. Click to install the update",
   "desktopUpdate.progress": "Update download progress",
   "desktopUpdate.up-to-date": "v{version} is up to date",

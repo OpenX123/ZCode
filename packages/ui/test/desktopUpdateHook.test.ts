@@ -69,6 +69,55 @@ describe("桌面更新 hook", () => {
     expect(screen.getByTestId("desktop-update-action")).toBeTruthy();
   });
 
+  it("开始下载后进度与已就绪状态不受隐藏偏好影响且不可关闭，下载失败可关闭", async () => {
+    const platform = createPlatform();
+    // 版本已被隐藏（例如另一窗口随后发起下载）：只有“发现新版”状态保持隐藏。
+    preferences.settings = { dismissedDesktopUpdateVersion: "1.0.6" } as AppSettings;
+    render(createElement(DesktopUpdateButton));
+    act(() => platform.emit({ kind: "update-available", enabled: true, version: "1.0.6" }));
+    expect(screen.queryByTestId("desktop-update-action")).toBeNull();
+    act(() =>
+      platform.emit({
+        kind: "download-progress",
+        enabled: true,
+        version: "1.0.6",
+        progress: "42",
+      }),
+    );
+    expect(screen.getByTestId("desktop-update-action")).toBeTruthy();
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("42");
+    expect(screen.queryByTestId("desktop-update-dismiss")).toBeNull();
+    act(() => platform.emit({ kind: "update-downloaded", enabled: true, version: "1.0.6" }));
+    expect(screen.getByTestId("desktop-update-action")).toBeTruthy();
+    expect(screen.getByTestId("desktop-update-status").textContent).toBe("desktopUpdate.readyHint");
+    expect(screen.queryByTestId("desktop-update-dismiss")).toBeNull();
+    // 已知版本的下载失败恢复“跳过该版本”：本例该版本已被隐藏，失败提示随之隐藏。
+    act(() =>
+      platform.emit({ kind: "error", enabled: true, version: "1.0.6", message: "checksum" }),
+    );
+    expect(screen.queryByTestId("desktop-update-action")).toBeNull();
+    preferences.settings = {} as AppSettings;
+    act(() =>
+      platform.emit({ kind: "error", enabled: true, version: "1.0.7", message: "checksum" }),
+    );
+    await act(async () => fireEvent.click(screen.getByTestId("desktop-update-dismiss")));
+    expect(preferences.update).toHaveBeenCalledWith({ dismissedDesktopUpdateVersion: "1.0.7" });
+    expect(platform.downloadUpdate).not.toHaveBeenCalled();
+  });
+
+  it("说明文案按平台区分：Windows 打开安装程序，macOS 自动重启", () => {
+    const platform = createPlatform();
+    const view = render(createElement(DesktopUpdateButton, { isWindowsDesktop: true }));
+    act(() => platform.emit({ kind: "update-available", enabled: true, version: "1.0.8" }));
+    expect(screen.getByTestId("desktop-update-status").textContent).toBe(
+      "desktopUpdate.downloadHint.windows",
+    );
+    view.rerender(createElement(DesktopUpdateButton, { isWindowsDesktop: false }));
+    expect(screen.getByTestId("desktop-update-status").textContent).toBe(
+      "desktopUpdate.downloadHint.mac",
+    );
+  });
+
   it("手动检查隐藏的版本重新显露并反馈", async () => {
     const platform = createPlatform();
     preferences.settings = { dismissedDesktopUpdateVersion: "1.0.6" } as AppSettings;
