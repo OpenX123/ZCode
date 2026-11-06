@@ -1253,6 +1253,31 @@ describe("settingService", () => {
     });
   });
 
+  it("按引擎记忆的模型与深度增量在写队列内合并，连续确认不互相覆盖", async () => {
+    const home = makeTempHome();
+    const service = await createSettingServiceInHome(home);
+
+    // 同一窗口先后确认模型与深度：两次补丁都只带增量，并发进入写队列。
+    await Promise.all([
+      service.update({ externalEngineConfigPreferences: { codex: { model: "gpt-5.5-codex" } } }),
+      service.update({ externalEngineConfigPreferences: { codex: { reasoning_effort: "high" } } }),
+    ]);
+    await service.update({
+      externalEngineConfigPreferences: { "claude-code": { model: "claude-opus-5-5" } },
+    });
+    await service.update({ externalEngineConfigPreferences: { codex: { model: "gpt-5.5" } } });
+
+    await expect(service.get()).resolves.toMatchObject({
+      externalEngineConfigPreferences: {
+        codex: { model: "gpt-5.5", reasoning_effort: "high" },
+        "claude-code": { model: "claude-opus-5-5" },
+      },
+    });
+    await expect(
+      service.update({ externalEngineConfigPreferences: { codex: { mode: "full-access" } } }),
+    ).rejects.toThrow();
+  });
+
   it("会持久化 ZCode 交互行为配置", async () => {
     const home = makeTempHome();
     const service = await createSettingServiceInHome(home);

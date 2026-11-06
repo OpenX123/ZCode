@@ -266,3 +266,33 @@ it("网关502显示服务错误、HTTP状态和可复制request id", () => {
   expect(alert.textContent).toContain("fixture-request");
   expect(screen.getByRole("button", { name: "复制错误详情", hidden: true })).toBeDefined();
 });
+
+it("远程工作区草稿的选择器灰显外部引擎并就地说明原因，只能选择 YCode", async () => {
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const onSelectEngine = vi.fn();
+  render(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN",
+      children: createElement(EngineControls, {
+        engine: "zcode",
+        onSelectEngine,
+        externalEngineUnavailableReason: "远程工作区暂不支持",
+      }),
+    }),
+  );
+  fireEvent.keyDown(screen.getByRole("combobox", { name: "会话引擎" }), { key: "ArrowDown" });
+  const codex = await screen.findByRole("option", { name: /Codex/ });
+  const claude = screen.getByRole("option", { name: /Claude Code/ });
+  for (const option of [codex, claude]) {
+    expect(option.getAttribute("aria-disabled")).toBe("true");
+    expect(option.textContent).toContain("远程工作区暂不支持");
+  }
+  const builtin = screen.getByRole("option", { name: "ZCode" });
+  expect(builtin.getAttribute("aria-disabled")).toBeNull();
+  expect(builtin.textContent).not.toContain("远程工作区暂不支持");
+  fireEvent.click(codex);
+  expect(onSelectEngine).not.toHaveBeenCalled();
+});

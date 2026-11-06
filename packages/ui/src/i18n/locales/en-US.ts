@@ -2,7 +2,7 @@
 const enUS: Record<string, string> = {
   "engine.default.title": "Default AI engine",
   "engine.default.description":
-    "New sessions remember your last selection. Existing sessions and drafts keep their engine.",
+    "New sessions remember your last selection and restore that engine's last confirmed model and thinking depth. Remote workspaces use YCode; existing sessions and drafts stay unchanged.",
   "engine.preferenceSaveFailed":
     "Could not save the default engine. Your current draft is preserved. Try again.",
   "desktopUpdate.dismiss": "Dismiss this version's update notification",
@@ -46,6 +46,7 @@ const enUS: Record<string, string> = {
   "engine.connectionFailed": "Engine connection failed",
   "engine.configChangeFailed": "Configuration was not changed. Try again.",
   "engine.select": "Session engine",
+  "engine.unavailable.remote": "Not available in remote workspaces",
   "engine.settings.title": "Agent engines",
   "engine.connection.mode": "Codex connection",
   "engine.connection.inherit": "Use existing CLI configuration",

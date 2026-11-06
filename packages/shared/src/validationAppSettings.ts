@@ -1,6 +1,6 @@
 /* oxlint-disable eslint(max-lines) -- AppSettings schema 聚合历史迁移、默认值和 patch 校验，拆分会削弱设置迁移的单一入口。 */
 import { z } from "zod";
-import { sessionEngineSchema } from "./external-engine/contract.js";
+import { engineConfigOptionKind, sessionEngineSchema } from "./external-engine/index.js";
 import { appToolSearchModeSchema } from "./app-runtime-preferences.js";
 import type { AppSettings } from "./protocol.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
@@ -19,6 +19,27 @@ import {
   sourceServerRecordSchema,
   sourceServerWorkspaceHistoryEntrySchema,
 } from "./source-server/contracts.js";
+
+const MAX_ENGINE_CONFIG_ID_LENGTH = 64;
+const MAX_ENGINE_CONFIG_VALUE_LENGTH = 256;
+/** 单个外部引擎的记忆只接受模型与思考深度的原始值；权限模式等其余 configId 视为无效。 */
+const externalEngineConfigPreferenceSchema = z
+  .record(
+    z.string().min(1).max(MAX_ENGINE_CONFIG_ID_LENGTH),
+    z.string().min(1).max(MAX_ENGINE_CONFIG_VALUE_LENGTH),
+  )
+  .refine((values) => Object.keys(values).every((id) => engineConfigOptionKind(id) !== "other"), {
+    message: "Only model and thinking-depth engine options can be remembered",
+  });
+const externalEngineConfigPreferencesPatchSchema = z.object({
+  "claude-code": externalEngineConfigPreferenceSchema.optional(),
+  codex: externalEngineConfigPreferenceSchema.optional(),
+});
+/** 落盘读取按引擎容错：单个引擎的坏记忆只丢弃该引擎，不影响其他设置。 */
+const externalEngineConfigPreferencesSettingsSchema = z.object({
+  "claude-code": externalEngineConfigPreferenceSchema.optional().catch(undefined),
+  codex: externalEngineConfigPreferenceSchema.optional().catch(undefined),
+});
 
 /** 引导职业枚举；单独导出供 onboarding 记录回填 settings 时做窄化校验。 */
 const appSettingsOccupationSchema = z.enum([
@@ -504,6 +525,9 @@ function migrateLegacyWorkspaceSession(value: unknown): unknown {
 
 const appSettingsObjectSchema = z.object({
   defaultSessionEngine: sessionEngineSchema.optional().catch(undefined),
+  externalEngineConfigPreferences: externalEngineConfigPreferencesSettingsSchema
+    .optional()
+    .catch(undefined),
   dismissedDesktopUpdateVersion: nonEmptyStringSchema.nullable().optional().catch(undefined),
   recentProjects: z.array(z.string()).default([]),
   locale: localeSchema.default("zh-CN"),
@@ -609,6 +633,7 @@ export const appSettingsSchema = z.preprocess(
 
 export const appSettingsPatchSchema = z.object({
   defaultSessionEngine: sessionEngineSchema.optional(),
+  externalEngineConfigPreferences: externalEngineConfigPreferencesPatchSchema.optional(),
   dismissedDesktopUpdateVersion: nonEmptyStringSchema.nullable().optional(),
   recentProjects: z.array(z.string()).optional(),
   locale: localeSchema.optional(),

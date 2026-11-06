@@ -25,6 +25,49 @@ describe("app settings", () => {
     });
   });
 
+  it("按引擎记忆的模型与思考深度可往返，不接受权限模式且坏记忆只丢弃该引擎", () => {
+    expect(appSettingsSchema.parse({}).externalEngineConfigPreferences).toBeUndefined();
+    const patch = appSettingsPatchSchema.parse({
+      externalEngineConfigPreferences: {
+        codex: { model: "gpt-5.5-codex", reasoning_effort: "high" },
+        "claude-code": { model: "claude-opus-5-5", effort: "max" },
+      },
+    });
+    expect(appSettingsSchema.parse(patch)).toMatchObject(patch);
+    for (const id of ["reasoning-effort", "thought_level", "Reasoning_Effort"]) {
+      expect(
+        appSettingsPatchSchema.safeParse({
+          externalEngineConfigPreferences: { codex: { [id]: "high" } },
+        }).success,
+      ).toBe(true);
+    }
+    // 权限模式沿用引擎默认，不能写入记忆。
+    for (const values of [{ mode: "auto" }, { fast: "on" }, { model: "" }]) {
+      expect(
+        appSettingsPatchSchema.safeParse({
+          externalEngineConfigPreferences: { codex: values },
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      appSettingsSchema.parse({
+        recentProjects: ["/kept"],
+        externalEngineConfigPreferences: {
+          codex: { mode: "full-access" },
+          "claude-code": { model: "claude-opus-5-5" },
+          zcode: { model: "glm" },
+        },
+      }),
+    ).toMatchObject({
+      recentProjects: ["/kept"],
+      externalEngineConfigPreferences: { "claude-code": { model: "claude-opus-5-5" } },
+    });
+    expect(
+      appSettingsSchema.parse({ externalEngineConfigPreferences: { codex: { mode: "auto" } } })
+        .externalEngineConfigPreferences?.codex,
+    ).toBeUndefined();
+  });
+
   it("自动归档默认关闭并保留 30 天，已有天数不覆盖", () => {
     expect(appSettingsSchema.parse({})).toMatchObject({
       taskAutoArchiveEnabled: false,

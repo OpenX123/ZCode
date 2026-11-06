@@ -153,6 +153,8 @@ export interface DraftSessionPrewarm {
   /** 当前 workspace/transport generation 已就绪的预热 binding。 */
   binding: DraftPrewarmBinding | null;
   error: Error | null;
+  /** 本代 createSession 仍在途（含排在旧代收口之后）；禁用、失败、丢弃或已就绪时为 false。 */
+  pending: boolean;
   /** 首发等待本 owner 当前创建任务；失败或换代即拒绝，不在发送路径另建会话。 */
   waitForSession(): Promise<DraftPrewarmBinding>;
 }
@@ -173,6 +175,7 @@ interface DraftPrewarmSubscriber {
   invalidationVersion: number;
   onBinding: (binding: DraftPrewarmBinding | null) => void;
   onError?: (error: Error | null) => void;
+  onPending?: (pending: boolean) => void;
 }
 
 interface DraftPrewarmCurrent {
@@ -281,6 +284,7 @@ class DraftSessionPrewarmCoordinator {
     invalidationVersion: number;
     onBinding: (binding: DraftPrewarmBinding | null) => void;
     onError?: (error: Error | null) => void;
+    onPending?: (pending: boolean) => void;
   }): () => void {
     if (this.cleanupTimer !== null) {
       clearTimeout(this.cleanupTimer);
@@ -432,11 +436,16 @@ class DraftSessionPrewarmCoordinator {
           if (this.current === current && !current.retiring && current.binding === null) {
             this.scheduleRetryAfterFailure(current);
           }
+          // 原因：onReady 在 settled 之前上抛，订阅者此时仍看到在途；收口后补发一次，
+          // 让“正在连接引擎”只覆盖真实在途的创建。
+          if (this.current === current) this.emitBindings();
           return;
         }
         this.current = null;
         if (this.subscribers.size > 0) {
           this.reconcile();
+          // 被丢弃（blocked）的一代不会重建；补发收口，避免订阅者停在等待旧代的在途态。
+          if (!this.current) this.emitBindings();
         } else {
           this.onEmpty();
         }
@@ -464,16 +473,28 @@ class DraftSessionPrewarmCoordinator {
     current.retiring = true;
     current.binding = null;
     current.controller.dispose();
-    this.emitBindings();
+    // 已收口的一代立即释放；先释放再广播，订阅者才不会把已结束的创建当成在途。
     if (current.settled) {
       this.current = null;
     }
+    this.emitBindings();
   }
 
   private emitBindings(): void {
     for (const subscriber of this.subscribers.values()) {
       this.emitBindingTo(subscriber);
     }
+  }
+
+  /**
+   * 订阅者所见的创建是否真实在途：本代 createSession 未收口，或旧代仍在回收、收口后即为
+   * 该版本重建。禁用、失败、丢弃（blocked）与已就绪都不算在途。
+   */
+  private isPendingFor(invalidationVersion: number): boolean {
+    const current = this.current;
+    if (!current) return false;
+    if (current.retiring) return this.blockedInvalidationVersion !== invalidationVersion;
+    return current.invalidationVersion === invalidationVersion && !current.settled;
   }
 
   private emitBindingTo(subscriber: DraftPrewarmSubscriber): void {
@@ -488,6 +509,7 @@ class DraftSessionPrewarmCoordinator {
         ? current.binding
         : null,
     );
+    subscriber.onPending?.(this.isPendingFor(subscriber.invalidationVersion));
   }
 }
 
@@ -586,12 +608,17 @@ export function useDraftSessionPrewarm(params: {
   const [failure, setFailure] = useState<{ generation: typeof generation; error: Error } | null>(
     null,
   );
+  const [pendingGeneration, setPendingGeneration] = useState<typeof generation | null>(null);
   useEffect(() => {
     if (!enabled) return;
     return coordinator.acquire({
       generation,
       invalidationVersion,
       onError: (error) => setFailure(error ? { generation, error } : null),
+      onPending: (pending) =>
+        setPendingGeneration((current) =>
+          pending ? generation : current === generation ? null : current,
+        ),
       onBinding: (binding) => {
         setReady((current) => {
           if (!binding) {
@@ -611,6 +638,9 @@ export function useDraftSessionPrewarm(params: {
   return {
     binding: ready?.generation === generation ? ready.binding : null,
     error: failure?.generation === generation ? failure.error : null,
+    // 原因：调用方曾用“无 binding 且无错误”推断在途，预热被禁用时会永久显示连接中；
+    // 在途只由 owner 上报，禁用（无订阅）即为 false。
+    pending: enabled && pendingGeneration === generation,
     waitForSession,
   };
 }

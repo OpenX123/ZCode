@@ -1,7 +1,8 @@
 /** 中文翻译 */
 const zhCN: Record<string, string> = {
   "engine.default.title": "默认 AI 引擎",
-  "engine.default.description": "新会话沿用最近一次选择；已有会话和草稿保持原引擎。",
+  "engine.default.description":
+    "新会话沿用最近一次选择，并恢复该引擎上次确认的模型与思考深度；远程工作区使用 YCode，已有会话和草稿保持原样。",
   "engine.preferenceSaveFailed": "默认引擎保存失败，当前草稿已保留，请重试。",
   "desktopUpdate.dismiss": "关闭此版本的更新提示",
   "desktopUpdate.found": "发现可安装版本 v{version}，可从侧栏继续更新。",
@@ -36,6 +37,7 @@ const zhCN: Record<string, string> = {
   "engine.connectionFailed": "连接引擎失败",
   "engine.configChangeFailed": "配置修改未生效，请重试。",
   "engine.select": "会话引擎",
+  "engine.unavailable.remote": "远程工作区暂不支持",
   "engine.settings.title": "Agent 引擎",
   "engine.settings.description": "管理本机的 Claude Code 和 Codex，选择登录或 API Key 连接方式。",
   "engine.connection.mode": "Codex 连接方式",
