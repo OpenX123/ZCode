@@ -10,19 +10,35 @@ import {
 import { Emitter } from "@zcode/rpc";
 import {
   EXTERNAL_ENGINE_RUNTIMES,
+  buildEngineConnectionEnv,
+  engineConnectionGatewayHost,
+  findEngineConnectionProfile,
+  lastUsedEngineConnectionProfileId,
   managedAdapterEntrySegments,
   managedAdapterInstallDirName,
-  type ExternalEngineStatus,
   type ExternalEngineConnectionProfile,
+  type ExternalEngineConnectionTestInput,
+  type ExternalEngineConnectionTestResult,
+  type ExternalEngineConnectionsView,
+  type ExternalEngineStatus,
   type ExternalSessionEngine,
 } from "@zcode/shared/external-engine";
 import {
   terminateProcessTreeAndWait,
   shouldSpawnInDetachedProcessGroup,
 } from "../process/processTreeTerminator.js";
+import { createServiceLogger } from "../logger/serviceLogger.js";
 import type { IExternalEngineService } from "./contract.js";
 import type { ICredentialService } from "../credential/credential.js";
 import { createEngineConnections } from "./connections.js";
+import { detectClaudeGatewayHost, detectCodexGatewayHost } from "./gatewayDetection.js";
+
+const logger = createServiceLogger("external-engine");
+// 设置页登录按钮的官方命令；Claude 显式选择订阅登录，与「官方登录」方式一致。
+const LOGIN_ARGS: Record<ExternalSessionEngine, readonly string[]> = {
+  codex: ["login"],
+  "claude-code": ["auth", "login", "--claudeai"],
+};
 
 interface CommandResult {
   code: number | null;
@@ -44,6 +60,10 @@ export interface ExternalEngineServiceOptions {
     args: readonly string[],
     options: CommandOptions,
   ) => Promise<CommandResult>;
+  /** 经本地 workspace 的 CLI 执行连接测试（正式 ACP 启动路径）；未装配时测试不可用。 */
+  testConnection?: (
+    input: ExternalEngineConnectionTestInput & { signal: AbortSignal },
+  ) => Promise<ExternalEngineConnectionTestResult>;
 }
 
 // 子进程输出可能含账号或凭据；只在内存中解析，错误和日志绝不拼接 stdout/stderr。
@@ -180,6 +200,7 @@ export function createExternalEngineService(
 ): IExternalEngineService & { disposeAll(): void; disposeAllAndWait(): Promise<void> } {
   const run = options.runCommand ?? runCommand;
   const emitter = new Emitter<ExternalEngineStatus>();
+  const profilesEmitter = new Emitter<ExternalEngineConnectionsView>();
   const abort = new AbortController();
   const installs = new Map<ExternalSessionEngine, Promise<ExternalEngineStatus>>();
   const commands = new Set<Promise<CommandResult>>();
@@ -195,6 +216,8 @@ export function createExternalEngineService(
   const generations = new Map<ExternalSessionEngine, number>();
   let loginAbort: AbortController | undefined;
   let loginPending: Promise<void> | undefined;
+  let testAbort: AbortController | undefined;
+  let testPending: Promise<unknown> | undefined;
   let disposed = false;
   const execute = (
     command: string,
@@ -210,35 +233,53 @@ export function createExternalEngineService(
   };
   const installDir = (engine: ExternalSessionEngine) =>
     join(options.enginesDir, managedAdapterInstallDirName(EXTERNAL_ENGINE_RUNTIMES[engine]));
-  const managedConnectionEnv = async (
+  /** 诊断与登录使用与 CLI 启动相同的环境规则（共享 buildEngineConnectionEnv），不另写剔除列表。 */
+  const connectionEnv = (profile: ExternalEngineConnectionProfile): NodeJS.ProcessEnv =>
+    buildEngineConnectionEnv({
+      env,
+      profile,
+      ...(profile.engine === "codex" && profile.mode !== "inherit"
+        ? { codexHome: connections.home(profile.id) }
+        : {}),
+    });
+  /** 新草稿缺省配置决定设置页的身份诊断；上次使用值失效时回落内置缺省。 */
+  const defaultProfile = async (
     engine: ExternalSessionEngine,
-    selected?: ExternalEngineConnectionProfile,
-  ): Promise<{
-    env: NodeJS.ProcessEnv;
-    profile?: ExternalEngineConnectionProfile;
-  }> => {
-    if (engine !== "codex") return { env: { ...env }, profile: undefined };
-    const profiles = selected ? undefined : await connections.read();
-    const profile =
-      selected ?? profiles?.profiles.find((item) => item.id === profiles.activeProfileId);
+  ): Promise<ExternalEngineConnectionProfile> => {
+    const current = await connections.read();
+    const profile = findEngineConnectionProfile(
+      current,
+      engine,
+      lastUsedEngineConnectionProfileId(current, engine),
+    );
     if (!profile) throw new Error("external_engine_connection_invalid");
-    if (profile.mode === "inherit") return { env: { ...env }, profile };
-    const childEnv: NodeJS.ProcessEnv = { ...env, CODEX_HOME: connections.home(profile.id) };
-    // 管理连接不能看到宿主的网关、密钥或原始 ACP 日志开关。
-    for (const key of Object.keys(childEnv))
-      if (
-        [
-          "APP_SERVER_LOGS",
-          "DEFAULT_AUTH_REQUEST",
-          "CODEX_CONFIG",
-          "MODEL_PROVIDER",
-          "OPENAI_API_KEY",
-          "OPENAI_BASE_URL",
-          "CODEX_API_KEY",
-        ].includes(key.toUpperCase())
-      )
-        delete childEnv[key];
-    return { env: childEnv, profile };
+    return profile;
+  };
+  const gatewayHosts = async (
+    profile: ExternalEngineConnectionProfile,
+  ): Promise<{ effective?: string; inherited?: string }> => {
+    const inherited =
+      profile.engine === "codex"
+        ? await detectCodexGatewayHost(env)
+        : await detectClaudeGatewayHost(env, true);
+    if (profile.mode === "apiKey")
+      return { effective: engineConnectionGatewayHost(profile), inherited };
+    if (profile.mode === "inherit") return { effective: inherited, inherited };
+    // Claude 官方登录仍会被 settings.json 的 env 改写路由；Codex 官方登录使用专用目录。
+    return {
+      effective:
+        profile.engine === "claude-code" ? await detectClaudeGatewayHost(env, false) : undefined,
+      inherited,
+    };
+  };
+  const findLoginProfile = async (profileId: string) => {
+    const current = await connections.read();
+    const profile =
+      findEngineConnectionProfile(current, "claude-code", profileId) ??
+      findEngineConnectionProfile(current, "codex", profileId);
+    if (!profile || profile.hidden || profile.mode !== "official")
+      throw new Error("external_engine_connection_invalid");
+    return profile;
   };
   const invalidateStatus = (engine: ExternalSessionEngine) => {
     // 只删已完成缓存仍会复用旧在途请求，配置切换后必须隔离迟到的身份诊断。
@@ -270,12 +311,11 @@ export function createExternalEngineService(
         "version" in metadata &&
         metadata.version === runtime.adapterVersion;
     }
-    const diagnosticContext = diagnostics
-      ? await managedConnectionEnv(engine)
-      : { env, profile: undefined };
+    const profile = diagnostics ? await defaultProfile(engine) : undefined;
+    const diagnosticEnv = profile ? connectionEnv(profile) : env;
     const cli = await resolveExternalEngineLaunch(
       runtime,
-      diagnosticContext.env,
+      diagnosticEnv,
       installed ? directory : undefined,
     );
     const status: ExternalEngineStatus = {
@@ -285,13 +325,17 @@ export function createExternalEngineService(
         : { installed: false },
       officialCli: { found: Boolean(cli), ...(cli ? { path: cli } : {}) },
       auth: { state: "unknown" },
+      ...(profile ? { connectionProfileId: profile.id } : {}),
       ready: false,
     };
-    if (cli && diagnostics) {
-      const cliEnv = diagnosticContext.env;
-      for (const key of runtime.strippedEnvVars)
-        for (const actualKey of Object.keys(cliEnv))
-          if (actualKey.toUpperCase() === key.toUpperCase()) delete cliEnv[actualKey];
+    if (profile) {
+      // 网关用户没有官方登录文件；status 只带 host，界面据此显示网关而不是「未登录」。
+      const hosts = await gatewayHosts(profile);
+      if (hosts.inherited) status.inheritedGatewayHost = hosts.inherited;
+      if (hosts.effective) status.auth.gatewayHost = hosts.effective;
+    }
+    if (cli && profile) {
+      const cliEnv = { ...diagnosticEnv };
       try {
         // npm 的官方入口依赖 env node；桌面 PATH 缺 node 时用当前运行时执行脚本。
         const nodeEntry = /\.(?:[cm]?js)$/i.test(await realpath(cli));
@@ -300,7 +344,7 @@ export function createExternalEngineService(
         if (nodeEntry) cliEnv.ELECTRON_RUN_AS_NODE = "1";
         const version = execute(command, [...prefix, "--version"], 10_000, cliEnv);
         const auth =
-          diagnosticContext.profile?.mode === "apiKey"
+          profile.mode === "apiKey"
             ? undefined
             : execute(command, [...prefix, ...runtime.authStatusArgs], 10_000, cliEnv);
         const [versionResult, authResult] = await Promise.all([
@@ -308,13 +352,16 @@ export function createExternalEngineService(
           auth ?? Promise.resolve(undefined),
         ]);
         status.officialCli.version = versionFromOutput(versionResult.stdout);
-        if (diagnosticContext.profile?.mode === "apiKey") {
+        if (profile.mode === "apiKey") {
           const key =
-            diagnosticContext.profile.credentialKey && options.credentials
-              ? await options.credentials.load(diagnosticContext.profile.credentialKey)
+            profile.credentialKey && options.credentials
+              ? await options.credentials.load(profile.credentialKey)
               : null;
-          status.auth = key ? { state: "loggedIn", label: "apiKey" } : { state: "loggedOut" };
-        } else if (authResult) status.auth = authStatus(engine, authResult);
+          status.auth = {
+            ...status.auth,
+            ...(key ? { state: "loggedIn", label: "apiKey" } : { state: "loggedOut" }),
+          };
+        } else if (authResult) status.auth = { ...status.auth, ...authStatus(engine, authResult) };
       } catch (error) {
         if (
           !(error instanceof Error) ||
@@ -384,12 +431,15 @@ export function createExternalEngineService(
       invalidateStatus(engine);
       return getStatus(engine);
     },
-    getConnectionProfiles: connections.read,
-    async saveConnectionProfile(input) {
+    getConnectionProfiles: connections.readView,
+    async updateConnectionProfiles(command) {
+      if (disposed) throw new Error("external_engine_service_disposed");
       try {
-        return await connections.save(input);
+        const result = await connections.update(command);
+        if (!disposed) profilesEmitter.fire(result.connections);
+        return result;
       } finally {
-        invalidateStatus("codex");
+        invalidateStatus(command.engine);
       }
     },
     login(profileId) {
@@ -397,28 +447,31 @@ export function createExternalEngineService(
       if (loginAbort) return Promise.reject(new Error("external_engine_login_running"));
       const controller = new AbortController();
       loginAbort = controller;
+      let engine: ExternalSessionEngine | undefined;
       const pending = (async () => {
         try {
-          const profile = (await connections.read()).profiles.find((item) => item.id === profileId);
-          if (!profile || profile.mode !== "official")
-            throw new Error("external_engine_connection_invalid");
+          const profile = await findLoginProfile(profileId);
+          engine = profile.engine;
           // 只检查 adapter/CLI 是否可启动；登录按钮不应先等待版本和身份诊断。
-          const status = await detect("codex", false);
+          const status = await detect(profile.engine, false);
           if (!status?.ready || !status.officialCli.path) throw new Error("engine_not_ready");
-          const home = connections.home(profile.id);
-          await mkdir(home, { recursive: true });
-          // 强制原生凭据写入专用目录，不能覆盖用户系统钥匙串中的 CLI 身份。
-          await atomicWritePrivateTextFile(
-            join(home, "config.toml"),
-            'cli_auth_credentials_store = "file"\n',
-          );
+          if (profile.engine === "codex") {
+            const home = connections.home(profile.id);
+            await mkdir(home, { recursive: true });
+            // 强制原生凭据写入专用目录，不能覆盖用户系统钥匙串中的 CLI 身份。
+            await atomicWritePrivateTextFile(
+              join(home, "config.toml"),
+              'cli_auth_credentials_store = "file"\n',
+            );
+          }
+          // Claude 官方登录使用用户自己的 Claude 登录；仍剔除继承的 API 变量，避免登录被网关改写。
           const cli = status.officialCli.path;
           const nodeEntry = /\.(?:[cm]?js)$/i.test(await realpath(cli));
-          const { env: loginEnv } = await managedConnectionEnv("codex", profile);
+          const loginEnv = connectionEnv(profile);
           if (nodeEntry) loginEnv.ELECTRON_RUN_AS_NODE = "1";
           const result = await execute(
             nodeEntry ? process.execPath : cli,
-            [...(nodeEntry ? [cli] : []), "login"],
+            [...(nodeEntry ? [cli] : []), ...LOGIN_ARGS[profile.engine]],
             180_000,
             loginEnv,
             AbortSignal.any([abort.signal, controller.signal]),
@@ -426,7 +479,7 @@ export function createExternalEngineService(
           if (result.code !== 0) throw new Error("external_engine_login_failed");
         } finally {
           loginAbort = undefined;
-          invalidateStatus("codex");
+          if (engine) invalidateStatus(engine);
         }
       })();
       loginPending = pending;
@@ -439,6 +492,58 @@ export function createExternalEngineService(
     },
     async cancelLogin() {
       loginAbort?.abort();
+    },
+    async testConnection(input) {
+      if (disposed) throw new Error("external_engine_service_disposed");
+      if (testAbort) throw new Error("external_engine_connection_test_running");
+      if (!options.testConnection) throw new Error("external_engine_connection_test_unavailable");
+      const controller = new AbortController();
+      testAbort = controller;
+      const signal = AbortSignal.any([abort.signal, controller.signal]);
+      const startedAt = Date.now();
+      const pending = (async (): Promise<ExternalEngineConnectionTestResult> => {
+        try {
+          const profile = findEngineConnectionProfile(
+            await connections.read(),
+            input.engine,
+            input.profileId,
+          );
+          if (!profile) throw new Error("external_engine_connection_invalid");
+          if (!input.workspacePath.trim())
+            throw new Error("external_engine_connection_test_unavailable");
+          // 读取配置期间已取消时不再启动 CLI 测试。
+          if (signal.aborted) return { status: "cancelled" };
+          try {
+            return await options.testConnection!({ ...input, signal });
+          } catch (error) {
+            // 取消后迟到的传输错误不再是测试失败。
+            if (signal.aborted) return { status: "cancelled" };
+            throw error;
+          }
+        } finally {
+          if (testAbort === controller) testAbort = undefined;
+        }
+      })();
+      testPending = pending;
+      try {
+        const result = await pending;
+        // 只记录分类、耗时与配置 ID；消息、回复摘要与密钥不进日志。
+        logger.info(undefined, "external engine connection test finished", {
+          engine: input.engine,
+          profileId: input.profileId,
+          status: result.status,
+          elapsedMs: Date.now() - startedAt,
+          ...(result.status === "failed"
+            ? { failureCode: result.failure.code, httpStatus: result.failure.httpStatus }
+            : {}),
+        });
+        return result;
+      } finally {
+        if (testPending === pending) testPending = undefined;
+      }
+    },
+    async cancelConnectionTest() {
+      testAbort?.abort();
     },
     listStatuses: () =>
       Promise.all(
@@ -488,10 +593,12 @@ export function createExternalEngineService(
       return pending;
     },
     onStatusChanged: emitter.event,
+    onConnectionProfilesChanged: profilesEmitter.event,
     disposeAll() {
       disposed = true;
       abort.abort();
       emitter.dispose();
+      profilesEmitter.dispose();
     },
     async disposeAllAndWait() {
       this.disposeAll();
@@ -499,6 +606,7 @@ export function createExternalEngineService(
         ...installs.values(),
         ...commands,
         ...(loginPending ? [loginPending] : []),
+        ...(testPending ? [testPending] : []),
       ]);
     },
   };

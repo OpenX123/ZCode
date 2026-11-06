@@ -1512,6 +1512,7 @@ export class ProductProjection {
           engineConfigOptions: unknown;
           engineConfigState?: unknown;
           engineConfigError?: unknown;
+          engineConnectionProfileId?: unknown;
         };
         const engine = sessionEngineSchema.parse(payload.engine);
         const engineConfigOptions = engineConfigOptionSchema
@@ -1525,6 +1526,10 @@ export class ProductProjection {
                 ...this.snapshot.config,
                 engine,
                 engineConfigOptions,
+                // 绑定只在 Runtime 解析后出现；尚未解析的 connecting 事件保留已投影的值。
+                ...(typeof payload.engineConnectionProfileId === "string"
+                  ? { engineConnectionProfileId: payload.engineConnectionProfileId }
+                  : {}),
                 engineConfigState: engineConfigStateSchema.parse(
                   payload.engineConfigState ?? "ready",
                 ),

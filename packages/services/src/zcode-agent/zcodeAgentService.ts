@@ -104,6 +104,8 @@ import {
   zcodeProviderRuntimeHeadersCancelledSchema,
   zcodeProviderRefreshRegistryResultSchema,
   zcodeProviderTestModelConnectivityResultSchema,
+  zcodeExternalEngineCancelConnectionTestResultSchema,
+  zcodeExternalEngineTestConnectionResultSchema,
   zcodeProtocolEmptyResultSchema,
   zcodeProtocolMethods,
   zcodeProtocolNotifications,
@@ -182,6 +184,7 @@ import type {
   ZCodeAgentInstallPluginParams,
   ZCodeAgentGenerateWorkspaceTextParams,
   ZCodeAgentTestModelConnectivityParams,
+  ZCodeAgentTestExternalEngineConnectionParams,
   ZCodeAgentGoalParams,
   ZCodeAgentGrantWorkspaceHookTrustParams,
   ZCodeAgentInitializeResult,
@@ -4583,6 +4586,34 @@ export function createZCodeAgentService(
         zcodeProviderTestModelConnectivityResultSchema,
         { signal: params.signal },
       );
+    },
+
+    async testExternalEngineConnection(params: ZCodeAgentTestExternalEngineConnectionParams) {
+      // 外部引擎会话与只读客户端共用进程；测试不刷新 Provider Registry，也不建立会话记录。
+      const client = await getReadOnlyClient(params);
+      const operationId = randomUUID();
+      const cancel = () => {
+        // CLI 侧测试独立于串行队列；取消失败不影响本端立即收口。
+        void client
+          .request(
+            zcodeProtocolMethods.externalEngineCancelConnectionTest,
+            { operationId },
+            zcodeExternalEngineCancelConnectionTestResultSchema,
+          )
+          .catch(() => {});
+      };
+      params.signal.addEventListener("abort", cancel, { once: true });
+      try {
+        return await client.request(
+          zcodeProtocolMethods.externalEngineTestConnection,
+          { operationId, engine: params.engine, connectionProfileId: params.connectionProfileId },
+          zcodeExternalEngineTestConnectionResultSchema,
+          // 测试最长等待一次握手与模型回复，CLI 自身限时 90 秒；取消时本端立即收口，CLI 由取消请求回收。
+          { signal: params.signal, timeoutMs: 120_000 },
+        );
+      } finally {
+        params.signal.removeEventListener("abort", cancel);
+      }
     },
 
     async sendPrompt(params: ZCodeAgentSendPromptParams) {

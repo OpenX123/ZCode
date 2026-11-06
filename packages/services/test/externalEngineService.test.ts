@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, chmod, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, chmod, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -57,21 +57,36 @@ async function fixture() {
     },
   );
   const credentialValues = new Map<string, string>();
+  const credentials = {
+    load: async (key: string) => credentialValues.get(key) ?? null,
+    save: async (key: string, value: string) => {
+      credentialValues.set(key, value);
+    },
+    delete: async (key: string) => {
+      credentialValues.delete(key);
+    },
+  };
+  const testConnection = vi.fn<NonNullable<ExternalEngineServiceOptions["testConnection"]>>(
+    async () => ({ status: "success", latencyMs: 1200 }),
+  );
   const service = createExternalEngineService({
     enginesDir,
     env,
     runCommand: run,
-    credentials: {
-      load: async (key) => credentialValues.get(key) ?? null,
-      save: async (key, value) => {
-        credentialValues.set(key, value);
-      },
-      delete: async (key) => {
-        credentialValues.delete(key);
-      },
-    },
+    credentials,
+    testConnection,
   });
-  return { root, env, enginesDir, run, service, install };
+  return {
+    root,
+    env,
+    enginesDir,
+    run,
+    service,
+    install,
+    credentials,
+    credentialValues,
+    testConnection,
+  };
 }
 
 describe("外部引擎 Host 服务", () => {
@@ -85,7 +100,11 @@ describe("外部引擎 Host 服务", () => {
     });
     expect(await f.service.isLaunchReady!("codex")).toBe(true);
     expect(f.run).not.toHaveBeenCalled();
-    await f.service.saveConnectionProfile!({ mode: "inherit" });
+    await f.service.updateConnectionProfiles!({
+      type: "select",
+      engine: "codex",
+      profileId: "inherit",
+    });
     expect(await f.service.isLaunchReady!("codex")).toBe(false);
     expect(f.run).not.toHaveBeenCalled();
     f.service.disposeAll();
@@ -102,32 +121,98 @@ describe("外部引擎 Host 服务", () => {
     f.service.disposeAll();
   });
 
-  it("管理连接只返回密钥存在性，修改连接创建新 ID 并保留旧配置", async () => {
+  it("管理连接只返回密钥存在性，编辑生成新 ID、隐藏旧配置并沿用旧密钥", async () => {
     const f = await fixture();
-    const first = await f.service.saveConnectionProfile!({
+    const first = await f.service.updateConnectionProfiles!({
+      type: "create",
+      engine: "codex",
       mode: "apiKey",
       baseUrl: "https://gateway.example/v1",
       model: "model-a",
       apiKey: "private-key-test",
     });
     expect(JSON.stringify(first)).not.toContain("private-key-test");
-    expect(first.hasApiKey).toBe(true);
-    const second = await f.service.saveConnectionProfile!({
+    const created = first.connections.profiles.find((item) => item.id === first.profileId);
+    expect(created).toMatchObject({ hasApiKey: true, gatewayHost: "gateway.example" });
+    expect(created).not.toHaveProperty("credentialKey");
+    expect(first.connections.defaults.codex).toBe(first.profileId);
+    const second = await f.service.updateConnectionProfiles!({
+      type: "edit",
+      engine: "codex",
+      profileId: first.profileId!,
       mode: "apiKey",
       baseUrl: "https://gateway.example/v1",
       model: "model-b",
-      apiKey: "private-key-test",
     });
-    expect(second.id).not.toBe(first.id);
+    expect(second.profileId).not.toBe(first.profileId);
     const profiles = await f.service.getConnectionProfiles!();
-    expect(profiles.activeProfileId).toBe(second.id);
-    expect(profiles.profiles.map((profile) => profile.id)).toContain(first.id);
+    expect(profiles.defaults.codex).toBe(second.profileId);
+    expect(profiles.profiles.find((item) => item.id === first.profileId)?.hidden).toBe(true);
+    expect(f.credentialValues.get(`external-engine:codex:${second.profileId}`)).toBe(
+      "private-key-test",
+    );
+    // 旧配置与凭据保留，已绑定会话继续解析；连接文件不含密钥且保持旧版可读字段。
+    expect(f.credentialValues.get(`external-engine:codex:${first.profileId}`)).toBe(
+      "private-key-test",
+    );
+    const file = await readFile(join(f.enginesDir, "connections.json"), "utf8");
+    expect(file).not.toContain("private-key-test");
+    expect(JSON.parse(file)).toMatchObject({ activeProfileId: second.profileId });
+    expect(JSON.parse(file).profiles.some((item: { id: string }) => item.id === "inherit")).toBe(
+      true,
+    );
+    f.service.disposeAll();
+  });
+  it("删除只隐藏配置，内置配置与隐藏配置不可选，写入后广播最新视图", async () => {
+    const f = await fixture();
+    const changed = vi.fn();
+    f.service.onConnectionProfilesChanged!(changed);
+    const { profileId } = await f.service.updateConnectionProfiles!({
+      type: "create",
+      engine: "claude-code",
+      name: "公司网关",
+      mode: "apiKey",
+      baseUrl: "https://gateway.example/anthropic",
+      apiKey: "claude-private-key",
+    });
+    expect((await f.service.getConnectionProfiles!()).defaults["claude-code"]).toBe(profileId);
+    await f.service.updateConnectionProfiles!({
+      type: "delete",
+      engine: "claude-code",
+      profileId: profileId!,
+    });
+    const view = await f.service.getConnectionProfiles!();
+    expect(view.defaults["claude-code"]).toBe("official");
+    expect(view.profiles.find((item) => item.id === profileId)).toMatchObject({
+      hidden: true,
+      name: "公司网关",
+    });
+    expect(f.credentialValues.has(`external-engine:claude-code:${profileId}`)).toBe(true);
+    for (const command of [
+      { type: "select", engine: "claude-code", profileId: profileId! },
+      { type: "delete", engine: "claude-code", profileId: "official" },
+      { type: "select", engine: "codex", profileId: "official" },
+      { type: "create", engine: "codex", mode: "inherit" },
+    ] as const)
+      await expect(f.service.updateConnectionProfiles!(command)).rejects.toThrow(
+        "external_engine_connection_invalid",
+      );
+    await expect(
+      f.service.updateConnectionProfiles!({ type: "create", engine: "codex", mode: "apiKey" }),
+    ).rejects.toThrow("external_engine_api_key_missing");
+    expect(changed).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(changed.mock.calls)).not.toContain("claude-private-key");
     f.service.disposeAll();
   });
   it("官方登录独占专用身份目录，取消及释放服务等待登录退出", async () => {
     const f = await fixture();
     await f.install("codex");
-    const profile = await f.service.saveConnectionProfile!({ mode: "official" });
+    const { profileId } = await f.service.updateConnectionProfiles!({
+      type: "create",
+      engine: "codex",
+      mode: "official",
+    });
+    const profile = { id: profileId! };
     await f.service.getStatus("codex");
     let started!: () => void;
     const loginStarted = new Promise<void>((resolve) => {
@@ -164,7 +249,12 @@ describe("外部引擎 Host 服务", () => {
   it("官方身份诊断使用管理目录，登录预检不等待版本和身份诊断", async () => {
     const f = await fixture();
     await f.install("codex");
-    const profile = await f.service.saveConnectionProfile!({ mode: "official" });
+    const { profileId } = await f.service.updateConnectionProfiles!({
+      type: "create",
+      engine: "codex",
+      mode: "official",
+    });
+    const profile = { id: profileId! };
     const home = join(f.enginesDir, "connections", profile.id, "codex-home");
     f.run.mockImplementation(async (_command, args, options) => {
       expect(options.env.CODEX_HOME).toBe(home);
@@ -185,10 +275,13 @@ describe("外部引擎 Host 服务", () => {
   it("API Key 身份诊断只检查对应凭据，不借用官方登录状态", async () => {
     const f = await fixture();
     await f.install("codex");
-    const profile = await f.service.saveConnectionProfile!({
+    const { profileId } = await f.service.updateConnectionProfiles!({
+      type: "create",
+      engine: "codex",
       mode: "apiKey",
       apiKey: "profile-key-fixture",
     });
+    const profile = { id: profileId! };
     f.run.mockImplementation(async (_command, args, options) => {
       expect(options.env.CODEX_HOME).toBe(
         join(f.enginesDir, "connections", profile.id, "codex-home"),
@@ -216,7 +309,12 @@ describe("外部引擎 Host 服务", () => {
     f.service.onStatusChanged(changed);
     const old = f.service.getStatus("codex");
     await started.promise;
-    await f.service.saveConnectionProfile!({ mode: "apiKey", apiKey: "fresh-key-fixture" });
+    await f.service.updateConnectionProfiles!({
+      type: "create",
+      engine: "codex",
+      mode: "apiKey",
+      apiKey: "fresh-key-fixture",
+    });
     const fresh = f.service.refreshStatus!("codex");
     expect(fresh).not.toBe(old);
     previous.resolve({ code: 1, stdout: "", stderr: "Not logged in" });
@@ -384,5 +482,198 @@ describe("外部引擎 Host 服务", () => {
     await expect(f.service.installAdapter("claude-code")).rejects.toThrow(
       "external_engine_service_disposed",
     );
+  });
+});
+
+describe("Claude Code 三种连接与网关状态", () => {
+  it("沿用 CLI 保留继承的 ANTHROPIC_*，状态显示环境网关而不是未登录", async () => {
+    const f = await fixture();
+    await f.install("claude-code");
+    await f.service.updateConnectionProfiles!({
+      type: "select",
+      engine: "claude-code",
+      profileId: "inherit",
+    });
+    const service = createExternalEngineService({
+      enginesDir: f.enginesDir,
+      env: { ...f.env, ANTHROPIC_BASE_URL: "https://claude-gw.example/api?token=leak" },
+      runCommand: f.run,
+    });
+    f.run.mockImplementation(async (_command, args) =>
+      args[0] === "--version"
+        ? { code: 0, stdout: "2.1.310", stderr: "" }
+        : { code: 0, stdout: '{"loggedIn":false}', stderr: "" },
+    );
+    const status = await service.getStatus("claude-code");
+    expect(status.connectionProfileId).toBe("inherit");
+    expect(status.auth).toEqual({ state: "loggedOut", gatewayHost: "claude-gw.example" });
+    expect(status.inheritedGatewayHost).toBe("claude-gw.example");
+    expect(JSON.stringify(status)).not.toMatch(/token=leak|must-be-stripped/);
+    expect(f.run.mock.calls[1]?.[2].env.ANTHROPIC_API_KEY).toBe("must-be-stripped");
+    service.disposeAll();
+    f.service.disposeAll();
+  });
+
+  it("官方登录去除继承变量但识别 settings.json 的网关，只读取该键", async () => {
+    const f = await fixture();
+    await f.install("claude-code");
+    await mkdir(join(f.env.HOME, ".claude"), { recursive: true });
+    await writeFile(
+      join(f.env.HOME, ".claude", "settings.json"),
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: "https://settings-gw.example/v1", ANTHROPIC_AUTH_TOKEN: "x" },
+        apiKeyHelper: "secret-helper",
+      }),
+    );
+    const status = await f.service.getStatus("claude-code");
+    expect(status.connectionProfileId).toBe("official");
+    expect(status.auth).toMatchObject({ state: "loggedIn", gatewayHost: "settings-gw.example" });
+    expect(JSON.stringify(status)).not.toMatch(/secret-helper|"x"/);
+    expect(f.run.mock.calls[1]?.[2].env.ANTHROPIC_API_KEY).toBeUndefined();
+    f.service.disposeAll();
+  });
+
+  it("API Key 配置只检查凭据并按地址区分官方 Key 与网关", async () => {
+    const f = await fixture();
+    await f.install("claude-code");
+    f.run.mockResolvedValue({ code: 0, stdout: "2.1.310", stderr: "" });
+    await f.service.updateConnectionProfiles!({
+      type: "create",
+      engine: "claude-code",
+      mode: "apiKey",
+      apiKey: "claude-private-key",
+    });
+    expect((await f.service.getStatus("claude-code")).auth).toEqual({
+      state: "loggedIn",
+      label: "apiKey",
+    });
+    await f.service.updateConnectionProfiles!({
+      type: "create",
+      engine: "claude-code",
+      mode: "apiKey",
+      baseUrl: "https://gw.example/anthropic",
+      apiKey: "claude-private-key",
+    });
+    const status = await f.service.getStatus("claude-code");
+    expect(status.auth).toEqual({ state: "loggedIn", label: "apiKey", gatewayHost: "gw.example" });
+    expect(f.run.mock.calls.every(([, args]) => args[0] === "--version")).toBe(true);
+    expect(JSON.stringify(status)).not.toContain("claude-private-key");
+    f.service.disposeAll();
+  });
+
+  it("Codex 沿用 CLI 读取 config.toml 当前 provider 的网关 host，不再显示未登录", async () => {
+    const f = await fixture();
+    await f.install("codex");
+    await mkdir(join(f.env.HOME, ".codex"), { recursive: true });
+    await writeFile(
+      join(f.env.HOME, ".codex", "config.toml"),
+      [
+        'model_provider = "corp"',
+        'profile = "work"',
+        "[profiles.work]",
+        'model_provider = "gateway"',
+        "[model_providers.corp]",
+        'base_url = "https://corp.example/v1"',
+        "[model_providers.gateway]",
+        'base_url = "https://codex-gw.example:8443/v1"',
+        'experimental_bearer_token = "toml-secret"',
+      ].join("\n"),
+    );
+    f.run.mockImplementation(async (_command, args) =>
+      args[0] === "--version"
+        ? { code: 0, stdout: "codex 1.0.0", stderr: "" }
+        : { code: 1, stdout: "", stderr: "Not logged in" },
+    );
+    const status = await f.service.getStatus("codex");
+    expect(status.auth).toEqual({ state: "loggedOut", gatewayHost: "codex-gw.example:8443" });
+    expect(JSON.stringify(status)).not.toContain("toml-secret");
+    f.service.disposeAll();
+  });
+
+  it("Claude 官方登录按钮运行 claude auth login --claudeai，可取消且去除继承的 API 变量", async () => {
+    const f = await fixture();
+    await f.install("claude-code");
+    let started!: () => void;
+    const loginStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    f.run.mockImplementation(async (_command, args, options) => {
+      expect(args).toEqual(["auth", "login", "--claudeai"]);
+      expect(options.env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(options.env.HOME).toBe(f.env.HOME);
+      started();
+      return new Promise((_resolve, reject) =>
+        options.signal.addEventListener(
+          "abort",
+          () => reject(new Error("external_engine_process_interrupted")),
+          { once: true },
+        ),
+      );
+    });
+    const pending = f.service.login!("official");
+    await loginStarted;
+    await f.service.cancelLogin!();
+    await expect(pending).rejects.toThrow("external_engine_process_interrupted");
+    await expect(f.service.login!("inherit")).rejects.toThrow("external_engine_connection_invalid");
+    f.service.disposeAll();
+  });
+});
+
+describe("测试连接", () => {
+  it("委托 CLI 正式启动路径，单个在途测试可取消，日志与结果不含密钥", async () => {
+    const f = await fixture();
+    const info = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { profileId } = await f.service.updateConnectionProfiles!({
+      type: "create",
+      engine: "claude-code",
+      mode: "apiKey",
+      baseUrl: "https://gw.example",
+      apiKey: "claude-private-key",
+    });
+    const input = { engine: "claude-code" as const, profileId: profileId!, workspacePath: f.root };
+    expect(await f.service.testConnection!(input)).toEqual({ status: "success", latencyMs: 1200 });
+    expect(f.testConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ ...input, signal: expect.any(AbortSignal) }),
+    );
+    const testStarted = Promise.withResolvers<void>();
+    f.testConnection.mockImplementationOnce(
+      ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("transport closed")), {
+            once: true,
+          });
+          testStarted.resolve();
+        }),
+    );
+    const running = f.service.testConnection!(input);
+    await expect(f.service.testConnection!(input)).rejects.toThrow(
+      "external_engine_connection_test_running",
+    );
+    await testStarted.promise;
+    await f.service.cancelConnectionTest!();
+    expect(await running).toEqual({ status: "cancelled" });
+    // 配置读取期间取消：不再启动 CLI 测试。
+    const early = f.service.testConnection!(input);
+    await f.service.cancelConnectionTest!();
+    expect(await early).toEqual({ status: "cancelled" });
+    expect(f.testConnection).toHaveBeenCalledTimes(2);
+    f.testConnection.mockResolvedValueOnce({
+      status: "failed",
+      latencyMs: 800,
+      failure: { code: "authentication", httpStatus: 401, requestId: "req_1", message: "bad key" },
+    });
+    expect((await f.service.testConnection!(input)).status).toBe("failed");
+    await expect(
+      f.service.testConnection!({ ...input, profileId: "missing-profile" }),
+    ).rejects.toThrow("external_engine_connection_invalid");
+    await expect(f.service.testConnection!({ ...input, workspacePath: " " })).rejects.toThrow(
+      "external_engine_connection_test_unavailable",
+    );
+    const logged = JSON.stringify(info.mock.calls);
+    expect(logged).toContain("external engine connection test finished");
+    expect(logged).not.toMatch(/claude-private-key|bad key/);
+    expect(JSON.stringify(f.testConnection.mock.calls)).not.toContain("claude-private-key");
+    info.mockRestore();
+    f.service.disposeAll();
   });
 });

@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { BrainIcon, ChevronDownIcon, CpuIcon, Settings2Icon, ShieldIcon } from "lucide-react";
+import {
+  BrainIcon,
+  ChevronDownIcon,
+  CpuIcon,
+  Settings2Icon,
+  ShieldIcon,
+  type LucideIcon,
+} from "lucide-react";
 import type { EngineConfigOption } from "@zcode/shared/external-engine";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -41,8 +48,10 @@ export function EngineConfigMenu({
   restoreFocus,
   onOpenChange,
   onValueChange,
-}: PickerProps) {
-  const Icon = option.id === "model" ? CpuIcon : option.id === "mode" ? ShieldIcon : Settings2Icon;
+  icon,
+}: PickerProps & { icon?: LucideIcon }) {
+  const Icon =
+    icon ?? (option.id === "model" ? CpuIcon : option.id === "mode" ? ShieldIcon : Settings2Icon);
   // 自测高分列曾覆盖共享限高并让长目录越出视口；直接沿用下拉层的尺寸和滚动约束。
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>

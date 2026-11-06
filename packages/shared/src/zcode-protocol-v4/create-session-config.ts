@@ -15,4 +15,9 @@ export const createSessionRequestedConfigSchema = z.object({
   planEnabled: z.boolean().optional(),
   // 会话引擎只在创建时生效；不传即沿用 zcode，不做默认值改写（同上 mode 的口径）。
   engine: sessionEngineSchema.optional(),
+  // 外部引擎草稿选用的连接配置 ID；只在首次连接准备前生效，缺省由 CLI 取该引擎的上次使用配置。
+  engineConnectionProfileId: z
+    .string()
+    .regex(/^(?:inherit|[a-zA-Z0-9-]{1,80})$/)
+    .optional(),
 });

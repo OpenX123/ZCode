@@ -369,7 +369,14 @@ export class AgentRuntime {
     return resolveSessionEngine(this.config);
   }
 
-  async prepareExternalEngineSession(): Promise<void> {
+  async prepareExternalEngineSession(options: { connectionProfileId?: string } = {}): Promise<void> {
+    // 草稿只在首次准备前接收所选连接配置；已绑定或恢复中的原生会话不可改写身份。
+    if (
+      options.connectionProfileId &&
+      this.engineConnectionProfileId === undefined &&
+      !this.config.externalSessionId
+    )
+      this.engineConnectionProfileId = options.connectionProfileId;
     // 同一 Runtime 的恢复与显式重试共享连接，避免并发 initialize/resume。
     if (this.externalEnginePreparation) return this.externalEnginePreparation;
     if (this.engineConfigState === "ready") return;

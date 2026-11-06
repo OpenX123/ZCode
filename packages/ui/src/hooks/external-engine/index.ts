@@ -1,9 +1,6 @@
-import { useOptionalServices } from "@/hooks/useServices.js";
-import { isRemoteWorkspaceIdentity } from "@zcode/shared";
-
-export function useExternalEngineService(workspaceIdentity?: string) {
-  const services = useOptionalServices();
-  return isRemoteWorkspaceIdentity(workspaceIdentity ?? "")
-    ? undefined
-    : services?.externalEngineService;
-}
+export {
+  useExternalEngineService,
+  type ExternalEngineServiceHandle,
+} from "./useExternalEngineService.js";
+export { useEngineConnectionProfiles } from "./useEngineConnectionProfiles.js";
+export { useEngineConnectionControl } from "./useEngineConnectionControl.js";

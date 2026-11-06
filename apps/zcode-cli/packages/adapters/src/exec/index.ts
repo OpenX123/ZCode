@@ -9,4 +9,7 @@ export type { ResolvedSpawnCommand } from "./execution-command.js";
 export type { NodeExecutionAdapterOptions } from "./execution-adapter-types.js";
 export { createNodeExecutionAdapter, NodeExecutionAdapter } from "./node-execution-adapter.js";
 export { decodeExecutionOutputBuffer } from "./outputEncoding.js";
-export { createExternalEnginePort } from "../external-engine/index.js";
+export {
+  createExternalEnginePort,
+  runExternalEngineConnectionTest,
+} from "../external-engine/index.js";

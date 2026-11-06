@@ -1,4 +1,8 @@
 import type { ZCodeSessionForkTransfer, ZCodeWorkspaceRef } from "@zcode/shared";
+import type {
+  ExternalEngineConnectionTestResult,
+  ExternalSessionEngine,
+} from "@zcode/shared/external-engine";
 import type { PluginUiToolResultNotification } from "@zcode/shared/mcp-apps";
 import type {
   BackgroundBashOutputResult,
@@ -362,6 +366,13 @@ export interface ZCodeAgentGenerateWorkspaceTextParams extends ZCodeAgentWorkspa
 export interface ZCodeAgentTestModelConnectivityParams extends ZCodeAgentWorkspaceTarget {
   selection: ZCodeProviderTestModelConnectivityParams["selection"];
   signal?: AbortSignal;
+}
+
+/** 外部引擎连接测试：借用本地 workspace 的 CLI 执行正式 ACP 启动路径，会话不进入存储。 */
+export interface ZCodeAgentTestExternalEngineConnectionParams extends ZCodeAgentWorkspaceTarget {
+  engine: ExternalSessionEngine;
+  connectionProfileId: string;
+  signal: AbortSignal;
 }
 
 // 合并时曾混用 Agent 完整鉴权响应；UI 只能回传请求校验，账号鉴权必须由 Host 合成。
@@ -823,6 +834,9 @@ export interface IZCodeAgentService {
   testModelConnectivity(
     params: ZCodeAgentTestModelConnectivityParams,
   ): Promise<ZCodeProviderTestModelConnectivityResult>;
+  testExternalEngineConnection?(
+    params: ZCodeAgentTestExternalEngineConnectionParams,
+  ): Promise<ExternalEngineConnectionTestResult>;
   /**
    * @deprecated：send 主路径已收敛 v4 sendText 命令。仅剩两个消费点——
    * adapter 带附件输入回退（待附件命令面落地后移除）与 zcodeSessionService

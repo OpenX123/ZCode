@@ -2,11 +2,14 @@ import { querySessionDebug } from "./session-debug.js";
 import { createNodeNetworkCapture } from "@zcode/shared/node";
 import { networkCaptureControlSchema, zcodeProtocolNotifications } from "@zcode/shared";
 import {
+  zcodeExternalEngineCancelConnectionTestParamsSchema,
+  zcodeExternalEngineTestConnectionParamsSchema,
   zcodePluginsCancelOperationParamsSchema,
   zcodeProtocolMethods,
   zcodeWorkspaceCancelGenerateTextParamsSchema,
   zcodeWorkspaceHookTrustGrantParamsSchema,
 } from "@zcode/shared";
+import { createExternalEnginePort, runExternalEngineConnectionTest } from "@zcode/adapters/exec";
 import type { BrowserControlPort } from "@zcode/contracts";
 import type {
   McpElicitationRequest,
@@ -265,6 +268,7 @@ export class ZCodeProtocolAgentServer {
   private readonly pendingClientRequests = new Map<string, PendingClientRequest<unknown>>();
   private readonly pluginOperationControllers = new Map<string, AbortController>();
   private readonly workspaceGenerateTextControllers = new Map<string, AbortController>();
+  private readonly externalEngineConnectionTests = new Map<string, AbortController>();
   /**
    * subscribe initial frame 按 JSON-RPC request id 隔离。connection 必须先 take，
    * 再写 response line，最后按数组顺序写 notification，不能靠 microtask 猜时序。
@@ -418,6 +422,8 @@ export class ZCodeProtocolAgentServer {
       controller.abort(error);
     }
     this.workspaceGenerateTextControllers.clear();
+    for (const controller of this.externalEngineConnectionTests.values()) controller.abort(error);
+    this.externalEngineConnectionTests.clear();
     for (const controller of this.pluginOperationControllers.values()) {
       controller.abort(error);
     }
@@ -435,6 +441,7 @@ export class ZCodeProtocolAgentServer {
     for (const controller of this.pluginOperationControllers.values()) controller.abort(error);
     for (const controller of this.workspaceGenerateTextControllers.values())
       controller.abort(error);
+    for (const controller of this.externalEngineConnectionTests.values()) controller.abort(error);
     for (const record of this.context.sessions.values()) {
       record.activeAbortController?.abort(error);
       try {
@@ -720,6 +727,10 @@ export class ZCodeProtocolAgentServer {
         return this.cancelWorkspaceGenerateText(request.params);
       case zcodeProtocolMethods.providerTestModelConnectivity:
         return await testProviderModelConnectivity(this.context, request.params);
+      case zcodeProtocolMethods.externalEngineTestConnection:
+        return await this.testExternalEngineConnection(request.params);
+      case zcodeProtocolMethods.externalEngineCancelConnectionTest:
+        return this.cancelExternalEngineConnectionTest(request.params);
       case zcodeProtocolMethods.mcpList:
         return await listMcpServers(this.context, request.params);
       case zcodeProtocolMethods.mcpReadResource:
@@ -897,6 +908,39 @@ export class ZCodeProtocolAgentServer {
         this.workspaceGenerateTextControllers.delete(operationId);
       }
     }
+  }
+
+  /** 设置页连接测试：独立 port 与临时 cwd 的一次性原生会话，不写 SQLite、不进任务索引。 */
+  private async testExternalEngineConnection(rawParams: unknown) {
+    const params = parseParams(zcodeExternalEngineTestConnectionParamsSchema, rawParams);
+    if (this.externalEngineConnectionTests.has(params.operationId))
+      throw new ProtocolRequestError(
+        -32600,
+        `External engine connection test is already active: ${params.operationId}`,
+      );
+    const controller = new AbortController();
+    this.externalEngineConnectionTests.set(params.operationId, controller);
+    try {
+      return await runExternalEngineConnectionTest(
+        createExternalEnginePort({ env: this.context.deps.env }),
+        {
+          engine: params.engine,
+          connectionProfileId: params.connectionProfileId,
+          signal: controller.signal,
+        },
+      );
+    } finally {
+      if (this.externalEngineConnectionTests.get(params.operationId) === controller)
+        this.externalEngineConnectionTests.delete(params.operationId);
+    }
+  }
+
+  private cancelExternalEngineConnectionTest(rawParams: unknown) {
+    const params = parseParams(zcodeExternalEngineCancelConnectionTestParamsSchema, rawParams);
+    const controller = this.externalEngineConnectionTests.get(params.operationId);
+    controller?.abort(new DOMException("External engine connection test cancelled", "AbortError"));
+    this.externalEngineConnectionTests.delete(params.operationId);
+    return { operationId: params.operationId, cancelled: Boolean(controller) };
   }
 
   private cancelWorkspaceGenerateText(rawParams: unknown) {

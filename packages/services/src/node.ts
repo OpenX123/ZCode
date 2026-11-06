@@ -1753,6 +1753,17 @@ export function createLocalServices(options: {
           enginesDir: externalEnginesDir,
           env: { ...process.env, HOME: externalEngineUserHome },
           credentials: credentialService,
+          // 连接测试必须走 CLI 的正式 ACP 启动路径；闭包惰性引用下方装配的 Agent Service。
+          testConnection: async ({ engine, profileId, workspacePath, signal }) => {
+            if (!zcodeAgentService.testExternalEngineConnection)
+              throw new Error("external_engine_connection_test_unavailable");
+            return zcodeAgentService.testExternalEngineConnection({
+              workspacePath,
+              engine,
+              connectionProfileId: profileId,
+              signal,
+            });
+          },
         })
       : undefined;
   const zcodeAgentService = createZCodeAgentService({
