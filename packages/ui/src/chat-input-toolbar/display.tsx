@@ -1,13 +1,11 @@
 /* eslint-disable max-lines -- 工具展示 */
 import {
   useCallback,
-  useMemo,
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
 import {
-  type ZCodeApiRetryStatus,
   type ZCodeConfigOption,
   type ZCodeConfigSelectValue,
   type ZCodeProvider,
@@ -44,7 +42,6 @@ import {
 } from "lucide-react";
 import { ZCODE_MODE_OPTION_DESCRIPTION_IDS, ZCODE_MODE_OPTION_LABEL_IDS } from "./display-help.js";
 import { RollingToolbarLabel } from "@/chat-input-toolbar/RollingToolbarLabel.js";
-import { ErrorDiagnostics } from "@/components/ai-elements/error-diagnostics.js";
 
 export {
   ChatContextUsage,
@@ -114,72 +111,6 @@ export function matchesModelDisplayNameSearch(
 
   // Bugfix: 统一用大小写不敏感匹配，避免用户输入大小写与展示名不一致时搜不到。
   return modelDisplayName.trim().toLocaleLowerCase().includes(normalizedSearchText);
-}
-
-export function ChatApiRetryStatus({
-  apiRetry,
-  intl,
-  locale,
-  requestId,
-  showError = false,
-}: {
-  apiRetry: ZCodeApiRetryStatus | null;
-  intl: ReturnType<typeof useZCodeIntl>["intl"];
-  locale: string;
-  requestId?: string;
-  showError?: boolean;
-}) {
-  const retryLabel = useMemo(() => {
-    if (!apiRetry) {
-      return null;
-    }
-
-    // 当前 ZCode Agent 只会推送某一刻的 retryDelayMs 快照，不会每秒递减。
-    // 继续把这个值渲染成“X 秒后继续”会给用户造成倒计时在卡住的错觉。
-    // 这里先收敛成稳定的重试状态文案，只展示第几次重试。
-    const formatter = new Intl.NumberFormat(locale);
-    return intl.formatMessage(
-      { id: apiRetry.maxRetries > 0 ? "chat.apiRetryStatus" : "chat.apiRetryStatusUnknown" },
-      {
-        attempt: formatter.format(apiRetry.attempt),
-        maxRetries: formatter.format(apiRetry.maxRetries),
-      },
-    );
-  }, [apiRetry, intl, locale]);
-
-  if (!apiRetry || !retryLabel) {
-    return null;
-  }
-
-  const retryTitle =
-    apiRetry.errorStatus == null ? retryLabel : `${retryLabel} · HTTP ${apiRetry.errorStatus}`;
-
-  return (
-    <div className="min-w-0 px-1 text-ui-base" title={retryTitle}>
-      {/* 样式修复原因：Retry 需要保留 ToolCall/Thinking 的字号、扫光节奏和低透明度移动低谷，
-      但作为次级运行状态不应使用同等的纯黑/纯白峰值；这里只将峰值降到 secondary 文本色。 */}
-      <span className="animated-gradient-text animated-gradient-text-subtle font-medium">
-        {retryLabel}
-      </span>
-      {apiRetry.errorStatus == null ? null : (
-        <span className="ml-2 text-foreground-subtle">HTTP {apiRetry.errorStatus}</span>
-      )}
-      {showError ? (
-        <>
-          <p className="select-text break-words text-ui-sm text-foreground-subtle">
-            {apiRetry.error}
-          </p>
-          <ErrorDiagnostics
-            text={[retryTitle, apiRetry.error, requestId ? `Request ID: ${requestId}` : ""]
-              .filter(Boolean)
-              .join("\n")}
-            label={intl.formatMessage({ id: "engine.errorDetails" })}
-            copyLabel={intl.formatMessage({ id: "engine.copyErrorDetails" })}
-          />
-        </>
-      ) : null}
-    </div>
-  );
 }
 
 export function getModeOptionDisplayLabel(

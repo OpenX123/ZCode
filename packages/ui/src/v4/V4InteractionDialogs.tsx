@@ -39,6 +39,11 @@ export interface V4InteractionDialogsProps {
   snapshot: ConversationSnapshot | null;
   onCommandSettled?: (commandId: string) => void;
   onPlanInteractionAccepted?: (interactionId: string) => void;
+  /**
+   * 引擎写完计划却未发审批请求时的“开始执行”：先经既有 setEngineConfigOption 切出 Plan，
+   * 成功后再经正常发送路径发送可见消息；返回 false 表示未执行。缺席时不显示该计划卡。
+   */
+  onStartPlanWithoutReview?: (configId: string, value: string) => Promise<boolean>;
 }
 
 export function getCurrentSessionInteractionSnapshot(
@@ -104,6 +109,7 @@ export function V4InteractionDialogs({
   snapshot,
   onCommandSettled,
   onPlanInteractionAccepted,
+  onStartPlanWithoutReview,
 }: V4InteractionDialogsProps) {
   const { sendCommand } = useV4Conversation();
   const connectWorkspaceHookCommands = useWorkspaceHookReviewStore((state) => state.connect);
@@ -319,7 +325,27 @@ export function V4InteractionDialogs({
   }, [pending?.autoResolution, pending?.interactionId, sendSnoozeOnce]);
 
   if (!pending) {
-    return null;
+    const startWithoutReview = currentSnapshot?.plan?.startWithoutReview;
+    // 未发审批请求的原生计划：空闲且无待处理交互时才提供“开始执行”，运行中由引擎继续。
+    if (
+      !startWithoutReview ||
+      !onStartPlanWithoutReview ||
+      currentSnapshot?.control.phase === "running" ||
+      !(currentSnapshot.plan?.document?.markdown || currentSnapshot.plan?.items.length)
+    )
+      return null;
+    return (
+      <NativePlanApprovalCard
+        key={`plan-start:${currentSnapshot.plan?.document?.id ?? ""}`}
+        markdown={currentSnapshot.plan?.document?.markdown ?? ""}
+        items={currentSnapshot.plan?.items ?? []}
+        workspacePath={workspacePath}
+        autoFocus={focused}
+        onStart={() =>
+          onStartPlanWithoutReview(startWithoutReview.configId, startWithoutReview.value)
+        }
+      />
+    );
   }
 
   // workspaceHookReview 只能由 Settings/Hooks 行内 Trust 处理；绝不降级成通用 Dialog。
@@ -392,10 +418,14 @@ export function V4InteractionDialogs({
         items={currentSnapshot?.plan?.items ?? []}
         workspacePath={workspacePath}
         autoFocus={focused}
-        onResolve={async (start) => {
+        nativeOptions={
+          pending.payload.kind === "userInput" ? pending.payload.nativeOptions : undefined
+        }
+        onResolve={async ({ start, optionId }) => {
+          // 外部引擎回传精确原生 optionId；内置引擎与旧快照沿用 allowOnce / decline。
           const accepted = await resolveInteraction(
             pending.interactionId,
-            start ? { optionId: "allowOnce" } : { action: "decline" },
+            optionId ? { optionId } : start ? { optionId: "allowOnce" } : { action: "decline" },
           );
           if (accepted) {
             removeElicitationDraft(pending.interactionId);

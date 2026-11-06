@@ -264,6 +264,26 @@ describe("SessionPane error banner wiring", () => {
     );
   });
 
+  it("轮次失败已在行内错误行展示时，输入框横幅不再重复显示", () => {
+    const snapshot = makeSnapshot();
+    projectionState.current = {
+      status: "live",
+      snapshot: {
+        ...snapshot,
+        control: {
+          ...snapshot.control,
+          lastError: { ...snapshot.control.lastError!, turnId: "turn-1" },
+        },
+      },
+      subscriptionId: "sub-1",
+      lastError: null,
+      optimisticCommands: [],
+      loadingOlder: false,
+    };
+
+    expect(renderPane()).not.toContain("Provider rate limit exceeded.");
+  });
+
   it("订阅失败显示原始错误并保留重新连接", () => {
     projectionState.current = {
       status: "error",
