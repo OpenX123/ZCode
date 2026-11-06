@@ -1,7 +1,7 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { constants } from "node:fs";
-import { access, realpath, stat } from "node:fs/promises";
-import { dirname, join, posix, win32 } from "node:path";
+import { access, readFile, realpath, stat } from "node:fs/promises";
+import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { promisify } from "node:util";
 import type { EnvInfo } from "@zcode/contracts";
 import { getWindowsEnvValue, splitWindowsPath } from "../exec/windows-executable.js";
@@ -13,9 +13,63 @@ const GIT_STATUS_NOT_REPO = "not_repo" as const;
 const GIT_STATUS_CLEAN = "clean" as const;
 const GIT_STATUS_DIRTY = "dirty" as const;
 const MAX_RECENT_COMMITS = 5;
-const DEFAULT_MAIN_BRANCH_CANDIDATES = ["main", "master"] as const;
+const DEFAULT_MAIN_BRANCH = "main";
+const DEFAULT_MAIN_BRANCH_CANDIDATES = [DEFAULT_MAIN_BRANCH, "master"] as const;
 const MAX_GIT_STATUS_CONTEXT_CHARS = 2000;
 const GIT_DIRECTORY_ENTRY = ".git";
+const DETACHED_HEAD_BRANCH = "HEAD";
+const ORIGIN_REMOTE_REF_PREFIX = "refs/remotes/origin/";
+const ORIGIN_HEAD_REF = `${ORIGIN_REMOTE_REF_PREFIX}HEAD`;
+const GIT_FOR_EACH_REF_FIELD_SEPARATOR = "\0";
+// `status --branch` 的首行：`## main...origin/main [ahead 1]`、`## HEAD (no branch)`、
+// `## No commits yet on main`（旧版 git 为 `## Initial commit on main`）。
+const STATUS_BRANCH_HEADER_PREFIX = "## ";
+const STATUS_DETACHED_HEADER = "HEAD (no branch)";
+const STATUS_UNBORN_HEADER_PREFIXES = ["No commits yet on ", "Initial commit on "] as const;
+const STATUS_UPSTREAM_SEPARATOR = "...";
+const STATUS_TRACKING_INFO_SEPARATOR = " [";
+const GIT_DIR_FILE_PREFIX = "gitdir:";
+const GIT_SYMBOLIC_REF_PREFIX = "ref:";
+// 与工作区无关的快照字段按仓库缓存；一个 CLI 进程通常只服务一个 workspace，上限防异常增长。
+const MAX_HEAD_SNAPSHOT_CACHE_ENTRIES = 32;
+
+// 状态行与分支名合并为一条命令：`--branch` 只多出首行，其余行与 `--short` 字节相同。
+// `status.aheadBehind=false` 避免为首行计算领先/落后计数；旧版 git 不认识该配置时会忽略它。
+const GIT_STATUS_ARGS = [
+  "--no-optional-locks",
+  "-c",
+  "status.aheadBehind=false",
+  "status",
+  "--short",
+  "--branch",
+  "--ignore-submodules=dirty",
+] as const;
+// 一次读出 origin/HEAD 指向与 origin/main、origin/master 是否存在；指向已删除分支的
+// origin/HEAD 不会被列出，与原先 symbolic-ref + show-ref 校验的结论一致。
+const GIT_MAIN_BRANCH_REFS_ARGS = [
+  "for-each-ref",
+  `--format=%(refname)%00%(symref)`,
+  ORIGIN_HEAD_REF,
+  ...DEFAULT_MAIN_BRANCH_CANDIDATES.map((branch) => `${ORIGIN_REMOTE_REF_PREFIX}${branch}`),
+] as const;
+const GIT_USER_ARGS = ["config", "user.name"] as const;
+const GIT_RECENT_COMMITS_ARGS = [
+  "--no-optional-locks",
+  "log",
+  "--oneline",
+  "-n",
+  String(MAX_RECENT_COMMITS),
+] as const;
+const GIT_CURRENT_BRANCH_ARGS = ["symbolic-ref", "--short", "-q", "HEAD"] as const;
+
+/** 与工作区文件无关、只随 HEAD / 引用 / 配置变化的快照字段。 */
+interface HeadDerivedGitSnapshot {
+  gitMainBranch: string;
+  gitUser: string | undefined;
+  recentCommits: string[];
+}
+
+const headSnapshotCache = new Map<string, { revision: string; snapshot: HeadDerivedGitSnapshot }>();
 
 const execFile = promisify(execFileCallback);
 
@@ -55,11 +109,19 @@ export async function resolveIsGitRepository(
   // 调用方已从打开时的路径查找过时传入结果；真实路径与它相同时直接复用，不再查找。
   givenPathGitRoot?: string | null,
 ): Promise<boolean> {
+  return (await resolveGitRepositoryRoot(workingDirectory, givenPathGitRoot)) !== undefined;
+}
+
+/** 与 resolveIsGitRepository 同一判断，但返回真实路径上找到的仓库根，供快照缓存定位 git 目录。 */
+export async function resolveGitRepositoryRoot(
+  workingDirectory: string,
+  givenPathGitRoot?: string | null,
+): Promise<string | undefined> {
   const realPath = await realpath(workingDirectory).catch(() => workingDirectory);
   if (givenPathGitRoot !== undefined && realPath === workingDirectory) {
-    return givenPathGitRoot !== null;
+    return givenPathGitRoot ?? undefined;
   }
-  return (await findGitRoot(realPath)) !== undefined;
+  return await findGitRoot(realPath);
 }
 
 export async function resolveGitSnapshot(
@@ -67,40 +129,200 @@ export async function resolveGitSnapshot(
   signal?: AbortSignal,
   // 调用方已经查找过 `.git` 时传入结论，不再向上查找。
   isGitRepository?: boolean,
+  // 调用方已知的仓库根（真实路径）；缺省且未传 isGitRepository 时由本函数顺带求出。
+  knownGitRoot?: string,
 ): Promise<Partial<EnvInfo>> {
-  if (!(isGitRepository ?? (await resolveIsGitRepository(workingDirectory)))) {
+  let gitRoot = knownGitRoot;
+  if (isGitRepository === undefined && gitRoot === undefined) {
+    gitRoot = await resolveGitRepositoryRoot(workingDirectory);
+    if (gitRoot === undefined) return { isGitRepository: false, gitStatus: GIT_STATUS_NOT_REPO };
+  } else if (isGitRepository === false) {
     return { isGitRepository: false, gitStatus: GIT_STATUS_NOT_REPO };
   }
 
-  // 修复原因：命令串行时，git 卡住的仓库要等 7–9 次 3 秒超时。命令互不依赖，并行执行，
-  // 结果按固定字段组装，字节与串行时相同。
-  const [gitBranch, gitMainBranch, gitUser, statusOutput, recentCommitOutput] = await Promise.all([
-    resolveGitBranch(workingDirectory, signal),
-    resolveMainBranch(workingDirectory, signal),
-    resolveGitUser(workingDirectory, signal),
-    readGitOutput(
-      ["--no-optional-locks", "status", "--short", "--ignore-submodules=dirty"],
-      workingDirectory,
-      signal,
-    ),
-    readGitOutput(
-      ["--no-optional-locks", "log", "--oneline", "-n", String(MAX_RECENT_COMMITS)],
-      workingDirectory,
-      signal,
-    ),
+  // 修复原因：每个 runtime 的首轮上下文过去启动 5–8 个 git.exe（1.0.5：p50 0.25s / p90 0.74s）。
+  // 现在状态行与分支名合并为一条 status --branch，主分支探测合并为一条 for-each-ref；与工作区
+  // 无关的字段按仓库的 HEAD 与索引修订在进程内缓存，命中时只运行 status。工作区改动不会改变
+  // HEAD/索引修订，所以状态行每次都实时读取，保持"会话开始时的快照"语义。命令互不依赖并行执行。
+  const revision = gitRoot ? await readHeadSnapshotRevision(gitRoot) : undefined;
+  const cached =
+    revision && gitRoot ? headSnapshotCache.get(gitRoot) : undefined;
+  const reusable = cached && cached.revision === revision ? cached.snapshot : undefined;
+  const [statusResult, headSnapshot] = await Promise.all([
+    execGitNoThrow([...GIT_STATUS_ARGS], workingDirectory, signal),
+    reusable
+      ? Promise.resolve({ cacheable: false, snapshot: reusable })
+      : readHeadDerivedSnapshot(workingDirectory, signal),
   ]);
+  if (revision && gitRoot && headSnapshot.cacheable) {
+    rememberHeadSnapshot(gitRoot, revision, headSnapshot.snapshot);
+  }
+
+  const { branchHeader, statusOutput } = splitStatusBranchHeader(statusResult);
+  // status 失败（超时、退出码非 0）时原先的分支名仍由独立命令读取；回退保持同一结果。
+  const gitBranch =
+    branchHeader === undefined
+      ? await resolveGitBranch(workingDirectory, signal)
+      : parseStatusBranchHeader(branchHeader);
   const gitStatusLines = splitGitStatusForContext(statusOutput.trim());
-  const recentCommits = splitNonEmptyLines(recentCommitOutput).slice(0, MAX_RECENT_COMMITS);
 
   return {
     isGitRepository: true,
     gitBranch,
-    gitMainBranch,
-    gitUser,
+    gitMainBranch: headSnapshot.snapshot.gitMainBranch,
+    gitUser: headSnapshot.snapshot.gitUser,
     gitStatus: gitStatusLines.length > 0 ? GIT_STATUS_DIRTY : GIT_STATUS_CLEAN,
     gitStatusLines,
-    recentCommits,
+    recentCommits: headSnapshot.snapshot.recentCommits,
   };
+}
+
+async function readHeadDerivedSnapshot(
+  workingDirectory: string,
+  signal: AbortSignal | undefined,
+): Promise<{ cacheable: boolean; snapshot: HeadDerivedGitSnapshot }> {
+  const [refsResult, userResult, logResult] = await Promise.all([
+    execGitNoThrow([...GIT_MAIN_BRANCH_REFS_ARGS], workingDirectory, signal),
+    execGitNoThrow([...GIT_USER_ARGS], workingDirectory, signal),
+    execGitNoThrow([...GIT_RECENT_COMMITS_ARGS], workingDirectory, signal),
+  ]);
+  const gitUser = userResult.stdout.trim();
+  return {
+    // 只缓存有确定结论的结果：超时、取消或 git 无法启动（没有退出码）时下次重新读取。
+    cacheable: [refsResult, userResult, logResult].every((result) => result.code !== undefined),
+    snapshot: {
+      gitMainBranch: resolveMainBranchFromRefs(refsResult.stdout),
+      gitUser: gitUser ? gitUser : undefined,
+      recentCommits: splitNonEmptyLines(logResult.stdout).slice(0, MAX_RECENT_COMMITS),
+    },
+  };
+}
+
+/** origin/HEAD 指向的 origin 分支 → main → master → 缺省 main，与原先的候选顺序相同。 */
+function resolveMainBranchFromRefs(output: string): string {
+  const refs = new Map<string, string>();
+  for (const line of output.split(/\r?\n/u)) {
+    const [refName, symref = ""] = line.split(GIT_FOR_EACH_REF_FIELD_SEPARATOR);
+    if (refName) refs.set(refName.trim(), symref.trim());
+  }
+  const originHeadTarget = refs.get(ORIGIN_HEAD_REF);
+  // 被列出的 origin/HEAD 已解析成功，说明它指向的 origin 分支存在。
+  if (originHeadTarget?.startsWith(ORIGIN_REMOTE_REF_PREFIX)) {
+    const branch = originHeadTarget.slice(ORIGIN_REMOTE_REF_PREFIX.length);
+    if (branch) return branch;
+  }
+  for (const candidate of DEFAULT_MAIN_BRANCH_CANDIDATES) {
+    if (refs.has(`${ORIGIN_REMOTE_REF_PREFIX}${candidate}`)) return candidate;
+  }
+  return DEFAULT_MAIN_BRANCH;
+}
+
+function splitStatusBranchHeader(result: GitCommandResult): {
+  branchHeader: string | undefined;
+  statusOutput: string;
+} {
+  if (result.code !== 0) return { branchHeader: undefined, statusOutput: "" };
+  const output = result.stdout;
+  if (!output.startsWith(STATUS_BRANCH_HEADER_PREFIX)) {
+    return { branchHeader: undefined, statusOutput: output };
+  }
+  const newlineIndex = output.indexOf("\n");
+  const headerLine = newlineIndex === -1 ? output : output.slice(0, newlineIndex);
+  return {
+    branchHeader: headerLine.replace(/\r$/u, "").slice(STATUS_BRANCH_HEADER_PREFIX.length),
+    statusOutput: newlineIndex === -1 ? "" : output.slice(newlineIndex + 1),
+  };
+}
+
+/** 分支名不能含 `..` 与空格（git check-ref-format），按 `...` 与 ` [` 切分是安全的。 */
+function parseStatusBranchHeader(header: string): string {
+  if (header === STATUS_DETACHED_HEADER) return DETACHED_HEAD_BRANCH;
+  let branch = header;
+  const unbornPrefix = STATUS_UNBORN_HEADER_PREFIXES.find((prefix) => branch.startsWith(prefix));
+  if (unbornPrefix) branch = branch.slice(unbornPrefix.length);
+  const upstreamIndex = branch.indexOf(STATUS_UPSTREAM_SEPARATOR);
+  if (upstreamIndex >= 0) branch = branch.slice(0, upstreamIndex);
+  const trackingIndex = branch.indexOf(STATUS_TRACKING_INFO_SEPARATOR);
+  if (trackingIndex >= 0) branch = branch.slice(0, trackingIndex);
+  return branch.trim() || DETACHED_HEAD_BRANCH;
+}
+
+/**
+ * 仓库 HEAD 修订：git 目录、HEAD 内容、HEAD 指向的松散引用、packed-refs、索引与仓库配置的统计。
+ * 任一读取失败（reftable、权限、异常布局）都不缓存，按未命中处理。
+ */
+async function readHeadSnapshotRevision(gitRoot: string): Promise<string | undefined> {
+  try {
+    const { gitDir, head } = await readGitDirectoryHead(gitRoot);
+    if (!head) return undefined;
+    const commonDir = await resolveGitCommonDirectory(gitDir);
+    const parts = [gitDir, head];
+    const refName = head.startsWith(GIT_SYMBOLIC_REF_PREFIX)
+      ? head.slice(GIT_SYMBOLIC_REF_PREFIX.length).trim()
+      : undefined;
+    if (refName !== undefined) {
+      // HEAD 来自仓库内容，拒绝带 `..` 或绝对路径的引用名，避免读到仓库外的文件。
+      if (!refName.startsWith("refs/") || refName.split("/").includes("..")) return undefined;
+      parts.push(await readOptionalText(join(commonDir, ...refName.split("/"))));
+    }
+    parts.push(
+      await readStatToken(join(commonDir, "packed-refs")),
+      await readStatToken(join(gitDir, "index")),
+      await readStatToken(join(commonDir, "config")),
+    );
+    return parts.join("\0");
+  } catch {
+    return undefined;
+  }
+}
+
+/** 先按目录读 `.git/HEAD`；读不到再把 `.git` 当作 worktree / submodule 的 `gitdir:` 文件。 */
+async function readGitDirectoryHead(gitRoot: string): Promise<{ gitDir: string; head: string }> {
+  const entry = join(gitRoot, GIT_DIRECTORY_ENTRY);
+  const directHead = await readOptionalText(join(entry, "HEAD"));
+  if (directHead) return { gitDir: entry, head: directHead };
+  const contents = (await readFile(entry, "utf8")).trim();
+  if (!contents.startsWith(GIT_DIR_FILE_PREFIX)) throw new Error("Unsupported .git entry");
+  const target = contents.slice(GIT_DIR_FILE_PREFIX.length).trim();
+  const gitDir = isAbsolute(target) ? target : resolve(gitRoot, target);
+  return { gitDir, head: await readOptionalText(join(gitDir, "HEAD")) };
+}
+
+async function resolveGitCommonDirectory(gitDir: string): Promise<string> {
+  const commonDir = await readOptionalText(join(gitDir, "commondir"));
+  if (!commonDir) return gitDir;
+  return isAbsolute(commonDir) ? commonDir : resolve(gitDir, commonDir);
+}
+
+async function readOptionalText(path: string): Promise<string> {
+  try {
+    return (await readFile(path, "utf8")).trim();
+  } catch {
+    return "";
+  }
+}
+
+async function readStatToken(path: string): Promise<string> {
+  try {
+    const info = await stat(path);
+    return `${info.size}:${info.mtimeMs}`;
+  } catch {
+    return "missing";
+  }
+}
+
+function rememberHeadSnapshot(
+  gitRoot: string,
+  revision: string,
+  snapshot: HeadDerivedGitSnapshot,
+): void {
+  headSnapshotCache.delete(gitRoot);
+  headSnapshotCache.set(gitRoot, { revision, snapshot });
+  while (headSnapshotCache.size > MAX_HEAD_SNAPSHOT_CACHE_ENTRIES) {
+    const oldest = headSnapshotCache.keys().next().value;
+    if (oldest === undefined) break;
+    headSnapshotCache.delete(oldest);
+  }
 }
 
 async function hasGitEntry(directory: string): Promise<boolean> {
@@ -112,63 +334,15 @@ async function hasGitEntry(directory: string): Promise<boolean> {
   }
 }
 
+/** 只在 status 失败时使用：与原先独立读取分支名的命令一致。 */
 async function resolveGitBranch(
   workingDirectory: string,
   signal: AbortSignal | undefined,
-): Promise<string | undefined> {
+): Promise<string> {
   // 修复原因：无提交时 rev-parse --abbrev-ref HEAD 以 128 退出，分支名丢失为 HEAD。
   // symbolic-ref 只读符号引用，不要求有提交；detached 时没有符号引用，仍退回 HEAD。
-  const branch = await readTrimmedGitOutput(
-    ["symbolic-ref", "--short", "-q", "HEAD"],
-    workingDirectory,
-    signal,
-  );
-  return branch || "HEAD";
-}
-
-async function resolveMainBranch(
-  workingDirectory: string,
-  signal: AbortSignal | undefined,
-): Promise<string | undefined> {
-  const remoteHead = await readTrimmedGitOutput(
-    ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-    workingDirectory,
-    signal,
-  );
-  const originHeadBranch = remoteHead?.replace(/^origin\//, "");
-  const candidates = originHeadBranch
-    ? [originHeadBranch, ...DEFAULT_MAIN_BRANCH_CANDIDATES]
-    : [...DEFAULT_MAIN_BRANCH_CANDIDATES];
-
-  for (const candidate of candidates) {
-    if (
-      await gitCommandSucceeds(
-        ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${candidate}`],
-        workingDirectory,
-        signal,
-      )
-    ) {
-      return candidate;
-    }
-  }
-
-  return "main";
-}
-
-async function resolveGitUser(
-  workingDirectory: string,
-  signal: AbortSignal | undefined,
-): Promise<string | undefined> {
-  return readTrimmedGitOutput(["config", "user.name"], workingDirectory, signal);
-}
-
-async function gitCommandSucceeds(
-  args: string[],
-  workingDirectory: string,
-  signal: AbortSignal | undefined,
-): Promise<boolean> {
-  const result = await execGitNoThrow(args, workingDirectory, signal);
-  return result.code === 0;
+  const branch = await readTrimmedGitOutput([...GIT_CURRENT_BRANCH_ARGS], workingDirectory, signal);
+  return branch || DETACHED_HEAD_BRANCH;
 }
 
 async function readTrimmedGitOutput(
