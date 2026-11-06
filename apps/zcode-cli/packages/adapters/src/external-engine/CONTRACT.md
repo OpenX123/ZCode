@@ -20,4 +20,6 @@ prepareSession 是同会话 single-flight 的连接恢复入口：只对连接/�
 
 prompt 响应允许 usage 缺省或为 null，均不产生用量，不回收健康连接。取消等待超时使用结构化 timeout 错误，Runtime 可通过既有 prepareSession 恢复原会话；adapter 不重发 prompt。
 
-POSIX PATH 缺 node 时，为 ACP 子进程补充托管运行时入口，复用当前 Node/Electron Node 模式；不修改系统 PATH 或用户官方 CLI。
+PATH 缺 node 时，为 ACP 子进程补充托管运行时入口（POSIX 符号链接 node，Windows node.cmd），复用当前 Node/Electron Node 模式；不修改系统 PATH 或用户官方 CLI。
+
+2026-11-07：两家引擎都按会话绑定的连接配置构造环境，规则来自共享 `buildEngineConnectionEnv`：Claude 沿用 CLI 保留 ANTHROPIC_*，官方登录与无绑定旧会话去除三项计费变量，API Key 只经子进程环境注入（官方地址 ANTHROPIC_API_KEY，网关 ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN）；Codex 规则不变。新草稿无显式绑定时取 Host 记录的上次使用值，首次解析后在重试中固定。adapter 环境经 `applyNetworkEgressEnv` 恢复用户代理/证书变量，YCode 显式配置优先。`runExternalEngineConnectionTest` 复用同一 port 在临时 cwd 建一次性会话发送最小 prompt，拒绝工具权限，首个原生失败即结束，结束后关闭会话并删除临时目录；结果不含密钥、原始帧或 stderr。

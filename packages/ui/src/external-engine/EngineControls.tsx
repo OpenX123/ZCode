@@ -5,7 +5,7 @@ import {
   type SessionEngine,
 } from "@zcode/shared/external-engine";
 import { useState } from "react";
-import { BotIcon, ChevronDownIcon } from "lucide-react";
+import { BotIcon, ChevronDownIcon, PlugIcon } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   Select,
@@ -34,6 +34,10 @@ export function EngineControls({
   connectionFailure,
   onRetry,
   externalEngineUnavailableReason,
+  connectionChoices = [],
+  connectionProfileId,
+  onSelectConnection,
+  connectionLabel,
 }: EngineControlsProps) {
   const { intl } = useZCodeIntl();
   const failureMessage = connectionFailure
@@ -116,6 +120,44 @@ export function EngineControls({
           <TaskClientLogo engine={engine} />
         </span>
       )}
+      {onSelectEngine && onSelectConnection && connectionChoices.length > 1 ? (
+        // 连接配置只在草稿可改；选择由草稿 owner 记录上次使用并重建预热，不在此保存第二份状态。
+        <EngineConfigMenu
+          option={{
+            id: "connection",
+            name: intl.formatMessage({ id: "engine.profile.composer" }),
+            currentValue: connectionProfileId ?? "",
+            options: connectionChoices.map((choice) => ({
+              value: choice.id,
+              name: choice.name,
+              ...(choice.description ? { description: choice.description } : {}),
+            })),
+          }}
+          icon={PlugIcon}
+          // 与引擎选择一致：连接中或连接失败时仍可改选连接，由草稿 owner 回收旧预热。
+          disabled={disabled}
+          open={activePicker === "connection"}
+          restoreFocus={activePicker === null || activePicker === "connection"}
+          onOpenChange={(open) =>
+            setActivePicker((current) =>
+              open ? "connection" : current === "connection" ? null : current,
+            )
+          }
+          onValueChange={(value) => {
+            if (value !== connectionProfileId) onSelectConnection(value);
+          }}
+        />
+      ) : null}
+      {!onSelectEngine && connectionLabel ? (
+        <span
+          className="max-w-32 truncate px-1 text-ui-sm text-foreground-subtle data-[composer-compact=true]:hidden"
+          title={intl.formatMessage({ id: "engine.profile.boundTitle" }, { name: connectionLabel })}
+          data-composer-collapse-priority="3"
+          data-testid="session-engine-connection"
+        >
+          {connectionLabel}
+        </span>
+      ) : null}
       {loading ? (
         <span role="status" className="px-2 text-ui-sm text-foreground-subtle">
           {intl.formatMessage({ id: "engine.connecting" })}

@@ -737,6 +737,8 @@ export interface ExternalEngineConfigUpdatedPayload {
   engineConfigOptions: import("@zcode/shared").EngineConfigOption[];
   engineConfigState?: import("@zcode/shared").EngineConfigState;
   engineConfigError?: import("@zcode/shared").EngineConnectionFailure;
+  /** 会话绑定的连接配置 ID（只读投影，不含密钥）。 */
+  engineConnectionProfileId?: string;
 }
 
 export interface ExternalEnginePlanUpdatedPayload {

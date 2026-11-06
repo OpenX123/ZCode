@@ -86,7 +86,11 @@ async function createSession(
     const record = requireRecord(host, sessionId);
     try {
       // 草稿 ACK 前完成 ACP 握手和配置投影；首发复用此连接，不制造空 turn。
-      await record.app.runtime.prepareExternalEngineSession();
+      // 所选连接配置只在此处首次绑定，缺省由 adapter 取该引擎的上次使用配置。
+      const connectionProfileId = payload.config.engineConnectionProfileId;
+      await record.app.runtime.prepareExternalEngineSession(
+        connectionProfileId ? { connectionProfileId } : {},
+      );
     } catch (error) {
       await host.deleteSession?.(sessionId);
       throw error;

@@ -1,9 +1,22 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { createElement } from "react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { EngineConfigOption } from "@zcode/shared/external-engine";
+import type { IExternalEngineService } from "@zcode/services";
+import type {
+  EngineConfigOption,
+  ExternalEngineConnectionsView,
+} from "@zcode/shared/external-engine";
 import { EngineControls } from "@/external-engine/index.js";
+import { useEngineConnectionControl } from "@/hooks/external-engine/index.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
 afterEach(cleanup);
@@ -265,6 +278,143 @@ it("网关502显示服务错误、HTTP状态和可复制request id", () => {
   expect(alert.textContent).toContain("Bad Gateway");
   expect(alert.textContent).toContain("fixture-request");
   expect(screen.getByRole("button", { name: "复制错误详情", hidden: true })).toBeDefined();
+});
+
+const choices = [
+  { id: "official", name: "官方登录", description: "官方登录" },
+  { id: "inherit", name: "沿用 CLI 配置", description: "沿用 CLI" },
+  { id: "gateway-a", name: "公司网关", description: "API Key" },
+];
+
+it("草稿按引擎展示连接配置，一次展开完整列表并回传所选 ID", () => {
+  const onSelectConnection = vi.fn();
+  render(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN",
+      children: createElement(EngineControls, {
+        engine: "claude-code",
+        onSelectEngine: vi.fn(),
+        connectionChoices: choices,
+        connectionProfileId: "official",
+        onSelectConnection,
+      }),
+    }),
+  );
+  const trigger = screen.getByTestId("engine-config-connection");
+  expect(trigger.textContent).toContain("官方登录");
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  expect(screen.getAllByRole("menuitemradio")).toHaveLength(3);
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "官方登录" }));
+  expect(onSelectConnection).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByTestId("engine-config-connection"), { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "公司网关" }));
+  expect(onSelectConnection).toHaveBeenCalledExactlyOnceWith("gateway-a");
+});
+
+it("只有一个可选配置时不显示选择器；已创建会话只读显示绑定且不可改选", () => {
+  const view = render(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN",
+      children: createElement(EngineControls, {
+        engine: "codex",
+        onSelectEngine: vi.fn(),
+        connectionChoices: [choices[1]!],
+        connectionProfileId: "inherit",
+        onSelectConnection: vi.fn(),
+      }),
+    }),
+  );
+  expect(screen.queryByTestId("engine-config-connection")).toBeNull();
+  view.rerender(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN",
+      children: createElement(EngineControls, {
+        engine: "codex",
+        connectionChoices: choices,
+        connectionProfileId: "gateway-a",
+        connectionLabel: "公司网关",
+      }),
+    }),
+  );
+  expect(screen.queryByTestId("engine-config-connection")).toBeNull();
+  const label = screen.getByTestId("session-engine-connection");
+  expect(label.textContent).toBe("公司网关");
+  expect(label.getAttribute("title")).toContain("公司网关");
+  expect(label.closest("button")).toBeNull();
+});
+
+it("草稿改选连接：Host 记录上次使用并重建预热，回流前显示所选值；已创建会话只读显示非缺省绑定", async () => {
+  const view: ExternalEngineConnectionsView = {
+    defaults: { "claude-code": "official", codex: "inherit" },
+    profiles: [
+      { id: "official", engine: "claude-code", mode: "official", hasApiKey: false, builtIn: true },
+      { id: "inherit", engine: "claude-code", mode: "inherit", hasApiKey: false, builtIn: true },
+      {
+        id: "gw",
+        engine: "claude-code",
+        name: "团队网关",
+        mode: "apiKey",
+        hasApiKey: true,
+        gatewayHost: "gw.example",
+      },
+      { id: "inherit", engine: "codex", mode: "inherit", hasApiKey: false, builtIn: true },
+    ],
+  };
+  const service = {
+    getConnectionProfiles: vi.fn(async () => view),
+    updateConnectionProfiles: vi.fn(async () => ({ connections: view })),
+  } as unknown as IExternalEngineService;
+  const onDraftSelected = vi.fn();
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(ZCodeIntlProvider, { initialLocale: "zh-CN", children });
+  const draft = renderHook(
+    (props: { boundProfileId?: string }) =>
+      useEngineConnectionControl({
+        service,
+        engine: "claude-code",
+        sessionId: null,
+        boundProfileId: props.boundProfileId,
+        onDraftSelected,
+      }),
+    { wrapper, initialProps: { boundProfileId: "official" } },
+  );
+  await waitFor(() => expect(draft.result.current.choices).toHaveLength(3));
+  expect(draft.result.current.choices.map((choice) => choice.name)).toEqual([
+    "官方登录",
+    "沿用 CLI 配置",
+    "团队网关",
+  ]);
+  expect(draft.result.current.currentId).toBe("official");
+  expect(draft.result.current.draftConnectionProfileId()).toBeUndefined();
+  act(() => draft.result.current.select("gw"));
+  expect(onDraftSelected).toHaveBeenCalledOnce();
+  expect(service.updateConnectionProfiles).toHaveBeenCalledWith({
+    type: "select",
+    engine: "claude-code",
+    profileId: "gw",
+  });
+  // 旧预热 snapshot 仍是 official 时不能把选择器拉回旧值。
+  expect(draft.result.current.currentId).toBe("gw");
+  expect(draft.result.current.draftConnectionProfileId()).toBe("gw");
+  draft.rerender({ boundProfileId: "gw" });
+  expect(draft.result.current.currentId).toBe("gw");
+  const session = renderHook(
+    (props: { boundProfileId?: string }) =>
+      useEngineConnectionControl({
+        service,
+        engine: "claude-code",
+        sessionId: "session-a",
+        boundProfileId: props.boundProfileId,
+        onDraftSelected,
+      }),
+    { wrapper, initialProps: { boundProfileId: "official" } },
+  );
+  await waitFor(() => expect(session.result.current.choices).toHaveLength(3));
+  expect(session.result.current.label).toBeUndefined();
+  session.rerender({ boundProfileId: "gw" });
+  expect(session.result.current.label).toBe("团队网关");
+  act(() => session.result.current.select("inherit"));
+  expect(service.updateConnectionProfiles).toHaveBeenCalledOnce();
 });
 
 it("远程工作区草稿的选择器灰显外部引擎并就地说明原因，只能选择 YCode", async () => {

@@ -1,6 +1,5 @@
-import { access, mkdir, symlink, realpath } from "node:fs/promises";
-import { createHash } from "node:crypto";
-import { delimiter, isAbsolute, join } from "node:path";
+import { access } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   ExternalEngineConnectionError,
@@ -11,14 +10,17 @@ import {
   EXTERNAL_ENGINE_RUNTIMES,
   EXTERNAL_ENGINES_DIR_ENV,
   EXTERNAL_ENGINE_USER_HOME_ENV,
+  defaultEngineConnectionProfileId,
   managedAdapterEntrySegments,
   managedAdapterInstallDirName,
 } from "@zcode/shared";
 import { spawnAcpProcess } from "../exec/acp-process.js";
 import { AcpConnection } from "./connection.js";
-import { resolveExternalEngineCli, resolveExternalEngineLaunch } from "@zcode/shared/node";
+import { resolveExternalEngineLaunch } from "@zcode/shared/node";
 import { resolveEngineConnection } from "./connection-profile.js";
+import { ensureNodeRuntimeOnPath, withNetworkEgressEnv } from "./adapter-env.js";
 import type { ExternalEngineAdapterOptions } from "./contract.js";
+export { runExternalEngineConnectionTest } from "./connection-test.js";
 export function createExternalEnginePort(
   options: ExternalEngineAdapterOptions = {},
 ): ExternalEnginePort {
@@ -57,12 +59,6 @@ export function createExternalEnginePort(
         ELECTRON_RUN_AS_NODE: "1",
         ...(home ? { HOME: home, USERPROFILE: home } : {}),
       };
-      // 上游 adapter 的原始帧日志包含 Authorization，任何连接模式都不能继承开启。
-      for (const key of Object.keys(childEnv))
-        if (key.toUpperCase() === "APP_SERVER_LOGS") delete childEnv[key];
-      for (const key of runtime.strippedEnvVars)
-        for (const actualKey of Object.keys(childEnv))
-          if (actualKey.toUpperCase() === key.toUpperCase()) delete childEnv[actualKey];
       for (const key of Object.keys(childEnv))
         if (key.toUpperCase() === runtime.officialExecutableEnvVar.toUpperCase())
           delete childEnv[key];
@@ -73,26 +69,12 @@ export function createExternalEnginePort(
       );
       if (official) childEnv[runtime.officialExecutableEnvVar] = official;
       else delete childEnv[runtime.officialExecutableEnvVar];
-      // 桌面可能只有 Electron Node 模式，npm 的 env node 入口会以 127 退出。
-      // 只补 ACP 子进程 PATH，保持官方 CLI 与当前运行时，不依赖用户另装 Node。
-      if (process.platform !== "win32" && !(await resolveExternalEngineCli("node", childEnv))) {
-        const executable = options.executable ?? process.execPath;
-        const runtimeKey = createHash("sha256").update(executable).digest("hex").slice(0, 16);
-        const bin = join(root, ".node-runtime", runtimeKey);
-        const node = join(bin, "node");
-        await mkdir(bin, { recursive: true });
-        try {
-          await symlink(executable, node);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-          if ((await realpath(node)) !== (await realpath(executable)))
-            throw new ExternalEngineConnectionError({ code: "not_ready" });
-        }
-        const pathKey = Object.keys(childEnv).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
-        childEnv[pathKey] = [bin, childEnv[pathKey]].filter(Boolean).join(delimiter);
-      }
+      // 1.0.7 只在 macOS/Linux 补 node 入口：Windows 无系统 Node 时 adapter 自带的 codex.js 无法启动。
+      await ensureNodeRuntimeOnPath(root, options.executable ?? process.execPath, childEnv);
+      // 计费与网关变量按会话绑定的连接方式处理（含 APP_SERVER_LOGS），规则见共享 buildEngineConnectionEnv。
       const resolved = await resolveEngineConnection(root, input, childEnv);
-      childEnv = resolved.env;
+      // 修复前沿用 CLI 时 adapter 丢失用户的代理/证书变量；按工具子进程的既有规则恢复，YCode 显式配置优先。
+      childEnv = withNetworkEgressEnv(resolved.env, env);
       // 路径探测含异步 IO；关闭会话后不能由迟到的探测重新创建进程。
       input.signal.throwIfAborted();
       connection = new AcpConnection(
@@ -126,6 +108,7 @@ export function createExternalEnginePort(
     preparations.set(input.sessionId, preparing);
     preparing.promise = (async () => {
       let externalSessionId = input.externalSessionId;
+      let connectionProfileId = input.connectionProfileId;
       for (let attempt = 0; ; attempt++) {
         signal.throwIfAborted();
         try {
@@ -133,9 +116,15 @@ export function createExternalEnginePort(
             ...input,
             signal,
             externalSessionId,
+            // 首次解析出的连接配置在重试中固定，避免上次使用值在退避期间变化导致改绑身份。
+            connectionProfileId,
             async onSession(id: string) {
               externalSessionId = id;
               await input.onSession(id);
+            },
+            async onConnectionProfile(id: string) {
+              connectionProfileId = id;
+              await input.onConnectionProfile?.(id);
             },
           };
           await execute(attemptInput, (connection) => connection.prepare(attemptInput));
@@ -167,7 +156,9 @@ export function createExternalEnginePort(
       const forkInput = {
         ...input,
         externalSessionId: undefined,
-        connectionProfileId: input.connectionProfileId ?? "inherit",
+        // 无绑定的旧源会话按 1.0.7 行为解析：Codex 沿用 CLI，Claude 官方登录。
+        connectionProfileId:
+          input.connectionProfileId ?? defaultEngineConnectionProfileId(input.engine),
         signal: AbortSignal.any([input.signal, controller.signal]),
       };
       // session/fork 已发出后可能已创建 child；响应丢失时不能自行重试制造第二份上下文。

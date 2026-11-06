@@ -170,7 +170,7 @@ export interface ExternalEngineRuntimeDescriptor {
   authStatusArgs: readonly string[];
   /** 引导用户在终端执行的官方登录命令。 */
   loginCommand: readonly string[];
-  /** 启动 adapter 前从继承环境中剔除的变量（避免改变计费来源）。 */
+  /** 官方登录与无绑定旧会话从继承环境中剔除的变量（避免改变计费来源）；沿用 CLI 不剔除。 */
   strippedEnvVars: readonly string[];
 }
 
@@ -236,39 +236,18 @@ export const externalEngineStatusSchema = z.object({
     state: externalEngineAuthStateSchema,
     /** 官方 CLI 报告的身份类别（订阅 / API Key / 网关），不含账号或密钥。 */
     label: z.string().optional(),
+    /** 生效网关的 host（不含路径与凭据）；存在时界面显示网关而非登录状态。 */
+    gatewayHost: z.string().max(255).optional(),
   }),
+  /** 诊断所用的配置（新草稿缺省配置）。 */
+  connectionProfileId: z.string().optional(),
+  /** 沿用 CLI 时检测到的网关 host，供连接列表显示。 */
+  inheritedGatewayHost: z.string().max(255).optional(),
   /** 本地 adapter 与官方 CLI 可启动；真实认证与连接就绪由 Runtime 握手确认。 */
   ready: z.boolean(),
   error: z.string().optional(),
 });
 export type ExternalEngineStatus = z.infer<typeof externalEngineStatusSchema>;
-
-export const externalEngineConnectionProfileSchema = z.object({
-  id: z.string().regex(/^(?:inherit|[a-zA-Z0-9-]{1,80})$/),
-  mode: z.enum(["inherit", "official", "apiKey"]),
-  baseUrl: z.string().url().optional(),
-  model: z.string().trim().min(1).optional(),
-  credentialKey: z.string().optional(),
-  hasApiKey: z.boolean().default(false),
-});
-export type ExternalEngineConnectionProfile = z.infer<typeof externalEngineConnectionProfileSchema>;
-export const externalEngineConnectionsSchema = z.object({
-  activeProfileId: z.string(),
-  profiles: z.array(externalEngineConnectionProfileSchema),
-});
-export type ExternalEngineConnections = z.infer<typeof externalEngineConnectionsSchema>;
-export interface SaveExternalEngineConnection {
-  mode: ExternalEngineConnectionProfile["mode"];
-  baseUrl?: string;
-  model?: string;
-  apiKey?: string;
-}
-export const INHERITED_ENGINE_CONNECTION: ExternalEngineConnectionProfile = {
-  id: "inherit",
-  mode: "inherit",
-  hasApiKey: false,
-};
-export const EXTERNAL_ENGINE_CONNECTIONS_FILE = "connections.json";
 
 // ── 安装布局：Host 安装方与 CLI 启动方共用，保证"装在哪"与"从哪启动"一致 ──
 

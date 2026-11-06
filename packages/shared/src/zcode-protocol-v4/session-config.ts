@@ -39,6 +39,8 @@ export const sessionConfigStateSchema = z.object({
   engineConfigOptions: z.array(engineConfigOptionSchema).optional(),
   engineConfigState: engineConfigStateSchema.optional(),
   engineConfigError: engineConnectionFailureSchema.optional(),
+  /** 外部引擎会话绑定的连接配置 ID；只读投影，不含密钥。 */
+  engineConnectionProfileId: z.string().optional(),
   /** 外部引擎可用命令，按会话投影，不混入 workspace 内置命令。 */
   engineCommands: z.array(engineCommandSchema).optional(),
 });

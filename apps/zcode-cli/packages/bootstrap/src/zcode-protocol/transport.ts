@@ -32,6 +32,10 @@ const PLUGIN_READ_IMMEDIATE_METHODS = new Set<string>([
   zcodeProtocolMethods.pluginsDescribe,
   zcodeProtocolMethods.pluginsList,
   zcodeProtocolMethods.pluginsOverview,
+  // 连接测试最长需等待一次真实模型请求，且只使用独立 port 与临时 cwd；排队会阻塞同 workspace
+  // 的会话请求，取消请求也会排在测试之后失效，因此二者与插件读请求一样立即处理。
+  zcodeProtocolMethods.externalEngineTestConnection,
+  zcodeProtocolMethods.externalEngineCancelConnectionTest,
 ]);
 // MCP App 的请求由实例凭证和 callId 隔离；若与普通命令一起等待完成，
 // uiCallTool 会挡住自己的 cancel/close，真实 stdio 链路将死锁。

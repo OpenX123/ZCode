@@ -1,4 +1,7 @@
-import { sessionEngineSchema } from "../external-engine/index.js";
+import {
+  externalEngineConnectionTestResultSchema,
+  sessionEngineSchema,
+} from "../external-engine/index.js";
 import { zcodeProtocolTraceSchema } from "./trace.js";
 // Bot 反向回复的名字解析/待澄清结果与 App、CLI 使用同一严格 schema。
 export { channelReplyRequestSchema, channelReplyResultSchema } from "../channel-mention.js";
@@ -2561,6 +2564,26 @@ export type ZCodeProviderTestModelConnectivityResult = z.infer<
   typeof zcodeProviderTestModelConnectivityResultSchema
 >;
 
+/** 设置页的外部引擎连接测试：CLI 用临时 cwd 建一次性原生会话，不进入会话存储。 */
+export const zcodeExternalEngineTestConnectionParamsSchema = z
+  .object({
+    operationId: nonEmptyString,
+    engine: z.enum(["claude-code", "codex"]),
+    connectionProfileId: z.string().regex(/^(?:inherit|[a-zA-Z0-9-]{1,80})$/),
+  })
+  .strict();
+export const zcodeExternalEngineTestConnectionResultSchema =
+  externalEngineConnectionTestResultSchema;
+export const zcodeExternalEngineCancelConnectionTestParamsSchema = z
+  .object({ operationId: nonEmptyString })
+  .strict();
+export const zcodeExternalEngineCancelConnectionTestResultSchema = z
+  .object({ operationId: nonEmptyString, cancelled: z.boolean() })
+  .strict();
+export type ZCodeExternalEngineTestConnectionParams = z.infer<
+  typeof zcodeExternalEngineTestConnectionParamsSchema
+>;
+
 /** Worker 从所属 Environment 的正式 Config Store 重建进程内 Provider Registry。 */
 export const zcodeProviderRefreshRegistryParamsSchema = z
   .object({
@@ -4006,6 +4029,9 @@ export const zcodeProtocolMethods = {
   workspaceGenerateText: "workspace/generateText",
   workspaceCancelGenerateText: "workspace/cancelGenerateText",
   providerTestModelConnectivity: "provider/testModelConnectivity",
+  // 外部引擎连接测试与取消都不进入串行队列，测试期间同 workspace 的会话请求不受阻塞。
+  externalEngineTestConnection: "externalEngine/testConnection",
+  externalEngineCancelConnectionTest: "externalEngine/cancelConnectionTest",
   mcpList: "mcp/list",
   mcpReadResource: "mcp/readResource",
   mcpUiOpenInstance: "mcp/uiOpenInstance",

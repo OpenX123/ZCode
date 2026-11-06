@@ -26,3 +26,12 @@ sequenceDiagram
 验收：双引擎 new/resume、文本/思考/工具/diff/usage、拒绝权限原 id、取消、退出拒绝 pending、非法帧、旧 session migration，连续 turn 不启动 Provider。远程工作区一期明确拒绝。
 
 外部引擎运行中不可 steer；guide 请求归一为普通 queue 并复用既有 admission intent 与队列持久化，下一轮串行执行，不保留无法消费的 guide。
+
+## 连接配置（2026-11-07）
+
+产品规则见 `docs/desktop/external-agent-engines-spec.md`「连接与认证规则」。CLI 侧只读 Host 写入的 `<ZCODE_EXTERNAL_ENGINES_DIR>/connections.json`，不写连接配置：
+
+- 绑定：`createSession.config.engineConnectionProfileId` 只在草稿首次 `prepareExternalEngineSession` 前写入 runtime；未提供时 adapter 取该引擎的上次使用配置，旧原生会话无绑定时 Codex 为 `inherit`、Claude 为 `official`。解析结果经 `onConnectionProfile` 持久化到 external_engine_config entry，并在 `ExternalEngineConfigUpdated` 携带 `engineConnectionProfileId`，同一次准备的重试固定首次解析值。配置缺失或凭据缺失分别报 `configuration` / `authentication`，不回落其他身份。
+- 环境：共享 `buildEngineConnectionEnv` 按方式构造（Claude 沿用 CLI 保留 ANTHROPIC_*，官方登录剔除三项计费变量，API Key 只在子进程环境注入密钥；Codex 不变）。随后 `applyNetworkEgressEnv` 从 `ZCODE_TOOL_ENV_PASSTHROUGH_JSON` 恢复用户代理与证书变量，`ZCODE_HTTP_PROXY` / `ZCODE_NO_PROXY` / `ZCODE_AGENT_CA_CERT` 显式配置优先。
+- `ZCODE_EXTERNAL_ENGINE_NODE`：仅当 Windows 上 PATH 缺 node、adapter 前置 `node.cmd` 补位时，由 adapter 写入 ACP 子进程环境，值为当前运行时路径；`node.cmd` 以 `"%ZCODE_EXTERNAL_ENGINE_NODE%" %*` 调用它，保证批处理内容为纯 ASCII（cmd 按控制台代码页解码批处理，中文用户名路径不能内嵌）。继承值一律被覆盖，不读取用户设置；缺失时 node.cmd 启动失败并按 initialize / transport 失败上报。POSIX 仍使用指向当前运行时的符号链接 `node`。测试覆盖纯 ASCII 内容、继承值覆盖与中文空格路径下的真实执行。
+- 连接测试：JSON-RPC `externalEngine/testConnection {operationId, engine, connectionProfileId}` 与 `externalEngine/cancelConnectionTest {operationId}` 不进入串行队列。handler 用独立 `createExternalEnginePort` 与临时 cwd 调用 `runExternalEngineConnectionTest`：发送 `Reply with OK`，拒绝全部权限，首个原生失败（`_meta.codex.error`、AIR `sessionFailure`、prompt JSON-RPC 错误）即结束，90 秒超时；结束后 closeSession 并删除临时目录。返回 success / unexpectedReply（脱敏摘要）/ failed（EngineConnectionFailure）/ cancelled，不写 SQLite、任务索引或日志正文。

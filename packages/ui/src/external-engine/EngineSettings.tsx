@@ -4,18 +4,23 @@ import {
   type ExternalEngineStatus,
   type ExternalSessionEngine,
 } from "@zcode/shared/external-engine";
-import { useExternalEngineService } from "@/hooks/external-engine/index.js";
+import {
+  useEngineConnectionProfiles,
+  useExternalEngineService,
+} from "@/hooks/external-engine/index.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { Button } from "@/components/ui/button.js";
 import { Snippet, SnippetCopyButton } from "@/components/ai-elements/snippet.js";
 import { SettingsGroupCard } from "@/settings/SettingsPageParts.js";
 import { SettingsResourceHeaderActions } from "@/settings/SettingsResourceHeaderActions.js";
-import { ENGINE_LABELS } from "./contract.js";
-import { EngineConnectionSettings } from "./EngineConnectionSettings.js";
+import { ENGINE_LABELS, type EngineSettingsProps } from "./contract.js";
+import { EngineConnectionProfiles } from "./EngineConnectionProfiles.js";
+import { engineAuthSummary } from "./connectionProfileLabels.js";
 
-export function EngineSettings() {
+export function EngineSettings({ connectivityWorkspacePath }: EngineSettingsProps = {}) {
   const service = useExternalEngineService();
   const { intl } = useZCodeIntl();
+  const profiles = useEngineConnectionProfiles(service);
   const [statuses, setStatuses] = useState<ExternalEngineStatus[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,19 +29,21 @@ export function EngineSettings() {
     setBusy(true);
     setError(null);
     try {
-      setStatuses(
+      const [next] = await Promise.all([
         service.refreshStatus
-          ? await Promise.all(
+          ? Promise.all(
               (["claude-code", "codex"] as const).map((engine) => service.refreshStatus!(engine)),
             )
-          : await service.listStatuses(),
-      );
+          : service.listStatuses(),
+        profiles.refresh(),
+      ]);
+      setStatuses(next);
     } catch (error) {
       setError(String(error));
     } finally {
       setBusy(false);
     }
-  }, [service]);
+  }, [service, profiles.refresh]);
   useEffect(() => {
     if (!service) return;
     let current = true;
@@ -135,9 +142,8 @@ export function EngineSettings() {
                         })}
                         {status.officialCli.version ? ` · ${status.officialCli.version}` : ""}
                       </span>
-                      <span>
-                        {intl.formatMessage({ id: `engine.auth.${status.auth.state}` })}
-                        {status.auth.label ? ` · ${status.auth.label}` : ""}
+                      <span data-testid={`engine-auth-${engine}`}>
+                        {engineAuthSummary(intl, status)}
                       </span>
                     </div>
                   ) : null}
@@ -178,7 +184,18 @@ export function EngineSettings() {
                   {runtime.adapterPackage}@{runtime.adapterVersion}
                 </code>
               </details>
-              {engine === "codex" ? <EngineConnectionSettings /> : null}
+              {service.getConnectionProfiles ? (
+                <EngineConnectionProfiles
+                  engine={engine}
+                  service={service}
+                  status={status}
+                  connections={profiles.connections}
+                  loading={profiles.loading}
+                  failed={profiles.failed}
+                  update={profiles.update}
+                  connectivityWorkspacePath={connectivityWorkspacePath}
+                />
+              ) : null}
               {status?.error ? (
                 <p role="alert" className="break-words text-ui-sm text-destructive">
                   {status.error}

@@ -417,4 +417,24 @@ describe("外部引擎草稿握手", () => {
     ).rejects.toThrow("SIGTRAP");
     expect(deleteSession).toHaveBeenCalledWith("s1");
   });
+  it("草稿所选连接配置随首次准备绑定；未选择时交由 adapter 取上次使用配置", async () => {
+    for (const config of [
+      { engine: "claude-code", engineConnectionProfileId: "gateway-a" },
+      { engine: "claude-code" },
+    ]) {
+      const prepare = vi.fn(async () => {});
+      const app = makeApp({
+        runtime: { getSessionEngine: () => "claude-code", prepareExternalEngineSession: prepare },
+      });
+      const record = makeRecord({ app, persistence: "deferred" });
+      await new V4CommandExecutor(
+        makeHost(record, { createSessionRecord: async () => ({ sessionId: "s1" }) }),
+      ).execute(envelope("createSession", { workspaceId: "/w", config }, "draft"));
+      expect(prepare).toHaveBeenCalledExactlyOnceWith(
+        config.engineConnectionProfileId
+          ? { connectionProfileId: config.engineConnectionProfileId }
+          : {},
+      );
+    }
+  });
 });

@@ -1,22 +1,130 @@
 # 外部 Agent 引擎（Claude Code / Codex）
 
-## 2026-11-06 连接与认证规则
+## 连接与认证规则（2026-11-07，1.0.8）
+
+本节取代 2026-11-06 版本，决策来源为 [YCode 1.1 更新方案](./ycode-1.1-plan.md)「连接与认证」。就绪与检测缓存规则保持不变。
+
+### 就绪与检测
 
 Host 的 ready 仅表示 adapter 与官方 CLI 可启动；真实执行就绪归 Runtime 的原生握手，login status 是诊断信息，不能阻止无需官方账号的网关。状态检测按引擎 single-flight 并缓存 60 秒，设置页显式刷新与安装完成使缓存失效，版本和登录诊断并行，不在每次发送重复启动两个进程。失效会切换该引擎的检测代次，新请求不复用旧在途诊断；旧结果只能回复原调用者，不得回填缓存或广播覆盖新身份状态。
 
-发送与冷启动门禁使用 `isLaunchReady`，只检查 adapter 安装元数据及官方 CLI 路径，不启动版本或登录查询。结果在同一 Host 内复用；健康续聊不增加文件或 CLI 检测。显式刷新、配置保存、安装、登录结束及界面收到配置／认证失败时仅使缓存失效；下次需要时重新检查，完整诊断继续由设置页发起。
+发送与冷启动门禁使用 `isLaunchReady`，只检查 adapter 安装元数据及官方 CLI 路径，不启动版本或登录查询。结果在同一 Host 内复用；健康续聊不增加文件或 CLI 检测。显式刷新、连接配置变更、安装、登录结束及界面收到配置／认证失败时仅使缓存失效；下次需要时重新检查，完整诊断继续由设置页发起。
 
-Codex 设置支持沿用 CLI、官方登录和 API Key 三种连接方式。Host 是连接配置的唯一写者，密钥进入既有 CredentialService，返回 UI 的配置只含 hasApiKey。API Key 使用官方 URL或 Responses 兼容网关，模型可显式填写。YCode 管理的连接各有固定 CODEX_HOME；真实 HOME 不变，用户原有 ~/.codex 不修改。官方登录按钮运行同一官方 CLI 的 login 命令并支持取消；API Key 只通过私有 ACP providers/set 传递，不进普通会话命令、argv、快照或日志。禁用继承的 APP_SERVER_LOGS，避免原生 JSON-RPC 日志泄露 Authorization。
+### 三种连接方式
+
+Claude Code 与 Codex 对称提供沿用 CLI（`inherit`）、官方登录（`official`）、API Key + Base URL（`apiKey`）。子进程环境规则只由共享纯函数 `buildEngineConnectionEnv` 定义，Host 的状态诊断、登录命令与 CLI 的 adapter 启动共用，不各自维护剔除列表。所有方式都剔除继承的 `APP_SERVER_LOGS`，避免原生 JSON-RPC 日志泄露 Authorization。
+
+| 方式     | Codex                                                                                                                                                                                  | Claude Code                                                                                                                                                                                                                                                                                                     |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 沿用 CLI | 原环境与 `CODEX_HOME`（缺省 `~/.codex`）不变                                                                                                                                           | 原环境不变，保留继承的 `ANTHROPIC_*`；`~/.claude/settings.json` 的 env 由 Claude 自行读取                                                                                                                                                                                                                       |
+| 官方登录 | 每个配置使用独立 `CODEX_HOME`；去除 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`CODEX_API_KEY`、`CODEX_CONFIG`、`MODEL_PROVIDER`、`DEFAULT_AUTH_REQUEST`；登录按钮运行 `codex login`，可取消 | 使用用户自己的 Claude 登录，不另建配置目录；去除继承的 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`（即 1.0.7 行为）；登录按钮运行 `claude auth login --claudeai`，可取消                                                                                                                  |
+| API Key  | 独立 `CODEX_HOME` 并按官方登录去除网关覆盖；初始化后经私有 `providers/set` 发送 Bearer；缺省地址 `https://api.openai.com/v1`；模型经 `CODEX_CONFIG`                                    | 去除全部继承的 `ANTHROPIC_*` 以及 `CLAUDE_CODE_USE_BEDROCK`、`CLAUDE_CODE_USE_VERTEX`、`CLAUDE_CODE_USE_FOUNDRY`、`CLAUDE_CODE_OAUTH_TOKEN`；官方地址（缺省 `https://api.anthropic.com`）用 `ANTHROPIC_API_KEY`，自定义网关用 `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`（Bearer）；模型经 `ANTHROPIC_MODEL` |
+
+- 两家官方登录与 API Key 的模型字段可选；Claude 官方登录填写模型时同样设置 `ANTHROPIC_MODEL`。
+- 密钥只进 CredentialService，键为 `external-engine:<engine>:<配置 ID>`。连接文件、返回 UI 的配置视图、状态、测试结果、V4 快照、argv 与日志只含 `hasApiKey`。Codex 的密钥只经私有 ACP `providers/set` 传递；Claude 官方 CLI 没有其他私有通道，密钥只出现在 adapter 子进程环境中。
+- YCode 不读写 `~/.codex/auth.json`、`~/.claude/.credentials.json`，不修改用户的 `config.toml` 或 `settings.json`；管理连接的真实 HOME 不变。
+- 已知限制：Claude 在子进程环境之后应用 `settings.json` 的 env；若其中配置了 `ANTHROPIC_BASE_URL` 或 `ANTHROPIC_AUTH_TOKEN`，会覆盖官方登录或 API Key 的路由。状态检测据此提示网关，YCode 不改写该文件。
+
+### 连接配置
+
+- Host 是连接配置唯一写者。`<YCode 数据目录>/engines/connections.json` 保存配置列表与每个引擎的上次使用配置 `lastUsed`，所有写入在文件锁内读改写并原子落盘；多窗口 Host 共享同一文件。
+- 内置配置不落盘、不可编辑或删除：两家都有「沿用 CLI」（ID `inherit`），Claude 另有「官方登录」（ID `official`）。无上次使用值时 Codex 缺省 `inherit`、Claude 缺省 `official`，保持 1.0.7 行为。
+- 兼容：1.0.7 文件中的配置缺省属于 Codex，旧 `activeProfileId` 作为 Codex 上次使用值的迁移来源；写入时继续把 `activeProfileId` 写成 Codex 的上次使用值并保留 `inherit` 条目，便于回退旧版本读取。
+- 用户配置包含可选名称（缺省按方式与网关域名生成）、方式、Base URL、模型与密钥。列表显示名称、方式和网关域名。
+- 写入是 `updateConnectionProfiles(command)` 命令：`create` 生成新 ID 并设为该引擎上次使用；`edit` 生成新 ID、隐藏旧配置，未填新密钥时复制旧密钥，上次使用指向旧 ID 时改指新 ID；`delete` 只把配置标记为隐藏，不清理目录与凭据，已绑定会话继续工作；`select` 记录上次使用，拒绝隐藏或不存在的配置。上次使用指向隐藏或不存在的配置时回落内置缺省。成功后 Host 广播 `onConnectionProfilesChanged` 并使该引擎的状态缓存失效。
+
+### 会话绑定
+
+- 新草稿的选择器默认上次使用配置。用户选择后 Host 先记录上次使用，再由现有草稿 owner 回收并重建预热；`createSession.config.engineConnectionProfileId` 携带所选 ID，Runtime 在首次连接准备前接收，之后不可变。
+- Runtime 解析配置后经既有 `external_engine_config` entry 持久化 `connectionProfileId`，并在 `ExternalEngineConfigUpdated` 与 snapshot `config.engineConnectionProfileId` 投影。UI 只读该投影显示绑定：草稿可改选，已创建会话只读显示。
+- 未显式传入时：新会话使用上次使用配置，没有则用内置缺省；旧原生会话（有 externalSessionId、无绑定）Codex 为 `inherit`、Claude 为 `official`；fork 继承源绑定，缺省同旧会话。绑定的配置不存在时明确失败，不静默换身份。
+
+### 测试连接
+
+- 设置页的每个配置都可「测试连接」。UI 调用 Host `testConnection({engine, profileId, workspacePath})`，Agent Service 取该本地 workspace 的 CLI，发送 `externalEngine/testConnection {operationId, engine, connectionProfileId}`。
+- CLI 使用独立的 ExternalEnginePort 和临时 cwd 建立一次性原生会话，不写 SQLite，也不进任务索引。它发送 `Reply with OK`，拒绝全部工具权限，结束后关闭会话、回收进程树并删除临时目录。
+- 结果分为 `success`（耗时）、`unexpectedReply`（耗时与经脱敏、≤120 字的回复摘要，覆盖以正文返回错误的引擎）、`failed`（EngineConnectionFailure：分类、HTTP 状态、脱敏消息、request id）和 `cancelled`。首个原生失败通知即结束测试，不等待引擎自行重试。
+- 取消由 Host `cancelConnectionTest()` 发送 `externalEngine/cancelConnectionTest {operationId}`。这两个方法不进入 CLI 串行队列，测试期间同一 workspace 的会话请求不受阻塞。同一 Host 同时只运行一个测试。
+- 无本地 workspace 时禁用测试并提示打开本地项目。日志只记录引擎、配置 ID、结果分类与耗时。
+
+### 状态显示
+
+- 网关用户不再显示「未登录」：`auth.gatewayHost` 存在时显示「使用网关 <host>」。
+- 检测只读必要键且只保留 host：Codex 读取 `$CODEX_HOME/config.toml`（缺省 `~/.codex`）中当前 profile 或顶层 `model_provider` 对应的 `model_providers.<id>.base_url`，内置 openai provider 再看环境 `OPENAI_BASE_URL`；Claude 读取 `$CLAUDE_CONFIG_DIR/settings.json`（缺省 `~/.claude`）的 `env.ANTHROPIC_BASE_URL`，沿用 CLI 时再看环境 `ANTHROPIC_BASE_URL`。不记录文件内容或凭据，读取或解析失败视为无网关。
+- API Key 配置：自定义地址显示「使用网关 <host>」；官方地址显示「OpenAI API Key」或「Anthropic API Key」，密钥缺失显示「缺少 API Key」。
+- 连接列表的「沿用 CLI」行显示检测到的网关 `inheritedGatewayHost`；身份类别（订阅 / API Key）本地化显示。
+
+### 代理与证书
+
+Host 与 CLI 启动时已把用户的代理与证书变量封存进 `ZCODE_TOOL_ENV_PASSTHROUGH_JSON`。adapter 子进程沿用工具子进程的既有恢复规则 `applyNetworkEgressEnv`：恢复 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`（含小写变体）、`SSL_CERT_FILE`、`SSL_CERT_DIR`、`NODE_EXTRA_CA_CERTS`、`REQUESTS_CA_BUNDLE` 等；只有 YCode 显式配置代理、No Proxy 或 CA 时才覆盖对应变量。网络出口与身份无关，三种连接方式一致。
+
+### Windows 运行时补位
+
+PATH 缺少 node 时，adapter 子进程的 PATH 前置 `<engines>/.node-runtime/<运行时哈希>/`：POSIX 为指向当前运行时的符号链接 `node`，Windows 为 `node.cmd`，以 `ELECTRON_RUN_AS_NODE=1` 调用当前运行时。cmd 按控制台代码页解码批处理，用户名含中文时内嵌路径会被解错，因此运行时路径经 adapter 写入的 `ZCODE_EXTERNAL_ENGINE_NODE` 传入，`node.cmd` 内容保持纯 ASCII。这样 npm 入口和 adapter 自带的 `codex.js` 在没有系统 Node 的机器上也能启动。不修改系统 PATH。
+
+### 状态所有者与事件顺序
+
+| 状态               | 所有者                                             | 读取方                                        |
+| ------------------ | -------------------------------------------------- | --------------------------------------------- |
+| 连接配置、上次使用 | Host `external-engine-service`（connections.json） | 设置页、输入框选择器（视图）、CLI（只读解析） |
+| 密钥               | CredentialService                                  | CLI 启动 adapter 时按配置读取                 |
+| 会话绑定的配置 ID  | CLI Runtime（external_engine_config entry）        | snapshot `config.engineConnectionProfileId`   |
+| 草稿当前选择       | 预热会话的 snapshot；尚未预热时为上次使用值        | 输入框选择器                                  |
+| 测试连接进度       | Host 单个在途测试；CLI 按 operationId 持有取消     | 设置页                                        |
+
+```mermaid
+sequenceDiagram
+  participant UI as Renderer
+  participant H as Host 引擎服务
+  participant CLI as CLI（V4 / 测试）
+  participant A as ACP adapter
+  UI->>H: updateConnectionProfiles(select, engine, id)
+  H-->>UI: 新视图并广播 onConnectionProfilesChanged
+  UI->>UI: 回收旧预热（现有草稿 owner）
+  UI->>CLI: createSession{engine, engineConnectionProfileId}
+  CLI->>A: 按配置构造环境，initialize（Codex API Key 时 providers/set）
+  CLI-->>UI: snapshot config.engineConnectionProfileId 与 ready
+  UI->>H: testConnection(engine, id, workspacePath)
+  H->>CLI: externalEngine/testConnection(operationId)
+  CLI->>A: 临时 cwd：session/new → session/prompt("Reply with OK")
+  A-->>CLI: 回复或结构化失败
+  CLI->>A: closeSession，回收进程树并删除临时目录
+  CLI-->>H: success / unexpectedReply / failed / cancelled
+  H-->>UI: 测试结果（不含密钥）
+```
+
+### 回归与验收
+
+| ID  | 场景                                                                    | 断言                                                                                                     |
+| --- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| C01 | Claude 沿用 CLI，环境含 `ANTHROPIC_BASE_URL`                            | adapter 环境保留原值；状态显示「使用网关 <host>」                                                        |
+| C02 | Claude 官方登录与旧会话                                                 | 去除三项继承变量；旧会话绑定 `official`；登录按钮运行 `claude auth login --claudeai` 且可取消            |
+| C03 | Claude API Key：官方地址 / 自定义网关                                   | 分别只设 `ANTHROPIC_API_KEY` 或 `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`；其他 `ANTHROPIC_*` 被去除 |
+| C04 | 密钥位置                                                                | 不出现在 argv、连接文件、视图、状态、测试结果、snapshot 与日志                                           |
+| C05 | 多个命名配置：新建、编辑、删除                                          | 编辑生成新 ID，旧会话保持旧绑定；删除只隐藏；上次使用随之更新或回落                                      |
+| C06 | 输入框选择配置                                                          | 记录上次使用并重建预热；已创建会话只读显示绑定                                                           |
+| C07 | 测试连接成功、失败、取消                                                | 显示耗时或 HTTP 状态 / 消息 / request id；取消后无残留进程与临时目录；同 workspace 会话不被阻塞          |
+| C08 | Codex 沿用 CLI，`config.toml` 配置自定义 provider                       | 显示「使用网关 <host>」而非「未登录」                                                                    |
+| C09 | 用户 shell 设置 `HTTPS_PROXY` / `NODE_EXTRA_CA_CERTS`，YCode 未配置代理 | adapter 环境保留原值；YCode 配置代理后改用 YCode 值                                                      |
+| C10 | Windows 无系统 Node，使用 adapter 自带 `codex.js`                       | PATH 前置 `node.cmd` 补位并可启动                                                                        |
+
+单测覆盖 C01–C10 的规则层；真实 Windows 整机、真实供应商请求、浏览器登录与 E2E 需单独验收，未验收前不得写成通过。
+
+### 2026-11-06 原始规则（Codex 三种连接）
+
+以下为 1.0.7 的 Codex 规则，仍然有效；与上文冲突时以上文为准。
+
+Codex 设置支持沿用 CLI、官方登录和 API Key 三种连接方式。Host 是连接配置的唯一写者，密钥进入既有 CredentialService，返回 UI 的配置只含 hasApiKey。API Key 使用官方 URL或 Responses 兼容网关，模型可显式填写。YCode 管理的连接各有固定 CODEX_HOME；真实 HOME 不变，用户原有 ~/.codex 不修改。官方登录按钮运行同一官方 CLI 的 login 命令并支持取消；API Key 只通过私有 ACP providers/set 传递，不进普通会话命令、argv、快照或日志。
 
 Codex 登录诊断与当前连接身份一致：inherit 查询原 CLI 环境，official 查询专用 CODEX_HOME 并去除继承的网关覆盖，API Key 只检查对应凭据是否存在，不查询原用户的官方登录状态。该诊断不验证上游 Key 是否有效，也不承担发送门禁。点击官方登录只做可启动性预检，不先执行版本与登录状态命令。
 
-每个新会话准备连接时绑定当前配置 ID，随既有 external_engine_config entry 持久化；旧原生会话缺省绑定 inherit，不能随设置切换认证目录。fork 继承配置 ID。连接模式不可原地改写，编辑 URL/模型/密钥产生新配置 ID，已有会话继续使用旧配置。连接目录与旧配置不自动清理。
+每个新会话准备连接时绑定配置 ID，随既有 external_engine_config entry 持久化；不能随设置切换认证目录。连接模式不可原地改写，编辑 URL/模型/密钥产生新配置 ID，已有会话继续使用旧配置。连接目录与旧配置不自动清理。
 
 ```mermaid
 flowchart TD
   A[设置选择连接方式] --> B{沿用 CLI?}
   B -->|是| C[保留原 CLI 环境]
-  B -->|否| D[创建独立连接 ID 和 CODEX_HOME]
+  B -->|否| D[创建独立连接 ID]
   D --> E{认证方式}
   E -->|官方登录| F[官方 CLI login 打开浏览器]
   E -->|API Key| G[凭据服务保存密钥]
@@ -75,9 +183,9 @@ sequenceDiagram
   - Codex：目标为官方 `@openai/codex/bin/codex.js` 时，按该脚本的真实路径向上查找平台 optional 包 `@openai/codex-win32-<arch>`（嵌套、提升与 pnpm 布局），回退包内 `vendor`，使用 `vendor/<target-triple>/bin/codex.exe`；目标直接为 `.exe` 时使用该文件。原生文件缺失或包装入口无法识别时保留原 `.cmd`，由 adapter 的 cross-spawn 执行（原行为）。附带的 `codex-resources`、`codex-path` 与 `codex-package.json` 仍位于原生文件的安装目录；`codex.js` 额外注入的 `CODEX_MANAGED_*` 从二进制字符串看只用于安装诊断与升级提示，直接启动时不再设置。经原生文件运行真实 app-server 会话须在 Windows 上独立验收。
   - 2026-11-07 本机实测（Windows 11，npm 全局安装 Codex 0.156.0，热缓存 9 轮中位数）：`codex --version` 经 `codex.cmd` 为 171ms（157–180ms），直接执行解析出的 `codex.exe` 为 51ms（47–60ms）。
 - PATH 无可用入口时，Claude 使用锁定 SDK 的平台原生 optional 包（Linux 按 libc 选择），Codex 使用安装树中的官方 JavaScript 入口；Host 与 adapter 通过同一解析器选择同一文件，不依赖已退役的 Claude SDK `cli.js`。
-- YCode 不读写用户原有 `~/.claude/.credentials.json`、`~/.codex/auth.json`，不自行实现 OAuth 或设备码登录，不新增遥测。Claude 引导用户运行 `claude auth login`；Codex 可沿用已有 CLI 配置，或在设置页发起专用身份目录内的官方 `codex login`，API Key 连接通过原生 provider 接口配置。
+- YCode 不读写用户原有 `~/.claude/.credentials.json`、`~/.codex/auth.json`，不自行实现 OAuth 或设备码登录，不新增遥测。两家都可沿用已有 CLI 配置，或在设置页发起官方登录命令（Claude 为 `claude auth login --claudeai`，Codex 为专用身份目录内的 `codex login`）；API Key 连接见「连接与认证规则」。
 - 不启用 claude-agent-acp 的 `--hide-claude-auth`。该开关的作用是拒绝走 claude.ai 订阅，与本功能目标相反。
-- 启动 Claude 子进程时清除继承来的 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`，确保使用用户的官方登录，不被宿主环境中的密钥意外改成 API 计费。Codex 的 inherit 连接沿用原配置；管理连接使用独立 CODEX_HOME 与显式 provider，不能混入宿主环境的其他 API Key 或 provider 覆盖。
+- Claude 子进程的环境按会话绑定的连接方式构造：官方登录与无绑定的旧会话清除继承来的 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`，不被宿主环境中的密钥意外改成 API 计费；沿用 CLI 保留原环境。Codex 的 inherit 连接沿用原配置；管理连接使用独立 CODEX_HOME 与显式 provider，不能混入宿主环境的其他 API Key 或 provider 覆盖。
 - adapter 只能由用户在设置页显式安装，打开会话不会隐式安装。安装使用 npm 官方 registry，并锁定版本。Claude Agent SDK 为 Anthropic 专有许可（`SEE LICENSE IN README.md`），因此不打进安装包、不再分发。
 - 一期范围：本地桌面 workspace。SSH、WSL、Docker 远程 workspace 放到二期。
 - 一期在外部引擎会话中禁用以下能力，并通过 `sessionActionAvailability` 灰显、给出原因：rewind、编辑重发、retry、文件回滚，以及 ZCode 自有的 compact。`/compact` 作为 slash command 透传给引擎。
@@ -128,7 +236,7 @@ sequenceDiagram
   - 外部引擎会话不下发 row actions 中的 `canEdit` / `canRetry`。
   - session availability 中 `fork`、`compact`、`switchModelConfig` 为 `{allowed:false, reasonCode:"external_engine_unsupported"}`。
 - 安装布局：Host 启动 CLI 时注入 `ZCODE_EXTERNAL_ENGINES_DIR=<YCode 数据目录>/.zcode/engines`。adapter 安装在 `<dir>/<engine>@<version>/`（`npm install --prefix`）。Host 另注入 `ZCODE_EXTERNAL_ENGINE_USER_HOME=<真实用户目录>`；CLI 只在启动外部 adapter 时恢复该 `HOME`（Windows 同时恢复 `USERPROFILE`），缺省时沿用当前用户目录，空值或非绝对路径拒绝启动；内置 Agent 的数据目录隔离不变。确保官方 CLI 能读到 `~/.claude`、`~/.codex`。PATH 无官方 CLI 时，Host 与 adapter 通过描述符 `bundledOfficialCli` 定位锁定安装树内的官方 CLI；Claude 使用 SDK 平台原生包，Codex 的 JavaScript 入口由同一 Node 执行，并保留真实 HOME。
-- Host 服务：受管模块 `external-engine-service`（`packages/services/src/external-engine/`）提供 `IExternalEngineService`，方法为 `getStatus`、`listStatuses`、`installAdapter`、`onStatusChanged`。`IServiceAccessor.externalEngineService` 为可选字段，未提供该服务的 host 中，UI 隐藏外部引擎入口；桌面远程工作区的草稿按“不支持外部引擎的工作区”灰显外部引擎。
+- Host 服务：受管模块 `external-engine-service`（`packages/services/src/external-engine/`）提供 `IExternalEngineService`：状态（`getStatus`、`listStatuses`、`isLaunchReady`、`invalidateStatus`、`refreshStatus`、`onStatusChanged`）、安装（`installAdapter`）与连接配置（`getConnectionProfiles`、`updateConnectionProfiles`、`login`、`cancelLogin`、`testConnection`、`cancelConnectionTest`、`onConnectionProfilesChanged`）。`IServiceAccessor.externalEngineService` 为可选字段，未提供该服务的 host 中，UI 隐藏外部引擎入口；桌面远程工作区的草稿按“不支持外部引擎的工作区”灰显外部引擎。
 - Host 执行门禁通过 `session/list {sessionIds, includeDrafts:true}` 读取 CLI 权威的 engine；该选项只允许精确读取已驻留草稿，不激活 runtime，不把草稿加入普通任务索引。冷恢复读取 SQLite 的 engine，不能按 Provider 值或 UI 当前草稿推断。
 - 登录检测直接调用官方 CLI 的状态命令（`claude auth status`、`codex login status`），只提取身份类别，丢弃账号和密钥片段。
 
@@ -229,8 +337,9 @@ flowchart TD
 - 基础设置新增同级分区 `agentEngines`（「Agent 引擎」），紧随「模型设置」。模型页仅保留供应商与模型配置，不再挂载引擎检测组件。
 - 页面可见性由本地 Host 的 `externalEngineService` 能力决定；无服务时隐藏导航，历史偏好或跳转意图回退到常规设置。远端 workspace 激活时，该页仍管理本机引擎，不改用远端服务。
 - 设置导航和上次停留位置继续由现有 `SettingsPage` / `settingsNavigation` 管理；引擎状态仍由 Host 服务提供，页面不新增持久化事实源。未就绪引导直达 `agentEngines`，供应商配置入口继续直达 `modelProvider`。
-- 使用共享设置页标题、内容宽度、主题 token 和紧凑列表：默认展示名称、就绪状态、CLI 版本、登录状态和安装操作；登录命令可复制；adapter 包名与锁定版本折叠到「技术详情」。检测和安装期间提供加载反馈。
-- 打开、刷新、切换页面均只读检测；只有点击安装按钮才调用安装。复制命令只写剪贴板；只有显式点击浏览器登录按钮才启动官方登录，期间可取消。
+- 使用共享设置页标题、内容宽度、主题 token 和紧凑列表：默认展示名称、就绪状态、CLI 版本、登录或网关状态和安装操作；登录命令可复制；adapter 包名与锁定版本折叠到「技术详情」。检测和安装期间提供加载反馈。
+- 每个引擎下方是连接配置列表（名称、方式、网关域名、默认标记），行内提供设为默认、测试连接、登录（官方方式）、编辑与删除；内置配置只提供前三项。新建与编辑复用同一行内表单，密钥输入框不回显已保存值。
+- 打开、刷新、切换页面均只读检测；只有点击安装按钮才调用安装。复制命令只写剪贴板；只有显式点击浏览器登录按钮才启动官方登录，只有点击测试连接才发起模型请求，两者期间都可取消。
 
 ```mermaid
 flowchart TD

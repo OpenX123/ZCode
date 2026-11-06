@@ -48,23 +48,19 @@ const enUS: Record<string, string> = {
   "engine.select": "Session engine",
   "engine.unavailable.remote": "Not available in remote workspaces",
   "engine.settings.title": "Agent engines",
-  "engine.connection.mode": "Codex connection",
-  "engine.connection.inherit": "Use existing CLI configuration",
-  "engine.connection.official": "Sign in with an official account",
-  "engine.connection.apiKey": "API key (official or third-party gateway)",
-  "engine.connection.url": "API URL (Responses compatible)",
   "engine.connection.model": "Default model (optional)",
   "engine.connection.keySaved": "Saved; leave blank to keep the current key",
   "engine.connection.hint":
     "New connections apply to new chats. Existing chats keep their connection. Account sign-in opens in your browser.",
   "engine.connection.login": "Sign in with browser",
-  "engine.connection.saved": "Connection saved for new Codex chats.",
-  "engine.connection.loggedIn": "Signed in for new Codex chats.",
+  "engine.connection.loggedIn": "Signed in for new {engine} chats.",
+  "engine.connection.loginRunning":
+    "Another sign-in is in progress. Finish or cancel it before trying again.",
   "engine.connection.invalidUrl":
     "Enter an HTTP or HTTPS API URL without credentials or query parameters.",
   "engine.connection.missingKey": "Enter an API key and save the connection again.",
   "engine.connection.engineMissing":
-    "Install the Codex CLI and adapter, then refresh the engine status.",
+    "Install the {engine} CLI and adapter, then refresh the engine status.",
   "engine.connection.interrupted":
     "Sign-in was cancelled or timed out. Start browser sign-in again.",
   "engine.connection.loginFailed":
@@ -89,6 +85,56 @@ const enUS: Record<string, string> = {
   "engine.notReadyGuide":
     "The engine is not ready. Install its adapter in Agent engines settings and check its connection. Your draft is preserved.",
   "engine.openSettings": "Configure Agent engines",
+
+  "engine.authLabel.subscription": "Subscription",
+  "engine.profile.title": "Connections",
+  "engine.profile.add": "Add connection",
+  "engine.profile.name": "Name (optional)",
+  "engine.profile.modeLabel": "{engine} connection type",
+  "engine.profile.mode.inherit": "Use CLI",
+  "engine.profile.mode.official": "Official sign-in",
+  "engine.profile.mode.apiKey": "API key",
+  "engine.profile.builtin.inherit": "Use CLI configuration",
+  "engine.profile.builtin.official": "Official sign-in",
+  "engine.profile.url.codex": "API URL (Responses compatible)",
+  "engine.profile.url.claude-code": "API URL (Anthropic compatible)",
+  "engine.profile.default": "Default",
+  "engine.profile.setDefault": "Set as default",
+  "engine.profile.edit": "Edit",
+  "engine.profile.delete": "Delete",
+  "engine.profile.confirmDelete": "Confirm delete",
+  "engine.profile.saved": "Connection saved and set as the default for new {engine} chats.",
+  "engine.profile.updated": "Connection updated. Existing chats keep their original connection.",
+  "engine.profile.deleted": "Connection removed. Existing chats keep working with it.",
+  "engine.profile.selected": "New {engine} chats will use this connection.",
+  "engine.profile.selectFailed":
+    "Could not remember this connection. Your draft uses it; try again later.",
+  "engine.profile.gateway": "Using gateway {host}",
+  "engine.profile.officialApiKey.codex": "OpenAI API key",
+  "engine.profile.officialApiKey.claude-code": "Anthropic API key",
+  "engine.profile.missingKey": "API key missing",
+  "engine.profile.composer": "Connection",
+  "engine.profile.boundTitle": "This chat uses the connection: {name}",
+  "engine.profile.test": "Test connection",
+  "engine.profile.testing": "Testing connection…",
+  "engine.profile.cancelTest": "Cancel test",
+  "engine.profile.testSuccess": "Connected · {seconds}s",
+  "engine.profile.testUnexpected": "Got a reply other than the expected OK ({seconds}s): {reply}",
+  "engine.profile.testFailed": "Test failed: {hint}",
+  "engine.profile.testCancelled": "Test cancelled",
+  "engine.profile.testRunning": "Another connection test is running. Try again when it finishes.",
+  "engine.profile.testNeedsWorkspace": "Open a local project to test connections.",
+  "engine.profile.testFailure.authentication":
+    "Authentication failed. Check the sign-in or API key.",
+  "engine.profile.testFailure.timeout": "The request timed out. Check the network and proxy.",
+  "engine.profile.testFailure.not_ready":
+    "The engine is not ready. Install its adapter and refresh the status.",
+  "engine.profile.testFailure.configuration":
+    "This connection is unavailable. Save it again and retry.",
+  "engine.profile.testFailure.provider":
+    "The model service returned an error. Check the gateway URL and service status.",
+  "engine.profile.testFailure.transport": "The engine process stopped unexpectedly.",
+  "engine.profile.testFailure.other": "The engine could not complete the test request.",
 
   "zcode.error.modelSuspiciousEmpty":
     "The model returned no content. Retry or check the API configuration.",

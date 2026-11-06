@@ -4,7 +4,11 @@ import {
   type SessionEngine,
 } from "@zcode/shared/external-engine";
 import { EngineControls, isEngineNotReadyError } from "@/external-engine/index.js";
-import { useEngineConfigMemory, useExternalEngineService } from "@/hooks/external-engine/index.js";
+import {
+  useEngineConfigMemory,
+  useEngineConnectionControl,
+  useExternalEngineService,
+} from "@/hooks/external-engine/index.js";
 import type { ComposerTimingSeed } from "@/v4/telemetry/localTtftObserver.js";
 import type { SessionLease } from "@/v4/sessionDataLayer.js";
 import { remoteHostIdFromWorkspaceIdentity } from "@zcode/shared";
@@ -985,10 +989,26 @@ export function SessionPane({
       invalidateOwnedDraftRuntime,
     ],
   );
-  const resolveDraftEngineConfig = useCallback(
-    () => (externalEngine ? { engine: sessionEngine } : resolveInitialDraftConfig()),
-    [externalEngine, sessionEngine, resolveInitialDraftConfig],
-  );
+  const engineConnection = useEngineConnectionControl({
+    service: externalEngineService,
+    engine: sessionEngine,
+    sessionId,
+    boundProfileId:
+      snapshot?.config.engine === sessionEngine
+        ? snapshot.config.engineConnectionProfileId
+        : undefined,
+    onDraftSelected: invalidateOwnedDraftRuntime,
+  });
+  const draftConnectionProfileId = engineConnection.draftConnectionProfileId;
+  const resolveDraftEngineConfig = useCallback(() => {
+    if (!externalEngine) return resolveInitialDraftConfig();
+    // 草稿改选的连接只在重建预热时随 createSession 绑定；未改选时由 CLI 取上次使用配置。
+    const engineConnectionProfileId = draftConnectionProfileId();
+    return {
+      engine: sessionEngine,
+      ...(engineConnectionProfileId ? { engineConnectionProfileId } : {}),
+    };
+  }, [externalEngine, sessionEngine, resolveInitialDraftConfig, draftConnectionProfileId]);
   const modelSelectionView =
     modelSelectionRead.state.status === "ready" ? modelSelectionRead.state.view : null;
   const draftModelSelectionRevisionRef = useRef<number | null>(null);
@@ -3852,6 +3872,10 @@ export function SessionPane({
                   ? undefined
                   : intl.formatMessage({ id: "engine.unavailable.remote" })
               }
+              connectionChoices={engineConnection.choices}
+              connectionProfileId={engineConnection.currentId}
+              onSelectConnection={sessionId === null ? engineConnection.select : undefined}
+              connectionLabel={engineConnection.label}
               options={
                 externalEngine && snapshot?.config.engine === sessionEngine
                   ? snapshot.config.engineConfigOptions

@@ -297,6 +297,10 @@ async function publishExternalEngineConfigState(
       engineConfigOptions: runtime.engineConfigOptions,
       engineConfigState: state,
       engineConfigError: failure,
+      // 连接配置绑定只读投影给 UI；密钥不在此路径。
+      ...(runtime.engineConnectionProfileId
+        ? { engineConnectionProfileId: runtime.engineConnectionProfileId }
+        : {}),
     },
     traceContext,
   );

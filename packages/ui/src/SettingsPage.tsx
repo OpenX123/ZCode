@@ -1249,7 +1249,12 @@ export function SettingsPage({
                             <ServiceProvider services={localHostServices}>
                               {/* 引擎安装属于本机 Host；远端 workspace 不能改变设置页的服务所有者。 */}
                               <DefaultEngineSetting />
-                              <EngineSettings />
+                              {/* 连接测试复用模型连通性的本地 workspace 选择；远端 workspace 不承载本机测试。 */}
+                              <EngineSettings
+                                connectivityWorkspacePath={
+                                  localModelProviderConnectivityWorkspacePath
+                                }
+                              />
                             </ServiceProvider>
                           ) : activeSection === "memory" ? (
                             <ServiceProvider services={localHostServices}>
