@@ -664,3 +664,91 @@ sequenceDiagram
     R-->>U: snapshot 确认模型与新深度目录
     U->>B: 恢复记忆的深度（在新目录内且不同）
 ```
+
+## 外部引擎原生子智能体（1.1.0）
+
+目标：Claude Code 与 Codex 的原生子智能体产出与内置引擎相同的数据——`subagent_child` 子会话（正文独立持久化、可按 childSessionId 经 V4 订阅，实时与重启后都可读）、父会话 `snapshot.subagents` 与 `session/subagents` 已结束分页。界面（M2-D）只消费这份引擎无关合同。
+
+### 能力声明与协议形态
+
+- 两家 initialize 都声明 `clientCapabilities.subagents: {}`。AIR 决策不变：仅 Codex 声明 `_meta.jetbrains.air`（sessionFailure）与 `terminal_output_delta`；Claude 不声明 AIR。
+- 因此 Codex 2.2.2 走 AIR 草案形态：父会话收到 `subagent_spawned {subagentSessionId, name, task, prompt?, capabilities}` 与 `subagent_state_update {subagentSessionId, state: completed|failed|cancelled|disconnected}`；子会话的正文、工具、usage 与权限请求以子 sessionId（Codex thread id）到达；重开的子会话 ID 为 `<thread>:generation:N`；嵌套子会话的 spawned 发在其直接父子会话上；`session/load` 先回放 spawned、子会话历史，再以 `disconnected` 收尾未终止的子会话。Codex 声明的 `capabilities` 为空，不支持取消。
+- Claude 0.95.0 走 RFD 形态：父会话收到 `subagent_update {sessionId, title?, description?, capabilities?, state?}`（首条宣告子会话，`capabilities.cancel` 表示可经 `session/cancel {sessionId: 子}` 停止当前工作），`state` 取值 running / requires_action / idle（stopReason end_turn|cancelled|error，或缺省）/ unknown；提示词以 `session_message` 同时投给父（发送视图）与子（接收视图，`recipientSessionId=子`），前台子会话的回答以 `session_message {messageId:"<launch>:reply", senderSessionId:子}` 发回父会话。RFD 形态隐藏父会话中的 Agent/Task 工具行；idle 子会话可再次 running 并沿用原 sessionId。
+- 未声明原生形态的旧 adapter 仍发普通工具行（Codex `spawnAgent` / `sendInput` / `resumeAgent` / `followupTask`，`Start subagent X`），只作降级展示，见“界面降级识别”。
+
+### 状态所有者与接口
+
+| 状态 | 所有者 | 说明 |
+| --- | --- | --- |
+| 原生帧解析、子 sessionId 归属、子会话请求路由 | ACP adapter（connection） | 把两种形态归一为 `ExternalEngineSubagentEvent`；只路由已宣告子 ID 的更新与权限，未知非主 ID 丢弃并记 debug |
+| 子会话记录、子会话正文、父会话 Agent 行、子智能体生命周期 | 父会话的外部引擎 Runtime（`core/src/external-engine/subagents.ts`） | 唯一发布 SubagentSpawned / SubagentStopped / BackgroundTask*；子会话正文经子 Runtime 写入既有 message/part 与事件日志 |
+| `snapshot.subagents`、子智能体行 | 既有 V4 ProductProjection | 不新增投影字段，live 与冷恢复同一 reducer |
+| 停止入口 | 既有 `cancelBackgroundWork(workId)` | 仅原生声明可取消的子会话发布 `cancellable` 后台工作 |
+
+接口（`@zcode/contracts` external-engine 契约，严格类型；adapter 在边界做运行时校验）：
+
+- `ExternalEngineSessionInput.onSubagent?(event)`：`spawned {nativeSessionId, parentNativeSessionId?, name, task?, prompt?, cancellable}`、`state {nativeSessionId, state: running|waiting|completed|failed|cancelled|lost, error?}`、`prompt {nativeSessionId, messageId, text}`、`reply {nativeSessionId, text}`。`parentNativeSessionId` 缺省表示主会话。
+- `onChildUpdate?(nativeSessionId, update)`：已宣告子会话的普通 `session/update`（正文、思考、工具、usage）。
+- `requestPermission(request)` 的 `request.childNativeSessionId`：子会话的权限请求。
+- `ExternalEnginePort.cancelSubagent?(sessionId, nativeSessionId)`：向已宣告且可取消的子会话发送 `session/cancel`，否则抛 `unsupported`。
+- `onDiagnostic?(event, fields)`：adapter 的无正文诊断（如丢弃未知子 ID），Runtime 记 debug。
+
+### 事件顺序
+
+```mermaid
+sequenceDiagram
+  participant A as ACP adapter
+  participant R as 父 Runtime（子智能体 owner）
+  participant C as 子 Runtime（subagent_child）
+  participant P as 父 V4 投影
+  participant V as 子 V4 topic
+  A->>R: onSubagent(spawned)
+  R->>C: 创建并持久化子会话记录（taskType=subagent_child，parentID=直接父会话）
+  C->>V: SessionTitleUpdated、TurnStarted、首条 user 消息（prompt / task）
+  R->>P: 父 Agent 行 ToolCallScheduled/Started（metadata 含 childSessionId）
+  R->>P: SubagentSpawned → snapshot.subagents.running
+  opt 原生可取消
+    R->>P: BackgroundTaskStarted(kind=subagent, cancellable, childSessionId)
+  end
+  A->>R: onChildUpdate(正文 / 思考 / 工具 / usage)
+  R->>C: 同普通外部轮的 message/part 持久化与 ModelStreaming/ToolCall* 事件
+  C->>V: 实时推送
+  A->>R: onSubagent(state=completed|failed|cancelled|lost)
+  R->>C: 收尾子轮（TurnComplete / TurnError）
+  R->>P: Agent 行终态 + SubagentStopped（+ BackgroundTaskCompleted）
+  P->>P: running → ended，endedTotal+1
+```
+
+- 子会话记录必须在 `SubagentSpawned` 之前落库（与内置引擎一致）。子 Runtime 只是持久化载体：不跑模型、不连原生 adapter；冷恢复与订阅复用既有子会话路径，且 `subagent_child` 会话不发起原生连接。
+- 子会话记录保存父会话的 engine，不保存 externalSessionId（原生上下文属于父原生会话）。
+- 父会话 Agent 行由 Runtime 合成：工具名 `Agent`，toolCallId 为 `native-subagent:<原生ID>:<序号>`，input `{description, prompt, subagent_type}`，metadata `{childSessionId, agentId, agentType, description, nativeSessionId}`；结束时 output 为 JSON `{agentId, childSessionId, agentType, description, status, result}`，失败/取消/失联写 error。冷恢复、`session/subagents` 查询与 live 共用这条既有 Agent 工具链，不新增 V4 字段。`snapshot.subagents.running[].toolCallId` 即该行，界面据此下钻。
+- running 子会话等待权限时投影为 waiting（既有 origin 规则）；RFD 的 requires_action 不另发事件。
+- 子会话生命周期绑定父轮：Codex 的 prompt 等待子会话结束后才返回；父轮结束（成功、失败、停止或断联）时仍 running 的子会话按 lost 收尾并保留正文。RFD 形态的后台子会话在父轮结束后继续运行的部分 YCode 不再观察，记为已知缺口。
+- 嵌套：spawned 的父 ID 是已知子会话时，子会话记录的 parentID 为该直接父子会话，Agent 行与 SubagentSpawned 写入直接父子会话的正文与事件流；根会话 `snapshot.subagents` 只列直属子会话。
+
+### 幂等与回放
+
+- 幂等键为原生子 sessionId。YCode 子会话 ID 由（父会话 ID，原生子 ID）确定性派生：`sess_ext-subagent_<sha256 前 32 位>`。同一原生 ID 的重复 spawned 不重复建记录、不重复写首条消息；记录已在库中（重启后同 ID 再现）时先恢复再续写。
+- `:generation:N` 是新的原生会话：建立新的子会话记录与新的 Agent 行（名称沿用原生 name，metadata 记录同一 `nativeSessionId` 前缀以便关联），不改写已结束子会话的正文。
+- RFD 同一子 ID 由 idle 再次 running：沿用同一子会话记录，开启新的子轮，父会话新增一条 Agent 行并重新发布 SubagentSpawned（投影把原子智能体行改回 running）。
+- `session/load` / fork 回放期间，adapter 丢弃全部子智能体帧与子会话更新，不登记子 ID；YCode 已持久化的子会话正文是唯一事实，回放不写入任何行。
+- 未宣告的非主 sessionId 的更新与权限请求一律丢弃（权限回 cancelled），记 debug，不含正文。
+
+### 权限路由
+
+子会话的 `session/request_permission` 进入父 Runtime 的既有审批路径：PermissionRequested / broker 以父 sessionId 登记，`origin = {kind:"subagent", agentId: 原生ID, agentType, childSessionId, description: 子会话名称, parentSessionId: 直接父会话, parentToolCallId: Agent 行, parentTurnId}`，用户在父会话的待处理交互中应答。应答按 kind 选出该请求自身的原生 optionId，原样回复子请求的 JSON-RPC id；缺少对应 kind 时回 cancelled，不猜 ID。父轮停止或结束时，与主会话请求一样取消在途子请求并先发布 PermissionResolved(cancelled)。
+
+### 停止
+
+只有原生声明可取消（Claude RFD `capabilities.cancel`、AIR 草案 `capabilities.cancel/close` 为 true）的子会话发布 `BackgroundTaskStarted {taskId: childSessionId, taskKind:"subagent", cancellable:true, childSessionId}`，既有 Stop 按 childSessionId 关联显示。`cancelBackgroundWork(workId=childSessionId)` 由父 Runtime 转为 `ExternalEnginePort.cancelSubagent`；真实结束以原生后续 state 为准。Codex 2.2.2 不声明取消，不提供 Stop。子会话结束时发布 BackgroundTaskCompleted，界面只对 running 工作给 Stop。
+
+### 界面降级识别
+
+旧 adapter 没有原生形态时，Codex 以 camelCase `spawnAgent` 工具行表示派发。`packages/ui` 的工具身份与 Agent 渲染把 `spawnAgent`（及既有 `spawn_agent`）识别为 Agent 行，标签取 `nickname`、输入 `prompt` 等既有字段；`sendInput` 等其余协作调用保持普通工具行。
+
+### 回归验收
+
+- 真实形状帧：Codex AIR 形态与 Claude RFD 形态各一组——spawn → 子会话记录与首条消息先于 SubagentSpawned → 子正文/工具/usage 写入子会话并可按 childSessionId 读取 → state 结束后 running 变 ended。
+- 嵌套子会话挂在直接父子会话；`:generation:N` 建新记录；RFD 同 ID 再运行沿用记录；`session/load` 回放不新增子会话行。
+- 子会话权限进入父会话待处理交互并带来源，应答回原生 optionId；可取消/不可取消两种 Stop；未知子 ID 丢弃；父 + 子冷恢复后 `snapshot.subagents`、Agent 行与子正文一致；界面识别 camelCase `spawnAgent`。
+- 夹具通过不等于真实供应商验收：真实 Claude/Codex 子智能体、Windows 整机需另行验证。

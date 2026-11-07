@@ -37,3 +37,12 @@ sequenceDiagram
 - 环境：共享 `buildEngineConnectionEnv` 按方式构造（Claude 沿用 CLI 保留 ANTHROPIC_*，官方登录剔除三项计费变量，API Key 只在子进程环境注入密钥；Codex 不变）。随后 `applyNetworkEgressEnv` 从 `ZCODE_TOOL_ENV_PASSTHROUGH_JSON` 恢复用户代理与证书变量，`ZCODE_HTTP_PROXY` / `ZCODE_NO_PROXY` / `ZCODE_AGENT_CA_CERT` 显式配置优先。
 - `ZCODE_EXTERNAL_ENGINE_NODE`：仅当 Windows 上 PATH 缺 node、adapter 前置 `node.cmd` 补位时，由 adapter 写入 ACP 子进程环境，值为当前运行时路径；`node.cmd` 以 `"%ZCODE_EXTERNAL_ENGINE_NODE%" %*` 调用它，保证批处理内容为纯 ASCII（cmd 按控制台代码页解码批处理，中文用户名路径不能内嵌）。继承值一律被覆盖，不读取用户设置；缺失时 node.cmd 启动失败并按 initialize / transport 失败上报。POSIX 仍使用指向当前运行时的符号链接 `node`。测试覆盖纯 ASCII 内容、继承值覆盖与中文空格路径下的真实执行。
 - 连接测试：JSON-RPC `externalEngine/testConnection {operationId, engine, connectionProfileId}` 与 `externalEngine/cancelConnectionTest {operationId}` 不进入串行队列。handler 用独立 `createExternalEnginePort` 与临时 cwd 调用 `runExternalEngineConnectionTest`：发送 `Reply with OK`，拒绝全部权限，首个原生失败（`_meta.codex.error`、AIR `sessionFailure`、prompt JSON-RPC 错误）即结束，90 秒超时；结束后 closeSession 并删除临时目录。返回 success / unexpectedReply（脱敏摘要）/ failed（EngineConnectionFailure）/ cancelled，不写 SQLite、任务索引或日志正文。
+
+## 原生子智能体（2026-11，1.1.0）
+
+产品规则、事件顺序与验收见根仓 `docs/desktop/external-agent-engines-spec.md`「外部引擎原生子智能体」。CLI 侧要点：
+
+- adapter：initialize 两家都声明 `clientCapabilities.subagents: {}`（Codex 另保留 AIR sessionFailure 与 terminal_output_delta）。`subagent-frames.ts` 把 AIR 草案（`subagent_spawned` / `subagent_state_update`）与 RFD（`subagent_update` / `session_message`）归一为 `onSubagent` 事件；已宣告子 sessionId 的更新经 `onChildUpdate`，其权限请求带 `childNativeSessionId` 进入同一 `requestPermission`；未知非主 ID 丢弃（权限回 cancelled）并经 `onDiagnostic` 记 debug。load/fork 回放期间丢弃全部子智能体帧。`cancelSubagent` 只对原生声明可取消的子会话发送 `session/cancel`。
+- Runtime：父会话外部引擎 Runtime 是子智能体唯一 owner（`core/src/external-engine/subagents.ts`）。子会话 ID 由父会话 ID 与原生子 ID 确定性派生；每个子会话由一个不跑模型、不连 adapter 的子 Runtime 承载持久化（taskType `subagent_child`、parentID 为直接父会话、engine 同父、无 externalSessionId），先落库再在父会话发布合成 Agent 行与 SubagentSpawned；子正文复用 `ExternalTranscriptWriter` 写入子会话 message/part 并经父 sink 路由到子 V4 topic；结束发布 SubagentStopped，父轮收尾时仍运行的子会话记 lost。`subagent_child` 会话的 resume / prepare 不发起原生连接。
+- 权限：子会话请求以父 sessionId 进入 broker，携带 `origin(kind=subagent)`，应答按 kind 选该请求自身的原生 optionId。
+- 停止：可取消子会话发布 `BackgroundTaskStarted(cancellable)`，`cancelBackgroundTask(childSessionId)` 先由外部子智能体 owner 处理并转为 `cancelSubagent`。

@@ -34,7 +34,7 @@ runTurn 发现会话没有健康的 adapter 连接（`ExternalEnginePort.isSessi
 
 - Codex：AIR 只改变工具行呈现——不再套用 Zed 兼容的标准字段；命令输出在未声明输出通道时不再分块（读取类命令结果不再附带正文）；MCP 进度不再推送；其余为附加 `_meta`。YCode 声明 `capabilities: ["sessionFailure"]`，同时声明非 AIR 专属的 `_meta.terminal_output_delta: true`，使终端命令输出仍按既有 `terminal_output_delta` 追加。残留差异：Codex 读取文件类命令的工具卡不再显示文件正文，搜索/列表结果改为结束时一次性给出；记录为已接受差异。
 - Claude Code：AIR 会让权限请求去掉 `name/kind/content`、Write/Edit 的 `rawInput` 去掉文件正文、Read/Grep/Glob 结果去掉正文、未声明原生子会话时丢弃子智能体流式正文，并把子智能体协议切到 AIR 形态（属于 1.1.0 多智能体里程碑）。审批预览与工具输出会退化，本里程碑不为 Claude 声明 AIR；1.1.0 处理子会话与审批预览后再启用。Claude 的最终失败沿用 JSON-RPC 错误路径结构化（见下）；其重试只经 AIR 通道上报，未声明前不可见，属已知缺口。
-- 不声明 subagents / nativeSubagentSessions / asyncTasks 等其他能力。
+- 1.1.0 起两家都声明 ACP `clientCapabilities.subagents`（Codex 仍是 AIR 客户端，走 AIR 草案子会话形态；Claude 不声明 AIR，走 RFD 形态），细则见 `docs/desktop/external-agent-engines-spec.md`「外部引擎原生子智能体」。不声明 nativeSubagentSessions / asyncTasks 等其他 AIR 能力。
 
 ### 失败来源与归一
 
