@@ -373,17 +373,20 @@ describe("v4 原生 createSession", () => {
   });
 });
 
-describe("外部引擎草稿握手", () => {
+describe("外部引擎草稿握手（1.1 异步 ACK）", () => {
   it.each(["claude-code", "codex"])(
-    "%s 在 createSession 返回前完成准备且不起 turn",
+    "%s 后台准备开始（connecting 已发布）即返回，不等待握手、不起 turn",
     async (engine) => {
-      let ready = false;
-      const prepare = vi.fn(async () => {
-        ready = true;
-      });
+      // 旧入口 prepareExternalEngineSession 等待完整握手；永不完成，用于证明 ACK 不再依赖它。
+      const prepare = vi.fn(() => new Promise<void>(() => {}));
+      const start = vi.fn(async () => {});
       const sendInput = vi.fn();
       const app = makeApp({
-        runtime: { getSessionEngine: () => engine, prepareExternalEngineSession: prepare },
+        runtime: {
+          getSessionEngine: () => engine,
+          startExternalEngineSessionPreparation: start,
+          prepareExternalEngineSession: prepare,
+        },
         sendInput,
       });
       const record = makeRecord({ app, persistence: "deferred" });
@@ -391,18 +394,18 @@ describe("外部引擎草稿握手", () => {
       const result = await new V4CommandExecutor(makeHost(record, { createSessionRecord })).execute(
         envelope("createSession", { workspaceId: "/w", config: { engine } }, "draft"),
       );
-      expect(ready).toBe(true);
-      expect(prepare).toHaveBeenCalledOnce();
+      expect(start).toHaveBeenCalledOnce();
+      expect(prepare).not.toHaveBeenCalled();
       expect(sendInput).not.toHaveBeenCalled();
       expect(result).toEqual({ type: "createSession", sessionId: "s1" });
     },
   );
-  it("握手失败回收 deferred 记录并向上返回失败", async () => {
-    const prepare = vi.fn(async () => {
-      throw new Error("ACP adapter exited (signal SIGTRAP)");
+  it("connecting 发布前失败才回收 deferred 记录并向上返回失败", async () => {
+    const start = vi.fn(async () => {
+      throw new Error("event store unavailable");
     });
     const app = makeApp({
-      runtime: { getSessionEngine: () => "codex", prepareExternalEngineSession: prepare },
+      runtime: { getSessionEngine: () => "codex", startExternalEngineSessionPreparation: start },
     });
     const record = makeRecord({ app, persistence: "deferred" });
     const deleteSession = vi.fn(async () => {});
@@ -414,8 +417,23 @@ describe("外部引擎草稿握手", () => {
       new V4CommandExecutor(service).execute(
         envelope("createSession", { workspaceId: "/w", config: { engine: "codex" } }, "draft"),
       ),
-    ).rejects.toThrow("SIGTRAP");
+    ).rejects.toThrow("event store unavailable");
     expect(deleteSession).toHaveBeenCalledWith("s1");
+  });
+  it("后台握手失败不删除草稿：ACK 成功，错误只经 engineConfigState 投影", async () => {
+    const start = vi.fn(async () => {});
+    const app = makeApp({
+      runtime: { getSessionEngine: () => "codex", startExternalEngineSessionPreparation: start },
+    });
+    const record = makeRecord({ app, persistence: "deferred" });
+    const deleteSession = vi.fn(async () => {});
+    const result = await new V4CommandExecutor(
+      makeHost(record, { createSessionRecord: async () => ({ sessionId: "s1" }), deleteSession }),
+    ).execute(
+      envelope("createSession", { workspaceId: "/w", config: { engine: "codex" } }, "draft"),
+    );
+    expect(result).toEqual({ type: "createSession", sessionId: "s1" });
+    expect(deleteSession).not.toHaveBeenCalled();
   });
   it("草稿所选连接配置随首次准备绑定；未选择时交由 adapter 取上次使用配置", async () => {
     for (const config of [
@@ -424,7 +442,10 @@ describe("外部引擎草稿握手", () => {
     ]) {
       const prepare = vi.fn(async () => {});
       const app = makeApp({
-        runtime: { getSessionEngine: () => "claude-code", prepareExternalEngineSession: prepare },
+        runtime: {
+          getSessionEngine: () => "claude-code",
+          startExternalEngineSessionPreparation: prepare,
+        },
       });
       const record = makeRecord({ app, persistence: "deferred" });
       await new V4CommandExecutor(

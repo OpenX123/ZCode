@@ -384,7 +384,11 @@ export function externalEngineSessionInput(
       if (runtime.sessionPersisted)
         await runtime.sessionStore?.updateSession({ id: runtime.sessionId, externalSessionId: id });
     },
-    onConfigOptions: (options) => publishExternalEngineConfig(runtime, options, traceContext),
+    // 后台握手可能在删除草稿/关闭 Runtime 之后才返回；关闭边界之后的迟到配置一律丢弃。
+    onConfigOptions: async (options) => {
+      if (runtime.shuttingDown) return;
+      await publishExternalEngineConfig(runtime, options, traceContext);
+    },
     onUpdate: (update) => publishExternalEngineSessionUpdate(runtime, update, traceContext),
     onFailure: (notice) => publishExternalEngineFailureNotice(runtime, notice, traceContext),
     // 初始化尚无 turn，不能授予任何工具执行权限。
@@ -394,9 +398,12 @@ export function externalEngineSessionInput(
 export async function prepareExternalEngineSession(
   runtime: AgentRuntimeInternal,
   traceContext: TraceContext,
+  /** connecting 已写入事件后回调；createSession 据此先 ACK，握手留在后台。 */
+  onConnecting?: () => void,
 ): Promise<void> {
   if (runtime.shuttingDown) return;
   await publishExternalEngineConfigState(runtime, "connecting", traceContext);
+  onConnecting?.();
   if (runtime.shuttingDown) return;
   try {
     const input = externalEngineSessionInput(runtime, new AbortController().signal, traceContext);
