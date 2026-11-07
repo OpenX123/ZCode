@@ -790,7 +790,13 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       currentSelection: () => getRuntime().getSessionModelSelection(),
     });
     runtime = new AgentRuntime(sessionId, runtimeConfig, {
-      externalEnginePort: createExternalEnginePort({ env: options.env }),
+      externalEnginePort: createExternalEnginePort({
+        env: options.env,
+        logger,
+        ...(options.externalEngineProcessPool
+          ? { processPool: options.externalEngineProcessPool }
+          : {}),
+      }),
       ...(options.readSubagentRuntimeConfig
         ? {
             loadAgentDefinitions: async (input) => {

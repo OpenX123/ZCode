@@ -156,6 +156,22 @@ describe("SessionResidentPool", () => {
     expect(() => makePool(fake, options)).toThrow(expectedField);
   });
 
+  it("缺省闲置回收为 30 分钟（1.1 由 10 分钟延长），29 分钟时不回收", async () => {
+    const fake = makeFakeHost();
+    const clock = createTestClock(1_000);
+    fake.sessions.set("sess-idle", idleFacts());
+    const pool = makePool(fake, { now: clock.now });
+    pool.rebalance();
+    clock.advance(29 * 60 * 1_000);
+    pool.rebalance();
+    expect(fake.sessions.has("sess-idle")).toBe(true);
+    clock.advance(60 * 1_000);
+    pool.rebalance();
+    await pool.waitForDeactivation("sess-idle");
+    expect(sessionIds(fake.deactivated)).toEqual(["sess-idle"]);
+    expect(fake.deactivated[0]?.decision.idleTimeoutMs).toBe(30 * 60 * 1_000);
+  });
+
   it("eligible 首次出现只开始 TTL，超时后即使低于 target 也回收", async () => {
     const fake = makeFakeHost();
     const clock = createTestClock(1_000);

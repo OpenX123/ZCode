@@ -11,5 +11,7 @@ export { createNodeExecutionAdapter, NodeExecutionAdapter } from "./node-executi
 export { decodeExecutionOutputBuffer } from "./outputEncoding.js";
 export {
   createExternalEnginePort,
+  createExternalEngineProcessPool,
+  type ExternalEngineProcessPool,
   runExternalEngineConnectionTest,
 } from "../external-engine/index.js";

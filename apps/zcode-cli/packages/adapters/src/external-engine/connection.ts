@@ -66,6 +66,14 @@ export class AcpConnection {
   private loadingHistory = false;
   private forking = false;
   private initialUpdates: Array<{ sessionId: unknown; update: JsonObject }> = [];
+  private initialized?: Promise<JsonObject>;
+  /** 最近一次握手的阶段耗时（毫秒），只供 port 写本地性能事件，不含任何正文。 */
+  lastHandshake?: {
+    method: string;
+    initializeMs: number;
+    sessionMs: number;
+    configRestoreMs: number;
+  };
   get healthy(): boolean {
     return !this.failure;
   }
@@ -293,6 +301,22 @@ export class AcpConnection {
       }
     });
   }
+  /**
+   * initialize 与连接级 setup（Codex API Key 的 providers/set），每个进程只做一次。
+   * 预热备用进程预先完成；会话领用后 execute 直接复用缓存的能力声明，不重复握手。
+   */
+  initialize(engine: ExternalEngineSessionInput["engine"]): Promise<JsonObject> {
+    this.initialized ??= (async () => {
+      const initialized = await this.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: clientCapabilities(engine),
+        clientInfo: { name: "ycode", version: "1" },
+      });
+      await this.setup?.(this);
+      return initialized;
+    })();
+    return this.initialized;
+  }
   async prepare(input: ExternalEngineSessionInput): Promise<void> {
     await this.execute(input);
   }
@@ -358,12 +382,9 @@ export class AcpConnection {
         }, HANDSHAKE_TIMEOUT_MS);
         timer.unref();
         try {
-          const initialized = await this.request("initialize", {
-            protocolVersion: 1,
-            clientCapabilities: clientCapabilities(input.engine),
-            clientInfo: { name: "ycode", version: "1" },
-          });
-          await this.setup?.(this);
+          const initializeStartedAt = Date.now();
+          const initialized = await this.initialize(input.engine);
+          const sessionStartedAt = Date.now();
           const capabilities = initialized.agentCapabilities as
             | { loadSession?: boolean; sessionCapabilities?: { resume?: unknown; fork?: unknown } }
             | undefined;
@@ -417,6 +438,7 @@ export class AcpConnection {
             );
           this.externalSessionId = id;
           await input.onSession(id);
+          const configStartedAt = Date.now();
           let restoredOptions = await this.initialConfigOptions(
             configOptions(response.configOptions),
           );
@@ -467,6 +489,12 @@ export class AcpConnection {
               method: "session/set_config_option",
             });
           await input.onConfigOptions(restoredOptions);
+          this.lastHandshake = {
+            method,
+            initializeMs: sessionStartedAt - initializeStartedAt,
+            sessionMs: configStartedAt - sessionStartedAt,
+            configRestoreMs: Date.now() - configStartedAt,
+          };
           this.notifications = this.notifications.then(async () => {
             for (const update of this.initialUpdates) await this.update(update);
             this.initialUpdates = [];
