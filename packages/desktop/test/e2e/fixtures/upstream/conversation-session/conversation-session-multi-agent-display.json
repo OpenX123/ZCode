@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-multi-agent-display",
+  "spec": "./test/e2e/conversation-session/manual-review/pending/conversation-session-multi-agent-display.test.ts",
+  "fixtures": [
+    {
+      "id": "multi-agent-display-parent-launch",
+      "description": "父模型在同一回复中并行启动 7 个 Agent（Explore 与 general-purpose 混合），覆盖合并派发行、胶囊头像串与轮廓变体。",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-tool-use",
+        "source": "synthetic",
+        "syntheticReason": "固定产生 7 个并行 Agent tool calls，稳定覆盖 child persist 与父投影发布的竞态窗口。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_MULTI_AGENT_DISPLAY_PARENT"],
+        "bodyIncludes": ["E2E_MULTI_AGENT_DISPLAY_PARENT", "E2E_MULTI_AGENT_DISPLAY_PARENT_DONE"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUses": [
+          {
+            "id": "toolu_e2e_multi_agent_display_01",
+            "name": "Agent",
+            "input": {
+              "description": "E2E display child 01",
+              "prompt": "E2E_MULTI_AGENT_DISPLAY_CHILD_01: wait for the controlled response and return it.",
+              "subagent_type": "Explore"
+            }
+          },
+          {
+            "id": "toolu_e2e_multi_agent_display_02",
+            "name": "Agent",
+            "input": {
+              "description": "E2E display child 02",
+              "prompt": "E2E_MULTI_AGENT_DISPLAY_CHILD_02: wait for the controlled response and return it.",
+              "subagent_type": "general-purpose"
+            }
+          },
+          {
+            "id": "toolu_e2e_multi_agent_display_03",
+            "name": "Agent",
+            "input": {
+              "description": "E2E display child 03",
+              "prompt": "E2E_MULTI_AGENT_DISPLAY_CHILD_03: wait for the controlled response and return it.",
+              "subagent_type": "general-purpose"
+            }
+          },
+          {
+            "id": "toolu_e2e_multi_agent_display_04",
+            "name": "Agent",
+            "input": {
+              "description": "E2E display child 04",
+              "prompt": "E2E_MULTI_AGENT_DISPLAY_CHILD_04: wait for the controlled response and return it.",
+              "subagent_type": "Explore"
+            }
+          },
+          {
+            "id": "toolu_e2e_multi_agent_display_05",
+            "name": "Agent",
+            "input": {
+              "description": "E2E display child 05",
+              "prompt": "E2E_MULTI_AGENT_DISPLAY_CHILD_05: wait for the controlled response and return it.",
+              "subagent_type": "general-purpose"
+            }
+          },
+          {
+            "id": "toolu_e2e_multi_agent_display_06",
+            "name": "Agent",
+            "input": {
+              "description": "E2E display child 06",
+              "prompt": "E2E_MULTI_AGENT_DISPLAY_CHILD_06: wait for the controlled response and return it.",
+              "subagent_type": "general-purpose"
+            }
+          },
+          {
+            "id": "toolu_e2e_multi_agent_display_07",
+            "name": "Agent",
+            "input": {
+              "description": "E2E display child 07",
+              "prompt": "E2E_MULTI_AGENT_DISPLAY_CHILD_07: wait for the controlled response and return it.",
+              "subagent_type": "general-purpose"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "multi-agent-display-child-controlled-window",
+      "description": "7 个 child 的模型请求保持同一个可观察 running 窗口。",
+      "metadata": {
+        "kind": "subagent",
+        "timingPolicy": "controlled-stream",
+        "source": "synthetic",
+        "syntheticReason": "真实模型完成速度不可控；固定延迟让 E2E 能在 child 全部 running 时断言并切换任务。"
+      },
+      "maxMatches": 7,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_MULTI_AGENT_DISPLAY_CHILD_"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "delayMs": 15000,
+        "text": {
+          "id": "upstream-e2e-multi-agent-display-child-done",
+          "text": "E2E_MULTI_AGENT_DISPLAY_CHILD_DONE"
+        }
+      }
+    },
+    {
+      "id": "multi-agent-display-parent-final",
+      "description": "父模型收到全部 7 个 child 结果后结束。",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "固定父 continuation 收口，证明 7 个真实 child 都已完成且 parent 可恢复 idle。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": [
+          "E2E_MULTI_AGENT_DISPLAY_PARENT",
+          "toolu_e2e_multi_agent_display_01",
+          "toolu_e2e_multi_agent_display_02",
+          "toolu_e2e_multi_agent_display_03",
+          "toolu_e2e_multi_agent_display_04",
+          "toolu_e2e_multi_agent_display_05",
+          "toolu_e2e_multi_agent_display_06",
+          "toolu_e2e_multi_agent_display_07",
+          "E2E_MULTI_AGENT_DISPLAY_CHILD_DONE"
+        ],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "upstream-e2e-multi-agent-display-parent-done",
+          "text": "E2E_MULTI_AGENT_DISPLAY_PARENT_DONE"
+        }
+      }
+    }
+  ]
+}

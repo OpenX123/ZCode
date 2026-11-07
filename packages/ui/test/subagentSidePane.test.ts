@@ -23,6 +23,15 @@ vi.mock("@/v4/SessionPane.js", async () => {
   };
 });
 
+// 头部（父/子投影、头像、停止）由 subagentSessionHeader.test.ts 单独覆盖；这里只验证只读 pane 装配。
+vi.mock("@/subagent-display/index.js", async () => {
+  const React = await import("react");
+  return {
+    SubagentSessionHeader: () =>
+      React.createElement("header", { "data-testid": "mock-subagent-session-header" }),
+  };
+});
+
 vi.mock("@/v4/V4ConversationContext.js", async () => {
   const React = await import("react");
   return {
@@ -240,7 +249,7 @@ describe("subagent side pane tabs", () => {
     });
     const tab = state.tabs.find((candidate) => candidate.type === "subagent-session");
 
-    renderToStaticMarkup(
+    const html = renderToStaticMarkup(
       createElement(SubagentSessionSidePane, {
         tab: tab!,
         focused: true,
@@ -248,6 +257,10 @@ describe("subagent side pane tabs", () => {
       }),
     );
 
+    // 头部位于只读对话之上，且与对话同处一个 provider（共享父/子 lease）。
+    expect(html.indexOf("mock-subagent-session-header")).toBeLessThan(
+      html.indexOf("mock-session-pane"),
+    );
     expect(paneState.props).toMatchObject({
       allowWorkspaceFileRewind: true,
       compactForRemoteControl: false,

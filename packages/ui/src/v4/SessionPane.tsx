@@ -141,6 +141,7 @@ import {
   resolveSoleRunningWorkflowRunTarget,
 } from "@/v4/conversationStatusPanelModel.js";
 import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversationStatusPanelModel.js";
+import { buildSubagentAvatarIndex } from "@/subagent-display/index.js";
 import {
   buildWorkflowRunByRunId,
   buildWorkflowSaveCandidatesByRunId,
@@ -2006,6 +2007,12 @@ export function SessionPane({
     if (result !== "sent") throw new Error(`failed turn resend not sent: ${result}`);
   }, []);
 
+  // 头像序号表按清单内容 memo：每次 subagents 投影都会换新数组，但只有成员变化才需要重渲染所有行。
+  const subagentManifestKey = (snapshot?.subagents?.childSessionIds ?? []).join("\n");
+  const subagentAvatarIndex = useMemo(
+    () => buildSubagentAvatarIndex(subagentManifestKey ? subagentManifestKey.split("\n") : []),
+    [subagentManifestKey],
+  );
   const rowContext = useMemo<ConversationRowRenderContext>(
     () => ({
       workspacePath,
@@ -2040,6 +2047,7 @@ export function SessionPane({
       onOpenFileLink,
       onOpenSubagentSession:
         runtimeReady && onOpenSubagentSession ? handleOpenSubagentSession : undefined,
+      subagentAvatarIndex,
       onOpenPlanDetail: runtimeReady && onOpenPlanDetail ? handleOpenPlanDetail : undefined,
       onOpenWorkflowRun: runtimeReady && onOpenWorkflowRun ? handleOpenWorkflowRun : undefined,
       onOpenWorkflowActor:
@@ -2122,6 +2130,7 @@ export function SessionPane({
       onOpenFileLink,
       onOpenSubagentSession,
       handleOpenSubagentSession,
+      subagentAvatarIndex,
       onOpenPlanDetail,
       handleOpenPlanDetail,
       onOpenWorkflowRun,
@@ -4213,6 +4222,7 @@ export function SessionPane({
               plan={snapshot?.plan ?? null}
               backgroundWorks={snapshot?.backgroundWorks ?? []}
               runningSubagents={subagents.running}
+              subagentChildSessionIds={subagents.childSessionIds}
               workflowRuns={snapshot?.workflowRuns?.runs ?? []}
               endedSubagentCount={subagents.endedTotal}
               rootSessionId={rootSessionId ?? sessionId ?? undefined}

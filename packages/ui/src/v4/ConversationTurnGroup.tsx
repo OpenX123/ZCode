@@ -55,7 +55,11 @@ import {
   type ConversationAssistantWorkRenderItem,
 } from "@/v4/conversationAssistantWorkItems.js";
 import type { ConversationCuaGroupEvent } from "@/v4/conversationCuaGroups.js";
-import { ConversationAgentToolCallRow } from "@/v4/ConversationAgentToolCallRow.js";
+import {
+  ConversationAgentCard,
+  ConversationAgentSpawnRow,
+  groupConsecutiveAgentSpawns,
+} from "@/subagent-display/index.js";
 import { ConversationFileSummaryPanel } from "@/v4/ConversationFileSummaryPanel.js";
 import {
   WorkflowNotificationToolRow,
@@ -409,24 +413,27 @@ function ConversationAssistantWorkItems({
   const firstReasoningRowId = context.messageStreamFirstReasoningRowId;
   const items = useMemo(
     () =>
-      buildAssistantWorkRenderItems(
-        rows,
-        {
-          messageStreamShowReasoning: showReasoning,
-          ...(firstReasoningRowId !== undefined
-            ? { messageStreamFirstReasoningRowId: firstReasoningRowId }
-            : {}),
-        },
-        {
-          stageTailIsRunning,
-          enableCuaGrouping: ENABLE_CUA_TOOL_CALL_GROUPING,
-          enableExploreGrouping:
-            context.toolGroupingExploreEnabled ?? ENABLE_EXPLORE_TOOL_CALL_GROUPING,
-          enableTerminalGrouping:
-            context.toolGroupingTerminalEnabled ?? ENABLE_TERMINAL_TOOL_CALL_GROUPING,
-          enableChangesGrouping:
-            context.toolGroupingChangesEnabled ?? ENABLE_CHANGES_TOOL_CALL_GROUPING,
-        },
+      // 同一轮相邻 ≥2 个派发合并为一行（docs/desktop/multi-agent-display-spec.md）；只用于实时时间线。
+      groupConsecutiveAgentSpawns(
+        buildAssistantWorkRenderItems(
+          rows,
+          {
+            messageStreamShowReasoning: showReasoning,
+            ...(firstReasoningRowId !== undefined
+              ? { messageStreamFirstReasoningRowId: firstReasoningRowId }
+              : {}),
+          },
+          {
+            stageTailIsRunning,
+            enableCuaGrouping: ENABLE_CUA_TOOL_CALL_GROUPING,
+            enableExploreGrouping:
+              context.toolGroupingExploreEnabled ?? ENABLE_EXPLORE_TOOL_CALL_GROUPING,
+            enableTerminalGrouping:
+              context.toolGroupingTerminalEnabled ?? ENABLE_TERMINAL_TOOL_CALL_GROUPING,
+            enableChangesGrouping:
+              context.toolGroupingChangesEnabled ?? ENABLE_CHANGES_TOOL_CALL_GROUPING,
+          },
+        ),
       ),
     [
       context.toolGroupingChangesEnabled,
@@ -460,7 +467,9 @@ function ConversationAssistantWorkItems({
             assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
           />
         ) : item.kind === "agentToolCall" ? (
-          <ConversationAgentToolCallRow key={item.key} item={item} context={context} />
+          <ConversationAgentCard key={item.key} item={item} context={context} />
+        ) : item.kind === "agentSpawnGroup" ? (
+          <ConversationAgentSpawnRow key={item.key} item={item} context={context} />
         ) : item.kind === "exploreGroup" ? (
           <ConversationExploreGroupRow key={item.key} item={item} context={context} />
         ) : (

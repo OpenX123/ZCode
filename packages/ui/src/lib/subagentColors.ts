@@ -1,5 +1,8 @@
 import type { AgentColor } from "@zcode/shared";
 
+// 按类型（或智能体定义里配置的 color）着色的只是类型名文字；头像颜色只按实例序号取
+// FACE_COLORS（DESIGN.md「Agent avatars」），这里的类型色不得用于头像。
+
 export const SUBAGENT_COLORS: AgentColor[] = [
   "yellow",
   "red",

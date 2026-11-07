@@ -340,6 +340,22 @@ export function resolveSoleRunningWorkflowRunTarget(
   return workflowRunOpenTarget(model.runningWorkflowRuns[0]!);
 }
 
+/**
+ * 子智能体的停止控制：只接受 running、kind=subagent 且 childSessionId 唯一的 backgroundWork；
+ * 同一 childSessionId 出现多次即记为 null（宁可不给 Stop，也不按标题或时间猜）。
+ * 状态面板行与右侧详情头部共用这一条规则（docs/desktop/multi-agent-display-spec.md）。
+ */
+export function buildSubagentControlWorkIndex(
+  backgroundWorks: readonly BackgroundWorkSummary[] | undefined,
+): Map<string, BackgroundWorkSummary | null> {
+  const index = new Map<string, BackgroundWorkSummary | null>();
+  for (const work of backgroundWorks ?? []) {
+    if (work.status !== "running" || work.kind !== "subagent" || !work.childSessionId) continue;
+    index.set(work.childSessionId, index.has(work.childSessionId) ? null : work);
+  }
+  return index;
+}
+
 export function buildConversationStatusPanelModel(
   input: BuildConversationStatusPanelModelInput,
 ): ConversationStatusPanelModel {
@@ -349,7 +365,10 @@ export function buildConversationStatusPanelModel(
   const plan = buildPlanModel(input.plan);
   const runningBashWorks: BackgroundWorkSummary[] = [];
   const workflowWorkByWorkId = new Map<string, BackgroundWorkSummary>();
-  const subagentControlByChildSessionId = new Map<string, BackgroundWorkSummary | null>();
+  // 目录投影接管 Agent 展示后，旧 backgroundWorks 的 workId/cancellable
+  // 没有再关联回来，导致 Stop 入口消失。只接受唯一 childSessionId 精确匹配；重复或
+  // 缺失身份时宁可不显示控制，也不能按标题、时间猜测并停止错误任务。
+  const subagentControlByChildSessionId = buildSubagentControlWorkIndex(input.backgroundWorks);
   for (const work of input.backgroundWorks ?? []) {
     if (work.kind === "workflow") {
       // "workflow"（workflow run）曾与 bash 同列在 Terminals 下，那是保住停止入口的已记录错标；
@@ -365,15 +384,6 @@ export function buildConversationStatusPanelModel(
     if (work.status !== "running") continue;
     if (work.kind === "bash") {
       runningBashWorks.push(work);
-    } else if (work.kind === "subagent" && work.childSessionId) {
-      // 目录投影接管 Agent 展示后，旧 backgroundWorks 的 workId/cancellable
-      // 没有再关联回来，导致 Stop 入口消失。只接受唯一 childSessionId 精确匹配；重复或
-      // 缺失身份时宁可不显示控制，也不能按标题、时间猜测并停止错误任务。
-      const existing = subagentControlByChildSessionId.get(work.childSessionId);
-      subagentControlByChildSessionId.set(
-        work.childSessionId,
-        existing === undefined ? work : null,
-      );
     }
   }
   const runningSubagentWorks: ConversationStatusPanelRunningSubagent[] = (

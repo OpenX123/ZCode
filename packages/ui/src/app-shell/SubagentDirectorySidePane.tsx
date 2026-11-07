@@ -19,11 +19,14 @@ import type {
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 import type { PaneWorkspaceScope } from "@/v4/paneLayoutStore.js";
 import type { SessionLease } from "@/v4/sessionDataLayer.js";
-import {
-  V4PaneConversationProvider,
-  useV4Conversation,
-} from "@/v4/V4ConversationContext.js";
+import { V4PaneConversationProvider, useV4Conversation } from "@/v4/V4ConversationContext.js";
 import { useConversationProjection } from "@/v4/useConversationProjection.js";
+import {
+  buildSubagentAvatarIndex,
+  resolveSubagentAvatarIndexes,
+  SubagentFace,
+  type SubagentDisplayStatus,
+} from "@/subagent-display/index.js";
 
 type DirectoryItem = RunningSubagentSummary | ZCodeSessionEndedSubagent;
 
@@ -46,7 +49,7 @@ export function buildSubagentDirectoryOpenRequest(
 }
 
 function StatusIcon({ status }: { status: DirectoryItem["status"] }) {
-  const className = "size-4 shrink-0";
+  const className = "size-3.5 shrink-0";
   switch (status) {
     case "running":
       return <LoaderCircleIcon aria-hidden className={`${className} animate-spin`} />;
@@ -64,10 +67,22 @@ function StatusIcon({ status }: { status: DirectoryItem["status"] }) {
   }
 }
 
+const FACE_STATUS: Record<DirectoryItem["status"], SubagentDisplayStatus> = {
+  running: "running",
+  waiting: "waiting",
+  blocked: "blocked",
+  success: "done",
+  failed: "failed",
+  cancelled: "cancelled",
+  lost: "failed",
+};
+
 const DirectoryRow = memo(function DirectoryRow({
+  avatarIndex,
   item,
   onOpen,
 }: {
+  avatarIndex: number;
   item: DirectoryItem;
   onOpen: (item: DirectoryItem) => void;
 }) {
@@ -79,13 +94,18 @@ const DirectoryRow = memo(function DirectoryRow({
       className="flex w-full min-w-0 items-start gap-3 rounded-lg px-3 py-2.5 text-left text-ui-base transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
       onClick={() => onOpen(item)}
     >
-      <span className="mt-0.5 text-foreground-subtle">
-        <StatusIcon status={item.status} />
-      </span>
+      <SubagentFace
+        avatarIndex={avatarIndex}
+        name={item.title}
+        size={20}
+        status={FACE_STATUS[item.status]}
+        subagentType={item.subagentType}
+      />
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate font-medium text-foreground">{item.title}</span>
-          <span className="shrink-0 text-ui-sm text-foreground-subtlest">
+          <span className="inline-flex shrink-0 items-center gap-1 text-ui-sm text-foreground-subtlest">
+            <StatusIcon status={item.status} />
             {intl.formatMessage({ id: `subagentDirectory.status.${item.status}` })}
           </span>
         </span>
@@ -121,10 +141,7 @@ export const SubagentDirectorySidePane = memo(function SubagentDirectorySidePane
   );
   return (
     <V4PaneConversationProvider scope={scope}>
-      <SubagentDirectoryContents
-        tab={tab}
-        onOpenSubagentSession={onOpenSubagentSession}
-      />
+      <SubagentDirectoryContents tab={tab} onOpenSubagentSession={onOpenSubagentSession} />
     </V4PaneConversationProvider>
   );
 });
@@ -156,6 +173,18 @@ const SubagentDirectoryContents = memo(function SubagentDirectoryContents({
   });
   const running = subagents?.running ?? EMPTY_RUNNING;
   const endedTotal = subagents?.endedTotal ?? 0;
+  const avatarIndex = useMemo(
+    () => buildSubagentAvatarIndex(subagents?.childSessionIds),
+    [subagents?.childSessionIds],
+  );
+  const runningIndexes = resolveSubagentAvatarIndexes(
+    avatarIndex,
+    running.map((item) => item.childSessionId),
+  );
+  const endedIndexes = resolveSubagentAvatarIndexes(
+    avatarIndex,
+    directory.ended.items.map((item) => item.childSessionId),
+  );
   const handleOpen = (item: DirectoryItem) => {
     onOpenSubagentSession(buildSubagentDirectoryOpenRequest(tab, item));
   };
@@ -173,8 +202,13 @@ const SubagentDirectoryContents = memo(function SubagentDirectoryContents({
             {intl.formatMessage({ id: "subagentDirectory.running" })} · {running.length}
           </h3>
           {running.length > 0 ? (
-            running.map((item) => (
-              <DirectoryRow key={item.childSessionId} item={item} onOpen={handleOpen} />
+            running.map((item, position) => (
+              <DirectoryRow
+                key={item.childSessionId}
+                avatarIndex={runningIndexes[position]!}
+                item={item}
+                onOpen={handleOpen}
+              />
             ))
           ) : (
             <p className="px-3 py-3 text-ui-base text-foreground-subtlest">
@@ -187,8 +221,13 @@ const SubagentDirectoryContents = memo(function SubagentDirectoryContents({
           <h3 className="px-3 pb-1.5 text-ui-sm font-medium text-foreground-subtlest">
             {intl.formatMessage({ id: "subagentDirectory.ended" })} · {endedTotal}
           </h3>
-          {directory.ended.items.map((item) => (
-            <DirectoryRow key={item.childSessionId} item={item} onOpen={handleOpen} />
+          {directory.ended.items.map((item, position) => (
+            <DirectoryRow
+              key={item.childSessionId}
+              avatarIndex={endedIndexes[position]!}
+              item={item}
+              onOpen={handleOpen}
+            />
           ))}
           {directory.ended.nextCursor ? (
             <div className="px-3 pt-2">

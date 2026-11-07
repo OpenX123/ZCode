@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { TID_V4_ROW, TID_V4_SUBAGENT_OPEN_SIDE_PANE, testId } from "@zcode/shared/test-ids";
 import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { getAgentPrimaryText } from "@/ToolCallBlocks/renderers/agentHelpers.js";
@@ -37,9 +37,18 @@ export function openSubagentSessionFromSummary({
 export function ConversationAgentToolCallRow({
   item,
   context,
+  agentIcon,
+  inSpawnGroup = false,
 }: {
   item: Extract<ConversationAssistantWorkRenderItem, { kind: "agentToolCall" }>;
   context: ConversationRowRenderContext;
+  /** 宿主画好的子智能体头像（实例序号 + 类型）；缺席时沿用 Bot 图标。 */
+  agentIcon?: ReactNode;
+  /**
+   * 位于合并派发行内：直开入口的 test id 归派发行的名称按钮，这里不再重复，
+   * 保证每个 child 在 DOM 中只有一个 `v4-subagent-open-side-pane-*` 入口。
+   */
+  inSpawnGroup?: boolean;
 }) {
   const toolCallNode = item.node;
   const childSessionId = item.subagentRow?.childSessionId;
@@ -57,10 +66,12 @@ export function ConversationAgentToolCallRow({
       canOpenChildSession && childSessionId
         ? {
             onActivate: handleOpenChildSession,
-            testId: testId(TID_V4_SUBAGENT_OPEN_SIDE_PANE, childSessionId),
+            ...(inSpawnGroup
+              ? {}
+              : { testId: testId(TID_V4_SUBAGENT_OPEN_SIDE_PANE, childSessionId) }),
           }
         : undefined,
-    [canOpenChildSession, childSessionId, handleOpenChildSession],
+    [canOpenChildSession, childSessionId, handleOpenChildSession, inSpawnGroup],
   );
 
   // Agent 工具行和普通工具行同属工作流，不能在配对壳上额外加 px-4，
@@ -83,6 +94,7 @@ export function ConversationAgentToolCallRow({
         onOpenAutomationsMain={context.onOpenAutomationsMain}
         agentSummaryAction={agentSummaryAction}
         authoritativeAgentType={item.subagentRow?.subagentType}
+        agentIcon={agentIcon}
       />
     </div>
   );

@@ -11,6 +11,7 @@ import type { WorkflowRunSettingsChange } from "@/components/workflow-timeline/w
 import type { WorkflowDraftPosition, WorkflowRunCardSummary } from "@/ToolCallBlocks/shared.js";
 import type { WorkflowFillGraph } from "@/v4/workflowRunCardJoin.js";
 import type { Theme } from "@/useTheme.js";
+import type { SubagentAvatarIndex } from "@/subagent-display/contract.js";
 import type { ModelSelectionView } from "@zcode/services";
 import type { ZCodeWorkflowsForRunCandidate } from "@zcode/shared";
 import type { ConversationAttachmentReadParams, ConversationTransport } from "@/v4/transport.js";
@@ -91,6 +92,11 @@ export interface ConversationRowRenderContext {
   /** Assistant markdown 本地文件链接入口：由 shell 统一 stat 后分流到预览或文件树。 */
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenSubagentSession?: (request: OpenSubagentSideTabRequest) => void;
+  /**
+   * 父会话 `snapshot.subagents.childSessionIds` 派生的头像序号表（按清单内容 memo）；
+   * Agent 卡与派发行用它取实例颜色（docs/desktop/multi-agent-display-spec.md）。
+   */
+  subagentAvatarIndex?: SubagentAvatarIndex;
   onOpenPlanDetail?: (request: OpenPlanDetailSideTabRequest) => void;
   /** 插件 UI：内联卡片请求在侧栏打开；RowView 补 parentSessionId 与 workspace 字段。 */
   onOpenWorkflowRun?: (request: OpenWorkflowRunSideTabRequest) => void;

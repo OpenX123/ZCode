@@ -16,6 +16,13 @@ import { uiMemoryDiagnosticsRegistry } from "@/lib/memoryDiagnostics.js";
 const toolLayoutOpenState = new Map<string, boolean>();
 // 内存诊断计数器：该表按 toolId 只增不减，先落日志。
 uiMemoryDiagnosticsRegistry.register("toolLayout", () => ({ openState: toolLayoutOpenState.size }));
+/**
+ * 预置一张工具卡的展开态（只影响之后挂载的卡）。多智能体派发行点击无子会话的成员时，
+ * 先预置再挂载/重挂该成员的 Agent 卡，使它直接展开行内详情（docs/desktop/multi-agent-display-spec.md）。
+ */
+export function presetToolLayoutOpen(persistOpenKey: string): void {
+  toolLayoutOpenState.set(persistOpenKey, true);
+}
 const TOOL_CONTENT_COLLAPSE_UNMOUNT_DELAY_MS = 300;
 const TOOL_CONTENT_SHELL_CLASSNAME = "text-popover-foreground outline-none";
 const TOOL_CONTENT_SPACING_CLASSNAME = "pt-2";

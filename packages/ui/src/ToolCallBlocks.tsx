@@ -101,6 +101,7 @@ function ToolCallBlockComponent({
   animateDiffCountOnMount = false,
   agentSummaryAction,
   authoritativeAgentType,
+  agentIcon,
   streamingEntranceActive = false,
   streamingEntranceKeyPrefix = "tool",
   cuaGroupEvents,
@@ -146,6 +147,7 @@ function ToolCallBlockComponent({
   animateDiffCountOnMount?: boolean;
   agentSummaryAction?: ToolCallBlockRenderContext["agentSummaryAction"];
   authoritativeAgentType?: ToolCallBlockRenderContext["authoritativeAgentType"];
+  agentIcon?: ToolCallBlockRenderContext["agentIcon"];
   streamingEntranceActive?: boolean;
   streamingEntranceKeyPrefix?: string;
   cuaGroupEvents?: readonly ConversationCuaGroupEvent[];
@@ -316,6 +318,7 @@ function ToolCallBlockComponent({
       animateDiffCountOnMount,
       agentSummaryAction,
       authoritativeAgentType,
+      agentIcon,
       onOpenCodeViewer: toolPreviewCodeViewer,
       onOpenFileLink,
       onOpenBrowserUrl,
@@ -338,6 +341,7 @@ function ToolCallBlockComponent({
       isOfficeMode,
       agentSummaryAction,
       authoritativeAgentType,
+      agentIcon,
       childToolList,
       codePreviewSettings,
       cuaAppIconClassName,

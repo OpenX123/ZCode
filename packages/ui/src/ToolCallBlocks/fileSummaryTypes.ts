@@ -256,6 +256,8 @@ export interface ToolCallBlockRenderContext {
   };
   /** v4 已配对 subagentRow 投影出的 runtime 权威类型；流式 input 尚未完整时优先使用。 */
   authoritativeAgentType?: string;
+  /** 宿主按实例序号与类型画好的子智能体头像；缺席时 Agent 卡沿用 Bot 图标。 */
+  agentIcon?: ReactNode;
   /** ExitPlanMode 计划卡片：由会话宿主绑定 parent/session scope 后打开 Side Pane。 */
   onOpenPlanDetail?: (request: Omit<OpenPlanDetailSideTabRequest, "parentSessionId">) => void;
   /**

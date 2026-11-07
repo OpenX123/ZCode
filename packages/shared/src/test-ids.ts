@@ -707,6 +707,18 @@ export const TID_V4_SUBAGENT_DRILLDOWN = "v4-subagent-drilldown";
 /** @deprecated subagent 详情已迁移到右侧 tabs；保留常量避免外部旧测试编译失败。 */
 export const TID_V4_SUBAGENT_OPEN_SPLIT = "v4-subagent-open-split";
 export const TID_V4_SUBAGENT_OPEN_SIDE_PANE = "v4-subagent-open-side-pane";
+/** v4 同一轮相邻派发合并行（动态后缀为首个成员 rowId） */
+export const TID_V4_SUBAGENT_SPAWN_GROUP = "v4-subagent-spawn-group";
+/** 合并行中无子会话成员的名称按钮（动态后缀为 toolCallId）；有子会话时用 TID_V4_SUBAGENT_OPEN_SIDE_PANE */
+export const TID_V4_SUBAGENT_SPAWN_MEMBER = "v4-subagent-spawn-member";
+/** 合并行展开 / 收起逐个 Agent 卡（动态后缀为首个成员 rowId） */
+export const TID_V4_SUBAGENT_SPAWN_TOGGLE = "v4-subagent-spawn-toggle";
+/** 右侧子智能体详情头部 */
+export const TID_V4_SUBAGENT_SESSION_HEADER = "v4-subagent-session-header";
+/** 右侧子智能体详情头部的停止按钮（父会话 cancelBackgroundWork） */
+export const TID_V4_SUBAGENT_SESSION_STOP = "v4-subagent-session-stop";
+/** 状态胶囊的运行中智能体项（头像串 + 计数） */
+export const TID_CHAT_SUMMARY_RUNNING_AGENTS = "chat-summary-running-agents";
 /** v4 userInput 行附件列表（动态后缀为 rowId） */
 export const TID_V4_ROW_ATTACHMENTS = "v4-row-attachments";
 

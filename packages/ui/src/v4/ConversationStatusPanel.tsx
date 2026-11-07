@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import {
   TID_CHAT_SUMMARY_PANEL,
+  TID_CHAT_SUMMARY_RUNNING_AGENTS,
   TID_V4_BACKGROUND_WORK_CANCEL,
   TID_V4_BACKGROUND_WORK_ITEM,
   testId,
@@ -102,6 +103,28 @@ import {
   buildConversationGoalIterationSummaries,
   getConversationGoalElapsedSeconds,
 } from "@/v4/conversationGoalSummaryModel.js";
+import {
+  buildSubagentAvatarIndex,
+  resolveSubagentAvatarIndexes,
+  SubagentFace,
+  SubagentFaceStack,
+  type SubagentAvatarIndex,
+} from "@/subagent-display/index.js";
+
+/** 运行中子智能体的展示序：按开始时间升序（与智能体分区行序一致），头像序号来自父会话清单。 */
+function orderRunningSubagents(
+  subagents: readonly ConversationStatusPanelRunningSubagent[],
+  avatarIndex: SubagentAvatarIndex,
+) {
+  const ordered = [...subagents].sort(
+    (left, right) => (left.startedAt ?? 0) - (right.startedAt ?? 0),
+  );
+  const indexes = resolveSubagentAvatarIndexes(
+    avatarIndex,
+    ordered.map((subagent) => subagent.childSessionId),
+  );
+  return ordered.map((subagent, position) => ({ subagent, avatarIndex: indexes[position]! }));
+}
 
 export interface ConversationStatusPanelProps {
   workspacePath: string;
@@ -116,6 +139,8 @@ export interface ConversationStatusPanelProps {
   plan?: PlanState | null;
   backgroundWorks?: readonly BackgroundWorkSummary[];
   runningSubagents?: readonly ZCodeSessionRunningSubagent[];
+  /** 父会话 `snapshot.subagents.childSessionIds`：头像颜色按其中的派发顺序取（不散列名字）。 */
+  subagentChildSessionIds?: readonly string[];
   /** 本会话 `snapshot.workflowRuns.runs`；与 backgroundWorks 在模型层按 workId ≡ runId 联接。 */
   workflowRuns?: readonly WorkflowRunState[];
   /**
@@ -1442,6 +1467,7 @@ function WorkflowStatusSection({
 }
 
 function SubagentStatusSection({
+  avatarIndex,
   endedSubagentCount,
   onCancelBackgroundWork,
   onOpenChange,
@@ -1454,6 +1480,7 @@ function SubagentStatusSection({
   title,
   subagents,
 }: {
+  avatarIndex: SubagentAvatarIndex;
   endedSubagentCount: number;
   onCancelBackgroundWork?: (workId: string) => void;
   onOpenChange?: (open: boolean) => void;
@@ -1469,8 +1496,8 @@ function SubagentStatusSection({
   const { intl } = useZCodeIntl();
   const [now, setNow] = useState(() => Date.now());
   const ordered = useMemo(
-    () => [...subagents].sort((left, right) => (left.startedAt ?? 0) - (right.startedAt ?? 0)),
-    [subagents],
+    () => orderRunningSubagents(subagents, avatarIndex),
+    [avatarIndex, subagents],
   );
   useEffect(() => {
     if (subagents.length === 0) return;
@@ -1511,7 +1538,7 @@ function SubagentStatusSection({
       }
     >
       <ul className="space-y-0">
-        {ordered.map((subagent) => {
+        {ordered.map(({ subagent, avatarIndex: faceIndex }) => {
           const request = buildRunningSubagentOpenRequest({
             parentSessionId,
             rootSessionId,
@@ -1549,7 +1576,14 @@ function SubagentStatusSection({
                   className="absolute inset-0 z-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-input-border-focused)]"
                 />
               ) : null}
-              <BotIcon className="pointer-events-none relative z-[1] mt-0.5 size-4 shrink-0 text-[var(--color-foreground-subtle)]" />
+              <SubagentFace
+                avatarIndex={faceIndex}
+                className="pointer-events-none relative z-[1] mt-0.5"
+                name={subagent.title}
+                size={16}
+                status={subagent.status}
+                subagentType={subagent.subagentType}
+              />
               <div className="pointer-events-none relative z-[1] flex min-w-0 flex-1 flex-col gap-1.5">
                 <span className="line-clamp-2 text-ui-base leading-5 text-[var(--color-foreground)]">
                   {subagent.title}
@@ -1730,17 +1764,60 @@ function getCompletedPlanItem(plan: ConversationStatusPanelModel["plan"]) {
   return [...(plan?.items ?? [])].reverse().find((item) => item.status === "completed") ?? null;
 }
 
+/**
+ * 胶囊里的运行中智能体：最多 3 个重叠头像 + "N 个运行中"（docs/desktop/multi-agent-display-spec.md）。
+ * 头像是身份不是状态图标，所以不走 StatusSummaryMetric 的悬停换 maximize-2，只抬底色。
+ */
+function RunningAgentsSummaryMetric({
+  avatarIndex,
+  subagents,
+}: {
+  avatarIndex: SubagentAvatarIndex;
+  subagents: readonly ConversationStatusPanelRunningSubagent[];
+}) {
+  const { intl } = useZCodeIntl();
+  const faces = orderRunningSubagents(subagents, avatarIndex).map(
+    ({ subagent, avatarIndex: faceIndex }) => ({
+      avatarIndex: faceIndex,
+      name: subagent.title,
+      status: subagent.status,
+      subagentType: subagent.subagentType,
+    }),
+  );
+  return (
+    <div
+      data-testid={TID_CHAT_SUMMARY_RUNNING_AGENTS}
+      data-status-summary-item="agents"
+      data-running-agent-count={subagents.length}
+      className="flex h-8 w-max max-w-full min-w-0 items-center gap-1.5 pl-2 pr-3 text-ui-base text-[var(--color-foreground)] [--wf-face-ring:var(--color-popover)] group-hover:[--wf-face-ring:var(--color-menu-hover)]"
+    >
+      <SubagentFaceStack faces={faces} />
+      <span className="shrink-0 whitespace-nowrap">
+        {intl.formatMessage(
+          { id: "chat.statusPanel.runningAgentsCapsule" },
+          { count: String(subagents.length) },
+        )}
+      </span>
+    </div>
+  );
+}
+
 function StatusSummaryRow({
+  avatarIndex,
   endedWorkflowRunCount,
   gitWorktreeChangeSummary,
   model,
+  onOpenAgentSection,
   onOpenWorkflowSection,
   onVariantChange,
 }: {
+  avatarIndex: SubagentAvatarIndex;
   /** 已结束 run 的目录计数；宿主给 0 表示目录入口不可渲染（缺会话或缺回调）。 */
   endedWorkflowRunCount: number;
   gitWorktreeChangeSummary?: { added: number; removed: number } | null;
   model: ConversationStatusPanelModel;
+  /** 胶囊显示着运行中智能体时，点击展开要同时打开的「智能体」分区。 */
+  onOpenAgentSection?: () => void;
   /** 胶囊显示着工作流时，点击展开要同时打开的「工作流」分区。 */
   onOpenWorkflowSection?: () => void;
   onVariantChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
@@ -1857,25 +1934,46 @@ function StatusSummaryRow({
       </span>
     </StatusSummaryMetric>
   ) : null;
+  // 1.1.0 优先级：工作流 > 运行中的智能体 > 计划/进度 > 目标 > Git（docs/desktop/multi-agent-display-spec.md）。
+  // 智能体项在上面的链之外单独覆盖，保持原链不动；它出现时链末的实时兜底只会剩终端计数。
+  const showsRunningAgents = !firstLiveRun && hasRunningSubagent;
+  const effectiveMetric = showsRunningAgents ? (
+    <RunningAgentsSummaryMetric avatarIndex={avatarIndex} subagents={model.runningSubagentWorks} />
+  ) : (
+    summaryMetric
+  );
 
-  if (!summaryMetric) {
+  if (!effectiveMetric) {
     return null;
   }
+
+  const buttonLabel = showsRunningAgents
+    ? intl.formatMessage(
+        {
+          id:
+            model.runningSubagentWorks.length === 1
+              ? "chat.statusPanel.runningAgentsCapsuleLabel"
+              : "chat.statusPanel.runningAgentsCapsuleLabelPlural",
+        },
+        { count: String(model.runningSubagentWorks.length) },
+      )
+    : expandLabel;
 
   return (
     <ControlHintTooltip title={expandLabel} sideOffset={4} side="left">
       <button
         type="button"
-        aria-label={expandLabel}
+        aria-label={buttonLabel}
         className="group inline-flex w-max max-w-full cursor-pointer flex-col items-stretch text-left text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-menu-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-input-border-focused)]"
         onClick={() => {
-          // 展开后看到的不能比胶囊还少：胶囊显示着工作流，就连同「工作流」分区一起打开——
+          // 展开后看到的不能比胶囊还少：胶囊显示着工作流 / 智能体，就连同对应分区一起打开——
           // 哪怕读者先前手动折过它（点胶囊就是「给我看这个」）。
           if (firstLiveRun) onOpenWorkflowSection?.();
+          else if (showsRunningAgents) onOpenAgentSection?.();
           onVariantChange?.("panel");
         }}
       >
-        {summaryMetric}
+        {effectiveMetric}
       </button>
     </ControlHintTooltip>
   );
@@ -1894,6 +1992,7 @@ function ConversationStatusPanelImpl({
   plan,
   backgroundWorks = EMPTY_BACKGROUND_WORKS,
   runningSubagents = EMPTY_RUNNING_SUBAGENTS,
+  subagentChildSessionIds,
   workflowRuns = EMPTY_WORKFLOW_RUNS,
   endedWorkflowRunCount = 0,
   endedSubagentCount = 0,
@@ -1998,6 +2097,13 @@ function ConversationStatusPanelImpl({
   const handleOpenWorkflowSection = useCallback(() => {
     onWorkflowSectionOpenChange?.(true);
   }, [onWorkflowSectionOpenChange]);
+  const handleOpenAgentSection = useCallback(() => {
+    onAgentSectionOpenChange?.(true);
+  }, [onAgentSectionOpenChange]);
+  const subagentAvatarIndex = useMemo(
+    () => buildSubagentAvatarIndex(subagentChildSessionIds),
+    [subagentChildSessionIds],
+  );
   const handleCollapseToMini = useCallback(() => {
     onVariantChange?.("mini");
   }, [onVariantChange]);
@@ -2188,6 +2294,7 @@ function ConversationStatusPanelImpl({
             ) : null}
             {canRenderAgents ? (
               <SubagentStatusSection
+                avatarIndex={subagentAvatarIndex}
                 title={intl.formatMessage({ id: "chat.statusPanel.agents" })}
                 subagents={model.runningSubagentWorks}
                 endedSubagentCount={canRenderEndedAgents ? endedSubagentCount : 0}
@@ -2222,7 +2329,9 @@ function ConversationStatusPanelImpl({
           )}
         >
           <StatusSummaryRow
+            avatarIndex={subagentAvatarIndex}
             model={model}
+            onOpenAgentSection={handleOpenAgentSection}
             // 与页脚同一道门（canRenderEndedWorkflows）：缺会话或缺回调时目录打不开，
             // 胶囊也就不该报一个点了没反应的数。
             endedWorkflowRunCount={canRenderEndedWorkflows ? endedWorkflowRunCount : 0}

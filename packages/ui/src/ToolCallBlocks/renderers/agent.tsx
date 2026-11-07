@@ -346,7 +346,7 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
     <>
       <ToolLayout
         toolId={toolCall.toolId}
-        icon={AGENT_TOOL_ICON}
+        icon={context.agentIcon ?? AGENT_TOOL_ICON}
         showIcon={context.showIcon !== false}
         canToggle={inlineDetails}
         forceOpen={inlineDetails && context.forceOpen === true}
