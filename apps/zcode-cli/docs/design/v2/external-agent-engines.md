@@ -51,3 +51,12 @@ sequenceDiagram
 - 性能事件（info，无正文）：`external_engine.handshake.completed|failed`、`external_engine.spare.claimed|miss|ready|expired|failed`、`external_engine.idle_close`、`external_engine.idle_resume.completed|failed`。
 
 验收：受控 ACP 夹具覆盖 ACK 先于握手、后台 ready/error、握手中关闭、备用进程领用/补位/过期/配置隔离、闲置关闭后透明恢复（ID 与配置保留、prompt 只发一次）、最近 3 个豁免与草稿不关闭、关闭 pool 清理备用进程。
+
+## 原生子智能体（2026-11，1.1.0）
+
+产品规则、事件顺序与验收见根仓 `docs/desktop/external-agent-engines-spec.md`「外部引擎原生子智能体」。CLI 侧要点：
+
+- adapter：initialize 两家都声明 `clientCapabilities.subagents: {}`（Codex 另保留 AIR sessionFailure 与 terminal_output_delta）。`subagent-frames.ts` 把 AIR 草案（`subagent_spawned` / `subagent_state_update`）与 RFD（`subagent_update` / `session_message`）归一为 `onSubagent` 事件；已宣告子 sessionId 的更新经 `onChildUpdate`，其权限请求带 `childNativeSessionId` 进入同一 `requestPermission`；未知非主 ID 丢弃（权限回 cancelled）并经 `onDiagnostic` 记 debug。load/fork 回放期间丢弃全部子智能体帧。`cancelSubagent` 只对原生声明可取消的子会话发送 `session/cancel`。
+- Runtime：父会话外部引擎 Runtime 是子智能体唯一 owner（`core/src/external-engine/subagents.ts`）。子会话 ID 由父会话 ID 与原生子 ID 确定性派生；每个子会话由一个不跑模型、不连 adapter 的子 Runtime 承载持久化（taskType `subagent_child`、parentID 为直接父会话、engine 同父、无 externalSessionId），先落库再在父会话发布合成 Agent 行与 SubagentSpawned；子正文复用 `ExternalTranscriptWriter` 写入子会话 message/part 并经父 sink 路由到子 V4 topic；结束发布 SubagentStopped，父轮收尾时仍运行的子会话记 lost。`subagent_child` 会话的 resume / prepare 不发起原生连接。
+- 权限：子会话请求以父 sessionId 进入 broker，携带 `origin(kind=subagent)`，应答按 kind 选该请求自身的原生 optionId。
+- 停止：可取消子会话发布 `BackgroundTaskStarted(cancellable)`，`cancelBackgroundTask(childSessionId)` 先由外部子智能体 owner 处理并转为 `cancelSubagent`。

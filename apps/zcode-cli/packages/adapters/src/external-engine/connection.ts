@@ -18,6 +18,7 @@ import {
   readPromptResultFailure,
   readSessionInfoFailure,
 } from "./failure.js";
+import { SUBAGENT_FRAME_KINDS, readSubagentFrame, type KnownSubagent } from "./subagent-frames.js";
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const CANCEL_GRACE_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 30000;
@@ -32,12 +33,18 @@ function object(value: unknown): JsonObject {
  * （核查见 docs/desktop/native-plan-errors-spec.md「能力声明」）：
  * - Codex 只改变工具行呈现；同时声明非 AIR 专属的 terminal_output_delta，让终端输出仍按
  *   既有 `_meta.terminal_output_delta` 追加，避免 AIR 下命令输出整段丢失。
- * - Claude 的 AIR 会去掉审批预览/读取结果正文并切换子智能体协议，本里程碑不声明。
+ * - Claude 的 AIR 会去掉审批预览/读取结果正文并切换子智能体协议，因此仍不声明。
+ * 1.1.0 两家都声明 `subagents`：Codex 作为 AIR 客户端得到 AIR 草案形态，Claude 得到 RFD 形态
+ * （docs/desktop/external-agent-engines-spec.md「外部引擎原生子智能体」）。
  */
 function clientCapabilities(engine: ExternalEngineSessionInput["engine"]): JsonObject {
   return engine === "codex"
-    ? { plan: {}, _meta: { ...AIR_SESSION_FAILURE_CAPABILITY_META, terminal_output_delta: true } }
-    : { plan: {} };
+    ? {
+        plan: {},
+        subagents: {},
+        _meta: { ...AIR_SESSION_FAILURE_CAPABILITY_META, terminal_output_delta: true },
+      }
+    : { plan: {}, subagents: {} };
 }
 function configOptions(value: unknown): EngineConfigOption[] {
   if (value === undefined) return [];
@@ -74,12 +81,30 @@ export class AcpConnection {
     sessionMs: number;
     configRestoreMs: number;
   };
+  /** 已宣告的原生子会话（连接级，跨轮保留；RFD 的 idle 子会话可被再次委派）。 */
+  private subagents = new Map<string, KnownSubagent>();
   get healthy(): boolean {
     return !this.failure;
   }
+  private diagnose(event: string, sessionId: unknown): void {
+    this.active?.onDiagnostic?.(event, { nativeSessionId: String(sessionId) });
+  }
   private async update(params: JsonObject): Promise<void> {
-    if (!this.active || params.sessionId !== this.externalSessionId) return;
+    if (!this.active) return;
+    const sessionId = params.sessionId;
+    const child = typeof sessionId === "string" && this.subagents.has(sessionId);
+    if (sessionId !== this.externalSessionId && !child) {
+      // 修复前所有非主会话更新都被静默丢弃；现在只丢未宣告的 ID，并留无正文诊断。
+      this.diagnose("external_engine.subagent.unrouted_update", sessionId);
+      return;
+    }
     const update = object(params.update);
+    if (SUBAGENT_FRAME_KINDS.has(String(update.sessionUpdate)) || child) {
+      // load/fork 回放的原生历史不写 YCode 子会话；已持久化的子会话正文是唯一事实。
+      if (this.loadingHistory) return;
+      await this.subagentUpdate(String(sessionId), update);
+      return;
+    }
     // session/load 重放的是原生历史；YCode 已有 transcript，只接纳配置与元数据。
     if (
       this.loadingHistory &&
@@ -106,6 +131,31 @@ export class AcpConnection {
       }
       await this.active.onUpdate(update);
     }
+  }
+  private async subagentUpdate(sessionId: string, update: JsonObject): Promise<void> {
+    const active = this.active!;
+    if (!SUBAGENT_FRAME_KINDS.has(String(update.sessionUpdate))) {
+      await active.onChildUpdate?.(sessionId, update);
+      return;
+    }
+    if (!active.onSubagent) return;
+    const result = readSubagentFrame(sessionId, this.externalSessionId!, update, this.subagents);
+    if ("invalid" in result) {
+      this.diagnose(`external_engine.subagent.invalid.${result.invalid}`, sessionId);
+      return;
+    }
+    for (const event of result.events) {
+      // 先登记再交付：Runtime 处理 spawned 期间到达的子会话更新必须可路由。
+      if (event.type === "spawned")
+        this.subagents.set(event.nativeSessionId, { cancellable: event.cancellable });
+      await active.onSubagent(event);
+    }
+  }
+  /** 停止原生声明可取消的子会话当前工作；结果以原生后续 state 为准。 */
+  cancelSubagent(nativeSessionId: string): void {
+    if (!this.subagents.get(nativeSessionId)?.cancellable)
+      throw new ExternalEngineConnectionError({ code: "unsupported" });
+    this.send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: nativeSessionId } });
   }
   constructor(
     child: ChildProcessWithoutNullStreams,
@@ -237,7 +287,24 @@ export class AcpConnection {
   }
   private async permission(frame: JsonObject): Promise<void> {
     const params = object(frame.params);
-    if (this.forking || !this.active || params.sessionId !== this.externalSessionId) {
+    // 权限请求不排队，但线上顺序里它晚于宣告子会话的 spawned 通知；非主 ID 尚未登记时先等已到达的
+    // 通知处理完再判定，否则子会话的首个请求会被误判为未知 ID 而取消。
+    if (
+      params.sessionId !== this.externalSessionId &&
+      !(typeof params.sessionId === "string" && this.subagents.has(params.sessionId))
+    )
+      await this.notifications;
+    const childSessionId =
+      typeof params.sessionId === "string" && this.subagents.has(params.sessionId)
+        ? params.sessionId
+        : undefined;
+    if (
+      this.forking ||
+      !this.active ||
+      (params.sessionId !== this.externalSessionId && !childSessionId)
+    ) {
+      if (this.active && params.sessionId !== this.externalSessionId)
+        this.diagnose("external_engine.subagent.unrouted_permission", params.sessionId);
       this.send({ jsonrpc: "2.0", id: frame.id, result: { outcome: { outcome: "cancelled" } } });
       return;
     }
@@ -259,6 +326,7 @@ export class AcpConnection {
     const outcome = await this.active.requestPermission({
       toolCall: toolCall as ExternalEnginePermissionRequest["toolCall"],
       options,
+      ...(childSessionId ? { childNativeSessionId: childSessionId } : {}),
     });
     if (
       outcome.outcome === "selected" &&

@@ -546,6 +546,38 @@ describe("ToolCallBlock agent routing", () => {
 
     expect(html).toContain("agent:tool-spawn-agent:spawn_agent:spawn_agent:source:none");
   });
+
+  it("routes Codex camelCase spawnAgent fallback rows to the agent renderer", () => {
+    // codex-acp CollabAgentReporter 未声明原生子会话时的真实 rawInput 形状。
+    const html = renderToStaticMarkup(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "zh-CN" },
+        createElement(ToolCallBlock, {
+          toolCallNode: {
+            toolCall: {
+              toolId: "tool-codex-spawn",
+              toolName: "spawnAgent",
+              kind: "spawnAgent",
+              input: {
+                prompt: "检查鉴权路径的耗时",
+                senderThreadId: "thread-root",
+                receiverThreadIds: ["thread-child"],
+                agentsStates: { "thread-child": { status: "running" } },
+                status: "inProgress",
+              },
+              status: "in_progress",
+              raw: { toolName: "spawnAgent" },
+            },
+            childToolCalls: [],
+          },
+          workspacePath: "/workspace",
+        }),
+      ),
+    );
+
+    expect(html).toContain("agent:tool-codex-spawn::spawnAgent:source:none");
+  });
 });
 
 describe("readRawToolCallFileSummaries", () => {

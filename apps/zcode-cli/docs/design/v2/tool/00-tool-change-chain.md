@@ -1845,3 +1845,7 @@ MCP app-only report_view 增加可选 viewId，release_view 释放指定窗口�
 ## 外部引擎工具链（2026-10-25）
 
 外部引擎由 CommandInbox 准入，经 executeTurnCommand 的外部端口运行；ACP 工具事件转换为现有 SessionEvent 与 message/part，权限进入既有 PermissionBroker。工具执行只属于官方 CLI；YCode 不二次执行或套用自己的模式。权限结果按 kind 对应回原 optionId，缺少对应选项时取消，不猜测 id。外部工具失败保留工具终态，允许同轮后续工具继续。diff 内容进入 file_diff display，退出与取消关闭同一会话 adapter 进程树。
+
+## 外部引擎原生子智能体投影（2026-11，1.1.0）
+
+ACP 原生子智能体帧 → adapter 归一（AIR 草案 / RFD）→ 父 Runtime 唯一 owner → 子会话记录与子正文（既有 message/part）→ 父会话合成 `Agent` 工具行（metadata/output 携带 childSessionId、agentId、agentType）+ SubagentSpawned/Stopped → 既有 V4 subagent row、`snapshot.subagents`、冷恢复 `subagentInfoFromToolPart` 与 `session/subagents` 查询。不新增 tool、schema 或 V4 字段；Agent 行不进模型上下文（外部引擎不经 YCode 模型）。子会话权限沿既有 PermissionBroker（origin=subagent）与原生 optionId 回执；停止沿 BackgroundTask* 与 cancelBackgroundWork。旧 adapter 的 Codex camelCase `spawnAgent` 工具行在 UI 工具身份层识别为 Agent 行。细则见根 `docs/desktop/external-agent-engines-spec.md`「外部引擎原生子智能体」。

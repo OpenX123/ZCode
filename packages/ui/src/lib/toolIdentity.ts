@@ -126,6 +126,15 @@ function readRawToolNameCandidates(raw: unknown) {
   };
 }
 
+/**
+ * 子智能体派发工具名：snake_case `spawn_agent` 与 Codex 原生降级形态的 camelCase `spawnAgent`
+ * （归一后为 `spawnagent`）。旧 adapter 未声明原生子会话时 Codex 只发这类工具行，修复前它们落成
+ * 通用工具行（docs/desktop/external-agent-engines-spec.md「界面降级识别」）。
+ */
+function isSpawnAgentToken(value: string): boolean {
+  return value === "spawn_agent" || value === "spawnagent";
+}
+
 function isLegacyAgentTool(
   toolCall: ToolIdentityLike,
   rawNames: ReturnType<typeof readRawToolNameCandidates>,
@@ -140,11 +149,11 @@ function isLegacyAgentTool(
     rawClaude === "agent" ||
     rawClaude === "task" ||
     rawZCode === "agent" ||
-    rawZCode === "spawn_agent" ||
+    isSpawnAgentToken(rawZCode) ||
     rawDirect === "agent" ||
-    rawDirect === "spawn_agent" ||
+    isSpawnAgentToken(rawDirect) ||
     kind === "agent" ||
-    kind === "spawn_agent" ||
+    isSpawnAgentToken(kind) ||
     (kind === "think" && (title === "agent" || title === "task")) ||
     (kind === "think" &&
       isRecord(toolCall.input) &&

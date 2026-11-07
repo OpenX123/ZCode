@@ -4,6 +4,7 @@ import {
   isFileDiffToolCall,
   resolveToolCallIdentity,
 } from "../src/lib/toolIdentity.js";
+import { getAgentPrimaryText } from "../src/ToolCallBlocks/renderers/agentHelpers.js";
 
 describe("toolIdentity", () => {
   it("keeps fixed AskUserQuestion name while routing it as user-question family", () => {
@@ -70,6 +71,32 @@ describe("toolIdentity", () => {
       family: "agent",
       isLegacy: true,
     });
+  });
+
+  it("recognizes Codex camelCase spawnAgent fallback rows as agent rows", () => {
+    // 旧 adapter 未声明原生子会话时，Codex 只发 title=spawnAgent 的协作工具行；V4 行以 toolName 作 kind。
+    const row = { toolName: "spawnAgent", kind: "spawnAgent", raw: { toolName: "spawnAgent" } };
+    expect(resolveToolCallIdentity(row)).toMatchObject({ family: "agent", isLegacy: true });
+    // 其余协作调用不是派发，保持普通工具行。
+    expect(
+      resolveToolCallIdentity({
+        toolName: "sendInput",
+        kind: "sendInput",
+        raw: { toolName: "sendInput" },
+      }).family,
+    ).not.toBe("agent");
+    // 实现名 spawnAgent 不作为 Agent 标题外露，回退到本地化标签。
+    expect(
+      getAgentPrimaryText(
+        {
+          toolId: "t",
+          title: "spawnAgent",
+          input: { prompt: "检查" },
+          status: "completed",
+        } as never,
+        "子智能体",
+      ),
+    ).toBe("子智能体");
   });
 
   it("keeps explicit Task tool calls as current agent identity", () => {

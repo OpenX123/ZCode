@@ -114,6 +114,8 @@ export type {
   ExternalEnginePermissionOutcome,
   ExternalEnginePermissionOption,
   ExternalEngineFailureNotice,
+  ExternalEngineSubagentEvent,
+  ExternalEngineSubagentState,
 } from "./external-engine/contract.js";
 
 export { ExternalEngineConnectionError } from "./external-engine/contract.js";

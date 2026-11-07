@@ -8,6 +8,7 @@ import type {
 } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { stopDynamicWorkflowBackgroundTask } from "./background-stop-dynamic-workflow.js";
+import { cancelExternalSubagentWork } from "../../external-engine/subagents.js";
 import type {
   RuntimeBackgroundStopOptions,
   RuntimeBackgroundStopResult,
@@ -47,6 +48,9 @@ export async function cancelBackgroundTask(
   taskId: string,
   options: { traceContext?: TraceContext } = {},
 ): Promise<BackgroundTaskCancelResult> {
+  // 外部引擎原生子智能体的停止由其 owner 转为原生 session/cancel，不进入本地任务注册表。
+  const external = await cancelExternalSubagentWork(this, taskId);
+  if (external) return external;
   // cancelBackgroundTask 只有 GUI 与后台面板会调（v4 cancelBackgroundWork）：这就是用户的手。
   const result = await this.stopBackgroundTask(taskId, {
     initiator: "user",

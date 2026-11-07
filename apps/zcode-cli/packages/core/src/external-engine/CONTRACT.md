@@ -13,3 +13,5 @@
 runTurn 抛错意味着 adapter 已清理连接。用户停止时的连接、超时、协议或取消回调异常由 Runtime 在 turn 收尾前通过既有 prepareSession 自动恢复原生会话和已确认配置，先 connecting、成功 ready、失败才 error；恢复不重发 prompt。应用关闭时不启动恢复，也不发布迟到 ready/error。其他 prompt 异常发布 error。正常 cancelled 返回保留 ready；配置业务拒绝不改变连接状态，配置中的连接故障进入同一错误投影和既有显式重试入口。
 
 空闲时配置 RPC 发现迟到断联，则先通过同一 prepareSession 恢复原 externalSessionId 和确认值，再对幂等配置写入重试一次；业务拒绝、运行中和关闭中的调用不进入该恢复路径。
+
+原生子智能体（1.1.0）：`subagents.ts` 是父会话侧唯一 owner。spawned 先经 `createExternalSubagentRuntime` 建立不跑模型、不连 adapter 的子 Runtime 并持久化 `subagent_child` 记录（ID 由父会话 ID 与原生子 ID 确定性派生），再在宿主 writer 合成 `Agent` 工具行并发布 SubagentSpawned（可取消时另发 BackgroundTaskStarted）；子会话正文经同一 `ExternalTranscriptWriter` 写入子会话，state 结束子轮并发布 SubagentStopped。子会话权限以父 sessionId 进入 broker 并带 origin；父轮收尾时仍运行的子会话记 lost/cancelled。`subagent_child` 会话的 prepare 直接返回。规则见根仓 docs/desktop/external-agent-engines-spec.md「外部引擎原生子智能体」。

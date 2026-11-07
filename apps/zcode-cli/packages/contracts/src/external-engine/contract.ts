@@ -13,7 +13,44 @@ export interface ExternalEnginePermissionOption {
 export interface ExternalEnginePermissionRequest {
   toolCall: Record<string, unknown> & { toolCallId: string };
   options: ExternalEnginePermissionOption[];
+  /** 已宣告原生子会话发出的请求；缺省表示主会话。应答仍回到该子请求自身的 JSON-RPC id。 */
+  childNativeSessionId?: string;
 }
+/**
+ * adapter 归一后的原生子智能体事实（AIR 草案与 RFD 两种形态；细则见根仓
+ * docs/desktop/external-agent-engines-spec.md「外部引擎原生子智能体」）。nativeSessionId 是幂等键。
+ */
+export type ExternalEngineSubagentEvent =
+  | {
+      type: "spawned";
+      nativeSessionId: string;
+      /** 直接父原生会话；缺省 = 主会话。 */
+      parentNativeSessionId?: string;
+      name: string;
+      task?: string;
+      prompt?: string;
+      /** 原生声明可经 session/cancel 停止。 */
+      cancellable: boolean;
+      /** RFD：委派提示随后以 prompt 事件到达，子会话首条消息等它而不用 task。 */
+      promptPending?: boolean;
+    }
+  | {
+      type: "state";
+      nativeSessionId: string;
+      state: ExternalEngineSubagentState;
+      error?: string;
+    }
+  /** 子会话收到的委派提示（RFD session_message 接收视图）。 */
+  | { type: "prompt"; nativeSessionId: string; messageId: string; text: string }
+  /** 子会话交回父会话的回答（RFD session_message 发送者为子会话）。 */
+  | { type: "reply"; nativeSessionId: string; text: string };
+export type ExternalEngineSubagentState =
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "lost";
 export type ExternalEnginePermissionOutcome =
   | { outcome: "cancelled" }
   | { outcome: "selected"; optionId: string };
@@ -46,6 +83,12 @@ export interface ExternalEngineSessionInput {
   requestPermission: (
     request: ExternalEnginePermissionRequest,
   ) => Promise<ExternalEnginePermissionOutcome>;
+  /** 原生子智能体生命周期；缺省时 adapter 丢弃子智能体帧。 */
+  onSubagent?: (event: ExternalEngineSubagentEvent) => Promise<void>;
+  /** 已宣告子会话的普通 session/update（正文、思考、工具、usage）。 */
+  onChildUpdate?: (nativeSessionId: string, update: Record<string, unknown>) => Promise<void>;
+  /** 无正文诊断（如丢弃未知子会话 ID）；调用方只记 debug。 */
+  onDiagnostic?: (event: string, fields: Record<string, string>) => void;
 }
 export interface ExternalEngineTurnInput extends ExternalEngineSessionInput {
   prompt: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
@@ -77,6 +120,8 @@ export interface ExternalEnginePort {
     value: string,
   ): Promise<EngineConfigOption[]>;
   closeSession(sessionId: string): Promise<void>;
+  /** 停止原生声明可取消的子会话当前工作（session/cancel）；未知或不可取消时抛 unsupported。 */
+  cancelSubagent?(sessionId: string, nativeSessionId: string): Promise<void>;
 }
 
 /** 仅保留输入边界脱敏后的摘要与诊断字段，不保存原始 ACP message/data。 */

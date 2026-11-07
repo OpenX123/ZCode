@@ -1,0 +1,100 @@
+{
+  "mainSessionId": "claude-root-session",
+  "prompt": [
+    {
+      "update": {
+        "sessionUpdate": "subagent_update",
+        "sessionId": "a1b2c3d4e5f6a7b8c",
+        "title": "Explorer (Explore)",
+        "description": "Find auth code",
+        "capabilities": { "cancel": {} },
+        "state": { "state": "running" }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu_01AgentLaunch",
+        "senderSessionId": "claude-root-session",
+        "recipientSessionId": "a1b2c3d4e5f6a7b8c",
+        "content": [{ "type": "text", "text": "找出鉴权检查的位置" }],
+        "recipientMessageId": "toolu_01AgentLaunch"
+      }
+    },
+    {
+      "sessionId": "a1b2c3d4e5f6a7b8c",
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu_01AgentLaunch",
+        "senderSessionId": "claude-root-session",
+        "recipientSessionId": "a1b2c3d4e5f6a7b8c",
+        "content": [{ "type": "text", "text": "找出鉴权检查的位置" }],
+        "senderMessageId": "toolu_01AgentLaunch"
+      }
+    },
+    {
+      "sessionId": "a1b2c3d4e5f6a7b8c",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "鉴权在 src/auth.ts 第 12 行。" }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "subagent_update",
+        "sessionId": "a1b2c3d4e5f6a7b8c",
+        "state": { "state": "idle", "stopReason": "end_turn" }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "session_message",
+        "messageId": "toolu_01AgentLaunch:reply",
+        "senderSessionId": "a1b2c3d4e5f6a7b8c",
+        "recipientSessionId": "claude-root-session",
+        "content": [{ "type": "text", "text": "鉴权在 src/auth.ts 第 12 行。" }]
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "subagent_update",
+        "sessionId": "f0e1d2c3b4a596870",
+        "title": "Runner (general-purpose)",
+        "description": "Long background check",
+        "capabilities": { "cancel": {} },
+        "state": { "state": "running" }
+      }
+    },
+    {
+      "sessionId": "f0e1d2c3b4a596870",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "还在跑" }
+      }
+    },
+    { "waitCancel": "f0e1d2c3b4a596870" },
+    {
+      "update": {
+        "sessionUpdate": "subagent_update",
+        "sessionId": "f0e1d2c3b4a596870",
+        "state": { "state": "idle", "stopReason": "cancelled" }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "subagent_update",
+        "sessionId": "99aa88bb77cc66dd5",
+        "title": "Watcher",
+        "capabilities": null,
+        "state": { "state": "running" }
+      }
+    },
+    {
+      "sessionId": "99aa88bb77cc66dd5",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "后台观察中" }
+      }
+    }
+  ]
+}

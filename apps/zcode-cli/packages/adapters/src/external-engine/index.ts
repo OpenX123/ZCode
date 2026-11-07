@@ -427,6 +427,11 @@ export function createExternalEnginePort(
         }
       }
     },
+    async cancelSubagent(sessionId, nativeSessionId) {
+      const connection = sessions.get(sessionId);
+      if (!connection?.healthy) throw new ExternalEngineConnectionError({ code: "not_ready" });
+      connection.cancelSubagent(nativeSessionId);
+    },
     async closeSession(sessionId) {
       const preparing = preparations.get(sessionId);
       preparing?.controller.abort(new Error("ACP preparation cancelled"));
