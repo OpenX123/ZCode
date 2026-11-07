@@ -31,18 +31,19 @@
   - 会话 lease 内已连接的 server 在没有在途请求（工具调用、资源读取与订阅）且 10 分钟没有使用后，由该 lease 释放连接（经既有 30s 空闲回收关闭进程），回到"待首次使用"。
   - 工具沿用回收时的真实清单（同时刷新缓存），registry 不变；下一次调用经同一首次启动路径重新连接。
   - 不回收：有在途调用的 server；有 MCP App 页面连接（lease 上登记了连接失效监听）的 server。窗口到期时再确认，条件不满足则重新计时。
+  - 有状态 server 永不闲置回收：持有跨调用进程内状态的 server 由**声明**豁免，不按 server 名特判。官方单元在 `bootstrap/src/app/official-plugin-definitions.ts` 声明 `statefulMcpServers: true`（当前为 `node-repl-host`，其 node_repl 保留 REPL 变量），宿主据此在 server 配置上写入 `idleReclaim: false`（仅限宿主生成，公共配置 schema 拒绝该字段）；lease 的闲置策略读取该配置，对它从不计闲置窗口。首次使用时启动照常适用。
   - 只适用于会话 lease；设置页（`mcp/list`）的 lease 不回收，避免状态轮询把被回收的 server 显示成断开。
   - 计时器由 lease 持有并 unref；server 被释放或 lease 关闭时清除，会话关闭后不遗留。
 - 不实现非阻塞启动的端口（TUI / headless 直连 adapter、测试替身、子智能体借用端口）保持原有"启动时连接全部 server"语义。
 
 ### 状态所有者
 
-| 状态                                 | 唯一所有者                                                                                            | 其他层                                                         |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| 连接                                 | 会话 MCP lease（`adapters/src/mcp/pool.ts`）                                                          | runtime 只调用 `startConfiguredServers` / `callTool`           |
-| "待首次使用"登记、闲置计时与在途计数 | lease 持有的 server 生命周期对象（managed 模块 `cli-mcp-lazy-start`，`adapters/src/mcp/lazy-start/`） | 回收条件由 lease 再确认，回收动作复用 release + 待首次使用登记 |
-| 工具清单缓存文件                     | `cli-mcp-lazy-start` 的 `tool-manifest-cache.ts`                                                      | lease 在连接完成时写入，在登记时读取                           |
-| registry 中的 MCP 工具               | runtime（`core/src/runtime/methods/mcp.ts`）                                                          | 只在模型步骤边界按 `toolListRevision` 刷新                     |
+| 状态                                 | 唯一所有者                                                                                            | 其他层                                                                                                                                                      |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 连接                                 | 会话 MCP lease（`adapters/src/mcp/pool.ts`）                                                          | runtime 只调用 `startConfiguredServers` / `callTool`                                                                                                        |
+| "待首次使用"登记、闲置计时与在途计数 | lease 持有的 server 生命周期对象（managed 模块 `cli-mcp-lazy-start`，`adapters/src/mcp/lazy-start/`） | 回收条件由 lease 再确认，回收动作复用 release + 待首次使用登记；是否可回收来自 server 配置的 `idleReclaim` 声明（官方定义 `statefulMcpServers` 经宿主写入） |
+| 工具清单缓存文件                     | `cli-mcp-lazy-start` 的 `tool-manifest-cache.ts`                                                      | lease 在连接完成时写入，在登记时读取                                                                                                                        |
+| registry 中的 MCP 工具               | runtime（`core/src/runtime/methods/mcp.ts`）                                                          | 只在模型步骤边界按 `toolListRevision` 刷新                                                                                                                  |
 
 ### 事件顺序
 
@@ -82,7 +83,7 @@ sequenceDiagram
   L->>S: 执行 A.x
   S-->>L: 结果
   L->>L: A 在途 -1 → 重新计时 10 分钟
-  Note over L: 10 分钟无使用、无 MCP App 连接
+  Note over L: 10 分钟无使用、无 MCP App 连接、A 未声明 idleReclaim: false
   L->>L: 再确认后 release(A)，A 回到待首次使用（工具不变）
   L->>S: 空闲回收后关闭进程（mcp.idle_reclaim.closed）
   RT->>L: callTool(A.y)
@@ -148,7 +149,7 @@ EOF 后停止接单，等待所有分道与在途请求完成或 100ms drain 到
 ## 验收与验证
 
 - 单测：缓存命中时调用前不启动进程；缓存未命中时首个请求不阻塞、连上后下一步加入工具；清单漂移；首次启动失败返回结构化错误；会话关闭/取消时首次连接干净结束。
-- 单测：闲置回收后下一次调用经首次启动路径重启；在途调用与 MCP App 连接阻止回收；会话关闭清除闲置计时器。
+- 单测：闲置回收后下一次调用经首次启动路径重启；在途调用与 MCP App 连接阻止回收；声明有状态（`idleReclaim: false`）的 server 跨过闲置窗口仍保持连接而无状态 server 被回收；node_repl 由宿主声明有状态；会话关闭清除闲置计时器。
 - 单测：跨会话并发、同会话保序、`createSession` → subscribe 保序、控制旁路、无会话读不排队、EOF drain。
 - 单测：内置插件摘要命中时不读文件内容；工作区展示在插件安装/启停后重新解析。
 - 单测：git 快照首次 4 个命令、缓存命中只运行 `status`，字段与原先一致。

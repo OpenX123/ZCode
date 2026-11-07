@@ -43,6 +43,7 @@ interface FakeServer {
   callTool: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   connectServer: ReturnType<typeof vi.fn>;
+  serverName: string;
 }
 
 /** 每个 pool entry 一个 adapter；connect 可被闸门挡住或返回失败。 */
@@ -86,7 +87,7 @@ function createServerFactory(options: {
       ),
       status: vi.fn(async () => ({ [serverName]: status })),
     } as unknown as McpPort;
-    created.push({ adapter, callTool, close, connectServer });
+    created.push({ adapter, callTool, close, connectServer, serverName });
     return adapter;
   };
   return { createAdapter, created };
@@ -396,6 +397,45 @@ describe("MCP 会话 lease：闲置回收", () => {
     off();
     await vi.advanceTimersByTimeAsync(IDLE_MS + 1_000);
     await vi.waitFor(() => expect(factory.created[0]!.close).toHaveBeenCalledOnce());
+    await lease.close();
+    await pool.close();
+  });
+
+  // 有状态 server（如 node_repl 的 REPL 变量）由宿主在配置上声明 idleReclaim: false：
+  // 仍然首次使用时才启动，但闲置窗口过后不回收；无状态 server 照常回收。
+  it("声明有状态的 server 跨过闲置窗口仍保持连接，无状态 server 被回收", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const tools = { docs: [tool("docs", "create")], repl: [tool("repl", "js")] };
+    const cache = createMemoryCache(tools);
+    const factory = createServerFactory({ tools });
+    const pool = createMcpConnectionPool({
+      createAdapter: factory.createAdapter,
+      idleGraceMs: 0,
+      sessionIdleReclaimMs: IDLE_MS,
+      toolManifestCache: cache,
+    });
+    const lease = pool.acquireLease({ leaseId: "s1", sessionId: "s1" });
+    await lease.startConfiguredServers!({ docs: CONFIG, repl: { ...CONFIG, idleReclaim: false } });
+    // 有状态也保留首次使用时启动：登记阶段不启动任何进程。
+    expect(factory.created).toHaveLength(0);
+    expect((await lease.status()).repl).toMatchObject({ deferredStart: true });
+
+    await lease.callTool({ serverName: "repl", toolName: "js" });
+    await lease.callTool({ serverName: "docs", toolName: "create" });
+    const repl = factory.created.find((server) => server.serverName === "repl")!;
+    const docs = factory.created.find((server) => server.serverName === "docs")!;
+
+    await vi.advanceTimersByTimeAsync(IDLE_MS * 3);
+    await vi.waitFor(() => expect(docs.close).toHaveBeenCalledOnce());
+    expect(repl.close).not.toHaveBeenCalled();
+    const statuses = await lease.status();
+    expect(statuses.docs).toMatchObject({ deferredStart: true });
+    expect(statuses.repl?.status).toBe("connected");
+    // 有状态 server 不留闲置计时器。
+    expect(vi.getTimerCount()).toBe(0);
+
+    await lease.callTool({ serverName: "repl", toolName: "js" });
+    expect(repl.connectServer).toHaveBeenCalledOnce();
     await lease.close();
     await pool.close();
   });

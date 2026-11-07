@@ -4,6 +4,8 @@ import {
   OFFICIAL_BROWSER_USE_PLUGIN_ID,
   OFFICIAL_CUA_PLUGIN_ID,
   OFFICIAL_NODE_REPL_HOST_PLUGIN_ID,
+  OFFICIAL_NODE_REPL_HOST_PLUGIN_NAME,
+  officialPluginProvidesStatefulMcpServers,
 } from "./official-plugin-definitions.js";
 
 export const BUILT_IN_NODE_REPL_SERVER_NAME = "node_repl";
@@ -45,6 +47,10 @@ export function resolveBuiltInNodeReplMcpServers(input: {
   return {
     [BUILT_IN_NODE_REPL_SERVER_NAME]: {
       ...nodeRepl,
+      // 宿主单元在官方定义里声明有状态：会话 lease 不闲置回收，REPL 变量不会因闲置而丢失。
+      ...(officialPluginProvidesStatefulMcpServers(OFFICIAL_NODE_REPL_HOST_PLUGIN_NAME)
+        ? { idleReclaim: false }
+        : {}),
       isolation: "workspace",
       protocolVersion: "2026-07-28",
     },

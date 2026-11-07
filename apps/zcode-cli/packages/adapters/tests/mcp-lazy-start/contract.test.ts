@@ -84,4 +84,30 @@ describe("cli-mcp-lazy-start contract", () => {
       vi.useRealTimers();
     }
   });
+
+  it("never times a server that the idle policy marks as not reclaimable", async () => {
+    vi.useFakeTimers();
+    try {
+      const onIdle = vi.fn();
+      const lifecycle = createMcpLeaseServerLifecycle({
+        acquire: connectedAcquire(),
+        cache: memoryCache(),
+        idleReclaimMs: 1_000,
+        isIdleReclaimable: (serverName) => serverName !== "repl",
+        onIdle,
+        readServerTools: async () => TOOLS,
+      });
+      lifecycle.connected("repl");
+      await lifecycle.use("repl", "tool_call", async () => undefined);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(onIdle).not.toHaveBeenCalled();
+      lifecycle.connected("docs");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(onIdle).toHaveBeenCalledWith("docs", expect.any(Function));
+      lifecycle.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

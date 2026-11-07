@@ -431,6 +431,10 @@ export function createMcpConnectionPool(options: McpConnectionPoolOptions): McpC
           acquire,
           cache: options.toolManifestCache,
           idleReclaimMs: sessionIdleReclaimMs,
+          // 闲置策略来自 server 配置的声明（宿主为有状态 server 写入 idleReclaim: false），
+          // 不在连接池里按 server 名特判。
+          isIdleReclaimable: (serverName) =>
+            acquiredServers.get(serverName)?.config.idleReclaim !== false,
           logger,
           onIdle: (serverName, isStillIdle) => {
             void reclaimIdleServer(serverName, isStillIdle).catch((error: unknown) => {

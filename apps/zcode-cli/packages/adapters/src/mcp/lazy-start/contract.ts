@@ -50,6 +50,11 @@ export interface McpLeaseServerLifecycleDeps {
   cache: McpToolManifestCache;
   /** 闲置回收窗口；缺省或 <=0 不计时（设置页等无会话的 lease）。 */
   idleReclaimMs?: number;
+  /**
+   * 闲置策略：返回 false 的 server 永不计闲置窗口（配置声明 `idleReclaim: false` 的有状态 server）。
+   * 缺省全部可回收。首次使用时启动不受影响。
+   */
+  isIdleReclaimable?: (serverName: string) => boolean;
   logger?: Logger;
   /**
    * 闲置窗口到期且没有在途使用时调用。lease 负责再确认（MCP App 连接、连接状态）并回收；

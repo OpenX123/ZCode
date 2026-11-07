@@ -54,8 +54,10 @@ class LeaseServerLifecycle implements McpLeaseServerLifecycle {
 
   constructor(private readonly deps: McpLeaseServerLifecycleDeps) {
     this.logger = deps.logger;
-    this.idleReclaimer = new LeaseIdleReclaimer(deps.idleReclaimMs ?? 0, (serverName, isStillIdle) =>
-      deps.onIdle?.(serverName, isStillIdle),
+    this.idleReclaimer = new LeaseIdleReclaimer(
+      deps.idleReclaimMs ?? 0,
+      (serverName, isStillIdle) => deps.onIdle?.(serverName, isStillIdle),
+      (serverName) => deps.isIdleReclaimable?.(serverName) ?? true,
     );
   }
 

@@ -252,6 +252,10 @@ Minimum coverage for the first implementation slice:
   回到待首次使用（`deferredStart`），registry 不变；下一次使用经首次启动路径重新连接，30s 空闲回收内
   再次使用会复用同一 entry。在途或有 MCP App 连接时到期只重新计时。计时器 unref，server 释放与
   lease 关闭时清除。记 `mcp.idle_reclaim.closed`（info）。设置页 lease 不回收。
+- 有状态豁免：`McpServerConfigBase.idleReclaim: false`（仅限宿主生成，公共配置 schema 拒绝）表示 server 持有
+  跨调用的进程内状态，lease 经 `isIdleReclaimable` 策略对其永不计闲置窗口，首次使用时启动照常。官方单元在
+  `official-plugin-definitions.ts` 声明 `statefulMcpServers: true`，宿主据此为其 server 写入该字段（当前：
+  node-repl-host 的 node_repl）。
 - 会话启动遥测 `session_startup` 在后台连接全部结束后上报；待首次使用的 server 不计入
   connected，也不计入 failed。
 - 子智能体借用父端口时以父端口的当前 `status()` / `listTools()` 为准；插件引用提醒同样把待首次使用

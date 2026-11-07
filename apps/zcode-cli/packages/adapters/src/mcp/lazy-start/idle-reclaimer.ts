@@ -17,6 +17,8 @@ export class LeaseIdleReclaimer {
   constructor(
     private readonly idleMs: number,
     private readonly onIdle: (serverName: string, isStillIdle: () => boolean) => void,
+    // 有状态 server（配置声明 idleReclaim: false）返回 false：永不计时，进程内状态不会因闲置丢失。
+    private readonly isReclaimable: (serverName: string) => boolean = () => true,
   ) {}
 
   /** 开始一次对该 server 的使用；返回的函数在使用结束时调用（重复调用无效）。 */
@@ -37,9 +39,10 @@ export class LeaseIdleReclaimer {
     };
   }
 
-  /** 从现在起重新计时；有在途使用、已关闭或未启用时不计时。 */
+  /** 从现在起重新计时；有在途使用、已关闭、未启用或该 server 不可回收时不计时。 */
   arm(serverName: string): void {
     if (this.closed || this.idleMs <= 0 || this.isBusy(serverName)) return;
+    if (!this.isReclaimable(serverName)) return;
     this.cancel(serverName);
     const timer = setTimeout(() => {
       this.timers.delete(serverName);

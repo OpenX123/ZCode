@@ -17,6 +17,12 @@ export interface McpServerRuntimeSource {
 export interface McpServerConfigBase {
   alwaysLoad?: boolean;
   enabled?: boolean;
+  /**
+   * 仅限宿主生成，公共配置 schema 会拒绝该字段。false 表示 server 持有跨调用的进程内状态
+   * （如 node_repl 的 REPL 变量）：会话 lease 不对它做闲置回收；首次使用时启动不受影响。
+   * 缺省按可回收处理。
+   */
+  idleReclaim?: boolean;
   isolation?: McpServerIsolation;
   protocolVersion?: McpProtocolVersion;
   /** 仅限宿主生成，公共配置 schema 会拒绝该字段。 */
