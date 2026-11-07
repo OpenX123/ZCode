@@ -169,7 +169,28 @@ feature-scoped token family:
   surface (spec: `docs/dynamic-workflow/presentation.md`, "Holes on the timeline").
 - Station lamps and agent pills use the semantic status colours (`--color-success`,
   `--color-warning` for running, `--color-destructive`); agent avatars use the fixed nine-color HEX palette defined in the workflow spec,
-  assigned by instance index (name hash fallback), and never encode status.
+  assigned by instance index (name hash fallback only where no index is derivable), and never encode status.
+
+### Agent avatars
+
+All subagent surfaces (status capsule, conversation spawn row and Agent card icon, Agents
+section rows, subagent directory, side-pane detail header) share one avatar: the code-drawn
+tile face (`WorkflowAgentFace`). Spec: [multi-agent display](docs/desktop/multi-agent-display-spec.md).
+
+- **Colour is instance identity**: `FACE_COLORS[avatarIndex % 9]`, where `avatarIndex` is the
+  position in the parent session's `snapshot.subagents.childSessionIds` (spawn order). Never
+  hash a name when an index is derivable; never use colour for status.
+- **Silhouette is kind**: `base` (general-purpose / unknown), `antenna` (explore / search),
+  `visor` (plan), `glasses` (review / verify), `crest` (test), `ears` (research). Variants are
+  pure SVG geometry, no PNG, and stay legible at 16px.
+- **Status is expression plus text/icon**: waiting dots, running pills, done arches, failed
+  arches; always pair with visible or accessible status text.
+- **Sizes**: 16px in conversation rows and panel rows, 20px in the capsule stack and directory,
+  24px in the detail header. The workflow timeline keeps its own 20px minimum.
+- **Stacks** overlap by 6px, at most three faces, separated by a ring in the host surface colour.
+- **Motion**: idle face motion only in the detail header while running; still elsewhere; none
+  under `prefers-reduced-motion`, hidden tabs or off-screen.
+- Per-type colours in `lib/subagentColors.ts` colour the agent type label text only, never avatars.
 - A compile-feedback row (a script that did not compile, so nothing ran) uses a hollow lamp:
   `--color-warning` while it is the latest draft, `--color-foreground-subtlest` once a newer
   draft exists. Never `--color-destructive`, which on this feature belongs to a run that errored

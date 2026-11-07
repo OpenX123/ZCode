@@ -749,7 +749,10 @@ fixed colours (`FACE_COLORS`: teal `#54B9A6`, amber `#F19D38`, indigo `#6464EF`,
 `#885CF5`, blue `#3C82F6`, orange `#ED712E`, pink `#EB4699`, green `#5BC67A`, red
 `#EA4045`) taken by `avatarIndex`, cycling from the tenth; without an index the name is
 hashed onto the same palette. Eyes are white. The pill's hover stroke uses the same
-`agentColor`. A face is never smaller than 20px.
+`agentColor`. A face is never smaller than 20px on workflow surfaces, and workflow pills always
+use the `base` silhouette. The conversation's subagent surfaces reuse the same face with
+silhouette variants by subagent type and 16/20/24px sizes
+([multi-agent display](../desktop/multi-agent-display-spec.md)); those rules do not apply here.
 
 The expression is state (`faceState`):
 

@@ -63,6 +63,18 @@ Agent / Task 摘要行激活（永远不展开）
   才打开侧栏。
 - 行内 Prompt 标题旁不再保留重复的“在右侧打开”按钮。
 - Agent 与 Claude Code 兼容别名 Task 使用同一规则；Workflow activity 不属于本功能。
+- 1.1.0 起，同一轮相邻的 2 个及以上派发合并为一行“A、B 和 C 开始工作”（[多智能体展示规范](./desktop/multi-agent-display-spec.md)）。
+  名称按钮沿用上面的直开规则：有 child 目标时打开右侧 tab（同一请求与可见 title），无 child 时展开本行与该
+  Agent 卡的行内详情；行尾箭头展开原有的逐个 Agent 卡。合并行收起时只有名称按钮携带
+  `v4-subagent-open-side-pane-<childSessionId>`，展开后内部卡不重复该入口。单个派发仍为 Agent 卡，图标换为该智能体头像。
+
+### 详情头部
+
+右侧 child tab 顶部固定一行头部：头像、tab 标题、状态（图标 + 文字）、耗时，以及可停时的停止按钮。
+运行态来自父会话 `snapshot.subagents.running`，结束态来自 child 自身 `control`；停止按钮只在父会话
+`backgroundWorks` 精确匹配可停 work 时出现，发送父会话 `cancelBackgroundWork(workId)`。这是父会话的
+后台控制，child 对话本身仍保持只读（不提供 child stop）。头部为每个打开的 child 额外持有父会话 lease，
+数据层引用计数复用已有订阅。
 
 ## 对话只读详情与文件撤销例外
 

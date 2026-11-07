@@ -57,9 +57,9 @@ CLI ProductProjection V4 snapshot.subagents
 ## UI 合同
 
 ```text
-mini capsule
-├─ subagent-only -> 只统计 running subagent；不显示 ended；显示“{count} 运行”
-└─ Bash/Subagent mixed -> 统计两类 running item；显示“{count} 运行”
+mini capsule（1.1.0 起，见 desktop/multi-agent-display-spec.md）
+├─ 有 running subagent -> 优先级仅次于工作流；最多 3 个头像 + “{count} 个运行中”，只数 subagent
+└─ 只有 Bash -> 仍是最低优先级兜底；显示“{count} 后台”
 
 expanded status panel
 └─ 智能体（统一折叠分组，标题尾部显示“{count} 运行”）
@@ -76,8 +76,10 @@ Subagent directory（桌面 / 普通 Web）
 - “{count} 运行”统计 `snapshot.subagents.running` 的成员数量，表达当前仍在运行的
   subagent 数量；不得显示为“{count} 后台”，因为该集合同时包含 foreground、background、
   blocked 和 waiting。
-- mini capsule 的计数只要包含 running subagent，也必须使用“{count} 运行”；只有纯
-  background terminal 计数继续使用“{count} 后台”。
+- mini capsule 有 running subagent 时显示头像串与“{count} 个运行中”，计数只含 subagent，
+  不再与 Bash 合并；只有纯 background terminal 计数继续使用“{count} 后台”。展开分区标题尾部仍为
+  “{count} 运行”。
+- 目录项与 Running 行左侧显示该子智能体的头像（序号取 `childSessionIds`，轮廓取 `subagentType`）。
 - 只有 ended 且没有 Git/plan/goal/running 等其它摘要内容时，mini 可以消失；不为目录增加
   单独常驻胶囊。
 - expanded panel 中“已结束”必须位于“智能体”折叠内容内，不能与“智能体”作为两个并列的

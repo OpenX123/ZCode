@@ -1981,6 +1981,25 @@ manual/capture review 后再从 pending 转正。普通 Web 使用同一 rendere
 | SAT25b     | partial  | SAT-UT / SAT-E2E-pending                   | focused unit 已覆盖 `attempt=3,maxAttempts=11` 显示 `重新连接中... 3/10`、独占 retry slot 及进展后清除；Main 的三次 fault-stream retry 作为最小 UI E2E 代表，delivery 与协议不新增组合，待 driver 可用后完成 pending E2E                                                                                                                                                                    |
 | SAT26      | partial  | SAT-RT / SAT-GW / SAT-UT / SAT-E2E-pending | core/projection/hydration/renderer 单测覆盖 fresh-only、实际模型、source-less marker 与 cold rebuild；既有 built-in override pending E2E 已扩展 provider-visible model、live copy 和完整冷启恢复。Main 首轮、旧 child 无回填及 parent 不镜像为同组负断言；待人工 review/promotion                                                                                                           |
 
+## 多智能体展示覆盖口径（MA，1.1.0）
+
+对应 [case catalog](../conversation-session-case-catalog.md) 的 `MA` 分组与[多智能体展示规范](../desktop/multi-agent-display-spec.md)。
+候选 spec：`packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-multi-agent-display.test.ts`
+（MA01、MA03、MA04、MA07 的实时部分；case-local controlled-stream replay 由 SAT24 fixture 派生，换用独立 marker 并混合 Explore / general-purpose；未运行，待人工 review）。
+
+| Catalog ID | 覆盖状态 | 自动化            | 备注                                                                                       |
+| ---------- | -------- | ----------------- | ------------------------------------------------------------------------------------------ |
+| MA01       | partial  | MA-UT / E2E-pending | `subagentSpawnGroups`、`conversationAgentSpawnRow` 单测；pending E2E 断言 7 个成员与轮廓 |
+| MA02       | covered  | MA-UT             | `v4ConversationStatusPanel` 覆盖工作流 > 智能体 > todo/目标/Git                             |
+| MA03       | partial  | MA-UT / E2E-pending | 单测覆盖最多 3 个头像与点击打开智能体分区；E2E 断言胶囊 3 个头像                         |
+| MA04       | partial  | MA-UT / E2E-pending | `subagentSessionHeader` 单测；E2E 断言头部状态与轮廓                                     |
+| MA05       | covered  | MA-UT             | 无子会话名称点击展开本行并预置该卡展开                                                     |
+| MA06       | covered  | MA-UT             | 相邻与跨轮分组规则                                                                         |
+| MA07       | partial  | MA-UT             | 同一清单同一序号；冷启动 GUI 证据待人工 review                                             |
+| MA08       | covered  | MA-UT             | 头部停止仅精确匹配可停 work，命令发往父会话                                                |
+| MA09       | covered  | MA-UT             | 非详情头部静止；`startFaceMotion` 在减少动态效果时不调度                                   |
+| MA10       | planned  | 视觉检查          | 浅色/深色、窄宽度与中英文待在桌面实机检查                                                  |
+
 ## Subagent Human-in-the-loop Delegate 覆盖口径
 
 这些 case 对应 [conversation-session-case-catalog.md](../conversation-session-case-catalog.md) 的 `T` 分组。`SB/SR` 已覆盖 subagent provider/model 请求链路，但没有断言 child 内部阻塞式人机交互是否代理回父 task。`SD` 使用 synthetic provider fixture 稳定制造父 `Agent` tool_use、child `AskUserQuestion`、child `Bash` permission 和父 continuation；断言 UI pending request 的 `origin.kind=subagent` 保留、用户响应进入 child provider-visible 请求、child 结果再被父会话 continuation 消费。该组只证明桌面本地 `desktop-continuous`，不覆盖手机 replayable 恢复、后台通知、并发 child 或 child `ExitPlanMode`。
