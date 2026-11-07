@@ -75,7 +75,7 @@ import {
   setQueueAutoDrain,
 } from "./steering.js";
 import { discardPersistedPendingSteerInputs } from "./steering.js";
-import { createDefaultSubagentPort } from "./subagent.js";
+import { createDefaultSubagentPort, createExternalSubagentRuntime } from "./subagent.js";
 import { ensureContextInitialized, getSkillCatalog } from "./context.js";
 import { createContextBuilderFromSnapshot } from "./context.js";
 import { loadProjectMemoryRoot } from "./context.js";
@@ -279,6 +279,7 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.discardHeldPendingInputById = discardHeldPendingInputById;
   proto.clearAllPendingInputs = clearAllPendingInputs;
   proto.createDefaultSubagentPort = createDefaultSubagentPort;
+  proto.createExternalSubagentRuntime = createExternalSubagentRuntime;
   proto.ensureContextInitialized = ensureContextInitialized;
   proto.getSkillCatalog = getSkillCatalog;
   proto.createContextBuilderFromSnapshot = createContextBuilderFromSnapshot;

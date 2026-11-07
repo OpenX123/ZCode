@@ -395,7 +395,9 @@ export async function prepareExternalEngineSession(
   runtime: AgentRuntimeInternal,
   traceContext: TraceContext,
 ): Promise<void> {
-  if (runtime.shuttingDown) return;
+  // 原生子智能体的子会话只是只读正文载体，原生上下文属于父原生会话；冷恢复或打开详情时
+  // 不能为它启动 adapter，更不能 session/new 一个无关原生会话。
+  if (runtime.shuttingDown || runtime.config.taskType === "subagent_child") return;
   await publishExternalEngineConfigState(runtime, "connecting", traceContext);
   if (runtime.shuttingDown) return;
   try {

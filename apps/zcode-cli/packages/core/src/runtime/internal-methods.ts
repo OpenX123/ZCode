@@ -245,6 +245,12 @@ export interface AgentRuntimeCoreMethods {
   /** 清空全部排队输入（clearQueueAndSend 执行件），返回丢弃条数。 */
   clearAllPendingInputs(traceContext: TraceContext): Promise<number>;
   createDefaultSubagentPort(deps: AgentRuntimeDeps): SubagentPort | undefined;
+  /** 外部引擎原生子智能体的子会话载体（不跑模型、不连 adapter），见 methods/subagent.ts createExternalSubagentRuntime。 */
+  createExternalSubagentRuntime(input: {
+    childSessionId: import("@zcode/contracts").SessionId;
+    parentSessionId: import("@zcode/contracts").SessionId;
+    traceContext: TraceContext;
+  }): import("./internal.js").AgentRuntimeInternal;
   getTools(model?: Model): ModelToolContract[];
   invalidateToolCache(): void;
   getToolRegistry(): ToolRegistry;

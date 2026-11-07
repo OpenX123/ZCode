@@ -1,0 +1,178 @@
+{
+  "mainSessionId": "019a7c00-0000-7000-8000-00000000root",
+  "prompt": [
+    {
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "我先派一个子智能体。" }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "subagent_spawned",
+        "subagentSessionId": "019a7c00-0000-7000-8000-0000child0001",
+        "name": "Engine perf auth",
+        "task": "检查鉴权路径的耗时",
+        "capabilities": {}
+      }
+    },
+    {
+      "sessionId": "019a7c00-0000-7000-8000-0000child0001",
+      "update": {
+        "sessionUpdate": "agent_thought_chunk",
+        "content": { "type": "text", "text": "先搜索鉴权入口" }
+      }
+    },
+    {
+      "sessionId": "019a7c00-0000-7000-8000-0000child0001",
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call_child_rg",
+        "title": "Run rg auth",
+        "kind": "execute",
+        "status": "in_progress",
+        "rawInput": { "command": ["rg", "auth"] }
+      }
+    },
+    {
+      "permission": {
+        "sessionId": "019a7c00-0000-7000-8000-0000child0001",
+        "toolCall": {
+          "toolCallId": "call_child_rg",
+          "title": "Run rg auth",
+          "kind": "execute",
+          "rawInput": { "command": ["rg", "auth"] }
+        },
+        "options": [
+          { "optionId": "approved", "name": "Yes", "kind": "allow_once" },
+          {
+            "optionId": "approved-for-session",
+            "name": "Yes, for this session",
+            "kind": "allow_always"
+          },
+          { "optionId": "abort", "name": "No", "kind": "reject_once" }
+        ]
+      }
+    },
+    {
+      "sessionId": "019a7c00-0000-7000-8000-0000child0001",
+      "update": {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call_child_rg",
+        "status": "completed",
+        "rawOutput": "src/auth.ts:12: checkAuth()"
+      }
+    },
+    {
+      "sessionId": "019a7c00-0000-7000-8000-0000child0001",
+      "update": { "sessionUpdate": "usage_update", "used": 1200, "size": 200000 }
+    },
+    {
+      "sessionId": "019a7c00-0000-7000-8000-0000child0001",
+      "update": {
+        "sessionUpdate": "subagent_spawned",
+        "subagentSessionId": "019a7c00-0000-7000-8000-0000grandkid01",
+        "name": "Token cache",
+        "task": "看看 token 缓存",
+        "capabilities": {}
+      }
+    },
+    {
+      "sessionId": "019a7c00-0000-7000-8000-0000grandkid01",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "缓存命中率正常" }
+      }
+    },
+    {
+      "sessionId": "019a7c00-0000-7000-8000-0000child0001",
+      "update": {
+        "sessionUpdate": "subagent_state_update",
+        "subagentSessionId": "019a7c00-0000-7000-8000-0000grandkid01",
+        "state": "completed"
+      }
+    },
+    {
+      "sessionId": "019a7c00-0000-7000-8000-0000child0001",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "鉴权耗时集中在 checkAuth。" }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "subagent_state_update",
+        "subagentSessionId": "019a7c00-0000-7000-8000-0000child0001",
+        "state": "completed"
+      }
+    },
+    {
+      "sessionId": "unknown-stranger-session",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "不应出现" }
+      }
+    },
+    {
+      "permission": {
+        "sessionId": "unknown-stranger-session",
+        "toolCall": { "toolCallId": "call_stranger", "title": "rm", "kind": "execute" },
+        "options": [{ "optionId": "approved", "name": "Yes", "kind": "allow_once" }]
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "subagent_spawned",
+        "subagentSessionId": "019a7c00-0000-7000-8000-0000child0001:generation:2",
+        "name": "Engine perf auth",
+        "task": "继续检查缓存未命中",
+        "capabilities": {}
+      }
+    },
+    {
+      "sessionId": "019a7c00-0000-7000-8000-0000child0001:generation:2",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "缓存未命中时更慢。" }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "subagent_state_update",
+        "subagentSessionId": "019a7c00-0000-7000-8000-0000child0001:generation:2",
+        "state": "failed"
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "子智能体已完成。" }
+      }
+    }
+  ],
+  "load": [
+    {
+      "update": {
+        "sessionUpdate": "subagent_spawned",
+        "subagentSessionId": "019a7c00-0000-7000-8000-0000child0001",
+        "name": "Engine perf auth",
+        "task": "Delegated task for Engine perf auth",
+        "capabilities": {}
+      }
+    },
+    {
+      "sessionId": "019a7c00-0000-7000-8000-0000child0001",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "鉴权耗时集中在 checkAuth。" }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "subagent_state_update",
+        "subagentSessionId": "019a7c00-0000-7000-8000-0000child0001",
+        "state": "completed"
+      }
+    }
+  ]
+}

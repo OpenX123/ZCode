@@ -33,6 +33,10 @@ import type { AgentRuntimeInternal } from "../internal.js";
 import { cloneModelSelection } from "../model-selection.js";
 import { resolveSubagentSelection } from "../helpers/subagent-selection.js";
 import type { AgentRuntimeDeps } from "../types.js";
+import type {
+  SessionId as ExternalSubagentSessionId,
+  TraceContext as ExternalSubagentTraceContext,
+} from "../deps.js";
 import { toMcpToolName } from "../../mcp/index.js";
 import { createBorrowedSubagentMcpAccess } from "../../subagent/borrowed-mcp-port.js";
 import { createSubagentMessageSink } from "../../subagent/message-steering.js";
@@ -980,4 +984,63 @@ function traceStringAttribute(
 ): string | undefined {
   const value = traceContext.attributes?.[key];
   return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * 外部引擎原生子智能体的子会话载体：只承担 subagent_child 记录、message/part 与事件持久化，
+ * 不跑模型、不连原生 adapter（原生上下文属于父原生会话）。与内置 subagent 同约定：共享父的
+ * event/session store，并在构造期把事件扇出到根父 runtime 的外部 sink——bootstrap 按 event.sessionId
+ * 路由到子会话 V4 topic（见 config.ts notifyExternalChildSessionEvent 的序号说明）。
+ * 规则见根仓 docs/desktop/external-agent-engines-spec.md「外部引擎原生子智能体」。
+ */
+export function createExternalSubagentRuntime(
+  this: AgentRuntimeInternal,
+  input: {
+    childSessionId: ExternalSubagentSessionId;
+    parentSessionId: ExternalSubagentSessionId;
+    traceContext: ExternalSubagentTraceContext;
+  },
+): AgentRuntimeInternal {
+  return buildExternalSubagentRuntime(this, input);
+}
+
+function buildExternalSubagentRuntime(
+  root: AgentRuntimeInternal,
+  input: {
+    childSessionId: ExternalSubagentSessionId;
+    parentSessionId: ExternalSubagentSessionId;
+    traceContext: ExternalSubagentTraceContext;
+  },
+): AgentRuntimeInternal {
+  const child = new AgentRuntime(
+    input.childSessionId,
+    {
+      engine: root.config.engine,
+      parentSessionId: input.parentSessionId,
+      taskType: "subagent_child",
+      workingDirectory: root.workingDirectory,
+      ...(root.config.workspacePath ? { workspacePath: root.config.workspacePath } : {}),
+      ...(root.config.workspaceIdentity ? { workspaceIdentity: root.config.workspaceIdentity } : {}),
+      mode: root.config.mode,
+      agentName: root.config.agentName,
+      subagents: { enabled: false },
+    },
+    {
+      eventStore: root.eventStore,
+      ...(root.sessionStore ? { sessionStore: root.sessionStore } : {}),
+      ...(root.logger ? { logger: root.logger } : {}),
+      appVersion: root.appVersion,
+      // 载体从不跑模型；误入模型路径时明确失败，而不是借用父会话的 Provider。
+      modelFactory: () => {
+        throw new Error("External subagent sessions never run a YCode model");
+      },
+      traceContext: { ...input.traceContext, sessionId: input.childSessionId },
+      eventSink: {
+        // 只通知不 append：子 runtime 已按子 sessionId 落库。
+        onSessionEvent: (event) =>
+          root.notifyEventSinks(event, { ...input.traceContext, sessionId: input.childSessionId }),
+      },
+    },
+  );
+  return child as unknown as AgentRuntimeInternal;
 }
