@@ -19,7 +19,11 @@ import { spawnAcpProcess } from "../exec/acp-process.js";
 import { AcpConnection } from "./connection.js";
 import { resolveExternalEngineLaunch } from "@zcode/shared/node";
 import { resolveEngineConnection } from "./connection-profile.js";
-import { ensureNodeRuntimeOnPath, withNetworkEgressEnv } from "./adapter-env.js";
+import {
+  adapterLaunchArgs,
+  ensureNodeRuntimeOnPath,
+  withNetworkEgressEnv,
+} from "./adapter-env.js";
 import type { ExternalEngineAdapterOptions } from "./contract.js";
 import type { ExternalEngineSpareKey } from "./process-pool.js";
 export { runExternalEngineConnectionTest } from "./connection-test.js";
@@ -37,6 +41,8 @@ type LaunchInput = Pick<
 >;
 interface Launch {
   entry: string;
+  /** adapter 进程参数（含是否移除 Node 模式变量的预加载），由 adapterLaunchArgs 决定。 */
+  args: string[];
   env: NodeJS.ProcessEnv;
   profileId: string;
   setup?: (connection: AcpConnection) => Promise<void>;
@@ -140,6 +146,7 @@ export function createExternalEnginePort(
     childEnv = withNetworkEgressEnv(resolved.env, env);
     return {
       entry,
+      args: adapterLaunchArgs(entry, official),
       env: childEnv,
       profileId: resolved.profile.id,
       ...(resolved.setup ? { setup: resolved.setup } : {}),
@@ -149,7 +156,7 @@ export function createExternalEnginePort(
   const spawnConnection = (launch: Launch, cwd: string): AcpConnection => {
     const setup = launch.setup;
     return new AcpConnection(
-      spawnAcpProcess(executable, [launch.entry], cwd, launch.env),
+      spawnAcpProcess(executable, launch.args, cwd, launch.env),
       setup
         ? async (target) => {
             const startedAt = Date.now();

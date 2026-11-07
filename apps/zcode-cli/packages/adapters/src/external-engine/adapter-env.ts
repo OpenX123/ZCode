@@ -22,6 +22,32 @@ export function windowsNodeShimContent(): string {
 }
 
 /**
+ * 修复前 adapter 继承的 ELECTRON_RUN_AS_NODE=1 会传给官方 CLI 及其执行的全部命令，用户在会话里
+ * 启动的 Electron 程序被当成 Node 运行而失败。运行模式在进程启动时已确定，预加载里删除该变量只影响
+ * adapter 此后创建的子进程（见 docs/desktop/external-agent-engines-spec.md「Electron Node 模式不外泄」）。
+ */
+export const SCRUB_ELECTRON_RUN_AS_NODE_IMPORT =
+  "data:text/javascript,delete process.env.ELECTRON_RUN_AS_NODE";
+const JAVASCRIPT_ENTRY_PATTERN = /\.(?:c|m)?js$/i;
+
+/**
+ * adapter 的启动参数。仅 Windows 且官方 CLI 已解析为原生可执行文件时移除 Node 模式变量：JavaScript
+ * 入口（adapter 自带 codex.js 经 process.execPath 运行）依赖继承的 Node 模式；POSIX 的补位 node 为
+ * 符号链接，同样依赖继承变量，本版不移除。node.cmd 补位自身设置该变量，不受影响。
+ */
+export function adapterLaunchArgs(
+  entry: string,
+  officialExecutable: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const nativeOfficial =
+    officialExecutable !== undefined && !JAVASCRIPT_ENTRY_PATTERN.test(officialExecutable);
+  return platform === "win32" && nativeOfficial
+    ? ["--import", SCRUB_ELECTRON_RUN_AS_NODE_IMPORT, entry]
+    : [entry];
+}
+
+/**
  * 桌面可能只有 Electron Node 模式：npm 的 env node 入口与 adapter 自带的 codex.js（经 cross-spawn
  * 解析 shebang）在 PATH 缺 node 时以 127 或 ENOENT 退出。只为 ACP 子进程补充指向当前运行时的入口：
  * POSIX 为符号链接 node，Windows 为 node.cmd（Windows 符号链接需要额外权限，Electron 也会按链接

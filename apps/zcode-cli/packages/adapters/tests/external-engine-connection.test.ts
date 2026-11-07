@@ -21,7 +21,9 @@ import {
 } from "@zcode/shared";
 import { createSharedZCodeCredentialStore } from "../src/auth/index.js";
 import {
+  adapterLaunchArgs,
   ensureNodeRuntimeOnPath,
+  SCRUB_ELECTRON_RUN_AS_NODE_IMPORT,
   windowsNodeShimContent,
 } from "../src/external-engine/adapter-env.js";
 import {
@@ -54,7 +56,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     prompt = message;
     const env = {};
     for (const key of ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ELECTRON_RUN_AS_NODE", "ZCODE_TOOL_ENV_PASSTHROUGH_JSON"]) env[key] = process.env[key];
-    if (mode === "report") { text(JSON.stringify({ argv: process.argv.slice(1), env })); send({ id: message.id, result: { stopReason: "end_turn" } }); }
+    if (mode === "report") { text(JSON.stringify({ argv: process.argv.slice(1), execArgv: process.execArgv, env })); send({ id: message.id, result: { stopReason: "end_turn" } }); }
     else if (mode === "codex-error") info({ codex: { error: { message: "unexpected status 401 Unauthorized: bad key sk-abcdefghijklmnop request id: req_123", httpStatus: 401, willRetry: true } } });
     else if (mode === "air-error") info({ jetbrains: { air: { sessionFailure: { id: "f1", severity: "error", category: "access", title: "Sign in to continue using Claude." } } } });
     else if (mode === "rpc-error") send({ id: message.id, error: { code: -32603, message: "Internal error", data: { message: "upstream 503 Service Unavailable", httpStatus: 503 } } });
@@ -109,6 +111,7 @@ async function reported(port: ExternalEnginePort, input: ExternalEngineTurnInput
   const chunk = updates.find((update) => update.sessionUpdate === "agent_message_chunk");
   return JSON.parse((chunk?.content as { text: string }).text) as {
     argv: string[];
+    execArgv: string[];
     env: Record<string, string | undefined>;
   };
 }
@@ -129,8 +132,12 @@ describe("adapter 子进程环境", () => {
       HTTPS_PROXY: "http://user-proxy.example:3128",
       NO_PROXY: "localhost,.corp.example",
       NODE_EXTRA_CA_CERTS: join(tmpdir(), "corp-ca.pem"),
-      ELECTRON_RUN_AS_NODE: "1",
     });
+    // 夹具回报的是 adapter 进程内环境：Windows 原生官方 CLI 时预加载已移除 Node 模式变量，
+    // 官方 CLI 与其命令不再继承；其他情况 adapter 仍以继承的 Node 模式运行子进程。
+    const nativeOfficial = fromUser.execArgv.includes(SCRUB_ELECTRON_RUN_AS_NODE_IMPORT);
+    expect(fromUser.env.ELECTRON_RUN_AS_NODE).toBe(nativeOfficial ? undefined : "1");
+    expect(nativeOfficial).toBe(process.platform === "win32");
     expect(fromUser.env[ZCODE_TOOL_ENV_PASSTHROUGH_ENV_KEY]).toBeUndefined();
     const ycode = await setup("codex", {
       FIXTURE_MODE: "report",
@@ -180,6 +187,37 @@ describe("adapter 子进程环境", () => {
     expect(JSON.stringify([onConnectionProfile.mock.calls, onSession.mock.calls])).not.toContain(
       key,
     );
+  });
+});
+
+describe("Electron Node 模式不外泄", () => {
+  test("仅 Windows 原生官方 CLI 时预加载移除变量，JavaScript 入口与其他平台保持原样", () => {
+    const entry = "C:\\engines\\codex@2.2.2\\dist\\index.js";
+    expect(adapterLaunchArgs(entry, "C:\\bin\\codex.exe", "win32")).toEqual([
+      "--import",
+      SCRUB_ELECTRON_RUN_AS_NODE_IMPORT,
+      entry,
+    ]);
+    expect(adapterLaunchArgs(entry, "C:\\bin\\claude.EXE", "win32")[0]).toBe("--import");
+    // adapter 自带 codex.js 经 process.execPath 运行，依赖继承的 Node 模式。
+    expect(adapterLaunchArgs(entry, "C:\\engines\\bin\\codex.js", "win32")).toEqual([entry]);
+    expect(adapterLaunchArgs(entry, undefined, "win32")).toEqual([entry]);
+    // POSIX 补位 node 为符号链接，依赖继承变量，本版不移除。
+    expect(adapterLaunchArgs(entry, "/usr/local/bin/codex", "darwin")).toEqual([entry]);
+  });
+
+  test("预加载在入口运行前移除变量，adapter 之后创建的子进程不再继承", async () => {
+    const script = [
+      "const { spawnSync } = require('node:child_process');",
+      "const child = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.env.ELECTRON_RUN_AS_NODE))'], { encoding: 'utf8' });",
+      "process.stdout.write(String(process.env.ELECTRON_RUN_AS_NODE) + '|' + child.stdout);",
+    ].join("\n");
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      ["--import", SCRUB_ELECTRON_RUN_AS_NODE_IMPORT, "-e", script],
+      { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, windowsHide: true },
+    );
+    expect(stdout).toBe("undefined|undefined");
   });
 });
 

@@ -180,6 +180,15 @@ Host 与 CLI 启动时已把用户的代理与证书变量封存进 `ZCODE_TOOL_
 
 PATH 缺少 node 时，adapter 子进程的 PATH 前置 `<engines>/.node-runtime/<运行时哈希>/`：POSIX 为指向当前运行时的符号链接 `node`，Windows 为 `node.cmd`，以 `ELECTRON_RUN_AS_NODE=1` 调用当前运行时。cmd 按控制台代码页解码批处理，用户名含中文时内嵌路径会被解错，因此运行时路径经 adapter 写入的 `ZCODE_EXTERNAL_ENGINE_NODE` 传入，`node.cmd` 内容保持纯 ASCII。这样 npm 入口和 adapter 自带的 `codex.js` 在没有系统 Node 的机器上也能启动。不修改系统 PATH。
 
+### Electron Node 模式不外泄（1.1，Windows）
+
+adapter 由当前运行时（桌面为 YCode.exe）以 `ELECTRON_RUN_AS_NODE=1` 启动；修复前该变量随 adapter 环境传给官方 CLI，再传给引擎内执行的全部命令，用户在 Claude Code / Codex 会话里启动的 Electron 程序（如 `pnpm dev` 一个 Electron 项目）会被当成 Node 运行而失败。
+
+- 规则：Windows 上官方 CLI 已解析为原生可执行文件（`claude.exe`、`codex.exe`）时，adapter 以 `--import data:text/javascript,delete process.env.ELECTRON_RUN_AS_NODE` 启动：运行模式在进程启动时已确定，删除只影响此后创建的子进程，官方 CLI 及其工具命令不再继承该变量。
+- 例外：官方 CLI 回退为 JavaScript 入口（adapter 自带 `codex.js` 经 `process.execPath` 运行）或未解析到官方 CLI 时保持原样，因为这些子进程依赖继承的 Node 模式；`node.cmd` 补位自身设置 `ELECTRON_RUN_AS_NODE=1`，不受影响。
+- macOS / Linux 的补位 `node` 是指向当前运行时的符号链接，依赖继承变量，本版不移除；后续改为自设变量的脚本补位后再统一。
+- 验收：本机 Windows 上 adapter 子进程环境不含该变量，Claude Code 会话内执行 `node -e "console.log(process.env.ELECTRON_RUN_AS_NODE)"` 输出 `undefined`；adapter、原生 CLI 与 `node.cmd` 补位照常启动。
+
 ### 状态所有者与事件顺序
 
 | 状态               | 所有者                                             | 读取方                                        |

@@ -15,7 +15,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
-const script = `const readline=require('node:readline'); const send=(value)=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...value})+'\\n'); let prompt; const sid='external-session'; readline.createInterface({input:process.stdin}).on('line',(line)=>{const x=JSON.parse(line); const result=(value)=>send({id:x.id,result:value}); if(x.method==='initialize')result({protocolVersion:1}); else if(x.method==='session/new'||x.method==='session/resume'){ send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'available_commands_update',availableCommands:[{name:'compact',description:'compact'}]}}}); result({sessionId:sid,configOptions:[{id:'mode',name:'Mode',type:'select',currentValue:'safe',options:[{value:'safe',name:'Safe'}]}]}); } else if(x.method==='session/prompt'){if(x.params.prompt[0].text==='exit'){process.exit(7);}if(x.params.prompt[0].text==='malformed'){process.stdout.write('invalid-test-private-frame\\n');return;}if(x.params.prompt[0].text==='env-check'){send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({nodeMode:process.env.ELECTRON_RUN_AS_NODE,home:process.env.HOME,profile:process.env.USERPROFILE,anthropicRemoved:!process.env.ANTHROPIC_API_KEY&&!process.env.ANTHROPIC_AUTH_TOKEN&&!process.env.ANTHROPIC_BASE_URL})}}}});result({stopReason:'end_turn'});return;}prompt=x; send({id:900,method:'session/request_permission',params:{sessionId:sid,toolCall:{toolCallId:'tool-id',title:'Write'},options:[{optionId:'unique-deny',kind:'reject_once',name:'Deny'},{optionId:'unique-allow',kind:'allow_once',name:'Allow'}]}});} else if(x.id===900){send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:x.result.outcome.optionId}}}}); send({id:prompt.id,result:{stopReason:'end_turn',usage:{inputTokens:5,outputTokens:2}}});} else if(x.method==='session/cancel')send({id:prompt.id,result:{stopReason:'cancelled'}}); else if(x.method==='session/set_config_option' && x.params.value==='reject')send({id:x.id,error:{code:-32602,message:'unsupported while running'}}); else if(x.method==='session/set_config_option')result({configOptions:[{id:'mode',name:'Mode',currentValue:x.params.value,options:[{value:'safe',name:'Safe'}]}]});});`;
+const script = `const readline=require('node:readline'); const send=(value)=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...value})+'\\n'); let prompt; const sid='external-session'; readline.createInterface({input:process.stdin}).on('line',(line)=>{const x=JSON.parse(line); const result=(value)=>send({id:x.id,result:value}); if(x.method==='initialize')result({protocolVersion:1}); else if(x.method==='session/new'||x.method==='session/resume'){ send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'available_commands_update',availableCommands:[{name:'compact',description:'compact'}]}}}); result({sessionId:sid,configOptions:[{id:'mode',name:'Mode',type:'select',currentValue:'safe',options:[{value:'safe',name:'Safe'}]}]}); } else if(x.method==='session/prompt'){if(x.params.prompt[0].text==='exit'){process.exit(7);}if(x.params.prompt[0].text==='malformed'){process.stdout.write('invalid-test-private-frame\\n');return;}if(x.params.prompt[0].text==='env-check'){send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({nodeMode:process.env.ELECTRON_RUN_AS_NODE,scrubbed:process.execArgv.includes('--import'),home:process.env.HOME,profile:process.env.USERPROFILE,anthropicRemoved:!process.env.ANTHROPIC_API_KEY&&!process.env.ANTHROPIC_AUTH_TOKEN&&!process.env.ANTHROPIC_BASE_URL})}}}});result({stopReason:'end_turn'});return;}prompt=x; send({id:900,method:'session/request_permission',params:{sessionId:sid,toolCall:{toolCallId:'tool-id',title:'Write'},options:[{optionId:'unique-deny',kind:'reject_once',name:'Deny'},{optionId:'unique-allow',kind:'allow_once',name:'Allow'}]}});} else if(x.id===900){send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:x.result.outcome.optionId}}}}); send({id:prompt.id,result:{stopReason:'end_turn',usage:{inputTokens:5,outputTokens:2}}});} else if(x.method==='session/cancel')send({id:prompt.id,result:{stopReason:'cancelled'}}); else if(x.method==='session/set_config_option' && x.params.value==='reject')send({id:x.id,error:{code:-32602,message:'unsupported while running'}}); else if(x.method==='session/set_config_option')result({configOptions:[{id:'mode',name:'Mode',currentValue:x.params.value,options:[{value:'safe',name:'Safe'}]}]});});`;
 async function setup(engine: "claude-code" | "codex") {
   const root = await mkdtemp(join(tmpdir(), "zcode-acp-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
@@ -169,8 +169,11 @@ test("外部Claude恢复真实HOME/USERPROFILE并清除API环境变量", async (
   await port.runTurn(input);
   const content = updates.find((update) => update.sessionUpdate === "agent_message_chunk")
     ?.content as { text: string };
-  expect(JSON.parse(content.text)).toEqual({
-    nodeMode: "1",
+  const reported = JSON.parse(content.text) as { scrubbed: boolean };
+  // Windows 原生官方 CLI 时 adapter 启动即移除 Node 模式变量（官方 CLI 不再继承），其余情况保持继承。
+  expect(reported).toEqual({
+    nodeMode: reported.scrubbed ? undefined : "1",
+    scrubbed: reported.scrubbed,
     home: root,
     profile: root,
     anthropicRemoved: true,
@@ -222,8 +225,9 @@ test.each(["claude-code", "codex"] as const)(
       expect(await port.setConfigOption(input.sessionId, "mode", "safe")).toMatchObject([
         { id: "mode", currentValue: "safe" },
       ]);
+      // c2ae3f2f 起业务拒绝展示脱敏后的原生摘要，不再是通用的 "External engine request failed"。
       await expect(port.setConfigOption(input.sessionId, "mode", "reject")).rejects.toThrow(
-        "External engine request failed",
+        "unsupported while running",
       );
     } finally {
       releasePermission();
