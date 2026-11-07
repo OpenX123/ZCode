@@ -13,6 +13,7 @@
 // useDraftSessionPrewarm 只做 effect 接线与 owner-scoped binding 暴露。
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { CommandAck, CommandType, SessionConfigState } from "@zcode/shared/zcode-protocol-v4";
+import type { EngineConfigState } from "@zcode/shared/external-engine";
 import { logger } from "@/logger.js";
 
 type DispatchCommand = (
@@ -147,6 +148,44 @@ export function startDraftSessionPrewarm(params: {
       }
     },
   };
+}
+
+/**
+ * 外部引擎草稿的就绪阶段（1.1）。createSession ACK 只表示草稿记录已建立，握手在 CLI 后台完成，
+ * 因此阶段只由 owner 的创建状态与预热会话 snapshot 的 engineConfigState 派生，不另存就绪缓存。
+ * 规则表见 docs/desktop/external-agent-engines-spec.md「草稿预热 owner」。
+ */
+export type DraftEngineReadiness =
+  | "disabled"
+  | "creating"
+  | "connecting"
+  | "ready"
+  | "failed"
+  | "recreatable";
+
+export function resolveDraftEngineReadiness(input: {
+  enabled: boolean;
+  binding: Pick<DraftPrewarmBinding, "sessionId"> | null;
+  pending: boolean;
+  error: Error | null;
+  /** 当前投影的 snapshot；只有 sessionId 与 binding 一致时才读取其 engineConfigState。 */
+  snapshot: { sessionId: string; engineConfigState?: EngineConfigState } | null;
+}): DraftEngineReadiness {
+  if (!input.enabled) return "disabled";
+  if (input.pending) return "creating";
+  if (!input.binding)
+    // 修复 1.0.8 遗留：被丢弃（订阅失败）的预热既无 binding 也无错误，旧门禁据此禁用发送，
+    // 而 owner 只在 waitForSession 时重建，二者互等成死锁。丢弃后允许发送，由 owner 单飞重建。
+    return input.error ? "failed" : "recreatable";
+  if (input.snapshot?.sessionId !== input.binding.sessionId) return "connecting";
+  if (input.snapshot.engineConfigState === "ready") return "ready";
+  if (input.snapshot.engineConfigState === "error") return "failed";
+  return "connecting";
+}
+
+/** 发送入口是否可用：就绪、失败（发送即重试）或可重建；创建/连接中与禁用时不可发送。 */
+export function draftEngineSubmissionAllowed(readiness: DraftEngineReadiness): boolean {
+  return readiness === "ready" || readiness === "failed" || readiness === "recreatable";
 }
 
 export interface DraftSessionPrewarm {
