@@ -1,5 +1,123 @@
 # 外部 Agent 引擎（Claude Code / Codex）
 
+## 外部引擎进程与异步准备（2026-11-07，1.1）
+
+决策来源：[YCode 1.1 更新方案](./ycode-1.1-plan.md)「性能」中的“外部引擎进程”“CLI 传输”，以及附录 B 的“外部引擎闲置连接”。仍是每个会话一个 adapter 进程；本节只改变握手何时完成、何时有空闲进程可用、何时关闭闲置进程。连接恢复、重试与 single-flight 规则见下文「原会话连接恢复与诊断」，不变。
+
+### 异步 createSession
+
+- 外部引擎草稿的 `createSession` 在会话记录建立、所选连接配置写入 Runtime、`engineConfigState=connecting` 发布之后就返回 ACK。ACP 握手（spawn → initialize → Codex API Key 的 `providers/set` → `session/new|resume|load` → Claude 新会话 Auto 默认与已保存配置的恢复）在 Runtime 后台继续，结果只经已有的 `engineConfigState` 投影：成功为 `ready`，失败为 `error` 并附带已有的结构化诊断 `engineConfigError`。ACK 不再表示握手已完成。
+- 握手失败不会删除草稿记录，草稿与 snapshot 保留，可经已有 CAS 命令 `prepareExternalEngineSession` 重试。只有在发布 connecting 之前就失败（例如事件写入失败）才按旧规则删除 deferred 记录，并返回失败 ACK。
+- 不变的部分：不隐式安装（入口缺失为 `not_ready`）；准备阶段不提交 prompt、不创建 turn；同一会话的准备是 single-flight（Runtime `externalEnginePreparation` + port `preparations` 两层合并），后台准备期间收到的 `prepareExternalEngineSession`、`setEngineConfigOption` 和 turn 都并入同一次握手；`deleteSession` 或关闭 Runtime 时先置 `shuttingDown`，再经 `closeSession` 中止后台握手和退避，之后到达的会话 ID、配置与错误一律丢弃，不再发布状态。
+- 带 `firstInput` 的 `createSession` 同样不等待握手：首条输入照常 admission，turn 在提交 prompt 之前并入同一次准备；准备失败时按已有 turn 失败路径结束。
+
+### 草稿预热 owner
+
+- `useDraftSessionPrewarm` 仍是草稿预热会话的唯一 owner，ACK 只用来建立 binding。草稿是否就绪由该 binding 会话 snapshot 中的 `config.engineConfigState` 决定，Renderer 不另存就绪缓存。纯函数 `resolveDraftEngineReadiness` 按以下规则派生：
+
+| owner / snapshot                                         | 阶段          | 显示        | 能否发送                                                   |
+| -------------------------------------------------------- | ------------- | ----------- | ---------------------------------------------------------- |
+| createSession 在途                                       | `creating`    | 正在连接…   | 否                                                         |
+| 已有 binding，但还没收到该会话 snapshot，或 `connecting` | `connecting`  | 正在连接…   | 否                                                         |
+| 已有 binding，`ready`                                    | `ready`       | 原生配置    | 是                                                         |
+| 已有 binding，`error`                                    | `failed`      | 诊断 + 重连 | 是：先 `prepareExternalEngineSession`，成功后才 `sendText` |
+| 无 binding，createSession 失败                           | `failed`      | 原错误      | 是：`waitForSession` 由 owner 重建，就绪后才 `sendText`    |
+| 无 binding，预热已被丢弃（订阅失败）                     | `recreatable` | 无          | 是：同上                                                   |
+| 预热被禁用（远程不可用、待恢复首发等）                   | `disabled`    | 无          | 否                                                         |
+
+- 发送仍要等就绪，与 1.0.x 一致：外部引擎草稿发送前，如果 binding 会话的 snapshot 不是 `ready`，就经配置屏障发送 `prepareExternalEngineSession`。该命令并入后台握手，或在失败后重试一次，ACK 为 accepted/noop 时才发出 `sendText`；否则抛错，输入框保留输入。失败的草稿另提供“重新连接”入口，走同一 CAS 命令。
+- 1.0.8 遗留问题：预热会话因订阅失败被 `discard()` 之后，owner 会阻止同一版本自动重建；而外部引擎草稿的 `submissionReady` 只看“有 binding 或有错误”，两者都为空，发送入口被禁用，也就不会再调用 `waitForSession`，形成死锁。修复后，被丢弃的预热属于 `recreatable` 阶段，可以发送；发送时由 owner 单飞重建，等就绪后再发送。
+
+### 预热备用进程（spare）
+
+- 所有者：每个 CLI 进程一个 `ExternalEngineProcessPool`（adapter 层），由协议 server 创建，并注入该进程内每个会话 app 的 ExternalEnginePort；测试连接使用的独立 port 不接入。
+- 每个（引擎，连接配置 ID）至多保留一个备用进程。它已完成 spawn、`initialize`，并在 Codex API Key 配置下完成 `providers/set`，但还没有原生会话。启动路径与冷启动相同：同一入口、同一环境构造、同一连接配置解析。
+- 领用：新会话（`session/new`，不含 resume/load/fork）解析出连接配置后，若备用进程的引擎、配置 ID 和 cwd 都一致且进程健康，就同步领用，跳过 spawn 和 initialize。领用后该进程归会话所有，之后与冷启动的会话连接没有区别。进程已退出、cwd 不同或备用进程仍在初始化时，按未命中处理并走冷启动；仍在初始化的那个备用进程会保留下来。备用进程不跨连接配置复用。
+- 补位：同一（引擎，配置）的 `session/new` 成功后（无论是否命中），后台准备一个替代备用进程；已有健康备用进程或正在初始化时不重复创建。补位排在会话握手之后，不和会话握手争抢启动资源。
+- 存在条件：只在 Host 注入了 `ZCODE_EXTERNAL_ENGINES_DIR` 的 CLI 中存在，即桌面本地工作区。远程工作区不运行外部引擎会话，所以没有备用进程。备用进程只在该引擎刚成功新建会话后补位；草稿预热按当前默认引擎（或用户刚改选的引擎）发起，因此备用进程只会属于当前默认或刚用过的引擎，自然满足“当前默认或近 24 小时用过”。启动、恢复历史会话和测试连接都不会创建备用进程。
+- 回收：备用进程 10 分钟未被领用就关闭。备用进程的失败（启动失败、initialize 失败、中途退出）不向用户展示，只写日志，并回落到冷启动路径。
+- 关闭：协议 server 的 `shutdown()` 在关闭各会话 app 的同时关闭 pool。pool 停止补位，关闭全部备用进程和仍在初始化的备用进程。关闭沿用 `closeAcpProcess`：Windows 用 `taskkill /T /F` 结束进程树，POSIX 结束 detached 进程组，与会话 adapter 相同。CLI 进程被强杀时，备用进程与会话 adapter 一样可能残留，这是已有边界。
+
+### 闲置连接关闭
+
+- 所有者仍是 port 与 pool：port 持有会话连接和该会话的在途计数（prepare、prompt、fork、setConfigOption），pool 按 60 秒节拍扫描已登记的会话连接。
+- 关闭条件（全部满足）：会话连接存在；没有在途操作或准备（外部引擎的待处理交互只出现在运行中的 prompt 内，因此也一并覆盖）；该连接的原生会话已确认可恢复（经 resume/load 建立，或至少提交过一次 prompt）；最近一次使用已超过 15 分钟；不是最近活跃的 3 个可恢复会话之一。即使会话仍被订阅（Tab 打开）也会关闭。
+- 未提交过 prompt 的草稿预热会话不关闭，也不占用这 3 个豁免名额：从未提交 prompt 的原生会话可能无法 resume。
+- 关闭只结束 adapter 进程。订阅、已确认配置、`externalSessionId` 和 `engineConfigState=ready` 都保留。下一次发送时，turn 发现没有健康连接，就投影 connecting，按原会话 resume/load 恢复已确认配置，再投影 ready 并提交 prompt；下一次修改配置时，`setConfigOption` 得到 `not_ready`，经已有空闲恢复路径重连，然后只重试这次幂等配置。prompt 绝不自动重发。
+- 关闭与使用并发：port 的释放与其他入口取得连接都在同一个同步片内完成，释放前再检查一次在途计数；释放之后到达的操作看不到旧连接，会走恢复路径。
+- 常驻池（未订阅、已持久化会话的 runtime 回收）的闲置时间从 10 分钟延长为 30 分钟，LRU 上限（16 → 8）不变。
+
+### 本地性能事件
+
+均为 info 级，只写本机日志，不含正文、路径、密钥或命令行：
+
+| 事件                                                           | 字段                                                                                                                                                                               |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `external_engine.handshake.completed`                          | `engine`、`sessionId`、`method`（new/resume/load/fork）、`spare`（hit/miss/none）、`launchMs`、`initializeMs`、`providersSetMs`（有时）、`sessionMs`、`configRestoreMs`、`totalMs` |
+| `external_engine.handshake.failed`                             | `engine`、`sessionId`、`code`、`method`、`totalMs`                                                                                                                                 |
+| `external_engine.spare.claimed` / `.miss`                      | `engine`、`connectionProfileId`、`reason`（miss：none/warming/unhealthy/cwd）、`ageMs`（hit）                                                                                      |
+| `external_engine.spare.ready` / `.expired` / `.failed`（warn） | `engine`、`connectionProfileId`、`durationMs` / `idleMs` / `code`                                                                                                                  |
+| `external_engine.idle_close`                                   | `engine`、`sessionId`、`idleMs`                                                                                                                                                    |
+| `external_engine.idle_resume.completed` / `.failed`            | `engine`、`sessionId`、`durationMs`（从发起恢复到 ready）、`code`（失败时）                                                                                                        |
+
+### 状态所有者与事件顺序
+
+| 状态                                        | 所有者                                                      | 读取方                                  |
+| ------------------------------------------- | ----------------------------------------------------------- | --------------------------------------- |
+| 草稿记录、连接配置绑定、`engineConfigState` | CLI Runtime（`prepareExternalEngineSession` single-flight） | V4 snapshot → Renderer                  |
+| 会话 adapter 连接、在途计数、最近使用时间   | CLI ExternalEnginePort（每会话 app 一个）                   | pool 扫描                               |
+| 备用进程、闲置扫描与 3 个豁免               | CLI ExternalEngineProcessPool（每 CLI 进程一个）            | port 领用 / 补位                        |
+| 草稿预热 binding                            | Renderer `useDraftSessionPrewarm`                           | SessionPane（就绪阶段由 snapshot 派生） |
+
+```mermaid
+sequenceDiagram
+  participant UI as Renderer 预热 owner
+  participant V4 as CLI V4 handler
+  participant R as Runtime（engineConfigState 所有者）
+  participant P as ExternalEnginePort
+  participant S as ProcessPool（备用进程）
+  participant A as ACP adapter
+  UI->>V4: createSession{engine, engineConnectionProfileId}
+  V4->>R: startExternalEngineSessionPreparation
+  R-->>R: 绑定配置，发布 connecting
+  V4-->>UI: ACK（仅记录已建立）
+  UI->>V4: subscribe → snapshot connecting
+  R->>P: prepareSession（后台，single-flight）
+  P->>P: 解析连接配置
+  P->>S: claimSpare(engine, profile, cwd)
+  alt 命中
+    S-->>P: 已 initialize 的连接
+  else 未命中
+    P->>A: spawn + initialize（+ providers/set）
+  end
+  P->>A: session/new（+ 配置恢复）
+  A-->>R: onSession / onConfigOptions
+  R-->>UI: snapshot ready（失败则 error + 诊断）
+  P->>S: refillSpare（后台补位）
+  UI->>V4: sendText（仅在 ready 后；error 时先 prepareExternalEngineSession）
+  Note over S,A: 备用进程 10 分钟未领用即关闭
+  Note over P,A: 空闲 15 分钟且不在最近 3 个 → 关闭 adapter，保留 ready 与 externalSessionId
+  UI->>V4: 之后发送
+  R-->>UI: connecting
+  P->>A: spawn + initialize + session/resume（恢复已确认配置）
+  R-->>UI: ready，提交 prompt（只一次）
+```
+
+### 回归与验收
+
+| ID  | 场景                                  | 断言                                                                                        | 层             |
+| --- | ------------------------------------- | ------------------------------------------------------------------------------------------- | -------------- |
+| P01 | 外部引擎草稿 createSession            | ACK 早于握手完成；ACK 时 Runtime 已为 connecting；随后 ready；不创建 turn、不发 prompt      | bootstrap/core |
+| P02 | 后台握手失败                          | ACK 已 accepted；记录保留；`engineConfigState=error` 带诊断；重试可恢复                     | bootstrap/core |
+| P03 | 握手中删除草稿                        | 后台握手中止，之后不再发布 ready/error，不启动迟到进程                                      | core/adapters  |
+| P04 | 备用进程领用 / 补位 / 过期 / 配置隔离 | 同配置第二个新会话不再 initialize；补位后仍至多一个；10 分钟后关闭；其他配置 ID 不领用      | adapters       |
+| P05 | 闲置关闭后发送与改配置                | adapter 进程退出；`externalSessionId` 与配置保留；下次发送 resume 恢复配置后只发一次 prompt | adapters       |
+| P06 | 最近 3 个会话与草稿                   | 第 4 个起才关闭；从未提交 prompt 的草稿不关闭                                               | adapters       |
+| P07 | CLI 关闭时存在备用进程                | pool 关闭全部备用进程与仍在初始化的备用进程，此后不再补位                                   | adapters       |
+| P08 | 草稿就绪阶段与丢弃后恢复              | 发送只在 ready / failed / recreatable 时可用；丢弃后发送由 owner 重建并等待就绪             | UI             |
+
+单测使用受控 ACP 夹具进程。Windows 整机上 `codex.exe` / `claude.exe` 的真实 spawn 耗时、进程树回收与内存下降需要在本机单独验收，未验收前不写成通过。
+
 ## 连接与认证规则（2026-11-07，1.0.8）
 
 本节取代 2026-11-06 版本，决策来源为 [YCode 1.1 更新方案](./ycode-1.1-plan.md)「连接与认证」。就绪与检测缓存规则保持不变。
@@ -192,13 +310,13 @@ sequenceDiagram
 
 ## 状态所有者与接口
 
-| 状态                                                     | 所有者                                             | 说明                                                                                                          |
-| -------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| transcript、turn/row、queue、interaction、session config | CLI V4 projection/runtime（不变）                  | 外部引擎事件翻译为 `SessionEvent` 并写入 `message`/`part` 行，冷恢复与 replayable 回放与 ZCode 会话同路径     |
-| 引擎自身会话（Claude session JSONL、Codex thread）       | 引擎                                               | YCode 只保存 `externalSessionId`，不解析引擎的 transcript 文件                                                |
-| 引擎会话 id 与 engine 类型                               | CLI session record + SQLite `session` 表（新增列） | 创建时写入，之后不可变                                                                                        |
-| adapter 进程                                             | CLI，每个会话一个进程                              | 子进程只经 `adapters/src/exec` 启动；空闲回收接入 `session-resident-pool`，有运行中 turn 或待处理权限时不回收 |
-| adapter 安装与登录状态                                   | Host services（`external-engine-service`）         | 只读检测加用户显式安装；就绪结果作为外部引擎会话的执行门禁                                                    |
+| 状态                                                     | 所有者                                             | 说明                                                                                                                                                                            |
+| -------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| transcript、turn/row、queue、interaction、session config | CLI V4 projection/runtime（不变）                  | 外部引擎事件翻译为 `SessionEvent` 并写入 `message`/`part` 行，冷恢复与 replayable 回放与 ZCode 会话同路径                                                                       |
+| 引擎自身会话（Claude session JSONL、Codex thread）       | 引擎                                               | YCode 只保存 `externalSessionId`，不解析引擎的 transcript 文件                                                                                                                  |
+| 引擎会话 id 与 engine 类型                               | CLI session record + SQLite `session` 表（新增列） | 创建时写入，之后不可变                                                                                                                                                          |
+| adapter 进程                                             | CLI，每个会话一个进程                              | 子进程只经 `adapters/src/exec` 启动；空闲回收接入 `session-resident-pool`，有运行中 turn 或待处理权限时不回收；1.1 起另有备用进程与闲置连接关闭（见「外部引擎进程与异步准备」） |
+| adapter 安装与登录状态                                   | Host services（`external-engine-service`）         | 只读检测加用户显式安装；就绪结果作为外部引擎会话的执行门禁                                                                                                                      |
 
 接缝：`apps/zcode-cli/packages/core/src/runtime/methods/turn.ts` 中 `executeTurnCommand` 对 `runRegularTurnLoop` 的调用。外部引擎会话改为调用新的 `ExternalEnginePort.runTurn`；准入、TurnStarted/Complete、usage 结算、abort 全部复用。
 
@@ -627,6 +745,7 @@ sequenceDiagram
 ### 草稿连接中提示
 
 - 草稿的“正在连接引擎…”只表示预热 `createSession` 在途（含排在旧代创建收口之后的新一代）。预热被禁用（存在待恢复的首发、远程连接不可用）、创建失败或预热会话被丢弃时不显示加载；失败仍显示原错误与重试入口。
+- 1.1 起 createSession 的 ACK 不再等待握手：“正在连接引擎…”还包括“已有 binding、该会话 snapshot 尚未到达或为 connecting”，阶段由 `resolveDraftEngineReadiness` 派生（见「外部引擎进程与异步准备」）。
 
 回归覆盖：跨项目/重启继承、设置迟到不启动内置引擎、旧草稿与已有会话不变、本机/SSH 设置隔离、偏好保存失败可见；SSH 草稿使用 YCode 且默认偏好不变、远程选择器灰显并说明原因；记忆只写确认的模型/深度、权限模式不记忆、恢复按目录跳过且模型先于深度、已有草稿不套用；预热禁用时不显示连接中。
 
