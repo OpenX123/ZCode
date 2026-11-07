@@ -101,11 +101,12 @@ async function setup(engine: "claude-code" | "codex") {
   return { port, input, notices, updates, calls };
 }
 
-test("只为 Codex 声明 AIR sessionFailure 与 terminal_output_delta，Claude 保持原能力", async () => {
+test("只为 Codex 声明 AIR sessionFailure 与 terminal_output_delta，两家都声明原生子智能体，Claude 不是 AIR 客户端", async () => {
   const codex = await setup("codex");
   await codex.port.prepareSession(codex.input("unused"));
   expect((await codex.calls())[0]?.params.clientCapabilities).toEqual({
     plan: {},
+    subagents: {},
     _meta: {
       jetbrains: { air: { version: 1, capabilities: ["sessionFailure"] } },
       terminal_output_delta: true,
@@ -114,7 +115,7 @@ test("只为 Codex 声明 AIR sessionFailure 与 terminal_output_delta，Claude 
   await codex.port.closeSession("local-session");
   const claude = await setup("claude-code");
   await claude.port.prepareSession(claude.input("unused"));
-  expect((await claude.calls())[0]?.params.clientCapabilities).toEqual({ plan: {} });
+  expect((await claude.calls())[0]?.params.clientCapabilities).toEqual({ plan: {}, subagents: {} });
 });
 
 test("Codex typed 重试按失败 ID 与 revision 交付，终态失败随 prompt 结果返回且连接保持健康", async () => {

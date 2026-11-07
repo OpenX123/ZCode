@@ -678,12 +678,12 @@ sequenceDiagram
 
 ### 状态所有者与接口
 
-| 状态 | 所有者 | 说明 |
-| --- | --- | --- |
-| 原生帧解析、子 sessionId 归属、子会话请求路由 | ACP adapter（connection） | 把两种形态归一为 `ExternalEngineSubagentEvent`；只路由已宣告子 ID 的更新与权限，未知非主 ID 丢弃并记 debug |
-| 子会话记录、子会话正文、父会话 Agent 行、子智能体生命周期 | 父会话的外部引擎 Runtime（`core/src/external-engine/subagents.ts`） | 唯一发布 SubagentSpawned / SubagentStopped / BackgroundTask*；子会话正文经子 Runtime 写入既有 message/part 与事件日志 |
-| `snapshot.subagents`、子智能体行 | 既有 V4 ProductProjection | 不新增投影字段，live 与冷恢复同一 reducer |
-| 停止入口 | 既有 `cancelBackgroundWork(workId)` | 仅原生声明可取消的子会话发布 `cancellable` 后台工作 |
+| 状态                                                      | 所有者                                                              | 说明                                                                                                                   |
+| --------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 原生帧解析、子 sessionId 归属、子会话请求路由             | ACP adapter（connection）                                           | 把两种形态归一为 `ExternalEngineSubagentEvent`；只路由已宣告子 ID 的更新与权限，未知非主 ID 丢弃并记 debug             |
+| 子会话记录、子会话正文、父会话 Agent 行、子智能体生命周期 | 父会话的外部引擎 Runtime（`core/src/external-engine/subagents.ts`） | 唯一发布 SubagentSpawned / SubagentStopped / BackgroundTask\*；子会话正文经子 Runtime 写入既有 message/part 与事件日志 |
+| `snapshot.subagents`、子智能体行                          | 既有 V4 ProductProjection                                           | 不新增投影字段，live 与冷恢复同一 reducer                                                                              |
+| 停止入口                                                  | 既有 `cancelBackgroundWork(workId)`                                 | 仅原生声明可取消的子会话发布 `cancellable` 后台工作                                                                    |
 
 接口（`@zcode/contracts` external-engine 契约，严格类型；adapter 在边界做运行时校验）：
 
@@ -723,13 +723,14 @@ sequenceDiagram
 - 子会话记录保存父会话的 engine，不保存 externalSessionId（原生上下文属于父原生会话）。
 - 父会话 Agent 行由 Runtime 合成：工具名 `Agent`，toolCallId 为 `native-subagent:<原生ID>:<序号>`，input `{description, prompt, subagent_type}`，metadata `{childSessionId, agentId, agentType, description, nativeSessionId}`；结束时 output 为 JSON `{agentId, childSessionId, agentType, description, status, result}`，失败/取消/失联写 error。冷恢复、`session/subagents` 查询与 live 共用这条既有 Agent 工具链，不新增 V4 字段。`snapshot.subagents.running[].toolCallId` 即该行，界面据此下钻。
 - running 子会话等待权限时投影为 waiting（既有 origin 规则）；RFD 的 requires_action 不另发事件。
+- RFD 的回答（`<launch>:reply`）在子会话结束前到达时作为 Agent 行摘要；结束后到达的回答与子会话最终正文重复，不再改写已结束的 Agent 行（摘要取子会话最终正文）。
 - 子会话生命周期绑定父轮：Codex 的 prompt 等待子会话结束后才返回；父轮结束（成功、失败、停止或断联）时仍 running 的子会话按 lost 收尾并保留正文。RFD 形态的后台子会话在父轮结束后继续运行的部分 YCode 不再观察，记为已知缺口。
 - 嵌套：spawned 的父 ID 是已知子会话时，子会话记录的 parentID 为该直接父子会话，Agent 行与 SubagentSpawned 写入直接父子会话的正文与事件流；根会话 `snapshot.subagents` 只列直属子会话。
 
 ### 幂等与回放
 
 - 幂等键为原生子 sessionId。YCode 子会话 ID 由（父会话 ID，原生子 ID）确定性派生：`sess_ext-subagent_<sha256 前 32 位>`。同一原生 ID 的重复 spawned 不重复建记录、不重复写首条消息；记录已在库中（重启后同 ID 再现）时先恢复再续写。
-- `:generation:N` 是新的原生会话：建立新的子会话记录与新的 Agent 行（名称沿用原生 name，metadata 记录同一 `nativeSessionId` 前缀以便关联），不改写已结束子会话的正文。
+- `:generation:N` 是新的原生会话：建立新的子会话记录与新的 Agent 行（名称沿用原生 name，metadata.nativeSessionId 记录含后缀的完整原生 ID，可按 `:generation:` 之前的前缀关联同一原生线程），不改写已结束子会话的正文。
 - RFD 同一子 ID 由 idle 再次 running：沿用同一子会话记录，开启新的子轮，父会话新增一条 Agent 行并重新发布 SubagentSpawned（投影把原子智能体行改回 running）。
 - `session/load` / fork 回放期间，adapter 丢弃全部子智能体帧与子会话更新，不登记子 ID；YCode 已持久化的子会话正文是唯一事实，回放不写入任何行。
 - 未宣告的非主 sessionId 的更新与权限请求一律丢弃（权限回 cancelled），记 debug，不含正文。
@@ -740,7 +741,7 @@ sequenceDiagram
 
 ### 停止
 
-只有原生声明可取消（Claude RFD `capabilities.cancel`、AIR 草案 `capabilities.cancel/close` 为 true）的子会话发布 `BackgroundTaskStarted {taskId: childSessionId, taskKind:"subagent", cancellable:true, childSessionId}`，既有 Stop 按 childSessionId 关联显示。`cancelBackgroundWork(workId=childSessionId)` 由父 Runtime 转为 `ExternalEnginePort.cancelSubagent`；真实结束以原生后续 state 为准。Codex 2.2.2 不声明取消，不提供 Stop。子会话结束时发布 BackgroundTaskCompleted，界面只对 running 工作给 Stop。
+只有原生声明可取消（Claude RFD `capabilities.cancel` 为对象、AIR 草案 `capabilities.cancel` 为 true；`close` 需要 session/close，暂不接入）的子会话发布 `BackgroundTaskStarted {taskId: childSessionId, taskKind:"subagent", cancellable:true, childSessionId}`，既有 Stop 按 childSessionId 关联显示。`cancelBackgroundWork(workId=childSessionId)` 由父 Runtime 转为 `ExternalEnginePort.cancelSubagent`；真实结束以原生后续 state 为准。Codex 2.2.2 不声明取消，不提供 Stop。子会话结束时发布 BackgroundTaskCompleted，界面只对 running 工作给 Stop。
 
 ### 界面降级识别
 
