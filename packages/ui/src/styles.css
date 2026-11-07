@@ -1923,6 +1923,24 @@ html[data-document-hidden] *::after {
   --wf-face-x: 0px;
   --wf-face-y: 0px;
 }
+/* 对话多智能体表面使用固定尺寸（docs/desktop/multi-agent-display-spec.md）；
+   workflow 表面不带 data-face-size，保留上面的 20px 下限。 */
+.wf-face[data-face-size="16"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+}
+.wf-face[data-face-size="20"] {
+  width: 20px;
+  height: 20px;
+}
+.wf-face[data-face-size="24"] {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+}
 .wf-face-eyes {
   transform: translate(var(--wf-face-x), var(--wf-face-y));
   transition: transform 360ms ease-in-out;

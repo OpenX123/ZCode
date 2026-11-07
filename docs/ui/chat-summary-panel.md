@@ -12,7 +12,7 @@ Chat status panel 是 V4 conversation pane 右上角的常驻状态面板，用�
 - 已有 task 但 Git、goal、todo、running 都没有可展示内容时，不挂载 status panel，不预留完整面板的 inline offset。只有已结束 subagent 不单独挂载 mini/status panel；用户已打开的目录 tab 不受影响。
 - `ChatViewEmptyState` 组件根节点在完整 status panel 使用 inline 布局时复用 `CHAT_VIEW_SUMMARY_PANEL_INLINE_OFFSET_CLASS_NAME`，并保留 transform 过渡，和消息列、输入区保持横向对齐；外层 empty region 与 task restore loading placeholder 共用居中布局，不应用该偏移。
 - Workspace header 不展示 status panel 开关；展开态通过面板右上角按钮收起，收起态通过摘要行点击展开。
-- 收起态摘要行只展示一项摘要，不把主状态与实时活动拼在同一胶囊。**在跑的工作流排在最前**：只要有 pending / running 的 workflow run，胶囊就显示第一条（启动序）的名称、状态灯、phase 词与 `+n`（规则见 `docs/dynamic-workflow/presentation.md`「Other places a run appears」）。它说的是名字和位置而不是一个计数，所以不与输入框的后台计数重复。点击显示工作流的胶囊时，展开面板并同时打开「工作流」分区——展开后看到的不能比胶囊还少。没有在跑的工作流时，主状态优先级沿用 Progress current、Goal active、Git、Goal done、Progress finish、Progress fallback：只要其中任一项可见，胶囊就只显示该主状态；只有没有任何主状态时，才用正在运行的资源作为兜底摘要。Progress current 使用 arrow-right 图标和当前 todo 标题；Goal active 使用 target 图标和 goal 标题；Git 只在 `added + removed > 0` 时使用 Git 变更图标以及 `Changes +added -removed / 更改 +added -removed`，其中 added / removed 使用 diff 语义色；Goal done 使用 target/goal 图标和 goal 标题；Progress finish 使用 circle-check-big 图标和最后一个已完成 todo 标题；Progress fallback 使用列表图标和 `Progress completed/total` / `进程 completed/total`。实时兜底中 Bash 从 `backgroundWorks` 统计，Subagent 从统一 `session/subagents.running` 统计；只有 Bash 时显示 terminal 图标，只有 Subagent 时显示 Bot 图标，两类并存时显示 Activity 图标，文字只显示 running 总数且不显示持续计时。已结束 subagent 不进入 mini。收起态摘要行内所有文字都使用普通 UI 字体，不使用 `font-mono`。
+- 收起态摘要行只展示一项摘要，不把主状态与实时活动拼在同一胶囊。**在跑的工作流排在最前**：只要有 pending / running 的 workflow run，胶囊就显示第一条（启动序）的名称、状态灯、phase 词与 `+n`（规则见 `docs/dynamic-workflow/presentation.md`「Other places a run appears」）。它说的是名字和位置而不是一个计数，所以不与输入框的后台计数重复。点击显示工作流的胶囊时，展开面板并同时打开「工作流」分区——展开后看到的不能比胶囊还少。**其次是运行中的智能体**（1.1.0，[多智能体展示规范](../desktop/multi-agent-display-spec.md)）：`snapshot.subagents.running` 非空时胶囊显示最多 3 个重叠头像与“N 个运行中”（只数 subagent），按钮无障碍名称含数量，点击展开面板并打开「智能体」分区；头像是身份，悬停不替换为 maximize-2。再往后，主状态优先级沿用 Progress current、Goal active、Git、Goal done、Progress finish、Progress fallback：只要其中任一项可见，胶囊就只显示该主状态；只有没有任何主状态时，才用正在运行的资源作为兜底摘要。Progress current 使用 arrow-right 图标和当前 todo 标题；Goal active 使用 target 图标和 goal 标题；Git 只在 `added + removed > 0` 时使用 Git 变更图标以及 `Changes +added -removed / 更改 +added -removed`，其中 added / removed 使用 diff 语义色；Goal done 使用 target/goal 图标和 goal 标题；Progress finish 使用 circle-check-big 图标和最后一个已完成 todo 标题；Progress fallback 使用列表图标和 `Progress completed/total` / `进程 completed/total`。实时兜底此时只剩 Bash（运行中的 Subagent 已在第二优先级显示）：从 `backgroundWorks` 统计，显示 terminal 图标与 running 数，不显示持续计时。已结束 subagent 不进入 mini。收起态摘要行内所有文字都使用普通 UI 字体，不使用 `font-mono`。
 - Status panel shell 始终是同一个 `aside`。收起态视觉尺寸、高度和 padding 参考原摘要胶囊，但 shell 圆角和展开态统一使用 `rounded-2xl`。收起态胶囊常驻 DOM；展开态只通过 `opacity` / `visibility` / `pointer-events` 把它藏起来。收起态的 shell 宽度由 CSS 决定：`w-max`，上限 `max-w-[min(20rem,calc(100cqw-2rem))]`，即量的是 conversation 容器（`@container/conversation`）而不是窗口。不再用 JS 测量摘要宽度写进 CSS 变量：那套测量是为了给宽度做插值动画，shell 早已不过渡宽度，而测量值会比内容晚一次渲染、上限又按 `100vw` 算，两者都能让文字落到胶囊外面。展开态沿用原完整面板宽度 `w-80`（上限同一个容器表达式），高度上限统一取 `min(64dvh, 32rem)`，避免桌面断点用固定 `36rem` 覆盖相对视口约束。`p-2` 放在展开内容容器上，避免影响收起态胶囊尺寸。收展动画挂在 shell 上，过渡最大高度、圆角、padding、背景和阴影；内容只做轻量透明度切换，避免独立胶囊和面板卸载导致动画断裂。
 - Status panel 外层相对 conversation pane 固定使用 `pt-4 right-4`（顶部和右侧均为 16px）；自动、始终展开和 mini 共用该外边距，不在窄屏降为 12px。
 - 收起态胶囊跟随摘要内容宽度，单条摘要内容高度为 `h-8`，宽度上限即 shell 的容器上限；内部摘要内容使用 `truncate`，避免长 goal / todo / 工作流标题撑开布局。
@@ -108,7 +108,7 @@ goal todo 和普通 todo 都是 `ZCodePlanStep[]`；goal todo 的轮次语义只
 - 当前阶段已删除窄屏的 JavaScript inline/overlay 裁决；点击入口统一切到完整 `panel`。后续 CSS 布局必须恢复窄容器 overlay 且不能让 Composer 横向溢出；手机 `/remote` 仍禁止从智能体行打开 Subagent 侧栏。
 - “终端”和“智能体”标题都支持折叠 / 展开并默认收起。左侧标题和箭头可点击；展开时右侧展示该类型的本地化后台运行数量，收起时右侧展示该类型中最长运行耗时和数量，不展示多个任务累计耗时。
 - “终端”和“智能体”分别完整渲染当前 running 列表，并各自在 `12rem` 高度上限内滚动；两个区块不共用滚动位置，标题、数量和折叠控制固定在滚动视口之外。
-- 每个 running item 参考 Goal prompt item 使用两行布局：background subagent 使用 bot icon，bash/process 使用 terminal icon；右侧第一行只展示权威 `title`，不得把内部 `bash/subagent` kind 拼进用户可见标题；第二行展示本地化的“已运行 elapsed”和带短文字的停止按钮。
+- 每个 running item 参考 Goal prompt item 使用两行布局：subagent 使用 16px 静止头像（颜色按父会话 `childSessionIds` 序号，轮廓按类型），bash/process 使用 terminal icon；右侧第一行只展示权威 `title`，不得把内部 `bash/subagent` kind 拼进用户可见标题；第二行展示本地化的“已运行 elapsed”和带短文字的停止按钮。
 - 当 background subagent 同时带有 `childSessionId`，且当前界面已注入 subagent 右侧 tab 打开能力时，整个 running item 是可访问的会话入口：点击或按 Enter/Space 必须复用 Agent 工具摘要行的 `parentSessionId + childSessionId` 打开逻辑，在右侧创建或激活同一个完整只读 child session tab。不得在 Status panel 内另存打开状态，也不得创建第二套 child session；重复激活继续由 workspace side pane 的稳定 tab ID 去重。
 - 新启动的 background subagent 必须把 Agent launch output / runtime task snapshot 中的 `childSessionId` 原样写入 `BackgroundTaskStarted/Updated/Completed`，再投影到 `backgroundWorks`；`workId` 只用于后台任务控制，不能替代 child session identity。只有缺少该字段的历史事件允许降级为不可下钻 item。
 - bash/process、缺少 `childSessionId` 的 subagent，或没有右侧 tab 能力的界面保持普通非交互 item。手机 `/remote` 紧凑模式继续沿用现有入口 gate，不得因为 Status panel 可见而绕过 `web-remote-replayable` 边界。
@@ -136,8 +136,9 @@ Composer background trigger
 Status capsule
         |
         +-- 有 pending / running 工作流 --> 显示第一条 run：名称 · 灯 · phase · +n
+        +-- 有 running subagent ----------> 最多 3 个头像 · N 个运行中（点击打开智能体分区）
         +-- 有 Goal / Todo / Git 等主状态 --> 只显示主状态
-        `-- 无主状态且有 running work ----> 显示实时活动兜底（终端 / 智能体计数）
+        `-- 无主状态且有 running Bash ----> 显示终端计数兜底
 ```
 
 ## 兼容性

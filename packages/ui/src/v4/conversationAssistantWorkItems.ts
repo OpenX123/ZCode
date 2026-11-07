@@ -71,7 +71,8 @@ const SUBAGENT_TOOL_NAMES = new Set(["Agent", "Task", "subagent"]);
 
 const isToolCallRow = (row: AssistantWorkRow): row is ToolCallRow => row.kind === "toolCall";
 
-const isAgentToolCallRow = (row: AssistantWorkRow): row is ToolCallRow =>
+/** Agent / Task / subagent 派发工具行；派发行分组与配对共用同一判定。 */
+export const isAgentToolCallRow = (row: AssistantWorkRow): row is ToolCallRow =>
   isToolCallRow(row) && SUBAGENT_TOOL_NAMES.has(row.toolName);
 
 function isExploreToolCallRow(row: AssistantWorkRow): row is ToolCallRow {

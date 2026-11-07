@@ -576,36 +576,74 @@ describe("ConversationStatusPanel", () => {
     expect(html).not.toContain("mock-git-action-menu");
   });
 
-  it("keeps goal and running background authority on the mini shell", async () => {
+  // 1.1.0 胶囊优先级：工作流 > 运行中的智能体 > 计划/进度 > 目标 > Git
+  // （docs/desktop/multi-agent-display-spec.md「右上角状态胶囊」）。
+  function capsuleOf(html: string) {
+    return html.slice(html.indexOf('aria-hidden="false"'));
+  }
+
+  it("puts running agents ahead of goal, to-do and git in the mini capsule", async () => {
     const html = await renderStatusPanel({
       summaryPanelVariantOverride: "mini",
       goal: goalState(),
+      plan: planState(),
       runningSubagents: [runningSubagent()],
     });
 
     expect(html).toContain('data-state="collapsed"');
-    expect(html).toContain('data-goal-status="active"');
     expect(html).toContain('data-goal-objective="修好状态面板"');
-    expect(html).toContain('data-running-background-count="1"');
-    expect(html).toContain("修好状态面板");
-    expect(html).not.toContain("chat.summaryPanel.runningBackgroundTasksMiniValue 1");
-    expect(html).not.toContain("lucide-bot");
+    expect(html).toContain('data-status-summary-item="agents"');
+    expect(html).toContain("chat.statusPanel.runningAgentsCapsule 1");
+    expect(html).toContain('aria-label="chat.statusPanel.runningAgentsCapsuleLabel 1"');
+    expect(html).not.toContain(">复刻浮层<");
+    expect(html).not.toContain("chat.statusPanel.changes");
   });
 
-  it("uses Bot for Subagent-only mini summaries and reserves Activity for mixed work", async () => {
-    const subagentOnly = await renderStatusPanel({
+  it("keeps a live workflow ahead of running agents", async () => {
+    const html = await renderStatusPanel({
+      summaryPanelVariantOverride: "mini",
+      workflowRuns: [phasedRunProjection()],
+      runningSubagents: [runningSubagent()],
+    });
+    expect(html).toContain('data-workflow-pill="dwfrun-1"');
+    expect(html).not.toContain('data-status-summary-item="agents"');
+  });
+
+  it("stacks at most three faces ordered by start time with the running count", async () => {
+    const now = Date.now();
+    const html = await renderStatusPanel({
       gitSummary: null,
       gitWorktreeChangeSummary: null,
       summaryPanelVariantOverride: "mini",
-      runningSubagents: [runningSubagent()],
+      subagentChildSessionIds: ["c-1", "c-2", "c-3", "c-4", "c-5"],
+      runningSubagents: [
+        runningSubagent({ childSessionId: "c-5", subagentType: "Plan", startedAt: now - 1_000 }),
+        runningSubagent({ childSessionId: "c-2", subagentType: "Explore", startedAt: now - 5_000 }),
+        runningSubagent({
+          childSessionId: "c-4",
+          subagentType: "test-runner",
+          startedAt: now - 2_000,
+        }),
+        runningSubagent({
+          childSessionId: "c-3",
+          subagentType: "general-purpose",
+          startedAt: now - 3_000,
+        }),
+      ],
     });
-    expect(subagentOnly).toContain("chat.statusPanel.runningAgentsValue 1");
-    expect(subagentOnly).not.toContain("chat.summaryPanel.runningBackgroundTasksMiniValue 1");
-    expect(subagentOnly).not.toMatch(/\d+秒/u);
-    expect(subagentOnly).toContain("lucide-bot");
-    expect(subagentOnly).not.toContain("lucide-activity");
-    expect(subagentOnly).not.toContain("lucide-square-terminal");
+    const capsule = capsuleOf(html);
+    expect(capsule).toContain('data-face-count="3"');
+    expect(capsule).toContain("chat.statusPanel.runningAgentsCapsule 4");
+    expect(capsule).toContain('aria-label="chat.statusPanel.runningAgentsCapsuleLabelPlural 4"');
+    // 头像序：c-2(序号1, 天线) → c-3(序号2, 基础) → c-4(序号3, 锯齿冠)；颜色按清单序号取九色板。
+    const variants = [...capsule.matchAll(/data-face-variant="([a-z]+)"/g)].map((m) => m[1]);
+    expect(variants).toEqual(["antenna", "base", "crest"]);
+    const bodies = [...capsule.matchAll(/--wf-face-body:(#[0-9A-F]+)/gi)].map((m) => m[1]);
+    expect(bodies).toEqual(["#F19D38", "#6464EF", "#885CF5"]);
+    expect(capsule).not.toContain("lucide-maximize-2");
+  });
 
+  it("keeps the terminal count as the only realtime fallback", async () => {
     const bashOnly = await renderStatusPanel({
       gitSummary: null,
       gitWorktreeChangeSummary: null,
@@ -613,11 +651,10 @@ describe("ConversationStatusPanel", () => {
       backgroundWorks: [backgroundWork({ kind: "bash" })],
     });
     expect(bashOnly).toContain("chat.summaryPanel.runningBackgroundTasksMiniValue 1");
-    expect(bashOnly).not.toContain("chat.statusPanel.runningAgentsValue 1");
     expect(bashOnly).toContain("lucide-square-terminal");
-    expect(bashOnly).not.toContain("lucide-bot");
-    expect(bashOnly).not.toContain("lucide-activity");
+    expect(bashOnly).not.toContain('data-status-summary-item="agents"');
 
+    // 终端与智能体并存：胶囊只数智能体（不再与终端合并计数）。
     const mixed = await renderStatusPanel({
       gitSummary: null,
       gitWorktreeChangeSummary: null,
@@ -625,11 +662,31 @@ describe("ConversationStatusPanel", () => {
       backgroundWorks: [backgroundWork({ workId: "bash-1", kind: "bash" })],
       runningSubagents: [runningSubagent()],
     });
-    expect(mixed).toContain("chat.statusPanel.runningAgentsValuePlural 2");
-    expect(mixed).not.toContain("chat.summaryPanel.runningBackgroundTasksMiniValuePlural 2");
-    expect(mixed).toContain("lucide-activity");
-    expect(mixed).not.toContain("lucide-bot");
-    expect(mixed).not.toContain("lucide-square-terminal");
+    expect(mixed).toContain("chat.statusPanel.runningAgentsCapsule 1");
+    expect(mixed).not.toContain("chat.statusPanel.runningAgentsValuePlural 2");
+    expect(mixed).not.toContain("lucide-activity");
+  });
+
+  it("opens the Agents section together with the panel from the agents capsule", async () => {
+    const { ConversationStatusPanel } = await import("@/v4/ConversationStatusPanel.js");
+    const onVariantChange = vi.fn();
+    const onAgentSectionOpenChange = vi.fn();
+    const view = render(
+      createElement(ConversationStatusPanel, {
+        workspacePath: "/repo",
+        summaryPanelVariantOverride: "mini",
+        runningSubagents: [runningSubagent()],
+        onVariantChange,
+        onAgentSectionOpenChange,
+      }),
+    );
+    const button = view.getByRole("button", {
+      name: "chat.statusPanel.runningAgentsCapsuleLabel 1",
+    });
+    act(() => button.click());
+    expect(onAgentSectionOpenChange).toHaveBeenCalledWith(true);
+    expect(onVariantChange).toHaveBeenCalledWith("panel");
+    view.unmount();
   });
 
   // ── Workflows 分区（docs/dynamic-workflow/presentation.md「Other places a run appears」）──
@@ -1295,11 +1352,11 @@ describe("ConversationStatusPanel", () => {
   it("shows realtime activity only when the capsule has no primary status", async () => {
     const gitPrimary = await renderStatusPanel({
       summaryPanelVariantOverride: "mini",
-      runningSubagents: [runningSubagent()],
+      backgroundWorks: [backgroundWork({ kind: "bash" })],
     });
     expect(gitPrimary).toContain("chat.statusPanel.changes");
     expect(gitPrimary).not.toContain("chat.summaryPanel.runningBackgroundTasksMiniValue 1");
-    expect(gitPrimary).not.toContain("lucide-bot");
+    expect(gitPrimary).not.toContain("lucide-square-terminal");
 
     const completedGoalPrimary = await renderStatusPanel({
       gitSummary: null,
@@ -1613,7 +1670,9 @@ describe("ConversationStatusPanel", () => {
     expect(html).toContain('data-status-section="agent"');
     expect(html).toContain("chat.statusPanel.terminals");
     expect(html).toContain("chat.statusPanel.agents");
-    expect(html).toContain("lucide-bot");
+    // 智能体行用 16px 静止头像代替 Bot 图标（颜色按清单序号，轮廓按类型）。
+    expect(html).toContain('data-face-size="16"');
+    expect(html).not.toContain("lucide-bot");
     expect(html).toContain("lucide-square-terminal");
     expect(html).not.toContain("subagent · packages结构分析");
     expect(html).not.toContain("bash · 启动开发服务器");

@@ -334,6 +334,17 @@ modules:
     layers: { ui: "." }
     owner: conversation
 
+  # subagent-display：多智能体头像、派发行与详情头部（docs/desktop/multi-agent-display-spec.md）
+  - id: subagent-display
+    roots: [packages/ui/src/subagent-display]
+    managed: true
+    requires: [ui, shared]
+    publicEntrypoints:
+      - packages/ui/src/subagent-display/index.ts
+      - packages/ui/src/subagent-display/contract.ts
+    layers: { ui: "." }
+    owner: conversation
+
   - id: gen-ui-service
     roots: [packages/services/src/gen-ui]
     managed: true
