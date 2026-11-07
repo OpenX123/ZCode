@@ -714,6 +714,7 @@ export async function executeTurnCommand(
             turnMachine,
             turnOutputStyle: admittedOutputStyle,
             turnTraceContext,
+            turnExecutionStartedAt: executionStartedAt,
             userMessageId,
           };
 

@@ -78,6 +78,7 @@ import { terminateMcpStdioProcessTree } from "./process-tree.js";
 import { McpResourceSubscriptionRegistry } from "./resource-subscriptions.js";
 import { ProcessTreeStdioClientTransport } from "./stdio-transport.js";
 import type { McpTelemetryTracker } from "./telemetry.js";
+import type { McpToolManifestCache } from "./lazy-start/index.js";
 import {
   createMcpDeadline,
   McpTimeoutError,
@@ -163,16 +164,18 @@ export function createMcpAdapter(options: CreateMcpAdapterOptions = {}): McpPort
 }
 
 export function createMcpAdapterConnectionPool(
-  options: CreateMcpAdapterOptions = {},
+  options: CreateMcpAdapterOptions & { toolManifestCache?: McpToolManifestCache } = {},
 ): McpConnectionPool {
+  const { toolManifestCache, ...adapterOptions } = options;
   return createMcpConnectionPool({
     logger: options.logger,
     telemetry: options.telemetry,
+    ...(toolManifestCache ? { toolManifestCache } : {}),
     createAdapter: ({ connectionContext, workingDirectory }) =>
       createMcpAdapter({
-        ...options,
+        ...adapterOptions,
         connectionContext,
-        workingDirectory: workingDirectory ?? options.workingDirectory,
+        workingDirectory: workingDirectory ?? adapterOptions.workingDirectory,
       }),
   });
 }
@@ -182,6 +185,12 @@ export {
   type McpConnectionPool,
   type McpConnectionPoolOptions,
 } from "./pool.js";
+export {
+  computeMcpServerFingerprint,
+  createFileMcpToolManifestCache,
+  type CreateMcpToolManifestCacheOptions,
+  type McpToolManifestCache,
+} from "./lazy-start/index.js";
 export {
   createMcpTelemetryTracker,
   resolvePluginName,

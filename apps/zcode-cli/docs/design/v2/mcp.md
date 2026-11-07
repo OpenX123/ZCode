@@ -6,7 +6,10 @@ Add a minimal Model Context Protocol integration that lets configured MCP server
 
 - Transports: `stdio`, `http`, and `sse`.
 - Model-facing tool names: `mcp__<server>__<tool>`.
-- Runtime entry: tools are discovered before the first context build in a session.
+- Runtime entry: with a session lease that supports non-blocking startup, tools come from the tool
+  manifest cache or from background connections and the first model request never waits for MCP
+  (see "会话启动：工具清单缓存与首次使用时启动"); other ports still discover tools before the first
+  context build.
 - UI entry: `/mcp` shows server status and can connect or disconnect a configured server.
 
 Prompts, resources, OAuth, server tool-list change notifications, and MCP server hosting are out of scope for this first version.
@@ -216,6 +219,59 @@ Minimum coverage for the first implementation slice:
 - Later trust slice: trusted project MCP servers connect and register tools normally.
 - ZCode app-server session `mcpServers` remains a complete override and does not merge project config.
 - Later diagnostics slice: invalid project config reports diagnostics with source path and does not silently drop unrelated config.
+
+## 会话启动：工具清单缓存与首次使用时启动（1.1）
+
+产品规则与事件顺序见[内置引擎性能规格](../../../../../docs/desktop/engine-performance-1.1-spec.md#1-mcp-不阻塞首个模型请求)。
+本节记录 CLI 契约。
+
+- `McpPort.startConfiguredServers(servers, options)`（可选）是会话启动用的非阻塞收敛：与
+  `connectConfiguredServers` 相同的 replace 语义，但只读取工具清单缓存与登记，不等待连接。
+  返回的快照带 `toolListRevision`（构建快照前的 revision），runtime 用它做后续刷新的基线，
+  避免快照与 revision 之间完成的后台连接被漏掉。
+- 实现方是会话 MCP lease（`createMcpConnectionPool` 配置了 `toolManifestCache` 时）。
+  命中缓存的 server 状态为 `status: "disconnected"`、`deferredStart: true`、`toolCount` 为缓存工具数；
+  `isMcpServerAvailableForTools(status)` 统一把"已连接"与"待首次使用"判为可用。该字段只出现在会话
+  lease 内，设置页的 `mcp/list` 走 `protocol-settings` lease 的阻塞连接，不产生该字段。
+- 首次使用：`callTool`、`readResource`、`listResources`、`listResourceTemplates`、`subscribeResource`、
+  `waitForAppConnection` 遇到待首次使用的 server 时先单飞连接（同一 server 的并发调用共享一次连接），
+  等待受调用方 `signal` 与 lease 关闭约束，连接本身沿用 `timeoutMs` 与会话 OAuth 等待预算。
+  连接结果不是 `connected` 时抛出 `code: "mcp_server_start_failed"` 的错误（含 server 名与失败原因），
+  工具执行层把它转成结构化工具错误；同时删除该指纹的缓存并记 `mcp.lazy_start.failed`（warn）。
+- 无缓存的 server 由 lease 后台连接；连接结束（成功或失败）后 lease 的 `toolListRevision` 递增，
+  runtime 在下一次模型步骤前重新 `listTools` 并按完整描述签名重注册。
+- 任一 lease 的连接成功后都用真实 `tools/list` 写缓存；首次使用时连接得到的清单与缓存不同则
+  revision 递增并记 `mcp.manifest_cache.drift`，相同则不打扰 registry。
+- `toolListRevision` 变化后 runtime 的工具签名覆盖完整描述（含 inputSchema、注解、UI 元数据），
+  schema 漂移也会重注册。
+- lease 关闭后拒绝新连接（`acquire` 抛错），正在等待首次连接的调用立即以错误返回；
+  已发起的连接沿原 entry 引用计数与空闲回收关闭，不会泄漏到其它会话。
+- 闲置回收（`McpConnectionPoolOptions.sessionIdleReclaimMs`，缺省 10 分钟，需配合工具清单缓存）：
+  会话 lease（有 sessionId）内已连接的 server 没有在途请求（`callTool`、资源读取与订阅）且闲置满窗口后，
+  lease 再确认仍由自己持有、已连接、没有 MCP App 连接失效监听，然后 `release` 并以回收时的真实清单
+  回到待首次使用（`deferredStart`），registry 不变；下一次使用经首次启动路径重新连接，30s 空闲回收内
+  再次使用会复用同一 entry。在途或有 MCP App 连接时到期只重新计时。计时器 unref，server 释放与
+  lease 关闭时清除。记 `mcp.idle_reclaim.closed`（info）。设置页 lease 不回收。
+- 有状态豁免：`McpServerConfigBase.idleReclaim: false`（仅限宿主生成，公共配置 schema 拒绝）表示 server 持有
+  跨调用的进程内状态，lease 经 `isIdleReclaimable` 策略对其永不计闲置窗口，首次使用时启动照常。官方单元在
+  `official-plugin-definitions.ts` 声明 `statefulMcpServers: true`，宿主据此为其 server 写入该字段（当前：
+  node-repl-host 的 node_repl）。
+- 会话启动遥测 `session_startup` 在后台连接全部结束后上报；待首次使用的 server 不计入
+  connected，也不计入 failed。
+- 子智能体借用父端口时以父端口的当前 `status()` / `listTools()` 为准；插件引用提醒同样把待首次使用
+  的 server 视为可用。
+- TUI / headless 直连 `createMcpAdapter`、测试替身与借用端口不实现 `startConfiguredServers`，
+  runtime 回退到原有阻塞的 `connectConfiguredServers`。
+
+工具清单缓存（managed 模块 `cli-mcp-lazy-start`，`adapters/src/mcp/lazy-start/tool-manifest-cache.ts`；同模块的 server 生命周期对象持有待首次使用登记与闲置计时）：
+
+- 指纹 = SHA-256（应用版本、server 名、transport、command/args/cwd、URL origin+path、header 键名、
+  OAuth 类型、`timeoutMs`/`alwaysLoad`/`protocolVersion`/`isolation`、env 键名、`ZCODE_PLUGIN_ID`、
+  插件根目录）。env / header / OAuth 的值不进入指纹，也不写入缓存文件。
+- 文件：`<cli 数据目录>/mcp/tool-manifests/<指纹>.json`，内容为 `{ version, fingerprint, serverName,
+  savedAt, tools }`；读取时校验版本、指纹、server 名与每个描述的基本形状，任一不符视为未命中。
+- 写入使用临时文件 + rename 原子替换，失败只记 warn 不影响连接；目录条目超过上限时按 mtime
+  淘汰最旧文件。全部为异步 IO。
 
 ## Tool Contract
 

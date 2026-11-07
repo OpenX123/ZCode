@@ -56,6 +56,11 @@ export interface OfficialPluginDefinition {
   rootCandidates: readonly string[];
   /** Extra top-level paths intentionally staged as plugin runtime assets. */
   runtimeTopLevelPaths?: readonly string[];
+  /**
+   * 该单元提供的 MCP server 持有跨调用的进程内状态（如 REPL 变量）。声明后宿主在 server 配置上
+   * 写入 `idleReclaim: false`：会话 lease 不闲置回收它，避免重启丢状态；首次使用时启动照常。
+   */
+  statefulMcpServers?: boolean;
   version: string;
 }
 
@@ -157,6 +162,8 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../node-repl-host",
       "../../../node-repl-host",
     ],
+    // node_repl 在进程内保留 REPL 变量；闲置回收会重启进程并丢失它们，因此声明为有状态。
+    statefulMcpServers: true,
     version: "0.6.1",
   },
   {
@@ -428,6 +435,14 @@ export const DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS: ReadonlySet<string> = new Set(
     (definition) => `${definition.name}@${ZCODE_OFFICIAL_PLUGIN_MARKETPLACE}`,
   ),
 );
+
+/** 官方单元是否声明其 MCP server 有状态（不参与会话 lease 的闲置回收）。 */
+export function officialPluginProvidesStatefulMcpServers(pluginName: string): boolean {
+  return (
+    OFFICIAL_PLUGIN_DEFINITIONS.find((definition) => definition.name === pluginName)
+      ?.statefulMcpServers === true
+  );
+}
 
 export function resolveOfficialPluginHostMcpServerNames(pluginId: string): string[] {
   const definition = OFFICIAL_PLUGIN_DEFINITIONS.find(

@@ -153,14 +153,35 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...actual, stat };
 });
 
-const SNAPSHOT_COMMANDS = [
-  ["symbolic-ref", "--short", "-q", "HEAD"],
-  ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-  ["config", "user.name"],
-  ["--no-optional-locks", "status", "--short", "--ignore-submodules=dirty"],
-  ["--no-optional-locks", "log", "--oneline", "-n", "5"],
+// 1.1 起快照只运行这 4 条命令：status 首行给出分支名，for-each-ref 一次判定主分支。
+const STATUS_COMMAND = [
+  "--no-optional-locks",
+  "-c",
+  "status.aheadBehind=false",
+  "status",
+  "--short",
+  "--branch",
+  "--ignore-submodules=dirty",
 ];
-const STATUS_COMMAND = SNAPSHOT_COMMANDS[3]!;
+const MAIN_BRANCH_REFS_COMMAND = [
+  "for-each-ref",
+  "--format=%(refname)%00%(symref)",
+  "refs/remotes/origin/HEAD",
+  "refs/remotes/origin/main",
+  "refs/remotes/origin/master",
+];
+const USER_COMMAND = ["config", "user.name"];
+const LOG_COMMAND = ["--no-optional-locks", "log", "--oneline", "-n", "5"];
+const CURRENT_BRANCH_COMMAND = ["symbolic-ref", "--short", "-q", "HEAD"];
+const SNAPSHOT_COMMANDS = [STATUS_COMMAND, MAIN_BRANCH_REFS_COMMAND, USER_COMMAND, LOG_COMMAND];
+
+function statusOutput(branchHeader: string, lines = ""): string {
+  return `## ${branchHeader}\n${lines}`;
+}
+
+function refsOutput(...entries: Array<[refName: string, symref?: string]>): string {
+  return entries.map(([refName, symref = ""]) => `${refName}\0${symref}\n`).join("");
+}
 const GIT_EXECUTABLE_NAME = process.platform === "win32" ? "git.exe" : "git";
 
 let root: string;
@@ -220,9 +241,63 @@ describe("resolveGitSnapshot command semantics", () => {
   });
 
   it("falls back to HEAD when HEAD is detached", async () => {
-    setGitResponse(["symbolic-ref", "--short", "-q", "HEAD"], { code: 1 });
+    setGitResponse(STATUS_COMMAND, { code: 0, stdout: statusOutput("HEAD (no branch)") });
     const { resolveGitSnapshot } = await import("../src/context/git-snapshot.js");
     expect((await resolveGitSnapshot(repoDirectory)).gitBranch).toBe("HEAD");
+    // 分支名来自 status 首行，status 成功时不再单独启动 symbolic-ref。
+    expect(gitCalls.map((call) => call.args)).not.toContainEqual(CURRENT_BRANCH_COMMAND);
+  });
+
+  it.each([
+    ["main", "main"],
+    ["feature/x...origin/feature/x [ahead 1, behind 2]", "feature/x"],
+    ["main...origin/main [different]", "main"],
+    ["release [gone]", "release"],
+    ["No commits yet on trunk", "trunk"],
+    ["Initial commit on legacy", "legacy"],
+    ["No commits yet on trunk...origin/trunk", "trunk"],
+    ["HEAD (no branch)", "HEAD"],
+  ])("reads the branch %j from the status header as %s", async (header, branch) => {
+    setGitResponse(STATUS_COMMAND, { code: 0, stdout: statusOutput(header, " M a.ts\n") });
+    const snapshot = await resolveGitSnapshot(repoDirectory);
+    expect(snapshot.gitBranch).toBe(branch);
+    expect(snapshot.gitStatusLines).toEqual(["M a.ts"]);
+  });
+
+  it("reads the branch separately only when status fails, keeping the original fallback", async () => {
+    setGitResponse(STATUS_COMMAND, { code: 0, failure: "timeout" });
+    setGitResponse(CURRENT_BRANCH_COMMAND, { code: 0, stdout: "feature\n" });
+    const snapshot = await resolveGitSnapshot(repoDirectory);
+    expect(snapshot).toMatchObject({ gitBranch: "feature", gitStatus: "clean", gitStatusLines: [] });
+    expect(gitCalls.map((call) => call.args)).toContainEqual(CURRENT_BRANCH_COMMAND);
+  });
+
+  it.each([
+    ["origin/HEAD target", refsOutput(["refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"]), "trunk"],
+    [
+      "origin/HEAD before main",
+      refsOutput(
+        ["refs/remotes/origin/HEAD", "refs/remotes/origin/develop"],
+        ["refs/remotes/origin/main"],
+      ),
+      "develop",
+    ],
+    ["main when origin/HEAD is absent", refsOutput(["refs/remotes/origin/main"]), "main"],
+    ["master when main is absent", refsOutput(["refs/remotes/origin/master"]), "master"],
+    [
+      "main when origin/HEAD points outside origin",
+      refsOutput(["refs/remotes/origin/HEAD", "refs/remotes/upstream/main"]),
+      "main",
+    ],
+    [
+      "main when only a prefix-matched descendant of master exists",
+      refsOutput(["refs/remotes/origin/master/sub"]),
+      "main",
+    ],
+    ["main without any origin refs", "", "main"],
+  ])("resolves the main branch from one for-each-ref: %s", async (_label, stdout, expected) => {
+    setGitResponse(MAIN_BRANCH_REFS_COMMAND, { code: 0, stdout });
+    expect((await resolveGitSnapshot(repoDirectory)).gitMainBranch).toBe(expected);
   });
 
   it("decides repository membership from .git without starting git", async () => {
@@ -316,8 +391,7 @@ describe("resolveGitSnapshot command semantics", () => {
   });
 
   it("reads a fresh Git context for the working directory without host facts", async () => {
-    setGitResponse(["symbolic-ref", "--short", "-q", "HEAD"], { code: 0, stdout: "feature\n" });
-    setGitResponse(STATUS_COMMAND, { code: 0, stdout: " M a.ts\n" });
+    setGitResponse(STATUS_COMMAND, { code: 0, stdout: statusOutput("feature", " M a.ts\n") });
     const context = await resolveGitSnapshot(repoDirectory);
     expect(context).toMatchObject({
       isGitRepository: true,
@@ -330,20 +404,16 @@ describe("resolveGitSnapshot command semantics", () => {
   });
 
   it("keeps the local three second timeout for every git snapshot command", async () => {
-    setGitResponse(["symbolic-ref", "--short", "-q", "HEAD"], { code: 0, stdout: "feature\n" });
-    setGitResponse(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], {
+    setGitResponse(MAIN_BRANCH_REFS_COMMAND, {
       code: 0,
-      stdout: "origin/main\n",
+      stdout: refsOutput(["refs/remotes/origin/HEAD", "refs/remotes/origin/main"]),
     });
-    setGitResponse(["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"], {
-      code: 0,
-    });
-    setGitResponse(["config", "user.name"], { code: 0, stdout: "ZCode Tester\n" });
+    setGitResponse(USER_COMMAND, { code: 0, stdout: "ZCode Tester\n" });
     setGitResponse(STATUS_COMMAND, {
       code: 0,
-      stdout: " M tracked.txt\n",
+      stdout: statusOutput("feature", " M tracked.txt\n"),
     });
-    setGitResponse(["--no-optional-locks", "log", "--oneline", "-n", "5"], {
+    setGitResponse(LOG_COMMAND, {
       code: 0,
       stdout: "abc123 first commit\n",
     });
@@ -361,15 +431,13 @@ describe("resolveGitSnapshot command semantics", () => {
   });
 
   it("starts the snapshot commands in parallel and keeps the result unchanged", async () => {
-    setGitResponse(["symbolic-ref", "--short", "-q", "HEAD"], { code: 0, stdout: "feature\n" });
-    setGitResponse(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], {
+    setGitResponse(MAIN_BRANCH_REFS_COMMAND, {
       code: 0,
-      stdout: "origin/trunk\n",
+      stdout: refsOutput(["refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"]),
     });
-    setGitResponse(["show-ref", "--verify", "--quiet", "refs/remotes/origin/trunk"], { code: 0 });
-    setGitResponse(["config", "user.name"], { code: 0, stdout: "ZCode Tester\n" });
-    setGitResponse(STATUS_COMMAND, { code: 0, stdout: " M a.ts\n" });
-    setGitResponse(["--no-optional-locks", "log", "--oneline", "-n", "5"], {
+    setGitResponse(USER_COMMAND, { code: 0, stdout: "ZCode Tester\n" });
+    setGitResponse(STATUS_COMMAND, { code: 0, stdout: statusOutput("feature", " M a.ts\n") });
+    setGitResponse(LOG_COMMAND, {
       code: 0,
       stdout: "abc123 first\ndef456 second\n",
     });
@@ -392,23 +460,18 @@ describe("resolveGitSnapshot command semantics", () => {
   });
 
   it("drops stdout from failed optional git commands and keeps the snapshot usable", async () => {
-    setGitResponse(["symbolic-ref", "--short", "-q", "HEAD"], { code: 0, stdout: "feature\n" });
-    setGitResponse(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], {
+    // status 失败时分支名回退到独立的 symbolic-ref，与原先逐字段读取的结果一致。
+    setGitResponse(CURRENT_BRANCH_COMMAND, { code: 0, stdout: "feature\n" });
+    setGitResponse(MAIN_BRANCH_REFS_COMMAND, {
       code: 1,
-      stdout: "origin/should-not-leak\n",
+      stdout: refsOutput(["refs/remotes/origin/HEAD", "refs/remotes/origin/should-not-leak"]),
     });
-    setGitResponse(["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"], {
-      code: 1,
-    });
-    setGitResponse(["show-ref", "--verify", "--quiet", "refs/remotes/origin/master"], {
-      code: 1,
-    });
-    setGitResponse(["config", "user.name"], { code: 1, stdout: "Leaked User\n" });
+    setGitResponse(USER_COMMAND, { code: 1, stdout: "Leaked User\n" });
     setGitResponse(STATUS_COMMAND, {
       code: 128,
-      stdout: " M leaked.txt\n",
+      stdout: statusOutput("leaked", " M leaked.txt\n"),
     });
-    setGitResponse(["--no-optional-locks", "log", "--oneline", "-n", "5"], {
+    setGitResponse(LOG_COMMAND, {
       code: 128,
       stdout: "abc123 leaked commit\n",
     });
@@ -597,6 +660,71 @@ describe("resolveGitSnapshot command semantics", () => {
     await resolveGitSnapshot(repoDirectory, controller.signal);
     expect(gitCalls.length).toBeGreaterThan(2);
     expect(gitCalls.every(({ options }) => options.signal === controller.signal)).toBe(true);
+  });
+
+  // 修复原因：每个 runtime 首轮上下文过去启动 5–8 个 git.exe。合并后首个快照 4 条命令，
+  // 同一 HEAD 与索引修订下后续 runtime 只运行 status；工作区改动不改变修订，状态行仍实时读取。
+  it("reuses the HEAD-derived fields per repository revision and always re-reads status", async () => {
+    const cachedRepo = join(root, "cached-repo");
+    const gitDir = join(cachedRepo, ".git");
+    await mkdir(join(gitDir, "refs", "heads"), { recursive: true });
+    await writeFile(join(gitDir, "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(join(gitDir, "refs", "heads", "main"), `${"a".repeat(40)}\n`);
+    await writeFile(join(gitDir, "index"), "index-v1");
+    setGitResponse(STATUS_COMMAND, { code: 0, stdout: statusOutput("main", " M a.ts\n") });
+    setGitResponse(MAIN_BRANCH_REFS_COMMAND, {
+      code: 0,
+      stdout: refsOutput(["refs/remotes/origin/main"]),
+    });
+    setGitResponse(USER_COMMAND, { code: 0, stdout: "ZCode Tester\n" });
+    setGitResponse(LOG_COMMAND, { code: 0, stdout: "abc123 first\n" });
+
+    const first = await resolveGitSnapshot(cachedRepo);
+    expect(gitCalls.map((call) => call.args)).toEqual(expect.arrayContaining(SNAPSHOT_COMMANDS));
+    expect(gitCalls).toHaveLength(SNAPSHOT_COMMANDS.length);
+
+    gitCalls.length = 0;
+    setGitResponse(STATUS_COMMAND, {
+      code: 0,
+      stdout: statusOutput("main", " M a.ts\n?? new.txt\n"),
+    });
+    setGitResponse(LOG_COMMAND, { code: 0, stdout: "def456 not-read-while-cached\n" });
+    const second = await resolveGitSnapshot(cachedRepo);
+    expect(gitCalls.map((call) => call.args)).toEqual([STATUS_COMMAND]);
+    expect(second).toEqual({ ...first, gitStatusLines: ["M a.ts", "?? new.txt"] });
+
+    // 索引修订变化（如提交、checkout）后重新读取与 HEAD 相关的字段。
+    gitCalls.length = 0;
+    await writeFile(join(gitDir, "index"), "index-v2-longer");
+    const third = await resolveGitSnapshot(cachedRepo);
+    expect(gitCalls).toHaveLength(SNAPSHOT_COMMANDS.length);
+    expect(third.recentCommits).toEqual(["def456 not-read-while-cached"]);
+
+    // HEAD 指向的引用变化（如 reset）同样失效。
+    gitCalls.length = 0;
+    await writeFile(join(gitDir, "refs", "heads", "main"), `${"b".repeat(40)}\n`);
+    await resolveGitSnapshot(cachedRepo);
+    expect(gitCalls).toHaveLength(SNAPSHOT_COMMANDS.length);
+  });
+
+  it("does not cache results without an exit code or for an unsafe HEAD reference", async () => {
+    const unsafeRepo = join(root, "unsafe-head-repo");
+    await mkdir(join(unsafeRepo, ".git"), { recursive: true });
+    await writeFile(join(unsafeRepo, ".git", "HEAD"), "ref: refs/../../outside\n");
+    await writeFile(join(unsafeRepo, ".git", "index"), "index");
+    await resolveGitSnapshot(unsafeRepo);
+    gitCalls.length = 0;
+    await resolveGitSnapshot(unsafeRepo);
+    expect(gitCalls.length).toBeGreaterThanOrEqual(SNAPSHOT_COMMANDS.length);
+
+    const timeoutRepo = join(root, "timeout-repo");
+    await mkdir(join(timeoutRepo, ".git"), { recursive: true });
+    await writeFile(join(timeoutRepo, ".git", "HEAD"), "ref: refs/heads/main\n");
+    setGitResponse(LOG_COMMAND, { code: 0, failure: "timeout" });
+    await resolveGitSnapshot(timeoutRepo);
+    gitCalls.length = 0;
+    await resolveGitSnapshot(timeoutRepo);
+    expect(gitCalls.map((call) => call.args)).toContainEqual(LOG_COMMAND);
   });
 });
 

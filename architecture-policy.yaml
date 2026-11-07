@@ -782,6 +782,30 @@ modules:
     layers:
       domain: .
     owner: conversation
+  # cli-mcp-lazy-start：会话 MCP 首次使用时启动、工具清单缓存与闲置回收（engine-performance-1.1-spec §1）
+  - id: cli-mcp-lazy-start
+    roots:
+      - apps/zcode-cli/packages/adapters/src/mcp/lazy-start
+      - apps/zcode-cli/packages/adapters/tests/mcp-lazy-start
+    managed: true
+    requires: [zcode-cli]
+    publicEntrypoints:
+      - apps/zcode-cli/packages/adapters/src/mcp/lazy-start/index.ts
+      - apps/zcode-cli/packages/adapters/src/mcp/lazy-start/contract.ts
+    layers: { adapters: . }
+    owner: agent
+  # cli-official-plugin-digest：内置插件逐文件摘要缓存（engine-performance-1.1-spec §2）
+  - id: cli-official-plugin-digest
+    roots:
+      - apps/zcode-cli/packages/bootstrap/src/app/official-plugin-digest
+      - apps/zcode-cli/packages/bootstrap/tests/official-plugin-digest
+    managed: true
+    requires: [zcode-cli]
+    publicEntrypoints:
+      - apps/zcode-cli/packages/bootstrap/src/app/official-plugin-digest/index.ts
+      - apps/zcode-cli/packages/bootstrap/src/app/official-plugin-digest/contract.ts
+    layers: { adapters: . }
+    owner: plugin
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。

@@ -180,6 +180,18 @@ export async function runModelBackedTurnStep(
     }
   };
 
+  if (!state.firstModelRequestRecorded && state.turnExecutionStartedAt !== undefined) {
+    // 本地性能摘要：本轮开始执行到首个主模型请求发出之间的 YCode 自身开销（MCP、上下文、
+    // 提醒与持久化），只记耗时，不含正文。
+    state.firstModelRequestRecorded = true;
+    this.logger?.info("Turn first model request started", {
+      ...traceContextToLogContext(modelTraceContext),
+      durationMs: Math.max(0, Math.round(Date.now() - state.turnExecutionStartedAt)),
+      event: "turn.first_model_request.started",
+      module: "core.runtime",
+      status: "started",
+    });
+  }
   let result: RuntimeModelTextResult;
   try {
     const baselineMaxOutputTokens = resolveNormalRequestMaxOutputTokens({

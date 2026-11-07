@@ -181,6 +181,19 @@ official cache path on first startup or when the embedded plugin hash changes.
 The MCP command must point at the seeded cache directory, not the source
 workspace and not a module compiled into the ZCode SEA main bundle.
 
+内置插件摘要缓存（1.1）：文件系统来源的内置插件随应用版本不可变，seed 不再在每次建 app 时
+重读并哈希全部文件（1.0.5 生产日志 p50 0.8s，约 42MB / 600 文件）。
+
+- 进程内按（插件根目录、插件名、插件版本、应用版本 `ZCODE_APP_VERSION`）记忆摘要，同一进程只算一次。
+- 跨进程持久化到 `<plugin storage>/official-plugin-digests.json`，每项保存应用版本、根目录、插件名/版本、
+  文件统计签名（文件数、总字节、最大 mtime、逐文件 path/size/mtime/mode 摘要）与逐文件 SHA-256。
+  进程首次解析时先遍历并 stat 文件得到签名，一致则直接复用；不一致才读文件重新哈希并覆盖该项。
+  写入为临时文件 + rename，失败只记 warn。
+- 复制进缓存时仍逐文件校验 SHA-256；SEA 来源不变；用户安装、市场与项目插件的完整性规则不变。
+- 自定义命令发现（工作区展示、会话 `/` 目录）对插件的解析按（workspace、插件修订）在进程内复用，
+  插件修订由生效配置的插件段、`installed_plugins.json`、`known_marketplaces.json` 与官方插件缓存目录的
+  统计签名组成；安装、卸载、更新、启停与恢复内置都会让下一次读取重新解析。
+
 For bundled official plugins only, ZCode rewrites the seeded
 `.zcode-plugin/plugin.json` MCP server command at seed time. The rewritten
 command launches the current ZCode executable through the hidden

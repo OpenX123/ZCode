@@ -617,7 +617,8 @@ describe("ZCodeProtocolNdjsonConnection", () => {
     expect(handled).toHaveLength(2);
   });
 
-  it("waits for a queued session/send to start before handling session/stop", async () => {
+  // 分道后跨会话请求互不排队；"控制请求等前序请求进入 handler"的保证收敛到同一会话分道。
+  it("waits for a queued session/send of the same session to start before handling session/stop", async () => {
     const input = new PassThrough();
     const output = new PassThrough();
     let releaseCompact!: () => void;
@@ -665,7 +666,7 @@ describe("ZCodeProtocolNdjsonConnection", () => {
         frame({
           id: 1,
           method: zcodeProtocolMethods.sessionCompact,
-          params: { sessionId: "sess_blocking" },
+          params: { sessionId: "sess_target" },
         }),
         frame({
           id: 2,
@@ -682,6 +683,7 @@ describe("ZCodeProtocolNdjsonConnection", () => {
 
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(stopSawActiveSend).toBe(false);
+    expect(sendActive).toBe(false);
 
     releaseCompact();
     await stopHandled;

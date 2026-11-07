@@ -17,6 +17,12 @@ export interface McpServerRuntimeSource {
 export interface McpServerConfigBase {
   alwaysLoad?: boolean;
   enabled?: boolean;
+  /**
+   * 仅限宿主生成，公共配置 schema 会拒绝该字段。false 表示 server 持有跨调用的进程内状态
+   * （如 node_repl 的 REPL 变量）：会话 lease 不对它做闲置回收；首次使用时启动不受影响。
+   * 缺省按可回收处理。
+   */
+  idleReclaim?: boolean;
   isolation?: McpServerIsolation;
   protocolVersion?: McpProtocolVersion;
   /** 仅限宿主生成，公共配置 schema 会拒绝该字段。 */
@@ -89,7 +95,21 @@ export interface McpServerStatus {
     authorizationUrl: string;
     startedAt: string;
   };
+  /**
+   * 连接推迟到首次使用：server 尚未启动，`toolCount` 来自持久化的工具清单缓存，
+   * 工具调用、资源读取或 MCP App 连接时才启动。此时 `status` 固定为 "disconnected"。
+   * 只出现在会话 lease 的状态里；设置页 `mcp/list` 走阻塞连接，不产生该字段。
+   */
+  deferredStart?: true;
 }
+
+/** 已连接或"待首次使用"（按缓存注册工具、调用时再启动）的 server 都可以提供工具。 */
+export function isMcpServerAvailableForTools(status: McpServerStatus | undefined): boolean {
+  return status?.status === "connected" || status?.deferredStart === true;
+}
+
+/** 首次使用时启动 server 失败；工具执行层把它转换为结构化工具错误。 */
+export const MCP_SERVER_START_FAILED_ERROR_CODE = "mcp_server_start_failed";
 
 export interface McpToolAnnotations {
   readOnlyHint?: boolean;
@@ -233,6 +253,11 @@ export interface McpNotificationPort {
 export interface McpConnectionSnapshot {
   statuses: Record<string, McpServerStatus>;
   tools: McpToolDescriptor[];
+  /**
+   * 构建快照之前的 `toolListRevision()`。非阻塞启动时后台连接可能在快照与读取 revision 之间完成；
+   * runtime 以该值为刷新基线，保证这类连接在下一次模型步骤被看到。
+   */
+  toolListRevision?: number;
 }
 
 export interface McpConnectOptions {
@@ -326,6 +351,16 @@ export interface McpPort {
   ): Promise<{ identity: string; generation: number } | null>;
 
   connectConfiguredServers(
+    servers: Record<string, McpServerConfig>,
+    options?: McpConnectOptions,
+  ): Promise<McpConnectionSnapshot>;
+  /**
+   * 会话启动用的非阻塞收敛（可选）：与 connectConfiguredServers 相同的 replace 语义，但不等待连接。
+   * 有工具清单缓存的 server 只登记（`deferredStart`），首次实际使用时才连接；无缓存的 server 后台连接，
+   * 连接结束后 `toolListRevision()` 递增。返回值只含缓存工具与此刻已连接 server 的工具。
+   * 未实现的端口由调用方回退到 connectConfiguredServers。
+   */
+  startConfiguredServers?(
     servers: Record<string, McpServerConfig>,
     options?: McpConnectOptions,
   ): Promise<McpConnectionSnapshot>;

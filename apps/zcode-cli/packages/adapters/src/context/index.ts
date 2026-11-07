@@ -20,7 +20,7 @@ import type {
   ResolvedUserInstructions,
   UserInstructionsOptions,
 } from "@zcode/contracts";
-import { findGitRoot, resolveGitSnapshot, resolveIsGitRepository } from "./git-snapshot.js";
+import { findGitRoot, resolveGitRepositoryRoot, resolveGitSnapshot } from "./git-snapshot.js";
 
 const DEFAULT_PRIORITY_FILES = ["AGENTS.md"];
 const DEFAULT_MAX_BYTES = 100 * 1024;
@@ -49,7 +49,7 @@ export class NodeContextSourceAdapter implements ContextSourcePort {
       (await this.detectEnvInfo(
         workingDirectory,
         request.effectiveShellDisplayName,
-        await resolveIsGitRepository(workingDirectory, projectRoot),
+        await resolveGitRepositoryRoot(workingDirectory, projectRoot),
         options?.signal,
       ));
     const userInstructions = request.userInstructions
@@ -78,13 +78,19 @@ export class NodeContextSourceAdapter implements ContextSourcePort {
 
   private async detectEnvInfo(
     workingDirectory: string,
-    effectiveShellDisplayName?: string,
-    isGitRepository?: boolean,
+    effectiveShellDisplayName: string | undefined,
+    // 真实路径上的仓库根；undefined 表示不在仓库内。
+    gitRoot: string | undefined,
     signal?: AbortSignal,
   ): Promise<EnvInfo> {
     const shellPath = this.env.SHELL ?? this.env.ComSpec ?? this.env.COMSPEC ?? "";
     const shell = effectiveShellDisplayName ?? (shellPath ? basename(shellPath) : "unknown");
-    const gitSnapshot = await resolveGitSnapshot(workingDirectory, signal, isGitRepository);
+    const gitSnapshot = await resolveGitSnapshot(
+      workingDirectory,
+      signal,
+      gitRoot !== undefined,
+      gitRoot,
+    );
     return {
       cwd: workingDirectory,
       platform: process.platform,

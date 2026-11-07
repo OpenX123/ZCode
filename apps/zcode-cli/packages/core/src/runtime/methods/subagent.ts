@@ -2,6 +2,7 @@
 import {
   RESPOND_TO_COORDINATOR_TOOL_NAME,
   SESSION_ENTRY_MODEL_SELECTION,
+  isMcpServerAvailableForTools,
   parseModelSelectionValue,
 } from "@zcode/contracts";
 import type { SubagentRunOptions } from "@zcode/contracts";
@@ -646,7 +647,7 @@ async function resolveSubagentMcpAccess(
     };
   }
 
-  // child 不拥有连接生命周期，只能复用 parent constructor 已创建的启动快照。
+  // child 不拥有连接生命周期，只能借用 parent 已启动的端口。
   const parentStartupSnapshot = await this.mcpStartupPromise;
   if (!parentStartupSnapshot) {
     if (scopedServerNames) {
@@ -654,9 +655,14 @@ async function resolveSubagentMcpAccess(
     }
     return { config: undefined, parentSnapshot: undefined, port: undefined, snapshot: undefined };
   }
+  // 非阻塞启动后，启动快照不含后台才连上的 server；改读 parent 端口的当前状态与工具
+  // （只读，不触发连接）。待首次使用的 server 由 parent lease 在 child 调用时按同一规则启动。
+  const parentSnapshot = this.mcpPort.startConfiguredServers
+    ? { statuses: await this.mcpPort.status(), tools: await this.mcpPort.listTools() }
+    : parentStartupSnapshot;
 
   const unavailableScopedServerNames = (scopedServerNames ?? []).filter(
-    (serverName) => parentStartupSnapshot.statuses[serverName]?.status !== "connected",
+    (serverName) => !isMcpServerAvailableForTools(parentSnapshot.statuses[serverName]),
   );
   if (unavailableScopedServerNames.length > 0) {
     throw createCoreError(
@@ -674,13 +680,13 @@ async function resolveSubagentMcpAccess(
 
   const borrowed = createBorrowedSubagentMcpAccess(
     this.mcpPort,
-    parentStartupSnapshot,
+    parentSnapshot,
     scopedServerNames,
     officialCuaServerNames,
   );
   return {
     config: { enabled: true },
-    parentSnapshot: parentStartupSnapshot,
+    parentSnapshot,
     port: borrowed.port,
     snapshot: borrowed.snapshot,
   };

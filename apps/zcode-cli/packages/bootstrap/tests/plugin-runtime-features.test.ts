@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { PluginLoadOutcome, PluginMetadata } from "@zcode/contracts";
 import { resolvePluginRuntimeFeatures } from "../src/app/plugin-runtime-features.js";
 import { resolveBuiltInNodeReplMcpServers } from "../src/app/built-in-node-repl.js";
+import {
+  OFFICIAL_NODE_REPL_HOST_PLUGIN_NAME,
+  officialPluginProvidesStatefulMcpServers,
+} from "../src/app/official-plugin-definitions.js";
 
 function plugin(id: string, enabled: boolean, rootPath = "/tmp/plugin"): PluginMetadata {
   const [name = id, marketplace = "test"] = id.split("@");
@@ -62,6 +66,21 @@ describe("resolvePluginRuntimeFeatures", () => {
         : undefined,
     ).toBe("/tmp/host/dist/mcp/server.js");
     expect(enabledServers.browser_use).toBeUndefined();
+  });
+
+  // node_repl 的 REPL 变量只活在进程内：宿主单元在官方定义里声明有状态，配置上写入
+  // idleReclaim: false，会话 lease 不闲置回收它（首次使用时启动不变）。
+  it("declares node_repl stateful so session leases never idle-reclaim it", () => {
+    expect(officialPluginProvidesStatefulMcpServers(OFFICIAL_NODE_REPL_HOST_PLUGIN_NAME)).toBe(true);
+    expect(officialPluginProvidesStatefulMcpServers("documents")).toBe(false);
+    const servers = resolveBuiltInNodeReplMcpServers({
+      pluginOutcome: outcome([
+        plugin("node-repl-host@zcode-plugins-official", true, "/tmp/host"),
+        plugin("browser-use@zcode-plugins-official", true),
+      ]),
+      workingDirectory: "/workspace",
+    });
+    expect(servers.node_repl).toMatchObject({ idleReclaim: false });
   });
 
   it("does not register node_repl when the shared host is missing", () => {

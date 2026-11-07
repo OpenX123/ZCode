@@ -115,6 +115,10 @@ export interface RegularTurnLoopState {
   /** 当前 Turn 捕获的 provider-visible output style；不表示显式 subagent model override。 */
   turnOutputStyle?: OutputStylePromptConfig;
   turnTraceContext: TraceContext;
+  /** 本轮开始执行的时刻（epoch 毫秒），用于"首个模型请求前耗时"本地性能事件。 */
+  turnExecutionStartedAt?: number;
+  /** 本轮首个主模型请求的性能事件只记一次。 */
+  firstModelRequestRecorded?: boolean;
   userMessageId: MessageId;
 }
 

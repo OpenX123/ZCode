@@ -11,7 +11,11 @@ import {
 import { dirname, join, resolve, sep } from "node:path";
 import { writeBundledOfficialMarketplacePartitionSync } from "@zcode/adapters";
 import { ZCODE_OFFICIAL_PLUGIN_MARKETPLACE, type Logger } from "@zcode/contracts";
-import { isZCodeCuaInternalFeatureEnabled, ZCODE_CUA_OFFICIAL_PLUGIN_ID } from "@zcode/shared";
+import {
+  isZCodeCuaInternalFeatureEnabled,
+  ZCODE_APP_VERSION_ENV,
+  ZCODE_CUA_OFFICIAL_PLUGIN_ID,
+} from "@zcode/shared";
 import {
   createOfficialPluginCacheRetryBudget,
   getOfficialPluginCacheRetryAttempts,
@@ -24,6 +28,11 @@ import {
   OFFICIAL_PLUGIN_DEFINITIONS,
   type OfficialPluginDefinition,
 } from "./official-plugin-definitions.js";
+import {
+  resolveOfficialPluginFileDigests,
+  type OfficialPluginDigestSource,
+  type OfficialPluginFileStat,
+} from "./official-plugin-digest/index.js";
 import { writeOfficialPluginRuntimeManifest } from "./official-plugin-runtime.js";
 import {
   isOfficialPluginSeedLockTimeoutError,
@@ -89,10 +98,11 @@ interface SeaOfficialPluginManifest {
 type SeaModule = typeof import("node:sea");
 
 function seedBundledOfficialPlugins(input: {
+  appVersion?: string;
   logger?: Logger;
   storageRoot: string;
 }): OfficialPluginDefinition[] {
-  const source = resolveSeedSource();
+  const source = resolveSeedSource(input);
   if (!source) return [];
 
   // Catalog/cache 是内置插件的不可变产品资产；Runtime 是否加载由 discovery 的抑制态决定，
@@ -249,6 +259,8 @@ export function resolveOfficialPluginRoots(input: {
     suppressedBuiltins.add(ZCODE_CUA_OFFICIAL_PLUGIN_ID);
   }
   const failedSeeds = seedBundledOfficialPlugins({
+    // 内置插件摘要按应用版本缓存；独立 CLI 没有该变量时只依赖文件统计签名校验。
+    appVersion: (input.env ?? process.env)[ZCODE_APP_VERSION_ENV],
     logger: input.logger,
     storageRoot: input.storageRoot,
   });
@@ -265,10 +277,14 @@ export function resolveOfficialPluginRoots(input: {
   return uniquePaths([...(input.extraRoots ?? []), ...fallbackRoots]);
 }
 
-function resolveSeedSource(): OfficialPluginSeedSource | undefined {
+function resolveSeedSource(input: {
+  appVersion?: string;
+  logger?: Logger;
+  storageRoot: string;
+}): OfficialPluginSeedSource | undefined {
   const seaSource = resolveSeaSeedSource();
   if (seaSource) return seaSource;
-  return resolveFilesystemSeedSource();
+  return resolveFilesystemSeedSource(input);
 }
 
 function resolveSeaSeedSource(): OfficialPluginSeedSource | undefined {
@@ -302,11 +318,33 @@ function resolveSeaSeedSource(): OfficialPluginSeedSource | undefined {
   };
 }
 
-function resolveFilesystemSeedSource(): OfficialPluginSeedSource | undefined {
+function resolveFilesystemSeedSource(input: {
+  appVersion?: string;
+  logger?: Logger;
+  storageRoot: string;
+}): OfficialPluginSeedSource | undefined {
+  const startedAt = performance.now();
+  const digestSources: Record<OfficialPluginDigestSource, number> = {
+    hashed: 0,
+    memory: 0,
+    persisted: 0,
+  };
   const plugins = OFFICIAL_PLUGIN_DEFINITIONS.flatMap((definition) => {
     const rootPath = resolveFilesystemPluginRoot(definition);
     if (!rootPath) return [];
-    const files = collectFilesystemPluginFiles(rootPath, definition);
+    // 修复原因：过去每次建 app 都重读并哈希全部内置插件文件（p50 0.8s）。摘要改为进程内记忆 +
+    // 按文件统计签名复用持久化结果，只在签名变化时才读取文件内容。
+    const resolved = resolveOfficialPluginFileDigests({
+      appVersion: input.appVersion,
+      definition,
+      hashFile: (file) => hashBytes(readFileSync(file.sourcePath)),
+      listFiles: () => listFilesystemPluginFileStats(rootPath, definition),
+      logger: input.logger,
+      rootPath,
+      storageRoot: input.storageRoot,
+    });
+    digestSources[resolved.source] += 1;
+    const files: OfficialPluginSeedFile[] = resolved.files;
     return [
       {
         definition,
@@ -317,6 +355,19 @@ function resolveFilesystemSeedSource(): OfficialPluginSeedSource | undefined {
       },
     ];
   });
+  if (digestSources.hashed + digestSources.persisted > 0) {
+    input.logger?.info("Official plugin digests resolved", {
+      durationMs: Math.round(performance.now() - startedAt),
+      event: "bootstrap.official_plugin_digest.resolved",
+      hashedCount: digestSources.hashed,
+      memoryCount: digestSources.memory,
+      module: "bootstrap.official_plugin_cache",
+      persistedCount: digestSources.persisted,
+      pluginCount: plugins.length,
+      source: digestSources.hashed > 0 ? "hashed" : "persisted",
+      status: "completed",
+    });
+  }
   if (plugins.length === 0) return undefined;
   return {
     kind: "filesystem",
@@ -363,11 +414,12 @@ function resolveFilesystemPluginRoot(definition: OfficialPluginDefinition): stri
   return undefined;
 }
 
-function collectFilesystemPluginFiles(
+/** 枚举并 stat 要 seed 的文件，不读取内容；哈希由摘要缓存在签名变化时按需进行。 */
+function listFilesystemPluginFileStats(
   rootPath: string,
   definition: OfficialPluginDefinition,
-): OfficialPluginSeedFile[] {
-  const files: OfficialPluginSeedFile[] = [];
+): OfficialPluginFileStat[] {
+  const files: OfficialPluginFileStat[] = [];
   const allowedTopLevelPaths = new Set([
     ...includedTopLevelPaths,
     ...(definition.runtimeTopLevelPaths ?? []),
@@ -375,11 +427,12 @@ function collectFilesystemPluginFiles(
   for (const sourcePath of walkFiles(rootPath, allowedTopLevelPaths)) {
     const relativePath = toPosixPath(sourcePath.slice(rootPath.length + 1));
     if (!shouldIncludePluginFile(relativePath, allowedTopLevelPaths)) continue;
-    const bytes = readFileSync(sourcePath);
+    const stats = statSync(sourcePath);
     files.push({
-      mode: modeForSeedFile(relativePath, statSync(sourcePath).mode),
+      mode: modeForSeedFile(relativePath, stats.mode),
+      mtimeMs: stats.mtimeMs,
       path: relativePath,
-      sha256: hashBytes(bytes),
+      size: stats.size,
       sourcePath,
     });
   }

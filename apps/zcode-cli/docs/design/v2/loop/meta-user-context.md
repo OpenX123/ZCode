@@ -164,5 +164,26 @@ Windows PATH 保留绝对盘符/UNC 路径并解析带引号目录，不改变�
 
 仓库身份根据真实路径上的 `.git` 文件/目录判断；无提交仓库保留符号分支名。
 互不依赖的只读快照查询并行执行，保留字段、2k 字符截断与单命令超时。
+
+### 最少 git 调用与快照缓存（1.1）
+
+1.0.5 生产日志里首轮上下文初始化 p50 0.25s / p90 0.74s，每个 runtime 启动 5–8 个 git.exe。
+快照只保留以下并行命令：
+
+| 命令 | 字段 |
+| --- | --- |
+| `--no-optional-locks -c status.aheadBehind=false status --short --branch --ignore-submodules=dirty` | `gitBranch`（首行 `## `），`gitStatus` / `gitStatusLines`（去掉首行，其余与 `--short` 字节相同） |
+| `for-each-ref --format=%(refname)%00%(symref) refs/remotes/origin/HEAD refs/remotes/origin/main refs/remotes/origin/master` | `gitMainBranch`（`origin/HEAD` 指向的 origin 分支 → `main` → `master` → 缺省 `main`） |
+| `config user.name` | `gitUser` |
+| `--no-optional-locks log --oneline -n 5` | `recentCommits` |
+
+- 首行解析：`## <branch>`、`## <branch>...<upstream> [...]` 取 `<branch>`；`## HEAD (no branch)` 记为 `HEAD`；
+  `## No commits yet on <branch>` / `## Initial commit on <branch>` 取 `<branch>`。分支名不能含 `..` 与空格，
+  按 `...` 切分是安全的。`status` 失败（超时、退出码非 0）时回退 `symbolic-ref --short -q HEAD`，
+  与原先分支名独立读取的结果一致。
+- 进程内按仓库缓存与工作区无关的字段（`gitMainBranch`、`gitUser`、`recentCommits`），键为 git 目录、
+  `HEAD` 文件内容、索引文件 mtime 与大小。命中时只运行 `status`；读不到 git 目录、HEAD 或索引时不缓存。
+- 工作区文件改动不改变 HEAD 与索引修订，状态行每个快照都实时读取，保持"会话开始时的快照"语义。
+- 缓存只在本进程内复用，不落盘；条目数有上限。
 真实 Git 回归验证仓库 fsmonitor 不执行、继承 `GIT_DIR` 不串库；平台参数测试覆盖
 Windows 路径、大小写环境变量与可执行文件查找。来源为官方 `a60ba6a7`。

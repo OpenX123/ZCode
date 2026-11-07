@@ -69,15 +69,23 @@ export function startMcpStartup(
   }
 
   const startedAt = Date.now();
-  const startup = this.mcpPort
-    .connectConfiguredServers(servers, {
-      // authorization_code MCP 无人完成浏览器授权时，session 启动过去会等默认 5 分钟，
-      // 导致模型请求迟迟不发出；session 只等 15s，授权入口由设置页 mcp/list 展示。
-      oauthAuthorizationTimeoutMs: MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS,
-      trace: traceContext,
-      workingDirectory: this.workingDirectory,
-      workspaceIdentity: this.config.workspaceIdentity?.toString(),
-    })
+  const connectOptions = {
+    // authorization_code MCP 无人完成浏览器授权时，session 启动过去会等默认 5 分钟，
+    // 导致模型请求迟迟不发出；session 只等 15s，授权入口由设置页 mcp/list 展示。
+    oauthAuthorizationTimeoutMs: MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS,
+    trace: traceContext,
+    workingDirectory: this.workingDirectory,
+    workspaceIdentity: this.config.workspaceIdentity?.toString(),
+  };
+  // 修复原因：首个模型请求过去等全部 MCP server 连接（1.0.5：p50 2.5s / p90 4.5s）。支持非阻塞
+  // 启动的端口只读工具清单缓存并登记，缓存命中的 server 首次调用时才启动，未命中的后台连接、
+  // 连上后由下一次模型步骤的 refreshMcpToolsIfChanged 加入；其余端口保持原有阻塞连接。
+  const lazyStartup = this.mcpPort.startConfiguredServers !== undefined;
+  const startup = (
+    lazyStartup
+      ? this.mcpPort.startConfiguredServers!(servers, connectOptions)
+      : this.mcpPort.connectConfiguredServers(servers, connectOptions)
+  )
     .then((snapshot) => {
       const statusCounts = Object.values(snapshot.statuses).reduce<Record<string, number>>(
         (counts, status) => {
@@ -86,10 +94,14 @@ export function startMcpStartup(
         },
         {},
       );
+      const statuses = Object.values(snapshot.statuses);
       this.logger?.info("MCP startup completed", {
         ...traceContextToLogContext(traceContext),
+        backgroundCount: statuses.filter((status) => status.status === "connecting").length,
+        deferredCount: statuses.filter((status) => status.deferredStart === true).length,
         durationMs: Date.now() - startedAt,
         event: "mcp.startup.completed",
+        mode: lazyStartup ? "lazy" : "eager",
         module: "core.runtime",
         serverCount: Object.keys(servers).length,
         status: "completed",
@@ -152,7 +164,8 @@ export async function initializeMcp(
     // A7：记住注册集合与签名，回合边界 refreshMcpToolsIfChanged 据此判断是否重注册。
     this.registeredMcpToolNames = registered;
     this.mcpToolsSignature = mcpToolsSignature(snapshot.tools);
-    this.mcpToolListRevision = mcpPort.toolListRevision?.();
+    // 以快照构建前的 revision 为基线：快照之后才完成的后台连接会让下一次刷新重新 listTools。
+    this.mcpToolListRevision = snapshot.toolListRevision ?? mcpPort.toolListRevision?.();
     this.logger?.info("MCP tools registered", {
       ...traceContextToLogContext(traceContext),
       event: "mcp.tools.registered",
@@ -188,11 +201,26 @@ function buildPluginIdByServerName(
   return map;
 }
 
+/**
+ * 工具表签名覆盖完整描述（含 inputSchema、注解与 UI 元数据）：工具清单缓存与真实清单只差
+ * schema 时也必须重注册，registry 才会从下一次模型步骤起使用真实清单。
+ */
 function mcpToolsSignature(descriptors: readonly McpToolDescriptor[]): string {
   return descriptors
-    .map((tool) => `${tool.serverName}\u0001${tool.toolName}\u0001${tool.description ?? ""}`)
+    .map((tool) => stableStringify(tool))
     .sort()
     .join("\n");
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .filter((key) => record[key] !== undefined)
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(",")}}`;
 }
 
 /**
