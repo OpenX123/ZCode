@@ -9,7 +9,12 @@ import {
   zcodeWorkspaceCancelGenerateTextParamsSchema,
   zcodeWorkspaceHookTrustGrantParamsSchema,
 } from "@zcode/shared";
-import { createExternalEnginePort, runExternalEngineConnectionTest } from "@zcode/adapters/exec";
+import {
+  createExternalEnginePort,
+  createExternalEngineProcessPool,
+  runExternalEngineConnectionTest,
+  type ExternalEngineProcessPool,
+} from "@zcode/adapters/exec";
 import type { BrowserControlPort } from "@zcode/contracts";
 import type {
   McpElicitationRequest,
@@ -269,6 +274,7 @@ export class ZCodeProtocolAgentServer {
   private readonly pluginOperationControllers = new Map<string, AbortController>();
   private readonly workspaceGenerateTextControllers = new Map<string, AbortController>();
   private readonly externalEngineConnectionTests = new Map<string, AbortController>();
+  private readonly externalEngineProcessPool: ExternalEngineProcessPool;
   /**
    * subscribe initial frame 按 JSON-RPC request id 隔离。connection 必须先 take，
    * 再写 response line，最后按数组顺序写 notification，不能靠 microtask 猜时序。
@@ -280,7 +286,13 @@ export class ZCodeProtocolAgentServer {
   private nextClientRequestId = 1;
 
   constructor(deps: ZCodeProtocolAgentDependencies) {
-    this.runtimeResources = new ProtocolRuntimeResources(deps.createZCodeApp);
+    // 外部引擎进程池归本 CLI 进程：同进程会话共享备用进程与闲置扫描；测试连接的独立 port 不接入。
+    this.runtimeResources = new ProtocolRuntimeResources((options) =>
+      deps.createZCodeApp({
+        ...options,
+        externalEngineProcessPool: this.externalEngineProcessPool,
+      }),
+    );
     const resolvedDeps = {
       ...deps,
       createZCodeApp: this.runtimeResources.create,
@@ -291,6 +303,9 @@ export class ZCodeProtocolAgentServer {
         deps.workspaceHookPolicyProvider ?? new InMemoryWorkspaceHookPolicyProvider(),
     };
     this.logger = createProtocolLogger(resolvedDeps);
+    this.externalEngineProcessPool = createExternalEngineProcessPool(
+      this.logger ? { logger: this.logger } : {},
+    );
     this.context = {
       assertServing: () => this.runtimeResources.assertServing(),
       deps: resolvedDeps,
@@ -433,7 +448,11 @@ export class ZCodeProtocolAgentServer {
   /** 进程资源关闭，不使用会删除产品会话/发布 session.removed 的 session/close。 */
   shutdown(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
-    this.shutdownPromise = this.runtimeResources.close();
+    // 备用进程不属于任何会话 app：与 app 关闭并行收口，沿用同一进程树回收，避免 CLI 退出后残留。
+    this.shutdownPromise = Promise.all([
+      this.runtimeResources.close(),
+      this.externalEngineProcessPool.close(),
+    ]).then(() => {});
     const error = new Error("ZCode Protocol runtime stopping");
     this.disconnectClient(error);
     this.messageSink = undefined;

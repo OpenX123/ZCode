@@ -10,6 +10,7 @@ import {
   managedAdapterInstallDirName,
 } from "@zcode/shared/external-engine";
 import { resolveE2EStorageRoot } from "../../../helpers/e2e-runtime-paths.js";
+import { TID_V4_COMPOSER_SEND, TID_V4_PANE_SHELL, testId } from "@zcode/shared/test-ids";
 import {
   prepareV4ConversationE2E,
   getV4PaneSnapshot,
@@ -54,7 +55,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   const count=JSON.parse(fs.readFileSync(recoveryPath,'utf8'))+1;fs.writeFileSync(recoveryPath,JSON.stringify(count));
   if(count<=2){send({id:f.id,error:{code:-32603,message:'E2E_TEMPORARY_RESUME_FAILURE'}});return;}
  }
- if(f.method==='initialize'){typedFailures=(f.params.clientCapabilities?._meta?.jetbrains?.air?.capabilities??[]).includes('sessionFailure');result({protocolVersion:1});}
+ if(f.method==='initialize'){typedFailures=(f.params.clientCapabilities?._meta?.jetbrains?.air?.capabilities??[]).includes('sessionFailure');const initControlPath=path.join(__dirname,'initialize-control.json');const initDelay=fs.existsSync(initControlPath)?JSON.parse(fs.readFileSync(initControlPath,'utf8')).delayMs??0:0;setTimeout(()=>result({protocolVersion:1}),initDelay);}
  else if(f.method==='session/new'||f.method==='session/resume')result({sessionId:sid,configOptions:options()});
  else if(f.method==='session/cancel' && pendingPrompt){
   if(pendingPrompt.params.prompt[0].text==='E2E_EXTERNAL_STOP_EXIT')process.exit(7);
@@ -402,7 +403,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       const card = await displayed(`${paneSelector} [data-testid="native-plan-approval"]`);
       expect(await card.getText()).toContain("E2E_CLAUDE_PLAN");
       await (await card.$('[data-testid="native-plan-more"]')).click();
-      const clearOption = await displayed('[data-testid="native-plan-option-exit-plan-clear-auto"]');
+      const clearOption = await displayed(
+        '[data-testid="native-plan-option-exit-plan-clear-auto"]',
+      );
       expect(await clearOption.getText()).toContain("清空上下文");
       await browser.keys("Escape");
       await (await card.$('[data-testid="native-plan-start"]')).click();
@@ -451,6 +454,60 @@ describe("外部引擎首发前配置与同会话续聊", () => {
           "codex fixture model",
         ),
       { timeout: 30000, timeoutMsg: "重启后新草稿必须使用默认 Codex 并连接配置" },
+    );
+  });
+
+  // 1.1：createSession 记录建立即确认，握手在后台；连接中可编辑草稿但不能发送，就绪后只发一次。
+  it("后台握手期间草稿显示连接中且不能发送，就绪后首发只提交一次", async () => {
+    await installExternalEngineFixtures();
+    await prepareV4ConversationE2E({ skipProvider: true });
+    const descriptor = EXTERNAL_ENGINE_RUNTIMES.codex;
+    const entry = join(
+      resolveE2EStorageRoot(),
+      "engines",
+      managedAdapterInstallDirName(descriptor),
+      ...managedAdapterEntrySegments(descriptor),
+    );
+    await writeFile(
+      join(dirname(entry), "initialize-control.json"),
+      JSON.stringify({ delayMs: 3000 }),
+    );
+    const promptPath = join(dirname(entry), "prompt-count.json");
+    const promptCount = async () =>
+      JSON.parse(await readFile(promptPath, "utf8").catch(() => "0")) as number;
+    const before = await promptCount();
+    await startNewV4Draft();
+    await (await displayed('[data-testid="session-engine-select"]')).click();
+    await (await displayed('[role="option"]=Codex')).click();
+    const paneId = await getV4FocusedPaneId();
+    if (!paneId) throw new Error("缺少焦点 pane");
+    await setV4ComposerText("E2E_ASYNC_PREPARE");
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          (shellTestId, sendTestId) => {
+            const shell = document.querySelector<HTMLElement>(`[data-testid="${shellTestId}"]`);
+            const status = shell?.querySelector<HTMLElement>(
+              '[data-testid="external-engine-controls"] [role="status"]',
+            );
+            const button = shell?.querySelector<HTMLButtonElement>(`[data-testid="${sendTestId}"]`);
+            return Boolean(status?.innerText) && button?.disabled === true;
+          },
+          testId(TID_V4_PANE_SHELL, paneId),
+          TID_V4_COMPOSER_SEND,
+        ),
+      { timeout: 10000, timeoutMsg: "握手期间必须显示连接中且发送按钮禁用" },
+    );
+    expect(await promptCount()).toBe(before);
+    await displayed('[data-testid="engine-config-model"]');
+    await sendV4PromptInPane(paneId, "E2E_ASYNC_PREPARE");
+    await browser.waitUntil(async () => (await promptCount()) === before + 1, {
+      timeout: 30000,
+      timeoutMsg: "就绪后首发必须且只提交一次 prompt",
+    });
+    await writeFile(
+      join(dirname(entry), "initialize-control.json"),
+      JSON.stringify({ delayMs: 0 }),
     );
   });
 

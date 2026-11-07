@@ -5,6 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandAck, SessionConfigState } from "@zcode/shared/zcode-protocol-v4";
 import {
+  draftEngineSubmissionAllowed,
+  resolveDraftEngineReadiness,
   startDraftSessionPrewarm,
   useDraftSessionPrewarm,
 } from "@/v4/composer/useDraftSessionPrewarm.js";
@@ -1296,4 +1298,107 @@ it("外部引擎握手失败向草稿反馈原因，不伪造就绪 binding", as
   await flushMicrotasks();
   expect(onReady).not.toHaveBeenCalled();
   expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "连接引擎失败" }));
+});
+
+describe("外部引擎草稿就绪阶段（1.1 异步 ACK）", () => {
+  const binding = { sessionId: "draft-1" };
+  const base = { enabled: true, binding, pending: false, error: null };
+
+  it("ACK 只建立 binding：snapshot 未到或 connecting 时仍在连接，发送不可用", () => {
+    for (const snapshot of [
+      null,
+      { sessionId: "other-session", engineConfigState: "ready" as const },
+      { sessionId: "draft-1", engineConfigState: "connecting" as const },
+      { sessionId: "draft-1" },
+    ]) {
+      const readiness = resolveDraftEngineReadiness({ ...base, snapshot });
+      expect(readiness).toBe("connecting");
+      expect(draftEngineSubmissionAllowed(readiness)).toBe(false);
+    }
+    expect(
+      resolveDraftEngineReadiness({ ...base, pending: true, binding: null, snapshot: null }),
+    ).toBe("creating");
+  });
+
+  it("只有预热会话 snapshot 为 ready 才就绪；error 允许发送（发送前重试准备）", () => {
+    const ready = resolveDraftEngineReadiness({
+      ...base,
+      snapshot: { sessionId: "draft-1", engineConfigState: "ready" },
+    });
+    expect(ready).toBe("ready");
+    const failed = resolveDraftEngineReadiness({
+      ...base,
+      snapshot: { sessionId: "draft-1", engineConfigState: "error" },
+    });
+    expect(failed).toBe("failed");
+    expect([ready, failed].every(draftEngineSubmissionAllowed)).toBe(true);
+  });
+
+  it("预热被禁用时不显示连接、不可发送；createSession 失败可发送重建", () => {
+    const disabled = resolveDraftEngineReadiness({ ...base, enabled: false, snapshot: null });
+    expect(disabled).toBe("disabled");
+    expect(draftEngineSubmissionAllowed(disabled)).toBe(false);
+    expect(
+      resolveDraftEngineReadiness({
+        ...base,
+        binding: null,
+        error: new Error("x"),
+        snapshot: null,
+      }),
+    ).toBe("failed");
+  });
+
+  it("1.0.8 遗留：订阅失败丢弃预热后仍可发送，发送由同一 owner 重建并等待新会话就绪", async () => {
+    let attempt = 0;
+    const { calls, dispatch } = createDispatchRecorder({
+      onCreate: () => acceptedCreateAck(`draft-${++attempt}`),
+    });
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    let owner!: ReturnType<typeof useDraftSessionPrewarm>;
+    await act(async () => {
+      root.render(
+        createElement(PrewarmHarness, {
+          workspaceKey: "/workspace",
+          transportIdentity: {},
+          dispatchCommand: dispatch,
+          onRender: () => {},
+          onOwner: (value) => {
+            owner = value;
+          },
+        }),
+      );
+      await flushMicrotasks();
+    });
+    await act(async () => {
+      owner.binding!.discard();
+      await flushMicrotasks();
+    });
+    const discarded = resolveDraftEngineReadiness({
+      enabled: true,
+      binding: owner.binding,
+      pending: owner.pending,
+      error: owner.error,
+      snapshot: { sessionId: "draft-1", engineConfigState: "ready" },
+    });
+    // 旧门禁“有 binding 或有错误”在此为 false，发送入口永久禁用，owner 也不会再重建。
+    expect(discarded).toBe("recreatable");
+    expect(draftEngineSubmissionAllowed(discarded)).toBe(true);
+    let rebuilt!: Awaited<ReturnType<typeof owner.waitForSession>>;
+    await act(async () => {
+      rebuilt = await owner.waitForSession();
+    });
+    expect(rebuilt.sessionId).toBe("draft-2");
+    expect(calls.filter((call) => call.type === "createSession")).toHaveLength(2);
+    // 新 binding 在其 snapshot 到达并 ready 之前仍是连接中（发送路径据此先并入准备）。
+    expect(
+      resolveDraftEngineReadiness({
+        enabled: true,
+        binding: rebuilt,
+        pending: false,
+        error: null,
+        snapshot: { sessionId: "draft-1", engineConfigState: "ready" },
+      }),
+    ).toBe("connecting");
+  });
 });

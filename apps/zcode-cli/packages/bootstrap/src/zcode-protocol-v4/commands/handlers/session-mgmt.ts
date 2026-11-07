@@ -85,13 +85,16 @@ async function createSession(
   if (payload.config?.engine && payload.config.engine !== "zcode") {
     const record = requireRecord(host, sessionId);
     try {
-      // 草稿 ACK 前完成 ACP 握手和配置投影；首发复用此连接，不制造空 turn。
+      // 1.1：记录建立、连接配置绑定且 connecting 写入后即 ACK；ACP 握手在 Runtime 后台继续，
+      // 结果只经 engineConfigState（ready / error）投影。旧实现等握手完成才 ACK，冷启动 3s+
+      // 期间独占 CLI 请求队列。握手失败不再删除草稿，保留诊断与 prepareExternalEngineSession 重试。
       // 所选连接配置只在此处首次绑定，缺省由 adapter 取该引擎的上次使用配置。
       const connectionProfileId = payload.config.engineConnectionProfileId;
-      await record.app.runtime.prepareExternalEngineSession(
+      await record.app.runtime.startExternalEngineSessionPreparation(
         connectionProfileId ? { connectionProfileId } : {},
       );
     } catch (error) {
+      // 只剩 connecting 发布之前的失败：尚无可投影的连接状态，按旧规则回收 deferred 记录。
       await host.deleteSession?.(sessionId);
       throw error;
     }

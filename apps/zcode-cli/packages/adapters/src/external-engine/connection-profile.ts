@@ -37,7 +37,11 @@ async function readConnections(root: string): Promise<ExternalEngineConnections 
  */
 export async function resolveEngineConnection(
   root: string,
-  input: ExternalEngineSessionInput,
+  // 备用进程按（引擎，配置 ID）预先启动，没有会话；只需要解析身份所用的字段。
+  input: Pick<
+    ExternalEngineSessionInput,
+    "engine" | "connectionProfileId" | "externalSessionId" | "onConnectionProfile"
+  >,
   env: NodeJS.ProcessEnv,
 ): Promise<{
   profile: ExternalEngineConnectionProfile;

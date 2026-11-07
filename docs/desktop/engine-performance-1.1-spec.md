@@ -286,3 +286,18 @@ sequenceDiagram
 - 修复：Main 在本地 Windows 路径进入工作区前，把每一段替换为磁盘上的实际大小写（逐级 `readdir` 匹配，盘符大写），不解析 junction、符号链接、subst 或网络映射。入口为 `activateOrSetWorkspace`（返回规范路径，Renderer 用它建 Tab 与草稿）和冷启动的显式工作区参数。`workspaceIdentity` 规则不变：远端 identity 与非 Windows 路径不做处理，共享 `resolveWorkspaceKey` 不变，已持久化的数据不迁移。
 - 匹配失败（权限不足、路径段不存在、8.3 短名）时保留该段原文。
 - 已有存量：旧版本以非规范大小写保存的 Tab、项目根或会话不会被改写；它们与规范路径仍是不同 key，需要在真实 Windows 上确认是否需要迁移。
+
+## 外部引擎进程
+
+范围：外部引擎 `createSession` 的握手时机、预热备用进程、闲置 adapter 关闭以及相关性能事件。完整规则、状态所有者与时序图见 [外部 Agent 引擎](external-agent-engines-spec.md)「外部引擎进程与异步准备」，CLI 契约见 `apps/zcode-cli/docs/design/v2/external-agent-engines.md`。
+
+- `createSession` 在记录建立、connecting 发布后即确认；握手在后台完成，进度沿用 `engineConfigState`（connecting → ready / error）。草稿就绪由预热会话 snapshot 派生，发送仍要等就绪。
+- 每个（引擎，连接配置 ID）至多一个已完成 `initialize`（与 `providers/set`）的备用进程，只在桌面本地工作区、该对 `session/new` 成功后补位；`session/new` 时同步领用，10 分钟未领用关闭，失败只写日志并回落冷启动。
+- 会话无在途操作、空闲 15 分钟、不在最近 3 个可恢复会话内时关闭 adapter（即使 Tab 打开），保留订阅、配置与 `externalSessionId`；下次发送或改配置经原会话恢复。常驻池对未订阅会话的回收由 10 分钟延长至 30 分钟。
+- 性能事件：`external_engine.handshake.completed|failed`（各阶段耗时）、`external_engine.spare.claimed|miss|ready|expired|failed`、`external_engine.idle_close`、`external_engine.idle_resume.completed|failed`，均为 info（备用进程失败为 warn），不含正文。
+
+| Case | 场景                       | 断言                                  | 验证层              |
+| ---- | -------------------------- | ------------------------------------- | ------------------- |
+| EP01 | 同配置连续新建两个外部草稿 | 第二个不再 spawn / initialize         | adapters 单测       |
+| EP02 | 闲置 15 分钟后发送         | 恢复原会话，prompt 只发一次           | adapters 单测       |
+| EP03 | 真实 Windows 连续使用一天  | 引擎子进程数与内存相对 1.0.5 显著下降 | 待真实 Windows 验证 |

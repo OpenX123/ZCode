@@ -369,7 +369,34 @@ export class AgentRuntime {
     return resolveSessionEngine(this.config);
   }
 
-  async prepareExternalEngineSession(options: { connectionProfileId?: string } = {}): Promise<void> {
+  async prepareExternalEngineSession(
+    options: { connectionProfileId?: string } = {},
+  ): Promise<void> {
+    await this.runExternalEngineSessionPreparation(options);
+  }
+
+  /**
+   * createSession 的后台准备入口（1.1）：与 prepareExternalEngineSession 共用 single-flight，
+   * 在 connecting 写入事件后即返回；握手结果只经 engineConfigState（ready / error）投影。
+   * 只有 connecting 发布之前的失败会抛给调用方（此时尚无可投影的连接状态）。
+   */
+  async startExternalEngineSessionPreparation(
+    options: { connectionProfileId?: string } = {},
+  ): Promise<void> {
+    let markConnecting!: () => void;
+    const connecting = new Promise<void>((resolve) => {
+      markConnecting = resolve;
+    });
+    const preparation = this.runExternalEngineSessionPreparation(options, markConnecting);
+    // 后台失败已由 core 发布为 engineConfigState=error 并记录 warn；这里只防止未处理拒绝。
+    void preparation.catch(() => {});
+    await Promise.race([connecting, preparation]);
+  }
+
+  private runExternalEngineSessionPreparation(
+    options: { connectionProfileId?: string },
+    onConnecting?: () => void,
+  ): Promise<void> {
     // 草稿只在首次准备前接收所选连接配置；已绑定或恢复中的原生会话不可改写身份。
     if (
       options.connectionProfileId &&
@@ -378,18 +405,29 @@ export class AgentRuntime {
     )
       this.engineConnectionProfileId = options.connectionProfileId;
     // 同一 Runtime 的恢复与显式重试共享连接，避免并发 initialize/resume。
-    if (this.externalEnginePreparation) return this.externalEnginePreparation;
-    if (this.engineConfigState === "ready") return;
-    if (this.hasActiveOrQueuedTurnWork()) throw new Error("External engine is busy");
-    this.externalEnginePreparation = prepareExternalEngineSession(
+    if (this.externalEnginePreparation) {
+      onConnecting?.();
+      return this.externalEnginePreparation;
+    }
+    if (this.engineConfigState === "ready") {
+      onConnecting?.();
+      return Promise.resolve();
+    }
+    if (this.hasActiveOrQueuedTurnWork())
+      return Promise.reject(new Error("External engine is busy"));
+    const preparation = prepareExternalEngineSession(
       this as unknown as AgentRuntimeInternal,
       this.rootTraceContext,
+      onConnecting,
     );
-    try {
-      await this.externalEnginePreparation;
-    } finally {
-      this.externalEnginePreparation = undefined;
-    }
+    this.externalEnginePreparation = preparation;
+    const release = () => {
+      if (this.externalEnginePreparation === preparation)
+        this.externalEnginePreparation = undefined;
+    };
+    // 先于调用方的 await 注册收尾：调用方恢复执行时 single-flight 已释放，可立即重试。
+    preparation.then(release, release);
+    return preparation;
   }
 
   getEngineConfigState(): import("@zcode/shared").EngineConfigState | undefined {

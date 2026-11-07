@@ -104,7 +104,11 @@ import {
   createComposerSubmissionConfig,
   type ComposerSubmissionConfig,
 } from "@/v4/composer/composerSubmissionConfig.js";
-import { useDraftSessionPrewarm } from "@/v4/composer/useDraftSessionPrewarm.js";
+import {
+  draftEngineSubmissionAllowed,
+  resolveDraftEngineReadiness,
+  useDraftSessionPrewarm,
+} from "@/v4/composer/useDraftSessionPrewarm.js";
 import { projectSessionConfigToTaskConfigOptions } from "@/v4/composer/sessionConfigTaskCache.js";
 import { useDraftRuntimeRebuildGate } from "@/v4/composer/useDraftRuntimeRebuildGate.js";
 import { useSettings } from "@/hooks/useSettingService.js";
@@ -2197,18 +2201,19 @@ export function SessionPane({
   // ── 草稿态 v4 draft session 预热（m5）──
   // pane 未绑定会话时后台建 phase=draft 会话作预热载体：配置写 CAS 直达、首发复用。
   // 对外绑定语义不变（shell activeTaskId 仍 null），预热会话只是 pane 内部 effective 订阅目标。
+  const draftPrewarmEnabled =
+    sessionId === null &&
+    (externalEngine
+      ? remoteAvailable && Boolean(externalEngineService)
+      : draftAgentStartupAllowed) &&
+    !recoveringDraft;
   const {
     binding: prewarmBinding,
     waitForSession: waitForDraftSession,
     error: prewarmError,
     pending: prewarmPending,
   } = useDraftSessionPrewarm({
-    enabled:
-      sessionId === null &&
-      (externalEngine
-        ? remoteAvailable && Boolean(externalEngineService)
-        : draftAgentStartupAllowed) &&
-      !recoveringDraft,
+    enabled: draftPrewarmEnabled,
     workspaceKey,
     paneId,
     invalidationVersion: draftRuntimeInvalidationVersion,
@@ -2222,6 +2227,16 @@ export function SessionPane({
   const prewarmBindingRef = useRef(prewarmBinding);
   prewarmBindingRef.current = prewarmBinding;
   const prewarmSessionId = prewarmBinding?.sessionId ?? null;
+  // 1.1：createSession ACK 不再代表握手完成；外部引擎草稿的就绪只由预热会话 snapshot 派生。
+  const draftEngineReadiness = resolveDraftEngineReadiness({
+    enabled: draftPrewarmEnabled,
+    binding: prewarmBinding,
+    pending: prewarmPending,
+    error: prewarmError,
+    snapshot: snapshot
+      ? { sessionId: snapshot.sessionId, engineConfigState: snapshot.config.engineConfigState }
+      : null,
+  });
   // runtime 换代（CUA Helper 就绪、liveness 恢复等触发 workspace-dispose）会冲掉草稿态尚未
   // 持久化的预热会话。重建期间禁止发送，否则附件会挂在已消失的会话上（sessionNotFound）。
   const { rebuilding: draftRuntimeRebuilding } = useDraftRuntimeRebuildGate({
@@ -2233,6 +2248,9 @@ export function SessionPane({
     workspacePath,
   });
   const ensureDraftPrewarmConfigBeforeSendRef = useRef<(targetSessionId: string) => Promise<void>>(
+    async () => undefined,
+  );
+  const ensureDraftEngineReadyBeforeSendRef = useRef<(targetSessionId: string) => Promise<void>>(
     async () => undefined,
   );
   const effectiveSessionId = sessionId ?? recoveringDraft?.sessionId ?? prewarmSessionId;
@@ -2643,6 +2661,8 @@ export function SessionPane({
       // Bug 根因：首发曾把 binding=null 当成无预热，绕过 owner 再建一个会话。
       // 文本、附件/context 和 goal 都等待同一创建任务，创建失败或换代直接保留草稿。
       const draftBinding = sessionId === null ? await waitForDraftSession() : null;
+      if (draftBinding && externalEngine)
+        await ensureDraftEngineReadyBeforeSendRef.current(draftBinding.sessionId);
       if (draftBinding) {
         await ensureDraftPrewarmConfigBeforeSendRef.current(draftBinding.sessionId);
         if (!draftBinding.beginPromotion()) throw new Error("草稿会话已切换，请重新发送");
@@ -3212,6 +3232,17 @@ export function SessionPane({
     [appFollowupMode, dispatchConfigCas, draftConfigRef],
   );
   ensureDraftPrewarmConfigBeforeSendRef.current = ensureDraftPrewarmConfigBeforeSend;
+  // 1.1：ACK 早于握手完成。外部引擎草稿发送仍须等就绪：snapshot 未确认 ready（连接中、失败或
+  // 刚由 owner 重建）时，先并入/重试 CLI 的单飞准备，成功才提交，绝不在准备期间提交 prompt。
+  // 发送本身已在配置屏障内执行，这里直接发 CAS；再次入队屏障会等待自己而死锁。
+  ensureDraftEngineReadyBeforeSendRef.current = async (targetSessionId: string) => {
+    const current = snapshotRef.current;
+    if (current?.sessionId === targetSessionId && current.config.engineConfigState === "ready")
+      return;
+    const ack = await dispatchConfigCas("prepareExternalEngineSession", {}, { targetSessionId });
+    if (ack?.status !== "accepted" && ack?.status !== "noop")
+      throw new Error(ack?.message ?? intl.formatMessage({ id: "engine.connectionFailed" }));
+  };
 
   // 按引擎记忆的模型/深度：恢复只经既有配置屏障与 setEngineConfigOption，首发仍排在其后。
   const applyRememberedEngineOption = useCallback(
@@ -3950,10 +3981,8 @@ export function SessionPane({
                 externalEngine &&
                 (sessionId === null
                   ? // 原因：曾用“无 binding 且无错误”推断在途，预热被禁用（待恢复首发、远程不可用）时
-                    // 两者都为空，草稿永久显示“正在连接引擎…”；改为只读 owner 上报的真实在途状态。
-                    prewarmPending ||
-                    (snapshot?.sessionId === prewarmSessionId &&
-                      snapshot?.config.engineConfigState === "connecting")
+                    // 两者都为空，草稿永久显示“正在连接引擎…”；改为 owner 在途状态与 snapshot 派生。
+                    draftEngineReadiness === "creating" || draftEngineReadiness === "connecting"
                   : connecting || snapshot?.config.engineConfigState === "connecting")
               }
               error={
@@ -3971,9 +4000,10 @@ export function SessionPane({
                   : undefined
               }
               onRetry={
-                externalEngine && sessionId !== null
+                externalEngine && (sessionId !== null || draftEngineReadiness === "failed")
                   ? () => {
                       void configCommandBarrier.enqueue(async () => {
+                        // 草稿未建立 binding 时 dispatchConfigCas 无目标并跳过；发送入口仍会由 owner 重建。
                         await dispatchConfigCas("prepareExternalEngineSession", {});
                       });
                     }
@@ -4027,7 +4057,7 @@ export function SessionPane({
             ? sessionId !== null
               ? snapshot?.config.engineConfigState !== "connecting" &&
                 snapshot?.config.engineConfigState !== "error"
-              : Boolean(prewarmBinding) || Boolean(prewarmError)
+              : draftEngineSubmissionAllowed(draftEngineReadiness)
             : composerSubmissionReady) &&
           runtimeReady &&
           !recoveringDraft

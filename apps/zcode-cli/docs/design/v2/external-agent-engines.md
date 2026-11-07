@@ -37,3 +37,17 @@ sequenceDiagram
 - 环境：共享 `buildEngineConnectionEnv` 按方式构造（Claude 沿用 CLI 保留 ANTHROPIC_*，官方登录剔除三项计费变量，API Key 只在子进程环境注入密钥；Codex 不变）。随后 `applyNetworkEgressEnv` 从 `ZCODE_TOOL_ENV_PASSTHROUGH_JSON` 恢复用户代理与证书变量，`ZCODE_HTTP_PROXY` / `ZCODE_NO_PROXY` / `ZCODE_AGENT_CA_CERT` 显式配置优先。
 - `ZCODE_EXTERNAL_ENGINE_NODE`：仅当 Windows 上 PATH 缺 node、adapter 前置 `node.cmd` 补位时，由 adapter 写入 ACP 子进程环境，值为当前运行时路径；`node.cmd` 以 `"%ZCODE_EXTERNAL_ENGINE_NODE%" %*` 调用它，保证批处理内容为纯 ASCII（cmd 按控制台代码页解码批处理，中文用户名路径不能内嵌）。继承值一律被覆盖，不读取用户设置；缺失时 node.cmd 启动失败并按 initialize / transport 失败上报。POSIX 仍使用指向当前运行时的符号链接 `node`。测试覆盖纯 ASCII 内容、继承值覆盖与中文空格路径下的真实执行。
 - 连接测试：JSON-RPC `externalEngine/testConnection {operationId, engine, connectionProfileId}` 与 `externalEngine/cancelConnectionTest {operationId}` 不进入串行队列。handler 用独立 `createExternalEnginePort` 与临时 cwd 调用 `runExternalEngineConnectionTest`：发送 `Reply with OK`，拒绝全部权限，首个原生失败（`_meta.codex.error`、AIR `sessionFailure`、prompt JSON-RPC 错误）即结束，90 秒超时；结束后 closeSession 并删除临时目录。返回 success / unexpectedReply（脱敏摘要）/ failed（EngineConnectionFailure）/ cancelled，不写 SQLite、任务索引或日志正文。
+
+## 异步准备、备用进程与闲置关闭（2026-11-07，1.1）
+
+产品规则见 `docs/desktop/external-agent-engines-spec.md`「外部引擎进程与异步准备」。CLI 侧契约：
+
+- `createSession`（外部引擎）调用 `AgentRuntime.startExternalEngineSessionPreparation({connectionProfileId?})`：同步绑定所选连接配置，复用 `prepareExternalEngineSession` 的 single-flight，在 `ExternalEngineConfigUpdated(connecting)` 写入后返回；握手结果只经 `engineConfigState` 投影 ready / error，后台拒绝不再冒泡到 ACK。发布 connecting 前的失败仍删除 deferred 记录并 ACK failed。Runtime 进入 `shuttingDown` 后，迟到的 `onConfigOptions` 与错误不再发布。
+- `ExternalEngineProcessPool`（`adapters/src/external-engine/process-pool.ts`）由协议 server 为每个 CLI 进程创建，经 `ZCodeAppOptions.externalEngineProcessPool` 注入各会话 app 的 `createExternalEnginePort`；`server.shutdown()` 调用 `pool.close()`。TUI、headless 与测试连接不传 pool，行为与 1.0.x 相同。
+- 备用进程键为（engine, connectionProfileId），附带 spawn cwd；只在 `session/new` 时领用（同步、健康、cwd 一致），领用前已按会话完成连接配置解析与 `onConnectionProfile` 持久化。`AcpConnection.initialize(engine)` 缓存 initialize 结果与连接级 setup（`providers/set`），领用后 `execute()` 不重复执行。补位在该对 `session/new` 成功后后台进行，至多一个；10 分钟未领用关闭；失败只写日志。
+- 闲置关闭：port 按会话记录在途计数、最近使用时间与“可恢复”（resume/load 建立或已提交过 prompt）；pool 每 60 秒扫描，关闭满 15 分钟、不在最近 3 个可恢复会话内、无在途操作的连接。只关闭进程，Runtime 状态不变；下次 turn / 配置沿既有恢复路径重连。
+- 常驻池 `DEFAULT_SESSION_RESIDENT_IDLE_TIMEOUT_MS` 改为 30 分钟。
+- 不新增环境变量；时间与数量常量在 pool 内具名定义，测试经 options 覆盖。
+- 性能事件（info，无正文）：`external_engine.handshake.completed|failed`、`external_engine.spare.claimed|miss|ready|expired|failed`、`external_engine.idle_close`、`external_engine.idle_resume.completed|failed`。
+
+验收：受控 ACP 夹具覆盖 ACK 先于握手、后台 ready/error、握手中关闭、备用进程领用/补位/过期/配置隔离、闲置关闭后透明恢复（ID 与配置保留、prompt 只发一次）、最近 3 个豁免与草稿不关闭、关闭 pool 清理备用进程。
