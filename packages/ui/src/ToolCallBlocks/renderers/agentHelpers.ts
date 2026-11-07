@@ -124,7 +124,13 @@ function isImplementationToolTitle(title: string): boolean {
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, "_");
-  return normalized === "agent" || normalized === "task" || normalized === "spawn_agent";
+  // Codex 降级形态的工具名是 camelCase `spawnAgent`，同样是实现名，不能当作 Agent 标题展示。
+  return (
+    normalized === "agent" ||
+    normalized === "task" ||
+    normalized === "spawn_agent" ||
+    normalized === "spawnagent"
+  );
 }
 
 function readAgentNameFromRecord(value: Record<string, unknown> | null): string | undefined {
