@@ -738,8 +738,12 @@ export interface IPlatformService {
   /** 订阅 Source transport 自动重连后的 logical session 换代事件。 */
   onRemoteSessionReconnected?(handler: (event: RemoteSessionReconnectedEvent) => void): () => void;
 
-  /** 检查目录是否已在其他窗口打开；如果是则激活该窗口并切到对应 tab */
-  activateOrSetWorkspace(path: string): Promise<{ activated: boolean }>;
+  /**
+   * 检查目录是否已在其他窗口打开；如果是则激活该窗口并切到对应 tab。
+   * Desktop 另返回规范化后的本地路径（Windows 按磁盘实际大小写），调用方据此建 Tab，
+   * 同一目录的不同写法共用一个 workspace key；缺省时沿用传入路径。
+   */
+  activateOrSetWorkspace(path: string): Promise<{ activated: boolean; workspacePath?: string }>;
 
   /** 建立远程连接（Desktop: 在当前窗口创建远程 session；Web: HTTP API） */
   connectRemote(
@@ -1002,6 +1006,15 @@ export interface IPlatformService {
 
   /** 导出日志：打包 ~/.zcode/v2 及外部 agent 日志为 zip 并在系统文件浏览器中显示 */
   exportLogs(): Promise<{ success: boolean; path?: string; error?: string }>;
+
+  /**
+   * 向本机桌面日志写一行 info 级本地诊断（如 1.1 本地性能摘要）。生产包同样落盘，不上传；
+   * 调用方只能传数字、布尔、枚举与生成的标识，不得含正文或路径。Web 不实现。
+   */
+  writeLocalDiagnosticLog?(
+    message: string,
+    fields: Readonly<Record<string, string | number | boolean | null>>,
+  ): void;
 
   /** 截取当前窗口，用于错误反馈携带现场画面；Web fallback 可返回 null */
   captureWindowScreenshot?(): Promise<WindowScreenshotResult | null>;

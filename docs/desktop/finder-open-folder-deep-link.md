@@ -43,6 +43,7 @@ Windows 不使用 `zcode://workspace/open` 作为 Explorer 菜单命令，原因
 - macOS 路径包含空格、中文、`&`、`?`、`#`：服务脚本必须编码；App 侧通过 URL query 解码。
 - Windows 路径包含空格、中文、`&`、`?`、`#`：Explorer 通过 `"%1"` 传 argv；App 侧不做 URL 解码。
 - Windows 路径是盘符根目录：通过 `Drive\shell` 注册表项传入，例如 `C:\`。
+- Windows 路径大小写与磁盘不一致（如终端输入 `c:\users\me\proj`）：Main 在打开前把每段替换为磁盘实际大小写，与目录选择框得到的路径一致，避免同一目录出现两个 Tab 和两个 CLI；规则见 [YCode 1.1 引擎性能 spec](engine-performance-1.1-spec.md)「Windows 工作区路径大小写」。
 - Windows 路径来自 UNC 或不存在目录：App 侧校验失败后拒绝，当前功能只承诺本地绝对目录。
 - App 未启动：deep link 冷启动后在 renderer ready 时继续打开目录。
 - App 已有窗口：发送到当前聚焦窗口或第一个可用窗口，再由 UI 的 `activateOrSetWorkspace` 处理跨窗口去重。

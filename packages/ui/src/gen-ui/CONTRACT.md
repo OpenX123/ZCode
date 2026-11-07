@@ -12,4 +12,6 @@ Reference projection accepts the Unicode JSON marker, `::visualize{path="..." ti
 
 `collectGenUiSourcePaths` and `matchesGenUiSourcePath` expose the same validated references for conversation presentation. Complete references suppress duplicate HTML preview cards and file-summary entries by full path, including Windows separator normalization. They do not authorize file reads or change page admission, stored file changes, or whole-turn rewind. See `docs/specs/gen-ui-file-summary.md`.
 
+`createGenUiModelContextReader` (exported from `host.ts`) builds the untrusted next-turn context for a send. It caches `listState` per scope (`buildGenUiScopeKey`) and drops a scope on any `onStateChanged` for it; a read that overlaps a change is used once and not cached. It owns no state: the base desktop Host storage stays the only source, and read failures leave the send unchanged. See `docs/desktop/engine-performance-1.1-spec.md` (Renderer 发送路径).
+
 Gen UI control styling projects dedicated host tokens independently of standard MCP accent variables. Typography and visible container radius nesting follow DESIGN.md; the shared visualize stylesheet provides standalone defaults. See `docs/specs/gen-ui-styles.md`.

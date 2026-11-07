@@ -99,3 +99,52 @@ it("broadcasts external state once despite duplicate file events and write ackno
     vi.mocked(watch).mockReset();
   }
 });
+
+it("publishes another Host's write for a path this Host has not read yet in a watched scope", async () => {
+  // 1.1 Renderer 发送路径的 scope 缓存只靠变更通知失效；新路径写入不能被静默丢弃。
+  const watchers: ControlledWatcher[] = [];
+  vi.mocked(watch).mockImplementation(
+    (
+      _path: PathLike,
+      options: WatchOptions | WatchListener<string>,
+      listener?: WatchListener<string>,
+    ) => {
+      const watcher = new ControlledWatcher();
+      const onChange = typeof options === "function" ? options : listener;
+      if (onChange) watcher.on("change", onChange);
+      watchers.push(watcher);
+      return watcher;
+    },
+  );
+  const root = await mkdtemp(join(tmpdir(), "gen-ui-state-new-path-"));
+  const a = createGenUiStateStorage(root);
+  const b = createGenUiStateStorage(root);
+  const observed = { workspacePath: "/workspace", sessionId: "task", path: "/workspace/a.html" };
+  const fresh = { ...observed, path: "/workspace/b.html" };
+  try {
+    await a.get(observed);
+    const received = vi.fn();
+    a.onChanged(received);
+    const state = { modelContent: "fresh", privateContent: null };
+    await b.set(fresh, state);
+    const [scopeDirectory] = await readdir(root);
+    const files = (await readdir(join(root, scopeDirectory!))).filter((name) =>
+      name.endsWith(".json"),
+    );
+    const changed = new Promise<unknown>((resolve) => {
+      const off = a.onChanged((event) => {
+        off.dispose();
+        resolve(event);
+      });
+    });
+    for (const file of files) watchers[0]!.emit("change", "rename", file);
+    await expect(changed).resolves.toEqual({ target: fresh, state });
+    expect(received).toHaveBeenCalledWith({ target: fresh, state });
+    expect(received).not.toHaveBeenCalledWith(expect.objectContaining({ target: observed }));
+  } finally {
+    a.dispose();
+    b.dispose();
+    await rm(root, { recursive: true, force: true });
+    vi.mocked(watch).mockReset();
+  }
+});

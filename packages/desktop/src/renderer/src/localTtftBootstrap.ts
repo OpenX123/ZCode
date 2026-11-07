@@ -1,12 +1,21 @@
+import type { IPlatformService } from "@zcode/shared";
 import { LocalTtftObserver, setLocalTtftObserver } from "@zcode/ui";
 
-/** 首输出计时只写本地 debug 日志，不经过 IPC 或网络导出。 */
-export function initializeDesktopLocalTtft(): () => void {
+/**
+ * 首输出明细只写本地 debug 日志；每次已下发命令的观测闭合时，另经平台日志通道写一条
+ * info 摘要到本机桌面日志（docs/trace/local-ttft-diagnostics.md），不经过网络导出。
+ */
+export function initializeDesktopLocalTtft(
+  platform?: Pick<IPlatformService, "writeLocalDiagnosticLog">,
+): () => void {
   const observer = new LocalTtftObserver(
     undefined,
     undefined,
     undefined,
     () => document.visibilityState === "visible" && document.hasFocus(),
+    platform?.writeLocalDiagnosticLog
+      ? (summary) => platform.writeLocalDiagnosticLog?.("[local-perf] send summary", summary)
+      : undefined,
   );
   observer.enabled = true;
   setLocalTtftObserver(observer);

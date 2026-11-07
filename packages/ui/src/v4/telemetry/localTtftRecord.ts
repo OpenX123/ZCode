@@ -32,6 +32,87 @@ export interface LocalTtftPending {
   confirmationStart?: number;
   rendererDetails: NonNullable<LocalTtftRecord["details"]>;
   rows: Map<number, { turnId: string; kind: ConversationRow["kind"] }>;
+  /** dispatch 时的会话引擎；只用于本地性能摘要。 */
+  engine?: string;
+  /** Renderer 收到 accepted/duplicate ACK 的时刻（Renderer 时钟）。 */
+  ackAt?: number;
+  /** 本观测是否已输出本地性能摘要（每次观测至多一条）。 */
+  summarized?: boolean;
+}
+
+/**
+ * 1.1 本地性能摘要：生产包落盘的一行 info，只含数字、布尔、枚举与生成的标识。
+ * 用 type 而非 interface，保证可直接作为平台日志的字段记录传递。
+ */
+export type LocalPerfSummary = {
+  version: 1;
+  observationId: string;
+  commandId: string | null;
+  sessionId: string | null;
+  outcome: LocalTtftRecord["outcome"];
+  engine: "zcode" | "claude-code" | "codex" | "unknown";
+  start: "cold" | "warm";
+  sendMode: "idle" | "queued" | "guided";
+  quality: LocalTtftRecord["quality"];
+  clickToPreviewMs: number | null;
+  clickToAckMs: number | null;
+  clickToReceivedMs: number | null;
+  clickToAdmittedMs: number | null;
+  enginePrepareMs: number | null;
+  requestToFirstContentMs: number | null;
+  totalMs: number;
+};
+
+const SUMMARY_IDENTIFIER = /^[A-Za-z0-9_.:-]{1,128}$/u;
+const SUMMARY_ENGINES = new Set(["zcode", "claude-code", "codex"]);
+
+function summaryIdentifier(value: string | undefined): string | null {
+  // 摘要不得携带路径、正文或其他自由文本；只放行生成的标识字符集。
+  return value !== undefined && SUMMARY_IDENTIFIER.test(value) ? value : null;
+}
+
+function summaryDuration(start: number | undefined, end: number | undefined): number | null {
+  if (start === undefined || end === undefined || !Number.isFinite(end - start) || end < start)
+    return null;
+  return Math.round(end - start);
+}
+
+/** 由闭合记录派生摘要；跨进程阶段只在记录已校准（aligned）时给出。 */
+export function buildLocalPerfSummary(
+  pending: LocalTtftPending,
+  record: LocalTtftRecord,
+  start: LocalPerfSummary["start"],
+): LocalPerfSummary {
+  const detail = (stage: string) =>
+    record.details?.find((item) => item.stage === stage && item.end !== undefined);
+  const interval = (stage: LocalTtftRecord["intervals"][number]["stage"]) =>
+    record.intervals.find((item) => item.stage === stage);
+  const preview = detail("optimistic_render");
+  const received = detail("command_received");
+  const admission = interval("command_admission");
+  const enginePrepare = detail("engine_prepare");
+  const modelRequest = interval("model_request");
+  return {
+    version: 1,
+    observationId: summaryIdentifier(record.observationId) ?? "invalid",
+    commandId: summaryIdentifier(record.commandId ?? pending.commandId),
+    sessionId: summaryIdentifier(record.sessionId ?? pending.sessionId),
+    outcome: record.outcome,
+    engine:
+      pending.engine && SUMMARY_ENGINES.has(pending.engine)
+        ? (pending.engine as LocalPerfSummary["engine"])
+        : "unknown",
+    start,
+    sendMode: record.sendMode ?? pending.sendMode,
+    quality: record.quality,
+    clickToPreviewMs: summaryDuration(pending.start, preview?.end),
+    clickToAckMs: summaryDuration(pending.start, pending.ackAt),
+    clickToReceivedMs: summaryDuration(pending.start, received?.end),
+    clickToAdmittedMs: summaryDuration(pending.start, admission?.end),
+    enginePrepareMs: summaryDuration(enginePrepare?.start, enginePrepare?.end),
+    requestToFirstContentMs: summaryDuration(modelRequest?.start, modelRequest?.end),
+    totalMs: summaryDuration(record.start, record.end) ?? 0,
+  };
 }
 
 export function buildLocalTtftRecord(

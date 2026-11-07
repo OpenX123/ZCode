@@ -51,6 +51,7 @@ import {
   saveCliMcpToUserDirectory,
 } from "./mcpUserDirectory/index.js";
 import { createTempTextAttachment } from "./tempTextAttachment.js";
+import { canonicalizeLocalWorkspacePathCase } from "./startupWorkspace.js";
 import { materializeWorkflowArtifactFile } from "./workflowArtifactFile.js";
 import { registerDesktopSaveFileIpcHandler } from "./desktopSaveFile.js";
 import { registerDesktopPrintToPdfIpcHandler } from "./desktopPrintToPdf.js";
@@ -158,14 +159,18 @@ export function registerPlatformIpcHandlers(options: {
     options.browserViewResidencyHandlers,
   );
 
-  ipcMain.handle(PlatformChannels.ActivateOrSetWorkspace, (event, path: string) => {
-    const validatedPath = nonEmptyStringSchema.parse(path);
+  ipcMain.handle(PlatformChannels.ActivateOrSetWorkspace, async (event, path: string) => {
+    // 1.1：本地 Windows 路径先规范为磁盘实际大小写，窗口映射、Tab 与 Host CLI 共用同一 key，
+    // 同一目录的不同大小写写法不再各起一个 CLI（docs/desktop/engine-performance-1.1-spec.md）。
+    const validatedPath = await canonicalizeLocalWorkspacePathCase(
+      nonEmptyStringSchema.parse(path),
+    );
     const senderWin = BrowserWindow.fromWebContents(event.sender);
     const activated = options.focusWorkspaceInExistingWindow(validatedPath, {
       skipWindowId: senderWin?.id,
     });
     if (activated.activated) {
-      return { activated: true };
+      return { activated: true, workspacePath: validatedPath };
     }
 
     if (senderWin) {
@@ -178,7 +183,7 @@ export function registerPlatformIpcHandlers(options: {
       pathSet.add(validatedPath);
       options.syncTaskRealtimeWorkspaceKeys(senderWin.id, pathSet);
     }
-    return { activated: false };
+    return { activated: false, workspacePath: validatedPath };
   });
 
   ipcMain.handle(PlatformChannels.GetResourceUsageSnapshot, (event) =>

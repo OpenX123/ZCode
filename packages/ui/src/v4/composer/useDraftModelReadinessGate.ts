@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isZCodeAgentProvider, ZCODE_AGENT_PROVIDER, type ZCodeProvider } from "@zcode/shared";
 import type { IModelSelectionService, ModelSelectionView } from "@zcode/services";
 import {
@@ -69,9 +69,19 @@ export function useDraftModelReadinessGate(params: {
       ? state
       : { scope, status: enabled ? "checking" : "ready", dismissed: false };
   if (state.scope !== scope) setState(effectiveState);
+  // 1.1 Renderer 发送路径：首发复查读订阅投影（挂载读取 + onDidChange），不再每次发送一次
+  // getView IPC。ref 与 state 同 scope；initialRead 是本 scope 唯一在途的首次读取。
+  const latestRef = useRef<{
+    scope: object;
+    status: DraftModelReadinessStatus;
+    initialRead?: Promise<void>;
+  }>({ scope, status: effectiveState.status });
+  if (latestRef.current.scope !== scope)
+    latestRef.current = { scope, status: effectiveState.status };
 
   const commitStatus = useCallback(
     (status: DraftModelReadinessStatus, options: { revealMissing?: boolean } = {}) => {
+      if (latestRef.current.scope === scope) latestRef.current.status = status;
       setState((current) =>
         current.scope !== scope
           ? current
@@ -110,7 +120,7 @@ export function useDraftModelReadinessGate(params: {
       applyStatus(resolveModelSelectionReadinessStatus(view));
     });
     const initialReadVersion = registryEventVersion;
-    void modelSelectionService
+    const initialRead = modelSelectionService
       .getView()
       .then((view) => {
         // 读取在变更事件之前发起、之后才返回时，事件快照更新；禁止旧读取覆盖新状态。
@@ -120,6 +130,7 @@ export function useDraftModelReadinessGate(params: {
       .catch((error) => {
         handleReadinessFailure(error);
       });
+    if (latestRef.current.scope === scope) latestRef.current.initialRead = initialRead;
 
     function handleReadinessFailure(error: unknown) {
       if (disposed) return;
@@ -136,7 +147,7 @@ export function useDraftModelReadinessGate(params: {
       disposed = true;
       subscription?.dispose();
     };
-  }, [commitStatus, enabled, modelSelectionService, workspaceKey]);
+  }, [commitStatus, enabled, modelSelectionService, scope, workspaceKey]);
 
   const markProviderNotReady = useCallback(() => {
     commitStatus("missing", { revealMissing: true });
@@ -144,6 +155,15 @@ export function useDraftModelReadinessGate(params: {
 
   const ensureReadyForSend = useCallback(async (): Promise<boolean> => {
     if (!enabled || !modelSelectionService) return true;
+    let known = latestRef.current.scope === scope ? latestRef.current : undefined;
+    if (known?.status === "checking" && known.initialRead) {
+      // 挂载读取仍在途：等待同一次读取，不另发 IPC。
+      await known.initialRead;
+      known = latestRef.current.scope === scope ? latestRef.current : undefined;
+    }
+    // 订阅投影已确认有模型直接放行；读取失败与挂载检查一致交给 Host 门禁。
+    if (known?.status === "ready" || known?.status === "check-failed") return true;
+    // 只有“没有模型”会拦截发送：拦截前做一次权威读取，避免变更事件在途时误拦。
     try {
       const view = await modelSelectionService.getView();
       const status = resolveModelSelectionReadinessStatus(view);
@@ -166,7 +186,7 @@ export function useDraftModelReadinessGate(params: {
       });
       return true;
     }
-  }, [commitStatus, enabled, modelSelectionService, workspaceKey]);
+  }, [commitStatus, enabled, modelSelectionService, scope, workspaceKey]);
 
   const error = useMemo(
     () =>

@@ -76,6 +76,7 @@ import { createPrimaryWindowCoordinator } from "./primaryWindowCoordinator.js";
 import { flushMainE2ECoverage } from "./e2eCoverage.js";
 import { resolveStartupWindowBootstrap, type StartupWindowBootstrap } from "./startupWorkspace.js";
 import {
+  canonicalizeExplicitStartupWorkspaceBootstrap,
   createStartupDeepLinkConsumptionGate,
   type ExplicitStartupWorkspaceRequest,
   resolveExplicitStartupWorkspaceBootstrap,
@@ -650,7 +651,7 @@ const primaryWindowCoordinator = createPrimaryWindowCoordinator({
         logger,
       });
       if (explicitBootstrap) {
-        return Promise.resolve(explicitBootstrap);
+        return canonicalizeExplicitStartupWorkspaceBootstrap(explicitBootstrap);
       }
     }
 

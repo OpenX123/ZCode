@@ -80,6 +80,7 @@ import {
 import { useWorkflowRunJournalSummaries } from "@/hooks/useWorkflowRunJournalSummaries.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { buildGenUiModelContext } from "@zcode/shared/gen-ui";
+import { createGenUiModelContextReader, type GenUiModelContextReader } from "@/gen-ui/host.js";
 import { useWorkspaceHomePath } from "@/hooks/useWorkspaceHomePath.js";
 import { prepareWorkspaceWithZCodeSessionService } from "@/hooks/useWorkspacePrepare.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
@@ -283,6 +284,11 @@ export interface SessionPaneProps {
    * focused pane。单 pane 消费者（V4ChatPane）缺省 true。
    */
   focused?: boolean;
+  /**
+   * 工作台布局中是否可见（未隐藏）。绑定已有会话的 pane 首次可见前不订阅会话，
+   * 启动时只恢复可见会话；缺省 true（单 pane 消费者）。
+   */
+  paneVisible?: boolean;
   /** 右侧面板关闭时，主区 focused pane 可接收对话外的 Esc。 */
   allowEscapeStopOutsidePane?: boolean;
   /** 关闭本窗格（仅非 primary pane 下发；关 pane ≠ 停 session）。 */
@@ -509,6 +515,7 @@ export function SessionPane({
   onSessionCreated,
   onSelectionSideChatUnavailable,
   focused = true,
+  paneVisible = true,
   allowEscapeStopOutsidePane = false,
   onClosePane,
   workspaceBadge,
@@ -563,6 +570,18 @@ export function SessionPane({
   const { intl, locale } = useZCodeIntl();
   const slashCommands = useSlashCommands(workspacePath, workspaceIdentity);
   const baseWorkspaceServices = useBaseWorkspaceServices();
+  const genUiService = baseWorkspaceServices.genUiService;
+  // 1.1：Gen UI 下一轮上下文改读订阅失效的缓存，不再每次发送一次 listState IPC。
+  const genUiModelContextReaderRef = useRef<GenUiModelContextReader | null>(null);
+  useEffect(() => {
+    if (!genUiService) return;
+    const reader = createGenUiModelContextReader(genUiService);
+    genUiModelContextReaderRef.current = reader;
+    return () => {
+      if (genUiModelContextReaderRef.current === reader) genUiModelContextReaderRef.current = null;
+      reader.dispose();
+    };
+  }, [genUiService]);
   const composerClientNamespace = useComposerClientNamespace();
   const composerProjectId = useZCodeSessionStore((store) =>
     draftTabId
@@ -593,6 +612,12 @@ export function SessionPane({
     remoteSessionId,
   });
   const [lease, setLease] = useSessionPaneLease(sessionId, layer);
+  // 1.1 启动恢复：重启后所有已打开 Tab 同时订阅，CLI 并发冷恢复 6 个会话（每个 4.5–10.6s），
+  // 发送被拖到 18–31s。绑定已有会话的 pane 首次可见前不取租约（不订阅 → 不冷恢复 runtime、
+  // 外部引擎不做后台连接）；首次可见后锁存，之后隐藏也保留租约。草稿预热不受此门控。
+  const [paneActivated, setPaneActivated] = useState(paneVisible);
+  if (paneVisible && !paneActivated) setPaneActivated(true);
+  const leaseDeferredUntilVisible = sessionId !== null && !paneActivated;
   const state = useConversationProjection(lease);
   const snapshot = state.snapshot;
   const runtimeReady =
@@ -1105,12 +1130,20 @@ export function SessionPane({
             }
           : undefined;
       if (commitCreatedTask) {
-        await commitCreatedTask(
+        // 1.1 决策：ACK accepted 即提升草稿并导航，“正在发送…”随之结束；过去等目录真实行
+        // （ACK 后还要一次任务树刷新）才提交，首发转圈被拉长。侧栏行仍由目录刷新带来，
+        // 可以晚到；分组归属继续等真实行后提交。见 docs/desktop/engine-performance-1.1-spec.md。
+        // 用户在等待 ACK 期间离开原 pane 时保持原语义：不再导航回新会话。
+        if (!draftNavigation.controller.signal.aborted) commit();
+        void commitCreatedTask(
           { taskId: createdSessionId, workspacePath, workspaceIdentity },
-          commit,
+          () => {},
           draftNavigation.controller.signal,
           organize,
-        );
+        ).catch((cause: unknown) => {
+          // 会话已经创建并导航；目录读取失败只影响侧栏行出现时机，不重发输入。
+          logger.warn("[v4-pane] 首发后的目录刷新失败，侧栏行等待下次刷新", cause);
+        });
       } else {
         void organize?.();
         commit();
@@ -1158,6 +1191,8 @@ export function SessionPane({
     },
     [onSessionCreated, sessionId],
   );
+  const sessionEngineRef = useRef(sessionEngine);
+  sessionEngineRef.current = sessionEngine;
   const dispatchCommand = useCallback(
     async (
       type: CommandType,
@@ -1300,6 +1335,8 @@ export function SessionPane({
             workspacePath,
             envelope.commandId,
             targetSessionId,
+            // 本地性能摘要按引擎分组；经 ref 读取，避免引擎事实到达时重建整条发送回调链。
+            sessionEngineRef.current,
           );
         }
         ack =
@@ -2320,7 +2357,7 @@ export function SessionPane({
   });
 
   useEffect(() => {
-    if (!effectiveSessionId) {
+    if (!effectiveSessionId || leaseDeferredUntilVisible) {
       setLease({ sessionId, layer, lease: null });
       return;
     }
@@ -2335,7 +2372,7 @@ export function SessionPane({
       offOnlineModelTransition();
       nextLease.release();
     };
-  }, [layer, effectiveSessionId]);
+  }, [layer, effectiveSessionId, leaseDeferredUntilVisible]);
 
   useEffect(() => {
     if (!sessionId || !lease || snapshot?.sessionId !== sessionId) return;
@@ -2472,13 +2509,11 @@ export function SessionPane({
           typeof args[1]?.text === "string"
         ) {
           try {
-            const context = buildGenUiModelContext(
-              await baseWorkspaceServices.genUiService.listState({
-                workspacePath,
-                workspaceIdentity,
-                sessionId: args[2],
-              }),
-            );
+            const scope = { workspacePath, workspaceIdentity, sessionId: args[2] };
+            const reader = genUiModelContextReaderRef.current;
+            const context = reader
+              ? await reader.read(scope)
+              : buildGenUiModelContext(await baseWorkspaceServices.genUiService.listState(scope));
             if (context) args[1] = { ...args[1], text: `${args[1].text}\n\n${context}` };
           } catch {
             // 状态是辅助上下文；读取失败不能阻断既有 CommandInbox 输入路径。
