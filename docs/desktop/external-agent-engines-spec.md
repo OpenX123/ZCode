@@ -180,6 +180,12 @@ Host 与 CLI 启动时已把用户的代理与证书变量封存进 `ZCODE_TOOL_
 
 PATH 缺少 node 时，adapter 子进程的 PATH 前置 `<engines>/.node-runtime/<运行时哈希>/`：POSIX 为指向当前运行时的符号链接 `node`，Windows 为 `node.cmd`，以 `ELECTRON_RUN_AS_NODE=1` 调用当前运行时。cmd 按控制台代码页解码批处理，用户名含中文时内嵌路径会被解错，因此运行时路径经 adapter 写入的 `ZCODE_EXTERNAL_ENGINE_NODE` 传入，`node.cmd` 内容保持纯 ASCII。这样 npm 入口和 adapter 自带的 `codex.js` 在没有系统 Node 的机器上也能启动。不修改系统 PATH。
 
+### 原生配置目录中的 null 描述（1.1 实机回归）
+
+- 现象：本机 Windows 开发版用沿用 CLI（第三方网关）连接 Codex，握手 2.2s 后报"引擎返回了不兼容的响应"（`external_engine.handshake.failed code=protocol`）。
+- 根因：Codex 模型目录里网关模型的选项值返回 `"description": null`，`engineConfigOptionValueSchema` 只接受字符串或缺省，整份 `configOptions` 校验失败。该形状与是否声明 AIR 无关，1.0.7 / 1.0.8 修复就绪判定后也会在此失败。AIR 客户端额外收到的值级 `_meta` 由 schema 剥离，不影响。
+- 修复：ACP 边界（adapter `configOptions` 归一）把值级 `description: null` 视同缺省，其余字段仍严格校验；落盘与快照只含归一后的值。回归用例按实测形状覆盖。
+
 ### Electron Node 模式不外泄（1.1，Windows）
 
 adapter 由当前运行时（桌面为 YCode.exe）以 `ELECTRON_RUN_AS_NODE=1` 启动；修复前该变量随 adapter 环境传给官方 CLI，再传给引擎内执行的全部命令，用户在 Claude Code / Codex 会话里启动的 Electron 程序（如 `pnpm dev` 一个 Electron 项目）会被当成 Node 运行而失败。

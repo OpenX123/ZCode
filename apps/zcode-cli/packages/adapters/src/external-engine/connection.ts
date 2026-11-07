@@ -46,10 +46,30 @@ function clientCapabilities(engine: ExternalEngineSessionInput["engine"]): JsonO
       }
     : { plan: {}, subagents: {} };
 }
+/**
+ * 本机 Windows 实测：Codex 模型目录里第三方网关模型的选项值返回 `description: null`，严格 schema 只接受
+ * 字符串或缺省，整份 configOptions 校验失败后握手以 protocol 报"不兼容的响应"，Codex 无法连接。
+ * ACP 帧在 adapter 边界归一：值级 description 为 null 视同缺省，其余字段仍按 schema 严格校验。
+ */
+function withoutNullValueDescriptions(value: unknown[]): unknown[] {
+  return value.map((option) => {
+    if (option === null || typeof option !== "object" || Array.isArray(option)) return option;
+    const record = option as Record<string, unknown>;
+    if (!Array.isArray(record.options)) return option;
+    return {
+      ...record,
+      options: record.options.map((entry: unknown) => {
+        if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return entry;
+        const { description, ...rest } = entry as Record<string, unknown>;
+        return description === null ? rest : entry;
+      }),
+    };
+  });
+}
 function configOptions(value: unknown): EngineConfigOption[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error("Invalid ACP config options");
-  const parsed = engineConfigOptionSchema.array().safeParse(value);
+  const parsed = engineConfigOptionSchema.array().safeParse(withoutNullValueDescriptions(value));
   if (!parsed.success) throw new ExternalEngineConnectionError({ code: "protocol" });
   return parsed.data;
 }

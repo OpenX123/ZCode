@@ -50,6 +50,7 @@ const info = (meta) => send({ method: "session/update", params: { sessionId: sid
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1 } });
+  else if (message.method === "session/new" && mode === "null-description") send({ id: message.id, result: { sessionId: sid, configOptions: [{ id: "model", name: "Model", type: "select", currentValue: "gw-model", options: [{ value: "gw-model", name: "6.1 Sol", description: null, _meta: { jetbrains: { air: { version: 1, kind: "standard" } } } }, { value: "gpt-5.5", name: "5.5", description: "Frontier model" }] }] } });
   else if (message.method === "session/new") send({ id: message.id, result: { sessionId: sid } });
   else if (message.method === "session/cancel") send({ id: prompt.id, result: { stopReason: "cancelled" } });
   else if (message.method === "session/prompt") {
@@ -264,6 +265,33 @@ describe("Windows 运行时补位", () => {
       expect(env.Path!.split(";").filter((entry) => entry === bin)).toHaveLength(1);
     },
   );
+});
+
+describe("原生配置目录归一", () => {
+  test("Codex 模型选项值的 description 为 null 时握手成功并视同缺省（本机 Windows 实测形状）", async () => {
+    const f = await setup("codex", { FIXTURE_MODE: "null-description" });
+    const received: unknown[] = [];
+    const input = turn("codex");
+    try {
+      await f.port.prepareSession({
+        ...input,
+        onConfigOptions: async (options) => void received.push(options),
+      });
+    } finally {
+      await f.port.closeSession(input.sessionId);
+    }
+    expect(received.at(-1)).toEqual([
+      {
+        id: "model",
+        name: "Model",
+        currentValue: "gw-model",
+        options: [
+          { value: "gw-model", name: "6.1 Sol" },
+          { value: "gpt-5.5", name: "5.5", description: "Frontier model" },
+        ],
+      },
+    ]);
+  });
 });
 
 describe("测试连接", () => {
