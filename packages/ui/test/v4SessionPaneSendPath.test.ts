@@ -99,7 +99,9 @@ vi.mock("@/v4/composer/useDraftConfigControl.js", () => ({
     promoteComposerDraft: vi.fn(),
   }),
 }));
-vi.mock("@/v4/composer/useDraftSessionPrewarm.js", () => ({
+// 只替换预热 hook；就绪判定 resolveDraftEngineReadiness 等纯函数沿用真实实现（M2-B1 新增导出）。
+vi.mock("@/v4/composer/useDraftSessionPrewarm.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/v4/composer/useDraftSessionPrewarm.js")>()),
   useDraftSessionPrewarm: () => ({
     binding: null,
     error: null,
