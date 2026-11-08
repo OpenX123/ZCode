@@ -1,6 +1,11 @@
 import { sendWithConversationDelayE2E } from "@/v4/conversationTransportDelayE2E.js";
 import { getLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
-import { calibrateLocalTtftClock, localTtftNow } from "@zcode/shared";
+import {
+  calibrateLocalTtftClock,
+  LOCAL_TTFT_CLOCK_PROBE_SAMPLES,
+  LOCAL_TTFT_CLOCK_TTL_MS,
+  localTtftNow,
+} from "@zcode/shared";
 /* oxlint-disable eslint(max-lines) -- transport 将上传、分块读取和 runtime 生命周期保持在同一 host 边界。 */
 // ConversationTransport 的 desktop/host 实现：桥到 IZCodeAgentService 的 v4 转发面
 // （依赖注入原则——数据层不感知 host 细节，
@@ -95,7 +100,44 @@ export function createAgentConversationTransport(
     workspacePath: target.workspacePath,
     ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
   };
+  // 时钟校准的结果由 LocalTtftObserver 持有；这里只持有本 workspace 的探测节奏。
+  // Bug 原因（P7，2026-11-08 扫描）：样本往返一半 >10ms 时结果被丢弃且不记时间，内容帧与
+  // 每个检查点又都会触发探测，流式期间几乎每帧一次三进程往返——11-07 共 3573 次、占 Host
+  // 日志 47% 行数，无发送时段仍 2246 次。修复：尝试无论成败都按校准有效期退避，一次尝试
+  // 顺序取最多 3 个样本取首个合格者，内容帧不再触发探测。
   let calibrationFlight: Promise<void> | undefined;
+  let lastCalibrationAttemptAt: number | undefined;
+  let calibrationGeneration = 0;
+  const resetCalibrationProbe = () => {
+    // runtime 换代后旧偏移失效；清空退避让新 runtime 尽快校准，迟到的旧结果按代际丢弃。
+    calibrationGeneration += 1;
+    calibrationFlight = undefined;
+    lastCalibrationAttemptAt = undefined;
+  };
+  const probeClock = async (generation: number) => {
+    let rejectedErrorMs: number | undefined;
+    for (let sample = 0; sample < LOCAL_TTFT_CLOCK_PROBE_SAMPLES; sample += 1) {
+      const start = localTtftNow();
+      const result = await agentService.queryConversationCommandsV4({
+        ...workspace,
+        commands: [{ sessionId: null, commandId: `ttft-clock-${crypto.randomUUID()}` }],
+        clock: true,
+      });
+      const end = localTtftNow();
+      if (generation !== calibrationGeneration) return undefined;
+      // 旧 CLI 不支持 clock 时重复取样没有意义，本轮直接放弃并进入退避。
+      if (!result.clock) return undefined;
+      const clock = calibrateLocalTtftClock(start, end, result.clock);
+      // 被拒样本往返都超过误差界，首个合格样本即为已取样本中往返最小者。
+      if (clock) return clock;
+      rejectedErrorMs = Math.min(rejectedErrorMs ?? Infinity, (end - start) / 2);
+    }
+    logger.debug("[local-ttft] clock calibration rejected", {
+      samples: LOCAL_TTFT_CLOCK_PROBE_SAMPLES,
+      bestHalfRoundTripMs: rejectedErrorMs,
+    });
+    return undefined;
+  };
   const calibrate = () => {
     const observer = getLocalTtftObserver();
     if (
@@ -104,21 +146,24 @@ export function createAgentConversationTransport(
       calibrationFlight
     )
       return;
-    const start = localTtftNow();
-    calibrationFlight = agentService
-      .queryConversationCommandsV4({
-        ...workspace,
-        commands: [{ sessionId: null, commandId: `ttft-clock-${crypto.randomUUID()}` }],
-        clock: true,
-      })
-      .then((result) => {
-        const clock = result.clock && calibrateLocalTtftClock(start, localTtftNow(), result.clock);
-        if (clock) observer.calibrate(target.workspacePath, clock);
+    const now = localTtftNow();
+    if (
+      lastCalibrationAttemptAt !== undefined &&
+      now - lastCalibrationAttemptAt < LOCAL_TTFT_CLOCK_TTL_MS
+    )
+      return;
+    lastCalibrationAttemptAt = now;
+    const generation = calibrationGeneration;
+    const flight = probeClock(generation)
+      .then((clock) => {
+        if (clock && generation === calibrationGeneration)
+          observer.calibrate(target.workspacePath, clock);
       })
       .catch(() => {})
       .finally(() => {
-        calibrationFlight = undefined;
+        if (calibrationFlight === flight) calibrationFlight = undefined;
       });
+    calibrationFlight = flight;
   };
   const ensureHandshake = async () => {
     const hello = await ensureAgentV4ConnectionHandshake(agentService);
@@ -145,10 +190,9 @@ export function createAgentConversationTransport(
     (frame: ConversationTopicFrame, deliveryKind) => {
       try {
         if (!target.workspaceIdentity?.trim()) {
+          // 内容帧不触发时钟探测（P7）：首输出记录在本帧同步闭合，之后到达的校准用不上；
+          // 排队输入的校准由 admitted/execution 检查点补测（见 onDynamicLocalTtftFacts）。
           getLocalTtftObserver()?.receive(target.workspacePath, frame, deliveryKind);
-          // Bug 原因：校准只在 ensureHandshake 顺带刷新，排队/慢发送等待期间没有传输调用，
-          // 首输出时校准已超过 60 秒有效期，跨进程阶段被整体丢弃。内容帧到达即刷新过期校准。
-          calibrate();
         }
       } catch (error) {
         logger.debug("[local-ttft] observation failed", { error });
@@ -544,6 +588,7 @@ export function createAgentConversationTransport(
               getLocalTtftObserver()?.checkpoint(target.workspacePath, facts);
               // CLI 在 admitted/execution/各准备阶段都会发检查点：排队输入开始执行时
               // 就能在首输出前拿到 60 秒内的新校准，不需要额外定时器或协议。
+              // calibrate 自带有效期与失败退避，检查点再多也最多每 60 秒尝试一次。
               calibrate();
             } catch (error) {
               logger.debug("[local-ttft] checkpoint failed", { error });
@@ -589,6 +634,7 @@ export function createAgentConversationTransport(
         if (event.workspaceKey !== targetWorkspaceKey) return;
         if (!target.workspaceIdentity?.trim())
           getLocalTtftObserver()?.interrupt(target.workspacePath);
+        resetCalibrationProbe();
         runtimeGeneration += 1;
         // runtime generation 可复用 subId/ordinal；ownership 与 assembler 必须原子失效。
         barrier.clear();
@@ -611,8 +657,10 @@ export function createAgentConversationTransport(
             runtimeLifecycleUpstream ??=
               agentService.onAgentRuntimeLifecycle?.((event) => {
                 if (event.workspaceKey !== targetWorkspaceKey) return;
-                if (event.state === "unavailable" && !target.workspaceIdentity?.trim())
+                if (event.state === "unavailable" && !target.workspaceIdentity?.trim()) {
                   getLocalTtftObserver()?.interrupt(target.workspacePath);
+                  resetCalibrationProbe();
+                }
                 // 只转发、不动 runtimeGeneration/barrier/decoder/topicBySubscriptionId：那是
                 // onRuntimeRestart 的语义（新 runtime 已存在、可安全重订阅）。unavailable 时
                 // 旧 CLI 已死不会再有帧到达，而提前递增 generation 会让随后 restart 的

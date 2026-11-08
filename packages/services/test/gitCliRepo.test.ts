@@ -112,6 +112,90 @@ describe("gitCliRepo", () => {
     ]);
   });
 
+  it("git status 不获取可选锁，避免自身的 index.lock 事件触发下一轮自动刷新", async () => {
+    // P8 自激循环：status 机会性创建/删除 .git/index.lock，.git 递归 watcher 收到事件后
+    // 60 秒再刷新一次（日志 60.48s 链）。GIT_OPTIONAL_LOCKS=0 后同一命令不再产生文件事件。
+    const { commandProvider, run } = createMockCommandProvider();
+    const repo = createGitCliRepo({ commandProvider });
+
+    await repo.getStatus("/repo/packages/app");
+
+    const statusCall = run.mock.calls.find(([options]) => options.args[0] === "status");
+    expect(statusCall?.[0].env).toMatchObject({ GIT_OPTIONAL_LOCKS: "0" });
+  });
+
+  it("缓存仓库解析：gitdir 仍在时顺序刷新不重复 rev-parse，invalidate 或删除 .git 后重新解析", async () => {
+    const repoRoot = makeTempDir("zcode-git-resolve-cache-");
+    mkdirSync(join(repoRoot, ".git"));
+    const { commandProvider, run } = createMockCommandProvider();
+    run.mockImplementation(
+      async (options: GitCommandExecutionOptions): Promise<GitCommandExecutionResult> => {
+        const command = options.args.join(" ");
+        if (
+          command === "rev-parse --show-toplevel --show-prefix --absolute-git-dir --git-common-dir"
+        ) {
+          return createCommandResult(options, {
+            stdout: `${repoRoot}\n\n${join(repoRoot, ".git")}\n.git\n`,
+          });
+        }
+        if (command.startsWith("status ")) {
+          return createCommandResult(options, { stdout: "# branch.head main\0" });
+        }
+        if (command.startsWith("diff ")) return createCommandResult(options);
+        throw new Error(`Unexpected git command in test: ${command}`);
+      },
+    );
+    const revParseCount = () =>
+      run.mock.calls.filter(([options]) => options.args[0] === "rev-parse").length;
+    const repo = createGitCliRepo({ commandProvider });
+
+    await repo.getStatus(repoRoot);
+    await repo.getStatus(repoRoot);
+    expect(revParseCount()).toBe(1);
+    // 一次刷新由 rev-parse + status + 2×diff 共 4 个进程降为 3 个。
+    expect(run).toHaveBeenCalledTimes(1 + 3 * 2);
+
+    repo.invalidate(repoRoot);
+    await repo.getStatus(repoRoot);
+    expect(revParseCount()).toBe(2);
+
+    rmSync(join(repoRoot, ".git"), { recursive: true, force: true });
+    await repo.resolveRepository(repoRoot);
+    expect(revParseCount()).toBe(3);
+  });
+
+  it("非仓库解析结果不缓存，git init 后下一次刷新即可识别", async () => {
+    const repoRoot = makeTempDir("zcode-git-resolve-init-");
+    let initialized = false;
+    const run = vi.fn(
+      async (options: GitCommandExecutionOptions): Promise<GitCommandExecutionResult> => {
+        if (!initialized) {
+          return createCommandResult(options, {
+            exitCode: 128,
+            stderr: "fatal: not a git repository (or any of the parent directories): .git",
+          });
+        }
+        return createCommandResult(options, {
+          stdout: `${repoRoot}\n\n${join(repoRoot, ".git")}\n.git\n`,
+        });
+      },
+    );
+    const repo = createGitCliRepo({
+      commandProvider: { resolveGitBinary: vi.fn().mockResolvedValue("git"), run },
+    });
+
+    await expect(repo.resolveRepository(repoRoot)).resolves.toMatchObject({
+      isRepository: false,
+    });
+    mkdirSync(join(repoRoot, ".git"));
+    initialized = true;
+    await expect(repo.resolveRepository(repoRoot)).resolves.toMatchObject({
+      isRepository: true,
+    });
+    await repo.resolveRepository(repoRoot);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
   it("详细状态超限后应按 repoRoot 复用未跟踪目录折叠模式", async () => {
     const { commandProvider, run } = createMockCommandProvider();
     run.mockImplementation(

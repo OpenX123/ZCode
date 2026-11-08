@@ -539,6 +539,11 @@ function parseGitIndexEntries(stdout: string): GitIndexEntry[] {
 export function createGitCliRepo(options?: { commandProvider?: GitCommandProvider }): GitCliRepo {
   const commandProvider = options?.commandProvider ?? createGitCommandProvider();
   const repositoryResolutionRequests = new Map<string, Promise<GitResolvedRepository>>();
+  // 已解析成功的仓库布局。每次自动刷新原本都先跑一次 `git rev-parse`（P8：每次 4 个 git.exe），
+  // 而布局只在 .git 被创建/删除或 worktree 被移除时变化：复用前用 stat 确认 .git 与 gitdir 仍在，
+  // 非仓库/Git 不可用的结果不缓存（git init 后下一次刷新即可识别），mutation 后经 invalidate 清除。
+  const resolvedRepositories = new Map<string, GitResolvedRepository>();
+  const resolutionGenerations = new Map<string, number>();
   const workspaceRepositoryInfoRequests = new Map<string, Promise<GitWorkspaceRepositoryInfo>>();
   const statusRequests = new Map<string, Promise<GitStatusSnapshot>>();
   const collapsedUntrackedRepoRoots = new Set<string>();
@@ -549,6 +554,12 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       args: ["status", "--porcelain=v2", "--branch", `--untracked-files=${untrackedMode}`, "-z"],
       timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
       maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      // Bug 原因（P8 自激循环）：status 每次都会机会性地获取 .git/index.lock（必要时重写 index），
+      // UI 的 .git / workspace 递归 watcher 收到事件后 60 秒再刷新一次，日志出现连续 60.48s 链。
+      // 临时仓库实测：index 最新时一次刷新 4 个命令里只有 status 产生事件，设为 0 后不再产生；
+      // index 过期时 `git diff` 仍会回写一次（不受该变量控制），UI 至多再刷新一次即收敛。
+      // 用环境变量而非 `--no-optional-locks`，远端老版本 Git（<2.15）会忽略它而不是报错。
+      env: { GIT_OPTIONAL_LOCKS: "0" },
     });
   }
 
@@ -591,7 +602,24 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     return request;
   }
 
+  async function isResolvedRepositoryStillPresent(
+    resolution: GitResolvedRepository,
+  ): Promise<boolean> {
+    const gitDir = resolution.autoRefreshWatchPaths[0]?.path;
+    try {
+      await Promise.all([
+        stat(join(resolution.repoRoot, ".git")),
+        ...(gitDir ? [stat(gitDir)] : []),
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function invalidate(workspacePath: string): void {
+    resolvedRepositories.delete(workspacePath);
+    resolutionGenerations.set(workspacePath, (resolutionGenerations.get(workspacePath) ?? 0) + 1);
     repositoryResolutionRequests.delete(workspacePath);
     workspaceRepositoryInfoRequests.delete(workspacePath);
     statusRequests.delete(workspacePath);
@@ -710,80 +738,103 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     invalidate,
 
     async resolveRepository(workspacePath: string): Promise<GitResolvedRepository> {
+      const cached = resolvedRepositories.get(workspacePath);
+      if (cached) {
+        const present = await isResolvedRepositoryStillPresent(cached);
+        if (resolvedRepositories.get(workspacePath) === cached) {
+          if (present) return cached;
+          resolvedRepositories.delete(workspacePath);
+        }
+      }
       // 启动阶段 summary / changes / branch / identity 会并发读取同一个 workspace，
       // 这里复用进行中的仓库解析，避免一轮刷新里重复执行多次 `git rev-parse`。
-      return await reuseInFlightRequest(repositoryResolutionRequests, workspacePath, async () => {
-        const gitBinary = await commandProvider.resolveGitBinary();
-        if (!gitBinary) {
+      const request = reuseInFlightRequest(
+        repositoryResolutionRequests,
+        workspacePath,
+        async () => {
+          const gitBinary = await commandProvider.resolveGitBinary();
+          if (!gitBinary) {
+            return {
+              workspacePath,
+              repoRoot: workspacePath,
+              workspaceInRepoPath: ".",
+              autoRefreshWatchPaths: [],
+              isGitAvailable: false,
+              isRepository: false,
+            };
+          }
+
+          const result = await commandProvider.run({
+            cwd: workspacePath,
+            args: [
+              "rev-parse",
+              "--show-toplevel",
+              "--show-prefix",
+              "--absolute-git-dir",
+              "--git-common-dir",
+            ],
+            timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+          });
+          if (result.exitCode !== 0) {
+            // 测试/窗口切换时 workspace 目录可能在并发请求过程中被删除（例如临时目录清理）。
+            // 之前这里会直接抛错，若调用方是 fire-and-forget 链路就会形成 unhandled rejection，
+            // 进而把 Vitest 跑挂成超时。目录缺失不属于“Git 协议失败”，应按“当前非可用仓库”降级返回。
+            if (isMissingWorkingDirectoryResult(result)) {
+              return {
+                workspacePath,
+                repoRoot: workspacePath,
+                workspaceInRepoPath: ".",
+                autoRefreshWatchPaths: [],
+                isGitAvailable: true,
+                isRepository: false,
+              };
+            }
+
+            if (isNotRepositoryResult(result)) {
+              return {
+                workspacePath,
+                repoRoot: workspacePath,
+                workspaceInRepoPath: ".",
+                autoRefreshWatchPaths: [],
+                isGitAvailable: true,
+                isRepository: false,
+              };
+            }
+
+            ensureGitCommandSucceeded("git rev-parse", result);
+          }
+
+          const lines = result.stdout.replace(/\r\n/g, "\n").split("\n");
+          const repoRoot = lines[0]?.trim();
+          if (!repoRoot) {
+            throw new Error("Failed to resolve Git repository root");
+          }
+
           return {
             workspacePath,
-            repoRoot: workspacePath,
-            workspaceInRepoPath: ".",
-            autoRefreshWatchPaths: [],
-            isGitAvailable: false,
-            isRepository: false,
+            repoRoot,
+            workspaceInRepoPath: normalizeWorkspaceInRepoPath(lines[1] ?? ""),
+            autoRefreshWatchPaths: buildAutoRefreshWatchPaths({
+              workspacePath,
+              absoluteGitDir: lines[2]?.trim() ?? "",
+              gitCommonDir: lines[3]?.trim() ?? "",
+            }),
+            isGitAvailable: true,
+            isRepository: true,
           };
-        }
-
-        const result = await commandProvider.run({
-          cwd: workspacePath,
-          args: [
-            "rev-parse",
-            "--show-toplevel",
-            "--show-prefix",
-            "--absolute-git-dir",
-            "--git-common-dir",
-          ],
-          timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
-        });
-        if (result.exitCode !== 0) {
-          // 测试/窗口切换时 workspace 目录可能在并发请求过程中被删除（例如临时目录清理）。
-          // 之前这里会直接抛错，若调用方是 fire-and-forget 链路就会形成 unhandled rejection，
-          // 进而把 Vitest 跑挂成超时。目录缺失不属于“Git 协议失败”，应按“当前非可用仓库”降级返回。
-          if (isMissingWorkingDirectoryResult(result)) {
-            return {
-              workspacePath,
-              repoRoot: workspacePath,
-              workspaceInRepoPath: ".",
-              autoRefreshWatchPaths: [],
-              isGitAvailable: true,
-              isRepository: false,
-            };
-          }
-
-          if (isNotRepositoryResult(result)) {
-            return {
-              workspacePath,
-              repoRoot: workspacePath,
-              workspaceInRepoPath: ".",
-              autoRefreshWatchPaths: [],
-              isGitAvailable: true,
-              isRepository: false,
-            };
-          }
-
-          ensureGitCommandSucceeded("git rev-parse", result);
-        }
-
-        const lines = result.stdout.replace(/\r\n/g, "\n").split("\n");
-        const repoRoot = lines[0]?.trim();
-        if (!repoRoot) {
-          throw new Error("Failed to resolve Git repository root");
-        }
-
-        return {
-          workspacePath,
-          repoRoot,
-          workspaceInRepoPath: normalizeWorkspaceInRepoPath(lines[1] ?? ""),
-          autoRefreshWatchPaths: buildAutoRefreshWatchPaths({
-            workspacePath,
-            absoluteGitDir: lines[2]?.trim() ?? "",
-            gitCommonDir: lines[3]?.trim() ?? "",
-          }),
-          isGitAvailable: true,
-          isRepository: true,
-        };
-      });
+        },
+      );
+      const generation = resolutionGenerations.get(workspacePath) ?? 0;
+      const resolution = await request;
+      // invalidate 发生在解析途中时，迟到的旧结果不能写回缓存。
+      if (
+        resolution.isGitAvailable &&
+        resolution.isRepository &&
+        (resolutionGenerations.get(workspacePath) ?? 0) === generation
+      ) {
+        resolvedRepositories.set(workspacePath, resolution);
+      }
+      return resolution;
     },
 
     async getWorkspaceRepositoryInfo(workspacePath: string): Promise<GitWorkspaceRepositoryInfo> {

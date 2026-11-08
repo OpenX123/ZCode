@@ -10,7 +10,7 @@ import { readProjectSidebarTree } from "@/project-sidebar/project-tree-reader.js
 import { stabilizeProjectTree, applyProjectTaskActivities } from "@/project-sidebar/view.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
-import { isWorkspaceTab } from "@/store/tabStore.js";
+import { isWorkspaceTab, type WindowTabState } from "@/store/tabStore.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import { getTaskListRowActivity } from "@/v4/taskListRowActivity.js";
@@ -23,6 +23,34 @@ import { areStabilizedValuesEquivalent } from "@/v4/taskListItemStabilization.js
 const subscribeToNothing = () => () => {};
 const zeroRevision = () => 0;
 const EMPTY: ProjectTree = { projects: [], tasks: [] };
+
+interface WorkspaceSetEntry {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+}
+
+/** workspace 集合的值签名：只含身份字段，排序去重，tab 标签与顺序不参与。 */
+function buildWorkspaceSetSignature(tabs: ReadonlyArray<WindowTabState>): string {
+  const byKey = new Map<string, WorkspaceSetEntry>();
+  for (const tab of tabs) {
+    if (!isWorkspaceTab(tab)) continue;
+    const workspaceIdentity = tab.workspaceIdentity?.trim() || undefined;
+    const remoteSessionId = tab.remoteSessionId || undefined;
+    byKey.set(`${workspaceIdentity || tab.workspacePath}\u0000${remoteSessionId ?? ""}`, {
+      workspacePath: tab.workspacePath,
+      ...(workspaceIdentity ? { workspaceIdentity } : {}),
+      ...(remoteSessionId ? { remoteSessionId } : {}),
+    });
+  }
+  return JSON.stringify(
+    [...byKey.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, entry]) => entry),
+  );
+}
+
+function localTabPath(entry: WorkspaceSetEntry): string[] {
+  return entry.workspaceIdentity || entry.remoteSessionId ? [] : [entry.workspacePath];
+}
 export function useProjectTree(isDesktop = false) {
   const services = useBaseWorkspaceServices();
   // 远端 bridge 的 base 服务属于 Source；侧栏读写与失效流必须整组来自窗口目录。
@@ -43,8 +71,13 @@ export function useProjectTree(isDesktop = false) {
   const directoryRevision = registry?.getDirectoryRevision() ?? 0;
   const sourceRevision = registry?.getSourceRevision() ?? 0;
   const tabs = useTabStore((state) => state.tabs);
-  const version = useZCodeSessionStore((state) =>
-    Object.values(state.workspaces).reduce((n, workspace) => n + workspace.taskListVersion, 0),
+  // Bug 原因（P12）：读取 effect 曾依赖整个 tabs 数组与 taskListVersion 之和，tab 标签/顺序/Settings
+  // 页签等与目录无关的变化都会整树重读（readDirectory 190 次/天、readTree 96 次/天）。这里只取
+  // workspace 集合的值签名；任务事实变化由 directoryRevision / workspace 事件 / 项目变化通知失效。
+  const workspaceSetSignature = useMemo(() => buildWorkspaceSetSignature(tabs), [tabs]);
+  const localTabWorkspacePaths = useMemo(
+    () => (JSON.parse(workspaceSetSignature) as WorkspaceSetEntry[]).flatMap(localTabPath),
+    [workspaceSetSignature],
   );
   const [tree, setTree] = useState<ProjectTree>(EMPTY);
   const [availability, setAvailability] = useState<ReadonlyMap<string, ProjectAvailability>>(
@@ -241,7 +274,7 @@ export function useProjectTree(isDesktop = false) {
   );
   useEffect(() => {
     void refresh();
-  }, [refresh, version, tabs, directoryRevision]);
+  }, [refresh, workspaceSetSignature, directoryRevision]);
   const scopes = useMemo(() => {
     const byKey = new Map<string, { workspacePath: string; workspaceIdentity?: string }>();
     for (const task of tree.tasks) byKey.set(task.workspaceIdentity || task.workspacePath, task);
@@ -256,16 +289,14 @@ export function useProjectTree(isDesktop = false) {
           ...(identity ? { workspaceIdentity: identity } : {}),
         });
       }
-    for (const tab of tabs)
-      if (isWorkspaceTab(tab) && !tab.workspaceIdentity && !tab.remoteSessionId)
-        byKey.set(tab.workspacePath, { workspacePath: tab.workspacePath });
+    for (const workspacePath of localTabWorkspacePaths) byKey.set(workspacePath, { workspacePath });
     return [...byKey.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([, { workspacePath, workspaceIdentity }]) => ({
         workspacePath,
         ...(workspaceIdentity ? { workspaceIdentity } : {}),
       }));
-  }, [tree, tabs, registry]);
+  }, [tree, localTabWorkspacePaths, registry]);
   const scopeKey = JSON.stringify(scopes);
   useProjectUnreadSignals(scopes, refresh);
   const sourceVersion = JSON.stringify(

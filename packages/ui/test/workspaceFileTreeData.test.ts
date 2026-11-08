@@ -311,6 +311,41 @@ describe("useWorkspaceFileTreeData", () => {
     });
   });
 
+  it("监听批次不再逐批调用 git.refresh，而是并入 Git 自动刷新的同一 60 秒节流", async () => {
+    // P8：文件树每批 watcher 事件都单独 git.refresh（每次 4 个 git.exe），绕过 60 秒防抖。
+    vi.useFakeTimers();
+    const harness = createWorkspaceFileTreeHarness({
+      [WORKSPACE_PATH]: [directory(SRC_PATH)],
+      [SRC_PATH]: [file(`${SRC_PATH}/old.ts`)],
+    });
+    await harness.render();
+    await act(async () => {
+      await harness.latestResult.loadDirectory(SRC_PATH, 1);
+      harness.latestResult.setExpandedPaths(new Set([SRC_PATH]));
+      await flushMicrotasks();
+    });
+    await flushReactWork();
+    const gitReads = vi.mocked(harness.services.gitService.refresh).mock.calls.length;
+
+    for (let batch = 0; batch < 3; batch += 1) {
+      harness.setDirectoryEntries(SRC_PATH, [file(`${SRC_PATH}/new-${batch}.ts`)]);
+      await harness.fireWatcherChange(SRC_PATH);
+    }
+    expect(harness.latestResult.rows.map((row) => row.path)).toContain(`${SRC_PATH}/new-2.ts`);
+    expect(harness.services.gitService.refresh).toHaveBeenCalledTimes(gitReads);
+
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+      await flushMicrotasks();
+      await flushMicrotasks();
+    });
+    expect(harness.services.gitService.refresh).toHaveBeenCalledTimes(gitReads + 1);
+
+    act(() => {
+      harness.root.unmount();
+    });
+  });
+
   it("目录折叠后释放 watcher，避免已加载目录持续占用监听资源", async () => {
     const harness = createWorkspaceFileTreeHarness({
       [WORKSPACE_PATH]: [directory(SRC_PATH)],

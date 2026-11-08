@@ -94,6 +94,17 @@ describe("project tree remote refresh", () => {
     expect(result.tree.projects[0]?.name).toBe("cached");
     expect(refreshEntry).not.toHaveBeenCalled();
   });
+  it("没有远端 Host 时只读一次目录（P12：readDirectory 190 次/天是 readTree 的两倍）", async () => {
+    const readDirectory = vi.fn(async () => ({ hosts: [], entries: [] }));
+    const readTree = vi.fn(async () => ({ projects: [], tasks: [] }));
+    const result = await readProjectSidebarTree({
+      projectService: { readTree } as unknown as IProjectService,
+      remoteProjectService: { readDirectory } as unknown as IRemoteProjectService,
+    });
+    expect(readDirectory).toHaveBeenCalledTimes(1);
+    expect(readTree).toHaveBeenCalledTimes(1);
+    expect(result.directory).toEqual({ hosts: [], entries: [] });
+  });
   it("rejects a completed read from a removed or replaced host membership", async () => {
     const { read, readTree, setDirectory, remote } = fixture();
     readTree.mockImplementation(async (input) => {

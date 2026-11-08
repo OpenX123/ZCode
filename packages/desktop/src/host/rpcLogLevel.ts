@@ -9,6 +9,8 @@ type RpcLogLevel = "debug" | "info" | "warn";
 export function resolveRpcLogLevel(message: string, ...args: unknown[]): RpcLogLevel {
   // 后台详情每秒读取一次，成功日志会持续落盘；只降低该查询的成功级别，保留失败诊断。
   if (message.startsWith("[rpc:call] zcode-agent.backgroundBashOutputV4 OK (")) return "debug";
+  // TTFT 时钟校准探测（P7：11-07 共 3573 次、占 Host 日志 47% 行数）：成功明细只记 debug。
+  if (message.startsWith("[rpc:call] zcode-agent.queryConversationCommandsV4 OK (")) return "debug";
 
   // workspace 首次绑定时，provider registry 会在 runtime identity 查询之后同步；
   // 这个明确带错误码的失败是启动握手状态，不是服务降级，避免每个 workspace 都留下一条 warn。

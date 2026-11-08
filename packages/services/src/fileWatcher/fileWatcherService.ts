@@ -1,5 +1,5 @@
 import { watch, type FSWatcher } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { Emitter, Event, type Event as RpcEvent } from "@zcode/rpc";
 import type { FileWatchEvent } from "@zcode/shared";
 import {
@@ -11,14 +11,20 @@ import { registerMemoryDiagnosticsProvider } from "#src/memoryDiagnostics.js";
 
 /** 防抖时间（ms）——批量文件变更（如 git checkout）时避免频繁刷新 */
 const DEBOUNCE_MS = 150;
+/** 递归 watcher 单个批次逐路径上报的上限；超出后折叠为祖先目录。 */
+const RECURSIVE_WATCH_MAX_CHANGED_PATHS = 32;
 
 interface WatcherInstance {
   path: string;
+  recursive: boolean;
   watcher: FSWatcher;
   changeEmitter: Emitter<FileWatchEvent>;
   /** 防抖定时器 */
   debounceTimer: ReturnType<typeof setTimeout> | null;
-  /** 同一防抖窗口只含一个明确路径时才透传，避免过滤掉同批次里的目标文件事件 */
+  /**
+   * 非递归：同一防抖窗口只含一个明确路径时才透传，避免过滤掉同批次里的目标文件事件；
+   * 递归：逐路径上报（见 collapseRecursiveWatchChangedPaths）。
+   */
   pendingChangedPaths: Set<string>;
   hasUnknownChangedPath: boolean;
 }
@@ -32,6 +38,43 @@ export function resolveFileWatchChangedPath(
   }
   const normalizedFileName = fileName.toString().trim();
   return normalizedFileName ? resolve(watchedDirectoryPath, normalizedFileName) : undefined;
+}
+
+function isInsideWatchRoot(rootPath: string, path: string): boolean {
+  const relativePath = relative(rootPath, path);
+  // Windows 跨盘符时 relative 返回绝对路径，同样视为在监听根之外。
+  return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+}
+
+function watchDepth(rootPath: string, path: string): number {
+  if (!isInsideWatchRoot(rootPath, path)) return 0;
+  return relative(rootPath, path).split(/[\\/]+/).length;
+}
+
+/**
+ * 递归 watcher 一个批次的变化路径：不超过上限时原样返回；超出时每轮只把最深的一层路径上提到
+ * 父目录，直到不超过上限（最终可能只剩监听根目录）。折叠后的路径表示“该目录下有变化”。
+ */
+export function collapseRecursiveWatchChangedPaths(
+  rootPath: string,
+  changedPaths: readonly string[],
+  limit = RECURSIVE_WATCH_MAX_CHANGED_PATHS,
+): string[] {
+  let current = [...new Set(changedPaths)];
+  while (current.length > limit) {
+    const deepest = Math.max(...current.map((path) => watchDepth(rootPath, path)));
+    if (deepest === 0) return [rootPath];
+    current = [
+      ...new Set(
+        current.map((path) => {
+          if (watchDepth(rootPath, path) !== deepest) return path;
+          const parent = dirname(path);
+          return isInsideWatchRoot(rootPath, parent) ? parent : rootPath;
+        }),
+      ),
+    ];
+  }
+  return current;
 }
 
 export function createFileWatcherService(options?: {
@@ -79,12 +122,23 @@ export function createFileWatcherService(options?: {
           if (instance.debounceTimer) clearTimeout(instance.debounceTimer);
           instance.debounceTimer = setTimeout(() => {
             instance.debounceTimer = null;
-            const onlyChangedPath =
-              !instance.hasUnknownChangedPath && instance.pendingChangedPaths.size === 1
-                ? instance.pendingChangedPaths.values().next().value
-                : undefined;
+            const changedPaths = [...instance.pendingChangedPaths];
+            const hasUnknownChangedPath = instance.hasUnknownChangedPath;
             instance.pendingChangedPaths.clear();
             instance.hasUnknownChangedPath = false;
+            if (instance.recursive && !hasUnknownChangedPath && changedPaths.length > 1) {
+              // 递归 watcher 只服务 Git 自动刷新这类工作区级信号。P8：旧实现批次含多个路径就省略
+              // changedPath，UI 无法区分 node_modules / 构建产物 / .git 噪声与源码改动，只能保守刷新。
+              // 这里逐路径上报（超上限折叠为祖先目录），由 UI 按 gitdir 与 .gitignore 过滤。
+              for (const changedPath of collapseRecursiveWatchChangedPaths(
+                instance.path,
+                changedPaths,
+              ))
+                instance.changeEmitter.fire({ dirPath: instance.path, changedPath });
+              return;
+            }
+            const onlyChangedPath =
+              !hasUnknownChangedPath && changedPaths.length === 1 ? changedPaths[0] : undefined;
             instance.changeEmitter.fire({
               dirPath: instance.path,
               ...(onlyChangedPath ? { changedPath: onlyChangedPath } : {}),
@@ -113,6 +167,7 @@ export function createFileWatcherService(options?: {
 
       watchers.set(id, {
         path: params.path,
+        recursive,
         watcher: fsWatcher,
         changeEmitter,
         debounceTimer: null,

@@ -14,6 +14,16 @@ describe("host RPC 日志级别映射", () => {
     ).toBe("info");
   });
 
+  it("TTFT 时钟校准查询成功仅记 debug，失败仍记 warn", () => {
+    // P7：11-07 该 RPC 3573 次、占 Host 日志 47% 行数；成功明细降为 debug，失败保留诊断。
+    expect(
+      resolveRpcLogLevel("[rpc:call] zcode-agent.queryConversationCommandsV4 OK (0.6ms)"),
+    ).toBe("debug");
+    expect(
+      resolveRpcLogLevel("[rpc:call] zcode-agent.queryConversationCommandsV4 FAIL (0.6ms)"),
+    ).toBe("warn");
+  });
+
   it("RPC 成功日志应记为 info", () => {
     expect(resolveRpcLogLevel("[rpc:call] setting.get OK (1.5ms)")).toBe("info");
   });

@@ -1186,7 +1186,7 @@ it("runtime unavailable 结束对应 workspace 的 TTFT，保留其他 workspace
   }
 });
 
-it("校准过期后收到 CLI 检查点或内容帧会重新探测时钟，有效期内不重复", async () => {
+it("校准过期后收到 CLI 检查点会重新探测时钟，有效期内不重复", async () => {
   const agent = setupAgent();
   const facts = new Emitter<import("@zcode/shared").LocalTtftFacts>();
   const service = { ...agent, onDynamicLocalTtftFacts: () => facts.event };
@@ -1229,5 +1229,197 @@ it("校准过期后收到 CLI 检查点或内容帧会重新探测时钟，有�
   } finally {
     off();
     setLocalTtftObserver(undefined);
+  }
+});
+
+/**
+ * P7（2026-11-08 扫描）：校准失败不记时间且每帧重探，`queryConversationCommandsV4` 一天 3573 次。
+ * 这里用可控的 performance.now 模拟往返耗时：rtts 依次消费，超过 20ms（一半 >10ms）即被拒。
+ */
+function setupClockProbeHarness(rtts: number[]) {
+  const perf = { now: 1_000 };
+  const spy = vi.spyOn(performance, "now").mockImplementation(() => perf.now);
+  const agent = setupAgent();
+  agent.queryConversationCommandsV4.mockImplementation(
+    async (params: { commands: Array<{ commandId: string }>; clock?: true }) => {
+      if (params.clock) {
+        perf.now += rtts.shift() ?? 30;
+        return {
+          results: [],
+          clock: { instanceId: "cli", receivedAt: 5_000, sentAt: 5_000 },
+        } as never;
+      }
+      return { results: params.commands.map((key) => ({ key, result: "unknown" as const })) };
+    },
+  );
+  const facts = new Emitter<import("@zcode/shared").LocalTtftFacts>();
+  const service = { ...agent, onDynamicLocalTtftFacts: () => facts.event };
+  const observer = new LocalTtftObserver(() => {});
+  observer.enabled = true;
+  setLocalTtftObserver(observer);
+  const clockProbes = () =>
+    agent.queryConversationCommandsV4.mock.calls.filter(
+      ([params]) => (params as { clock?: true }).clock === true,
+    ).length;
+  const checkpoint = {
+    version: 1 as const,
+    observationId: "e0b15fc2-3a50-4d73-854d-61fa148cbfd0",
+    instanceId: "cli",
+    commandId: "c",
+    sessionId: "s",
+    receivedAt: 100_000,
+  };
+  const settle = async () => {
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+  };
+  return {
+    perf,
+    agent,
+    facts,
+    service,
+    observer,
+    clockProbes,
+    checkpoint,
+    settle,
+    dispose() {
+      spy.mockRestore();
+      setLocalTtftObserver(undefined);
+    },
+  };
+}
+
+it("内容帧不触发时钟探测，即使校准已过期", async () => {
+  const harness = setupClockProbeHarness([]);
+  try {
+    harness.observer.calibrate("/a", {
+      instanceId: "cli",
+      offsetMs: 0,
+      errorMs: 1,
+      measuredAt: performance.timeOrigin + harness.perf.now,
+    });
+    const transport = createAgentConversationTransport(harness.service as never, {
+      workspacePath: "/a",
+    });
+    transport.onFrame(() => {});
+    const subscribed = await transport.subscribe({ topic: "conversation/session-1" });
+    transport.activate(subscribed.ack.subscriptionId);
+    expect(harness.clockProbes()).toBe(0);
+    harness.perf.now += 61_000;
+    for (let ordinal = 1; ordinal <= 5; ordinal += 1)
+      harness.agent.conversationFrames.fire(
+        completeConversationWire(
+          {
+            ...emptyFrame("conversation/session-1", subscribed.ack.subscriptionId),
+            sentAt: ordinal,
+          },
+          `logical-content-${ordinal}`,
+          ordinal,
+        ),
+      );
+    await harness.settle();
+    expect(harness.clockProbes()).toBe(0);
+  } finally {
+    harness.dispose();
+  }
+});
+
+it("时钟探测失败也按 60 秒节奏退避：期间检查点与传输调用都不重探", async () => {
+  const harness = setupClockProbeHarness([30, 30, 30, 30, 30, 30]);
+  try {
+    const transport = createAgentConversationTransport(harness.service as never, {
+      workspacePath: "/a",
+    });
+    const off = transport.onFrame(() => {});
+    harness.facts.fire(harness.checkpoint);
+    await harness.settle();
+    // 一次尝试最多 3 个样本，全部超出误差界后放弃本轮。
+    expect(harness.clockProbes()).toBe(3);
+    expect(harness.observer.needsCalibration("/a")).toBe(true);
+    for (let index = 0; index < 5; index += 1) {
+      harness.facts.fire({ ...harness.checkpoint, admittedAt: 100_000 + index });
+      await transport.queryCommands({ commands: [{ sessionId: "s", commandId: "c" }] });
+    }
+    await harness.settle();
+    expect(harness.clockProbes()).toBe(3);
+    harness.perf.now += 60_001;
+    harness.facts.fire({ ...harness.checkpoint, executionAt: 100_100 });
+    await harness.settle();
+    expect(harness.clockProbes()).toBe(6);
+    off();
+  } finally {
+    harness.dispose();
+  }
+});
+
+it("一次校准取多个样本，第一个满足误差界的样本（往返最小）即生效并停止", async () => {
+  const harness = setupClockProbeHarness([40, 30, 4, 2]);
+  try {
+    const transport = createAgentConversationTransport(harness.service as never, {
+      workspacePath: "/a",
+    });
+    const off = transport.onFrame(() => {});
+    harness.facts.fire(harness.checkpoint);
+    await harness.settle();
+    expect(harness.clockProbes()).toBe(3);
+    expect(harness.observer.needsCalibration("/a")).toBe(false);
+    off();
+  } finally {
+    harness.dispose();
+  }
+});
+
+it("CLI 不返回 clock 时一次尝试只探测一次，并同样退避", async () => {
+  const harness = setupClockProbeHarness([]);
+  harness.agent.queryConversationCommandsV4.mockImplementation(
+    async (params: { commands: Array<{ commandId: string }> }) => ({
+      results: params.commands.map((key) => ({ key, result: "unknown" as const })),
+    }),
+  );
+  try {
+    const transport = createAgentConversationTransport(harness.service as never, {
+      workspacePath: "/a",
+    });
+    const off = transport.onFrame(() => {});
+    harness.facts.fire(harness.checkpoint);
+    await harness.settle();
+    harness.facts.fire({ ...harness.checkpoint, admittedAt: 100_001 });
+    await harness.settle();
+    expect(harness.clockProbes()).toBe(1);
+    off();
+  } finally {
+    harness.dispose();
+  }
+});
+
+it("runtime 重启清空退避并丢弃旧 runtime 的迟到探测结果", async () => {
+  const harness = setupClockProbeHarness([30, 30, 30]);
+  try {
+    const transport = createAgentConversationTransport(harness.service as never, {
+      workspacePath: "/a",
+    });
+    const off = transport.onFrame(() => {});
+    const offRestart = transport.onRuntimeRestart(() => {});
+    harness.facts.fire(harness.checkpoint);
+    await harness.settle();
+    expect(harness.clockProbes()).toBe(3);
+    // 新 runtime 的首个探测在途时旧结果不能写入：这里让探测一直挂起，再触发一次重启。
+    let release!: (value: unknown) => void;
+    harness.agent.queryConversationCommandsV4.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }) as never,
+    );
+    harness.agent.runtimeRestarts.fire({ workspaceKey: "/a" });
+    harness.facts.fire(harness.checkpoint);
+    expect(harness.clockProbes()).toBe(4);
+    harness.agent.runtimeRestarts.fire({ workspaceKey: "/a" });
+    release({ results: [], clock: { instanceId: "old-cli", receivedAt: 5_000, sentAt: 5_000 } });
+    await harness.settle();
+    expect(harness.observer.needsCalibration("/a")).toBe(true);
+    offRestart();
+    off();
+  } finally {
+    harness.dispose();
   }
 });

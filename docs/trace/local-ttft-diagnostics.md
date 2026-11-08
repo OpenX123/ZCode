@@ -30,6 +30,24 @@ Windows 性能验收需在同一环境分别采集冷启动、预热首发、热
 
 生产 debug 不落盘，因此缺少记录不等于发送没有发生；需要阶段细节时使用明确的开发诊断运行。
 
+## 跨进程时钟校准节奏
+
+2026-11-08：Renderer 与 CLI 的时钟偏移由 `queryConversationCommandsV4({ clock: true })` 往返探测得出，
+`calibrateLocalTtftClock` 只接受往返一半不超过 10ms 的样本。修正前探测失败既不记录时间、也不退避，
+而内容帧与每个检查点都会触发探测，流式期间几乎每帧一次三进程往返：2026-11-07 本机 Host 日志
+`queryConversationCommandsV4` 共 3573 次、占日志行数 47%，峰值 59 次/分钟，无发送时段仍有 2246 次，
+窗口最小化时照常运行。现规则：
+
+- 校准结果仍由 `LocalTtftObserver` 按 workspace 持有；探测节奏由该 workspace 的会话传输面持有，不新增第二份校准结果。
+- 只在传输调用前的 handshake（含发送命令）与 CLI 检查点时按需探测；内容帧不触发探测。
+- 一次尝试顺序最多取 3 个样本，首个满足误差界的样本即为已取样本中往返最小者，取到即停；CLI 未返回 `clock`
+  时不再重复取样。
+- 尝试无论成功或失败都按 60 秒（与校准有效期相同）节奏退避：成功后到期才再测，失败后 60 秒内不再测。
+- runtime 重启或不可用时清空该 workspace 的校准与退避，迟到的旧 runtime 探测结果丢弃。
+- 校准缺失或过期时，摘要中依赖时钟的字段（`clickToReceivedMs`、`clickToAdmittedMs`，以及 `command_admission`、
+  `output_return` 阶段）按现有规则为 null / 缺失，`quality` 记 `missing`，不冒充 `clock_invalid`。
+- Host 对该 RPC 的成功日志记 debug（与 `backgroundBashOutputV4` 一致），失败仍记 warn。
+
 ## 本地性能摘要（1.1）
 
 2026-11-07：生产包按 [YCode 1.1 引擎性能 spec](../desktop/engine-performance-1.1-spec.md)「本地性能摘要」落一条 info 级摘要。Observer 在每次已下发命令的观测闭合时（`first_output`，或此前的 `excluded`）调用 bootstrap 注入的摘要回调，桌面 bootstrap 经 `IPlatformService.writeLocalDiagnosticLog` 写入本机桌面日志；Web 没有该方法，不输出。上面的 debug 明细保持原样。

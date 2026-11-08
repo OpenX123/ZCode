@@ -320,6 +320,28 @@ flowchart TD
 - 这些结果证明消除了指定的无效工作。原 57.482 秒场景尚无同数据、同负载的修改前后
   冷/热启动对照，不据此声称总启动缩短到某个秒数，也未证明整个应用内存降低。
 
+### 6.5 项目树目录读取依赖（2026-11-08）
+
+证据（本机 1.1.0 生产日志，P12）：`remote-projects.readDirectory` 190 次/天、`project.readTree` 96 次/天（p50 约 2ms）。
+`useProjectTree` 的读取 effect 依赖整个 `tabs` 数组与各 workspace `taskListVersion` 之和：tab 的标签、
+顺序、Settings 页签、`restorePaneSession` 等与目录无关的变化都会换掉数组引用并整树重读；每次读取在没有
+远端 Host 时仍调用两次 `readDirectory`。
+
+- 读取 effect 只依赖 workspace 集合的稳定签名（workspace tab 的 `workspaceIdentity?.trim() || workspacePath`
+  与 `remoteSessionId`，排序去重后序列化）和 Controller 的 `directoryRevision`。`scopes` 中本地 tab 一项同样改用
+  该签名派生，tabs 数组引用变化不再换代 scope。
+- 不再依赖 `taskListVersion`：任务事实变化已有专门的失效通道——有 Controller 时由 task frame 的
+  `directoryRevision`（新增/删除/事实变化/snapshot）驱动，没有 Controller 时由 `workspace_task_list_changed`
+  事件驱动，项目写入由 `projectChanges` / `state:projects` 驱动；窗口回到前台与显式刷新入口保持不变。
+- `readProjectSidebarTree` 在目录中没有远端 Host 时只读一次 `readDirectory`：第二次读取只用于丢弃读取期间被
+  移除或换代的远端成员，没有远端读取就没有可丢弃的结果；读取期间的目录变化由变化通知再触发一轮读取。
+- 启动期 sessions-index 订阅增删（11-07 22:33 一次启动 9 次 `subscribeSessionsIndexV4`、8 次 `unsubscribeSessionsIndexV4`）
+  不来自项目树：桌面 `windowControllerService` 恒存在，`useProjectTree` 传给 `useWorkspaceSessionsIndexItems` 的是空集合。
+  代码中桌面端的订阅者是恢复 pane 的存在性校验（`WorkbenchPane` 的 `PaneRestoredGuard`，确认后卸载即 release，
+  refCount 归零时关闭 store 并取消订阅）与 App 的 `useWorkspaceTerminalTaskNotifications`。同一时刻 9 次订阅只对应
+  5 个 `onDynamicSessionsIndexFrame` 监听，多出的订阅来源（同 workspace 以不同 agentService 实例 acquire 而新建 store，
+  或 runtime 上线后的重订阅）尚未用运行时证据确认；修复需改 `WorkbenchPane` / `sessionsIndexRegistry`，不在本节范围。
+
 这轮仍保留全树 activity 合成和现有 Context 通知，不承诺只有一个任务行重渲染。
 若实测启动与交互已达到要求，就结束；若仍有明显长任务，再按剩余热点单独设计下一步。
 不因为局部优化未消除所有 O(N) 工作，就预先加入实体化 store、租约协议或桥接迁移。

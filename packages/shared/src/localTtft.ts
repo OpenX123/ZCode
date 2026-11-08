@@ -49,7 +49,13 @@ export type LocalTtftDetail = z.infer<typeof localTtftDetailSchema>;
 export const LOCAL_TTFT_MAX_PENDING = 128;
 export const LOCAL_TTFT_TTL_MS = 300_000;
 export const LOCAL_TTFT_CLOCK_MAX_ERROR_MS = 10;
+/** 校准有效期；探测尝试（无论成功失败）也按同一节奏退避，见 docs/trace/local-ttft-diagnostics.md。 */
 export const LOCAL_TTFT_CLOCK_TTL_MS = 60_000;
+/**
+ * 一次校准尝试最多顺序取的样本数。单个样本往返一半 >10ms 会被丢弃；忙时多取两次，
+ * 首个通过误差界的样本即为已取样本中往返最小者。
+ */
+export const LOCAL_TTFT_CLOCK_PROBE_SAMPLES = 3;
 const time = z.number().finite().nonnegative();
 const identifier = z.string().min(1).max(128);
 export const localTtftContextSchema = z
@@ -66,6 +72,10 @@ export interface LocalTtftCalibration {
   errorMs: number;
   measuredAt: number;
 }
+/**
+ * 单个样本的纯计算：往返一半超过误差界即返回 undefined。这里不记录失败时间；
+ * 退避节奏由探测方（会话传输面）持有，否则调用方会在每次触发时重探（P7：一天 3573 次）。
+ */
 export function calibrateLocalTtftClock(
   start: number,
   end: number,

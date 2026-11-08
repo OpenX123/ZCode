@@ -41,7 +41,12 @@ export async function readProjectSidebarTree(input: {
         project: { projectId: project.id, name: project.name, roots: project.roots },
       });
   }
-  const directory = (await input.remoteProjectService?.readDirectory()) ?? before;
+  // 第二次读取只用于丢弃读取期间被移除/换代的远端成员（P12：无远端时 readDirectory 是 readTree 的两倍，
+  // 190 次/天）。没有远端读取就没有可丢弃的结果；读取期间的目录变化由变化通知再触发一轮读取。
+  const directory =
+    before.hosts.length === 0
+      ? before
+      : ((await input.remoteProjectService?.readDirectory()) ?? before);
   for (const [hostId] of remote) {
     const original = before.hosts.find((host) => host.id === hostId);
     if (

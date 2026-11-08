@@ -1,6 +1,10 @@
 /* eslint-disable max-lines -- 文件树数据 hook 需要集中维护目录加载、watcher 刷新和 Git 状态竞态。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import {
+  acquireGitAutoRefreshScheduler,
+  type GitAutoRefreshScheduler,
+} from "@/lib/gitAutoRefresh.js";
 import { logger } from "@/logger.js";
 import {
   WORKSPACE_FILE_TREE_WATCH_BULK_REFRESH_THRESHOLD,
@@ -75,6 +79,7 @@ export function useWorkspaceFileTreeData({
   const refreshBatchVersionRef = useRef(0);
   const pendingWatchRefreshPathsRef = useRef<Set<string>>(new Set());
   const watchRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gitAutoRefreshRef = useRef<GitAutoRefreshScheduler | null>(null);
   const loadingDirectoryPathsRef = useRef<Set<string>>(new Set());
   const loadedDirectoryPathsRef = useRef<Set<string>>(new Set());
   const [childrenByDirectory, setChildrenByDirectory] = useState<
@@ -544,21 +549,13 @@ export function useWorkspaceFileTreeData({
       workspaceGeneration,
       refreshBatchVersion,
       refreshDirectoryFromWatcher,
-    ).finally(() => {
-      if (
-        workspaceGenerationRef.current === workspaceGeneration &&
-        refreshBatchVersionRef.current === refreshBatchVersion
-      ) {
-        void loadGitStatus({ workspaceGeneration });
-      }
-    });
-  }, [
-    expandedPaths,
-    loadGitStatus,
-    refreshDirectoryFromWatcher,
-    refreshDirectoryPaths,
-    workspacePath,
-  ]);
+    );
+    // Bug 原因（P8）：此前每批 watcher 事件目录刷新后都直接 git.refresh（每次 4 个 git.exe），
+    // 绕过 Git 自动刷新的 1 分钟防抖与窗口隐藏暂停。现在只把变化目录报告给同一 workspace 的
+    // 节流所有者，由它过滤 ignored 路径、防抖后通知下方订阅的 loadGitStatus。
+    for (const directoryPath of changedDirectoryPaths)
+      gitAutoRefreshRef.current?.notifyChange(directoryPath);
+  }, [expandedPaths, refreshDirectoryFromWatcher, refreshDirectoryPaths, workspacePath]);
 
   const enqueueWatchRefresh = useCallback(
     (directoryPath: string) => {
@@ -618,6 +615,28 @@ export function useWorkspaceFileTreeData({
       }
     };
   }, [cancelRefreshBatch, loadDirectory, loadGitStatus, workspaceIdentity, workspacePath]);
+
+  // 与 App 的 useGitAutoRefresh 共享同一 workspaceKey 的节流所有者：计时到期（或窗口回到前台补刷）
+  // 时两路订阅者并发 refresh，Host 端复用同一次进行中的 getStatus。
+  useEffect(() => {
+    if (!enableWorkspaceFeatures) return;
+    const lease = acquireGitAutoRefreshScheduler({
+      workspaceKey: workspaceIdentity?.trim() || workspacePath,
+      workspacePath,
+    });
+    lease.scheduler.configure({
+      checkIgnored: (paths) => gitService.getIgnoredPaths({ workspacePath, paths }),
+    });
+    gitAutoRefreshRef.current = lease.scheduler;
+    const unsubscribe = lease.scheduler.subscribe(() => {
+      void loadGitStatus();
+    });
+    return () => {
+      unsubscribe();
+      if (gitAutoRefreshRef.current === lease.scheduler) gitAutoRefreshRef.current = null;
+      lease.release();
+    };
+  }, [enableWorkspaceFeatures, gitService, loadGitStatus, workspaceIdentity, workspacePath]);
 
   const rows = useWorkspaceFileTreeRows({
     workspacePath,

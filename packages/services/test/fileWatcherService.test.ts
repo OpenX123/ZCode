@@ -1,8 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { FileWatchEvent } from "@zcode/shared";
 import {
+  collapseRecursiveWatchChangedPaths,
   createFileWatcherService,
   resolveFileWatchChangedPath,
 } from "../src/fileWatcher/fileWatcherService.js";
@@ -70,6 +72,57 @@ describe("fileWatcherService", () => {
     secondSubscription.dispose();
 
     expect(fired).toBe(false);
+  });
+
+  it("递归 watcher 的批次超过上限时逐级折叠为祖先目录", () => {
+    const root = resolve("workspace");
+    const paths = [
+      ...Array.from({ length: 40 }, (_, index) =>
+        resolve(root, "node_modules", `pkg-${index}`, "index.js"),
+      ),
+      resolve(root, "src", "a.ts"),
+    ];
+    expect(collapseRecursiveWatchChangedPaths(root, paths.slice(0, 3), 32)).toEqual(
+      paths.slice(0, 3),
+    );
+    expect(collapseRecursiveWatchChangedPaths(root, paths, 32)).toEqual([
+      resolve(root, "node_modules"),
+      resolve(root, "src"),
+    ]);
+    expect(
+      collapseRecursiveWatchChangedPaths(
+        root,
+        Array.from({ length: 40 }, (_, index) => resolve(root, `file-${index}.ts`)),
+        32,
+      ),
+    ).toEqual([root]);
+  });
+
+  it("递归 watcher 按路径逐个上报 changedPath，供 Git 自动刷新过滤 ignored 与 gitdir 噪声", async () => {
+    // P8：旧实现一个批次只要含多个路径就省略 changedPath，UI 无法区分 node_modules 与源码改动。
+    const service = createFileWatcherService();
+    const dir = makeTempDir();
+    mkdirSync(join(dir, "src"));
+    mkdirSync(join(dir, "node_modules"));
+    const { id } = await service.watch({ path: dir, recursive: true });
+    const events: FileWatchEvent[] = [];
+    const subscription = service.onDynamicChange(id)((event) => events.push(event));
+    try {
+      writeFileSync(join(dir, "src", "a.ts"), "a");
+      writeFileSync(join(dir, "node_modules", "b.js"), "b");
+      await vi.waitFor(
+        () => {
+          const changed = new Set(events.map((event) => event.changedPath));
+          expect(changed.has(join(dir, "src", "a.ts"))).toBe(true);
+          expect(changed.has(join(dir, "node_modules", "b.js"))).toBe(true);
+        },
+        { timeout: 3_000, interval: 50 },
+      );
+      expect(events.every((event) => event.dirPath === dir)).toBe(true);
+    } finally {
+      subscription.dispose();
+      service.disposeAll();
+    }
   });
 });
 
