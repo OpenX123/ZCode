@@ -155,6 +155,19 @@ describe("轻量安装包直接预算和体积报告", () => {
     expect(f.audit(true, true).status).toBe(1);
   });
 
+  it("接受1.2发布线的正式固定URL", () => {
+    const f = fixture(".dmg", "1.2.0");
+    f.makeLightweight();
+    for (const archive of f.descriptor.archives) {
+      archive.urls = [
+        `https://github.com/OpenX123/ZCode/releases/download/v1.2.0/${archive.fileName}`,
+      ];
+    }
+    f.save();
+    const result = f.audit(true, true);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it.each([
     [".exe", 250_000_000],
     [".dmg", 280_000_000],

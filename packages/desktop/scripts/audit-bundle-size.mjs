@@ -78,7 +78,7 @@ async function verifyRemoteResources(directory, version) {
       for (const address of archive.urls) {
         const url = new URL(address);
         const match =
-          /^\/[^/]+\/[^/]+\/releases\/download\/(build-\d+-\d+|v1\.0\.(?:0|[1-9]\d*))\/([^/]+)$/.exec(
+          /^\/[^/]+\/[^/]+\/releases\/download\/(build-\d+-\d+|v1\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))\/([^/]+)$/.exec(
             url.pathname,
           );
         if (
