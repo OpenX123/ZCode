@@ -3,10 +3,17 @@ import { dirname, join } from "node:path";
 
 const DEFAULT_RETRY_DELAY_MS = 50;
 const DEFAULT_STALE_LOCK_AGE_MS = 60_000;
+/**
+ * 无 owner.json 的锁只可能处于"mkdir 成功、尚未写 owner"的同一同步片内（微秒级），
+ * 或是释放时删目录失败（Windows 上等待者 stat/读 owner 占用句柄导致 EPERM）留下的遗留锁。
+ * 修复前按 60s 陈旧阈值不接管，等待者同步等满 15s 预算；宽限 2s 足以覆盖前一种情况。
+ */
+const DEFAULT_OWNERLESS_LOCK_GRACE_MS = 2_000;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const SEED_LOCK_TIMEOUT_ERROR_CODE = "ZCODE_PLUGIN_SEED_LOCK_TIMEOUT";
 
 interface OfficialPluginSeedLockOptions {
+  ownerlessLockGraceMs?: number;
   retryDelayMs?: number;
   staleLockAgeMs?: number;
   timeoutMs?: number;
@@ -19,6 +26,10 @@ export function withOfficialPluginSeedLock<T>(
 ): T {
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   const staleLockAgeMs = options.staleLockAgeMs ?? DEFAULT_STALE_LOCK_AGE_MS;
+  const ownerlessLockGraceMs = Math.min(
+    staleLockAgeMs,
+    options.ownerlessLockGraceMs ?? DEFAULT_OWNERLESS_LOCK_GRACE_MS,
+  );
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const lockRoot = `${targetRoot}.seed-lock`;
   const startedAt = Date.now();
@@ -30,7 +41,7 @@ export function withOfficialPluginSeedLock<T>(
       break;
     } catch (error) {
       if (!isAlreadyExistsError(error)) throw error;
-      tryTakeOverStaleLock(lockRoot, staleLockAgeMs);
+      tryTakeOverStaleLock(lockRoot, ownerlessLockGraceMs);
       if (Date.now() - startedAt >= timeoutMs) {
         throw Object.assign(
           new Error(`[official-plugin-seed-lock] timed out waiting for ${lockRoot}`),
@@ -59,7 +70,7 @@ export function isOfficialPluginSeedLockTimeoutError(
   return errorCode(error) === SEED_LOCK_TIMEOUT_ERROR_CODE;
 }
 
-function tryTakeOverStaleLock(lockRoot: string, staleLockAgeMs: number): void {
+function tryTakeOverStaleLock(lockRoot: string, ownerlessLockGraceMs: number): void {
   let ageMs: number;
   try {
     ageMs = Date.now() - statSync(lockRoot).mtimeMs;
@@ -70,7 +81,7 @@ function tryTakeOverStaleLock(lockRoot: string, staleLockAgeMs: number): void {
 
   const ownerPid = readLockOwnerPid(lockRoot);
   if (ownerPid !== undefined && isProcessAlive(ownerPid)) return;
-  if (ownerPid === undefined && ageMs < staleLockAgeMs) return;
+  if (ownerPid === undefined && ageMs < ownerlessLockGraceMs) return;
 
   const staleRoot = `${lockRoot}.stale-${process.pid}-${Date.now()}`;
   try {

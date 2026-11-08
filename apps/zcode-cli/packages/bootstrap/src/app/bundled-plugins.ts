@@ -33,7 +33,10 @@ import {
   type OfficialPluginDigestSource,
   type OfficialPluginFileStat,
 } from "./official-plugin-digest/index.js";
-import { writeOfficialPluginRuntimeManifest } from "./official-plugin-runtime.js";
+import {
+  isOfficialPluginRuntimeManifestCurrent,
+  writeOfficialPluginRuntimeManifest,
+} from "./official-plugin-runtime.js";
 import {
   isOfficialPluginSeedLockTimeoutError,
   withOfficialPluginSeedLock,
@@ -137,17 +140,29 @@ function seedBundledOfficialPlugins(input: {
       continue;
     }
     try {
+      const manifestFile = plugin.files.find((file) => file.path === ".zcode-plugin/plugin.json");
+      if (!manifestFile)
+        throw new Error(`Bundled plugin manifest is missing: ${plugin.definition.name}`);
+      const sourceManifestContents = readSeedFileBytes(source, plugin, manifestFile).toString(
+        "utf8",
+      );
+      // 修复前每次建 app 都在锁内检查缓存：Windows 上释放锁删目录遇 EPERM 会留下无主空锁，
+      // 其余进程把它当作"刚创建的锁"同步等满 15s（Atomics.wait 阻塞事件循环），1.1.0 生产
+      // 日志里会话命令与外部引擎握手因此卡 15s / 31s / 46s。缓存已是当前版本且无需写入时
+      // 不碰锁；需要写入时仍进锁并二次检查（见 docs/desktop/engine-performance-1.1-spec.md §2）。
+      if (
+        isSeedCurrent(targetRoot, plugin) &&
+        !existsSync(legacySeedBackupRoot(targetRoot)) &&
+        isOfficialPluginRuntimeManifestCurrent({
+          sourceManifestContents,
+          pluginName: plugin.definition.name,
+          rootPath: targetRoot,
+        })
+      )
+        continue;
       withOfficialPluginSeedLock(
         targetRoot,
         () => {
-          const manifestFile = plugin.files.find(
-            (file) => file.path === ".zcode-plugin/plugin.json",
-          );
-          if (!manifestFile)
-            throw new Error(`Bundled plugin manifest is missing: ${plugin.definition.name}`);
-          const sourceManifestContents = readSeedFileBytes(source, plugin, manifestFile).toString(
-            "utf8",
-          );
           // 桌面会并发预热多个 workspace Agent；复制插件资源时，
           // 多进程会互删 target 并在 Windows rename 时触发 EPERM。拿锁后必须二次检查，
           // 让等待者直接复用首个进程已经提交的完整缓存。
@@ -628,12 +643,16 @@ function cleanupLegacySeedBackup(
   targetRoot: string,
   retryBudget: OfficialPluginCacheRetryBudget,
 ): void {
-  const backupRoot = `${targetRoot}.backup`;
+  const backupRoot = legacySeedBackupRoot(targetRoot);
   if (!existsSync(backupRoot)) return;
 
   // 旧版固定 backup 没有事务归属，target 暂时缺失时可能属于另一个仍在
   // promote 的进程，不能把它恢复回去。仅在当前 seed 已确认可用后清理这个遗留目录。
   removeOfficialPluginCacheDirectory(backupRoot, retryBudget);
+}
+
+function legacySeedBackupRoot(targetRoot: string): string {
+  return `${targetRoot}.backup`;
 }
 
 function createSeedBackupRoot(targetRoot: string): string {

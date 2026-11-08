@@ -50,6 +50,33 @@ interface OfficialRuntimeManifestInput {
 }
 
 export function writeOfficialPluginRuntimeManifest(input: OfficialRuntimeManifestInput): void {
+  const plan = planOfficialPluginRuntimeManifest(input);
+  if (!plan) return;
+  writeTextFileAtomicallyWithRetry(
+    plan.manifestPath,
+    plan.nextContents,
+    input.retryBudget ?? createOfficialPluginCacheRetryBudget(),
+  );
+}
+
+/**
+ * 只读判断：运行时 manifest 重新生成后与磁盘字节一致。供 seed 的无锁快速路径使用；
+ * 读取或解析失败时返回 false，交回锁内路径按原语义处理。
+ */
+export function isOfficialPluginRuntimeManifestCurrent(
+  input: Omit<OfficialRuntimeManifestInput, "retryBudget">,
+): boolean {
+  try {
+    return planOfficialPluginRuntimeManifest(input) === undefined;
+  } catch {
+    return false;
+  }
+}
+
+/** 返回需要写入的新内容；无需改写（无 MCP、非打包入口或字节一致）时返回 undefined。 */
+function planOfficialPluginRuntimeManifest(
+  input: Omit<OfficialRuntimeManifestInput, "retryBudget">,
+): { manifestPath: string; nextContents: string } | undefined {
   const manifestPath = join(input.rootPath, ".zcode-plugin", "plugin.json");
   const currentContents = readFileSync(manifestPath, "utf8");
   // 缓存里的入口可能已被旧客户端覆盖，必须从内置原始 manifest 重新生成。
@@ -60,10 +87,10 @@ export function writeOfficialPluginRuntimeManifest(input: OfficialRuntimeManifes
   // skill-only / command-only 类型的 official plugin 不带 mcpServers，直接跳过 rewrite。
   // 之前这里无脑 asRecord(manifest.mcpServers) 会对 undefined 抛错，
   // 把 seed 流程整个阻断，连带 listZCodeSkills 拉不出 plugin skill。
-  if (manifest.mcpServers === undefined) return;
+  if (manifest.mcpServers === undefined) return undefined;
   const mcpServers = asRecord(manifest.mcpServers);
   const hostPrefixArgs = officialPluginHostPrefixArgs();
-  if (!hostPrefixArgs) return;
+  if (!hostPrefixArgs) return undefined;
 
   // 保留对其他历史 official plugin MCP 的通用重写；zcode-cua 当前是 skill/SDK-only，
   // 不会进入这个分支，也不会生成独立的 CUA MCP server。
@@ -106,12 +133,8 @@ export function writeOfficialPluginRuntimeManifest(input: OfficialRuntimeManifes
   const nextContents = `${JSON.stringify(manifest, null, 2)}\n`;
   // 启动时无条件 rename 同内容的 plugin.json 会放大 Windows 杀毒/索引器
   // 的短暂文件占用。字节完全一致时不触碰文件；真正有更新时仍保持原子的失败语义。
-  if (nextContents === currentContents) return;
-  writeTextFileAtomicallyWithRetry(
-    manifestPath,
-    nextContents,
-    input.retryBudget ?? createOfficialPluginCacheRetryBudget(),
-  );
+  if (nextContents === currentContents) return undefined;
+  return { manifestPath, nextContents };
 }
 
 export function officialPluginHostPrefixArgs(): string[] | undefined {

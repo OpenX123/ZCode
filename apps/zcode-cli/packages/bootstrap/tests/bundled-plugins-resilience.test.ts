@@ -359,6 +359,8 @@ describe("bundled official plugin cache resilience", () => {
     const storageRoot = await createStorageRoot(cleanups);
     expect(resolveOfficialPluginRoots({ storageRoot })).toEqual([]);
     for (const cacheSuffix of [BROWSER_CACHE_SUFFIX, SKILL_CREATOR_CACHE_SUFFIX]) {
+      // 当前版本缓存走无锁快速路径；marker 过期才需要写入并进锁，才会等待预算。
+      await markSeedStale(join(storageRoot, cacheSuffix));
       const lockRoot = `${join(storageRoot, cacheSuffix)}.seed-lock`;
       await mkdir(lockRoot, { recursive: true });
       await writeFile(
@@ -384,6 +386,8 @@ describe("bundled official plugin cache resilience", () => {
     expect(resolveOfficialPluginRoots({ storageRoot })).toEqual([]);
     // 当前版本目录保持完整（不 rename 成旧版本），只把锁交给「另一个存活进程」。
     const currentRoot = join(storageRoot, BROWSER_CACHE_SUFFIX);
+    // 已是当前版本的缓存不进锁；marker 过期（内容仍完整）才走锁路径并等锁超时。
+    await markSeedStale(currentRoot);
     const lockRoot = `${currentRoot}.seed-lock`;
     await mkdir(lockRoot, { recursive: true });
     await writeFile(
@@ -556,6 +560,12 @@ async function createStorageRoot(cleanups: string[]): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "zcode-plugin-cache-resilience-"));
   cleanups.push(root);
   return join(root, "plugins");
+}
+
+async function markSeedStale(targetRoot: string): Promise<void> {
+  const markerPath = join(targetRoot, ".zcode-plugin-seed.json");
+  const marker = JSON.parse(await readFile(markerPath, "utf8")) as Record<string, unknown>;
+  await writeFile(markerPath, JSON.stringify({ ...marker, hash: "stale" }));
 }
 
 async function expectNoSeedBackups(targetRoot: string): Promise<void> {

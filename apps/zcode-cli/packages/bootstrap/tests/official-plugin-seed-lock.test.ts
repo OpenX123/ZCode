@@ -72,6 +72,29 @@ describe("official plugin seed lock", () => {
     }
   });
 
+  // 回归（1.1.0 Windows 生产日志）：持锁进程释放时 rmSync 删掉 owner.json 后删目录遇 EPERM，
+  // 留下无主空锁；等待者按 60s 陈旧阈值不接管，同步等满 15s 预算后降级。
+  it(
+    "takes over a fresh ownerless lock after a short grace instead of the full wait budget",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "zcode-plugin-seed-lock-ownerless-"));
+      const targetRoot = join(root, "visualize", "0.1.0");
+      const lockRoot = `${targetRoot}.seed-lock`;
+
+      try {
+        await mkdir(lockRoot, { recursive: true });
+
+        const startedAt = Date.now();
+        expect(withOfficialPluginSeedLock(targetRoot, () => "seeded")).toBe("seeded");
+        expect(Date.now() - startedAt).toBeLessThan(5_000);
+        expect(existsSync(lockRoot)).toBe(false);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   it("does not take over an old lock while its owner process is alive", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-plugin-seed-lock-live-owner-"));
     const targetRoot = join(root, "zcode-cua", "0.5.2");
