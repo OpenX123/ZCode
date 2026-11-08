@@ -61,6 +61,7 @@ import {
   groupConsecutiveAgentSpawns,
 } from "@/subagent-display/index.js";
 import { ConversationFileSummaryPanel } from "@/v4/ConversationFileSummaryPanel.js";
+import { resolveConversationFlowItemKey } from "@/v4/conversationTurnFlowItems.js";
 import {
   WorkflowNotificationToolRow,
   workflowRowNotification,
@@ -703,10 +704,8 @@ function ConversationWorkSegmentFlow({
           index === segment.flowItems.length - 1 &&
           (item.kind === "assistantHistory" || item.kind === "assistantWork");
         const showHistoryStatus = shouldShowHistoryStatus && index === firstAssistantFlowItemIndex;
-        const itemKey =
-          item.kind === "userInput" || item.kind === "assistantText"
-            ? `${item.kind}:${item.row.rowId}`
-            : `${item.kind}:${item.rows[0]?.rowId ?? index}`;
+        // 段首多行 item 用位置 key：HLP01 前插更早行时不能整段卸载重挂（见 resolveConversationFlowItemKey）。
+        const itemKey = resolveConversationFlowItemKey(item, index, firstAssistantFlowItemIndex);
         let content: React.ReactNode;
 
         if (item.kind === "userInput") {

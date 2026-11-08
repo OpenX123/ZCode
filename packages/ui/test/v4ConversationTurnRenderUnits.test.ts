@@ -19,6 +19,7 @@ import {
   advanceConversationRowsPartition,
 } from "@/v4/conversationProjectionStore.js";
 import { resolveAssistantCopyText } from "@/v4/ConversationTurnRow.js";
+import { resolveConversationFlowItemKey } from "@/v4/conversationTurnFlowItems.js";
 
 function baseRow<T extends ConversationRow>(
   row: Omit<T, "createdAt" | "createdAtSeq" | "rowId" | "turnId"> & {
@@ -419,6 +420,58 @@ describe("buildConversationTurnRenderUnits", () => {
 
     expect(partial[0]?.key).toBe("turn-long");
     expect(complete[0]?.key).toBe(partial[0]?.key);
+  });
+
+  it("HLP01 性能：前插更早行与流式追加都不改变已挂载 flow item 的 React key", () => {
+    // 段首 history 以首行 rowId 作 key 时，每补一页整段（展开态即整轮）都会卸载重挂。
+    const workRows = (from: number, to: number) => {
+      const rows: ConversationRow[] = [];
+      for (let rowId = from; rowId <= to; rowId += 1) {
+        rows.push(
+          rowId % 2 === 0 ? toolCall(rowId, "Bash") : assistantText(rowId, `进展 ${rowId}`),
+        );
+      }
+      return rows;
+    };
+    const flowKeys = (
+      rows: readonly ConversationRow[],
+      sessionPhase: "completedInterrupted" | "running",
+    ) => {
+      const unit = buildConversationTurnRenderUnits(rows, { sessionPhase })[0]!;
+      return (unit.workSegments ?? []).flatMap((segment) => {
+        const firstAssistantIndex = segment.flowItems.findIndex(
+          (item) => item.kind !== "userInput",
+        );
+        return segment.flowItems.map((item, index) =>
+          resolveConversationFlowItemKey(item, index, firstAssistantIndex),
+        );
+      });
+    };
+
+    // 中断态冷快照：尾窗 → 前插一页 → 补到 header/user。
+    const tail = flowKeys(workRows(41, 61), "completedInterrupted");
+    const prepended = flowKeys(workRows(21, 61), "completedInterrupted");
+    const complete = flowKeys(
+      [
+        turnHeader(1, { state: "completedInterrupted" }),
+        userInput(2, "长任务"),
+        ...workRows(3, 61),
+      ],
+      "completedInterrupted",
+    );
+    expect(tail).toEqual(["assistantHistory:leading", "assistantText:61"]);
+    expect(prepended).toEqual(tail);
+    expect(complete).toEqual(["userInput:2", ...tail]);
+
+    // running 轮流式追加：已有 item 的 key 是追加后 key 列表的前缀。
+    const runningRows = [
+      turnHeader(1, { state: "running" }),
+      userInput(2, "长任务"),
+      ...workRows(3, 20),
+    ];
+    const beforeAppend = flowKeys(runningRows, "running");
+    const afterAppend = flowKeys([...runningRows, ...workRows(21, 24)], "running");
+    expect(afterAppend.slice(0, beforeAppend.length)).toEqual(beforeAppend);
   });
 
   it("groups a visible user query with assistant work and hides turnHeader rows", () => {

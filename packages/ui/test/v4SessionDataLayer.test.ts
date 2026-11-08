@@ -2164,6 +2164,185 @@ describe("ConversationProjectionStore.loadOlder", () => {
     expect(transport.rowsRangeCalls).toHaveLength(1);
   });
 
+  // ── HLP01 性能：首轮一次性补齐（docs/ui/chat-virtual-scroll.md「长轮历史回填」） ──
+
+  /**
+   * 单轮长会话：t0 占 1..headerRowId-1，t1 从 headerRowId 的 turnHeader 开始到 560；
+   * 窗口为最后 60 行（501..560），首轮 t1 缺 header。rowsRange 按全序切片应答。
+   */
+  function seedLongLeadingTurn(headerRowId = 1): ConversationRow[] {
+    const all: ConversationRow[] = [];
+    for (let rowId = 1; rowId <= 560; rowId++) {
+      if (rowId < headerRowId) all.push({ ...assistantRow(rowId, `旧轮 ${rowId}`), turnId: "t0" });
+      else if (rowId === headerRowId) all.push(turnHeaderRow(rowId, "t1"));
+      else all.push(assistantRow(rowId, `行 ${rowId}`));
+    }
+    const tail = store.getState().snapshot!;
+    store.handleFrame(
+      makeFrame("sub-1", 5, 6, {
+        kind: "snapshot",
+        snapshot: {
+          ...tail,
+          seq: 6,
+          rows: { window: all.slice(500), totalCount: 560, firstRowId: 1 },
+        },
+      }),
+    );
+    transport.rowsRangeImpl = (params) => {
+      const end = (params.beforeRowId ?? all.length + 1) - 1;
+      const start = Math.max(1, end - params.limit + 1);
+      return {
+        rows: all.slice(start - 1, end),
+        atSeq: 6,
+        atRevision: 6,
+        atLogEpoch: "epoch-1",
+        hasMore: start > 1,
+      };
+    };
+    return all;
+  }
+
+  function countWindowCommits(): () => number {
+    let commits = 0;
+    let lastWindow = store.getState().snapshot?.rows.window;
+    store.subscribe(() => {
+      const window = store.getState().snapshot?.rows.window;
+      if (window !== lastWindow) commits += 1;
+      lastWindow = window;
+    });
+    return () => commits;
+  }
+
+  it("HLP01 性能：首轮补齐按协议上限连续取页，取回 header 后只提交一次", async () => {
+    const all = seedLongLeadingTurn(1);
+    const commits = countWindowCommits();
+
+    await store.loadIncompleteLeadingTurn();
+
+    // 旧实现每 60 行提交一次（这里需 9 次），每次提交都重渲染整轮。
+    expect(
+      transport.rowsRangeCalls.map(({ beforeRowId, limit }) => ({ beforeRowId, limit })),
+    ).toEqual([
+      { beforeRowId: 501, limit: PROTOCOL_V4_LIMITS.rowsRangeMaxLimit },
+      { beforeRowId: 301, limit: PROTOCOL_V4_LIMITS.rowsRangeMaxLimit },
+      { beforeRowId: 101, limit: PROTOCOL_V4_LIMITS.rowsRangeMaxLimit },
+    ]);
+    expect(commits()).toBe(1);
+    const state = store.getState();
+    expect(state.loadingOlder).toBe(false);
+    expect(state.snapshot!.rows.window.map((row) => row.rowId)).toEqual(
+      all.map((row) => row.rowId),
+    );
+    expect(shouldAutoLoadIncompleteLeadingTurn(state.snapshot, false)).toBe(false);
+  });
+
+  it("HLP01 性能：取回首轮 header 即停止，不为更早的轮继续取页", async () => {
+    seedLongLeadingTurn(150);
+    const commits = countWindowCommits();
+
+    await store.loadIncompleteLeadingTurn();
+
+    expect(transport.rowsRangeCalls.map((call) => call.beforeRowId)).toEqual([501, 301]);
+    expect(commits()).toBe(1);
+    const window = store.getState().snapshot!.rows.window;
+    // 与逐页补齐相同：header 所在页整页并入，其中更早轮的行保留（窗口单调、无重复）。
+    expect(window[0]!.rowId).toBe(101);
+    expect(window.find((row) => row.kind === "turnHeader")).toMatchObject({ rowId: 150 });
+    expect(new Set(window.map((row) => row.rowId)).size).toBe(window.length);
+  });
+
+  it("HLP01 性能：补齐在途时窗口被 resync 替换 → 已取页整批丢弃", async () => {
+    seedLongLeadingTurn(1);
+    const serve = transport.rowsRangeImpl;
+    transport.rowsRangeImpl = (params) => {
+      if (params.beforeRowId === 301) {
+        // 第二页在途时权威侧 resync：窗口首行改变，已取页可能含已移除行。
+        store.handleFrame(
+          makeFrame("sub-1", 0, 9, {
+            kind: "snapshot",
+            snapshot: makeSnapshot({
+              seq: 9,
+              rows: { window: olderRows(540, 560), totalCount: 560, firstRowId: 1 },
+            }),
+          }),
+        );
+      }
+      return serve(params);
+    };
+
+    await store.loadIncompleteLeadingTurn();
+
+    expect(transport.rowsRangeCalls).toHaveLength(2);
+    expect(store.getState().loadingOlder).toBe(false);
+    expect(store.getState().snapshot!.rows.window[0]!.rowId).toBe(540);
+  });
+
+  it("HLP01 性能：中途某页失败 → 提交已取到的连续页，下次从新首行继续", async () => {
+    const all = seedLongLeadingTurn(1);
+    const serve = transport.rowsRangeImpl;
+    let failSecondPage = true;
+    transport.rowsRangeImpl = (params) => {
+      if (params.beforeRowId === 301 && failSecondPage) {
+        failSecondPage = false;
+        throw new Error("transport closed");
+      }
+      return serve(params);
+    };
+
+    await store.loadIncompleteLeadingTurn();
+
+    expect(store.getState().loadingOlder).toBe(false);
+    expect(store.getState().snapshot!.rows.window[0]!.rowId).toBe(301);
+    // 首行变化后触发侧会以新游标再次调用；这里直接验证续拉结果。
+    await store.loadIncompleteLeadingTurn();
+    expect(store.getState().snapshot!.rows.window.map((row) => row.rowId)).toEqual(
+      all.map((row) => row.rowId),
+    );
+  });
+
+  it("HLP01 性能：空页 / 游标不推进时停止且不提交；首轮完整或已有在途取页时不发请求", async () => {
+    seedLongLeadingTurn(1);
+    const commits = countWindowCommits();
+    transport.rowsRangeImpl = () => ({
+      rows: olderRows(501, 520),
+      atSeq: 6,
+      atRevision: 6,
+      atLogEpoch: "epoch-1",
+      hasMore: true,
+    });
+    await store.loadIncompleteLeadingTurn();
+    expect(transport.rowsRangeCalls).toHaveLength(1);
+    expect(commits()).toBe(0);
+    expect(store.getState().loadingOlder).toBe(false);
+
+    let resolveFetch: (result: V4ConversationRowsRangeResult) => void;
+    transport.rowsRangeImpl = () =>
+      new Promise<V4ConversationRowsRangeResult>((resolve) => {
+        resolveFetch = resolve;
+      });
+    const inflight = store.loadOlder();
+    await store.loadIncompleteLeadingTurn();
+    expect(transport.rowsRangeCalls).toHaveLength(2);
+    resolveFetch!({ rows: [], atSeq: 6, atRevision: 6, atLogEpoch: "epoch-1", hasMore: true });
+    await inflight;
+
+    store.handleFrame(
+      makeFrame("sub-1", 6, 7, {
+        kind: "snapshot",
+        snapshot: makeSnapshot({
+          seq: 7,
+          rows: {
+            window: [turnHeaderRow(500), ...olderRows(501, 560)],
+            totalCount: 560,
+            firstRowId: 1,
+          },
+        }),
+      }),
+    );
+    await store.loadIncompleteLeadingTurn();
+    expect(transport.rowsRangeCalls).toHaveLength(2);
+  });
+
   it("mergeOlderRows：按 rowId 键控，只收窗口首行之前的行", () => {
     const window = olderRows(41, 45);
     // 与窗口重叠/越界的行被丢弃；纯旧行前插。

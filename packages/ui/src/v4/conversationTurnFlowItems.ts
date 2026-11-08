@@ -89,3 +89,29 @@ export function buildConversationFlowItems(options: {
 
   return items;
 }
+
+/**
+ * 段内 flow item 的 React key（spec：docs/ui/chat-virtual-scroll.md「长轮历史回填」）。
+ *
+ * Bug 根因（P1 长单轮回填越来越慢）：多行 item 原先一律以首行 rowId 作 key。冷快照尾窗从
+ * 同一轮中部截断时，HLP01 每补一页都把更早的行并进段首 item，首行 rowId 随之变化，React
+ * 把整段子树当成新节点卸载重挂；展开态下段首 item 往往装着整轮几千行工具/正文，于是每页成本
+ * 随已加载行数线性增长。回路实测（1000 行单轮、展开态）：DOM 新增 68032 个节点而最终只有
+ * 7355 个，段首 history 容器与其中的行在 16 页里每页都被替换。
+ *
+ * 修复依据：向前补页只会改变段首 assistant item 的首行，其余 item 的首行不变；向后追加
+ * （流式）只改变末尾 item 的尾行，任何 item 的首行都不变。因此只给段首 assistant 多行 item
+ * 一个位置 key，其余保持首行 rowId。userInput 在段首前插入也不会改变它的 key，避免 header
+ * 到达的最后一页再整段重挂。
+ */
+export function resolveConversationFlowItemKey(
+  item: ConversationTurnFlowItem,
+  index: number,
+  firstAssistantFlowItemIndex: number,
+): string {
+  if (item.kind === "userInput" || item.kind === "assistantText") {
+    return `${item.kind}:${item.row.rowId}`;
+  }
+  if (index === firstAssistantFlowItemIndex) return `${item.kind}:leading`;
+  return `${item.kind}:${item.rows[0]?.rowId ?? index}`;
+}

@@ -1785,6 +1785,10 @@ turn 不增加状态组合或断言，故从 25 剪到 21。E2E build 将 Sessio
 缩放为 1 秒后仍等待过期再重订阅；生产默认 30 秒由 focused fake-timer test 单独锁定，
 不把真实 30 秒墙钟重复支付到分页交互门禁。
 
+HLP01 性能（2026-11-08）：首轮补齐按 `rowsRangeMaxLimit` 连续拉页、取回首轮 header 后只提交一次
+snapshot，段首多行 flow item 使用位置 key；数千行展开态单轮不再随页数重复渲染或重挂整轮。规则与验收见
+`docs/ui/chat-virtual-scroll.md`「长轮历史回填」。
+
 ## Q. AskUserQuestion / 问答响应可见性
 
 `AskUserQuestion` 是 agent 主动向用户提问的交互工具，不走普通 `session/send`。用户在问答卡片里选择选项或输入自定义答案后，agent 必须收到，UI 也必须在对应 AskUserQuestion 消息里留下可追踪的已回答记录。这里单独覆盖 `elicitation_response`，避免它只作为内部 tool result 被消费后从用户视角消失。

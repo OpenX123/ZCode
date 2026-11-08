@@ -1199,6 +1199,99 @@ export class ConversationProjectionStore {
   }
 
   /**
+   * 冷快照首轮补齐（HLP01）：连续拉页直到取回当时首轮的 turnHeader，再一次性前插。
+   * 规则见 docs/ui/chat-virtual-scroll.md「长轮历史回填」。
+   *
+   * Bug 根因（P1 长单轮打开后回填越来越慢）：旧触发每次只 loadOlder 一窗（60 行）并立即提交，
+   * 提交后再由 effect 触发下一页。每次提交都让整轮 render unit、work items 和整轮已挂载行重新
+   * 渲染，单页成本随已加载行数线性增长，几千行的单轮总成本是平方级。现场证据：Host 侧 73 次
+   * rowsRange 各 3–7ms，页间隔却从 0.06s 涨到 2.4s；回路实测 1000 行展开态单轮 16 页的页间隔
+   * 合计 10.6s。
+   *
+   * 修复：取页与提交解耦，按协议上限取页、取到 header 后只换一次 snapshot（与 loadAllOlder
+   * 的一次性提交同一做法），渲染成本与页数无关。中途失败时提交已取到的连续页，保持窗口单调
+   * 增长，下一次触发从新首行继续；游标/epoch 失效则整批丢弃。
+   */
+  async loadIncompleteLeadingTurn(): Promise<void> {
+    if (this.closed || this.state.loadingOlder) return;
+    const snapshot = this.state.snapshot;
+    if (!snapshot || !shouldAutoLoadIncompleteLeadingTurn(snapshot, false)) return;
+    const sessionId = parseConversationTopic(this.topic);
+    const initialFirstRow = snapshot.rows.window[0];
+    if (!sessionId || !initialFirstRow) return;
+    const initialBeforeRowId = initialFirstRow.rowId;
+    const leadingTurnId = initialFirstRow.turnId;
+    const initialLogEpoch = snapshot.logEpoch;
+    const pages: ConversationRow[][] = [];
+    let beforeRowId = initialBeforeRowId;
+    let committed = false;
+    const cursorStillValid = (
+      current: ConversationSnapshot | null,
+    ): current is ConversationSnapshot =>
+      current !== null &&
+      current.logEpoch === initialLogEpoch &&
+      current.rows.window[0]?.rowId === initialBeforeRowId;
+    // 只提交已校验的连续页；pages 按取回顺序由近到远，前插前需反转为 rowId 升序。
+    const commitPages = (reason: "complete" | "partial") => {
+      const current = this.state.snapshot;
+      if (pages.length === 0 || !cursorStillValid(current)) return;
+      const window = mergeOlderRows(
+        current.rows.window,
+        this.shareRows([...pages].reverse().flat()),
+      );
+      if (window === null) return;
+      committed = true;
+      this.setState({
+        loadingOlder: false,
+        snapshot: { ...current, rows: { ...current.rows, window } },
+      });
+      logger.debug("[v4-store] 首轮补齐提交", {
+        loadedRows: window.length,
+        pages: pages.length,
+        reason,
+        sessionId,
+      });
+    };
+    this.setState({ loadingOlder: true });
+    try {
+      while (true) {
+        const result = await this.transport.rowsRange({
+          sessionId,
+          beforeRowId,
+          limit: PROTOCOL_V4_LIMITS.rowsRangeMaxLimit,
+        });
+        if (this.closed) return;
+        if (result.atLogEpoch !== initialLogEpoch || !cursorStillValid(this.state.snapshot)) {
+          // 在途期间 resync / row.removed 截断：已取页可能包含权威侧已移除的行，整批作废。
+          logger.warn("[v4-store] 首轮补齐期间投影游标失效，整批丢弃", {
+            expectedBeforeRowId: initialBeforeRowId,
+            resultLogEpoch: result.atLogEpoch,
+            sessionId,
+          });
+          return;
+        }
+        const older = result.rows.filter((row) => row.rowId < beforeRowId);
+        const nextBeforeRowId = older[0]?.rowId;
+        // 空页或游标不推进：停止补拉，提交已取到的部分；触发侧按首行去重，不会自旋。
+        if (nextBeforeRowId === undefined) break;
+        pages.push(older);
+        beforeRowId = nextBeforeRowId;
+        if (older.some((row) => row.turnId === leadingTurnId && row.kind === "turnHeader")) break;
+        if (!result.hasMore) break;
+      }
+      commitPages("complete");
+    } catch (error) {
+      // query 只读且可重发：失败不进 error 态；已取到的连续页仍有效，先提交保住进度。
+      logger.warn(
+        `[v4-store] 首轮补齐 rowsRange ${this.topic} 失败: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      if (!this.closed) commitPages("partial");
+    } finally {
+      if (!this.closed && !committed) this.setState({ loadingOlder: false });
+    }
+  }
+
+  /**
    * 完整问题目录：沿既有 rows/range 游标把当前有效分支一次补齐。
    *
    * 问题导航过去直接扫描 renderer 的 tail window，因此 1000 轮会话只显示

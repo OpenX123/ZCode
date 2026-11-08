@@ -3616,13 +3616,15 @@ export function SessionPane({
     // snapshotTailWindowRows 按 row 截尾，可能把一个长 turn 的 header/user
     // 留在窗口外。旧 UI 只在 scroll 事件到达顶边时 loadOlder；内容不足一屏或 scrollTop
     // 已经为 0 时不会再产生事件，于是只渲染 assistant，必须先下滚再上滚。检测到首 turn
-    // 缺 header 后立即逐窗补齐；cursor 去重避免空 range 或失败时 effect 自旋。
+    // 缺 header 后立即补齐；cursor 去重避免空 range 或失败时 effect 自旋。
     logger.debug("[v4-pane] 冷快照首 turn 不完整，自动补拉更早行", {
       firstRowId,
       sessionId,
       turnId: snapshot?.rows.window[0]?.turnId,
     });
-    void lease.store.loadOlder();
+    // P1 修复：不能逐页 loadOlder——每页提交都会重渲染整轮，数千行单轮的页间隔随行数线性
+    // 增长；改为取到首轮 header 后一次提交（根因与证据见 loadIncompleteLeadingTurn）。
+    void lease.store.loadIncompleteLeadingTurn();
   }, [lease, sessionId, snapshot, state.loadingOlder, state.subscriptionId]);
 
   // subscribe ACK 会先把 store 置 live，initial snapshot 稍后才到；只看

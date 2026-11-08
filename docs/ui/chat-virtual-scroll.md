@@ -88,6 +88,35 @@ flowchart TD
 - turn group 内传给单条消息的 retry、文件切换、feedback、fork 回调通过 `useCallback` 稳定，避免 memo 被 map 里的 inline function 抵消。
 - diff 只稳定 options 和 viewer 输入，不缓存实际 DOM；主题、字号、换行和行号设置变化时仍会正常重渲染。
 
+## 长轮历史回填（HLP01 性能）
+
+冷快照尾窗从同一轮中部截断时（case catalog HLP01），首轮补齐必须与已加载行数无关地完成，不能按页反复重渲染整轮。
+
+- 触发仍由 `SessionPane` 的首轮补齐 effect 判定首轮缺 `turnHeader`，按 `sessionId + subscriptionId + 窗口首行` 去重；执行改为 `ConversationProjectionStore.loadIncompleteLeadingTurn()`，不再逐页调用 `loadOlder()`。
+- 该方法以窗口首行为游标、按 `rowsRangeMaxLimit` 连续拉页，直到取回当时首轮的 `turnHeader`、`hasMore=false` 或游标不再推进，再**只提交一次** snapshot。期间 `loadingOlder` 持续在途，滚动预取与问题目录补齐沿用同一 single-flight，不并发取页。
+- 任一页返回时若 logEpoch 或窗口首行已变（resync、row.removed 截断），整批丢弃；某页失败时只提交已取到的连续页，窗口仍单调增长、无重复，下次触发从新首行继续。空页或游标不推进时停止，由触发侧去重防止自旋。
+- 一次补齐只以当时的首轮为目标。并入的更早行若又从另一轮中部开始，按同一判定再补一次：每轮一次提交，而不是每页一次。
+- 段内 flow item 的 React key：单行 item 用自身 rowId；段首 assistant 多行 item（history / work / CUA group）用位置 key；其余多行 item 用首行 rowId。前插只会改变段首 item 的首行，流式追加只会改变末尾 item 的尾行，所以补页与流式都不会把已挂载的行整段卸载重挂。
+- 单个超长轮仍是一个虚拟单元，展开态下整轮 DOM 常驻；本规则只消除补页造成的重复渲染与重挂，不引入轮内虚拟化。
+
+```mermaid
+sequenceDiagram
+  participant P as SessionPane（触发）
+  participant S as ProjectionStore（唯一写入方）
+  participant H as Host/CLI rowsRange
+  participant T as Timeline
+  P->>S: loadIncompleteLeadingTurn()（首轮缺 header）
+  S->>S: loadingOlder=true
+  loop 直到取回首轮 header / hasMore=false / 游标不推进
+    S->>H: rowsRange(beforeRowId, 200)
+    H-->>S: rows（校验 logEpoch 与窗口首行）
+  end
+  S->>S: mergeOlderRows 一次前插 + loadingOlder=false
+  S-->>T: 单次通知 → 一次渲染（已挂载行 key 不变）
+```
+
+验收：`packages/ui/test/v4LongTurnBackfill.test.ts` 用 720 行展开态（中断）单轮驱动真实 store 与 timeline（触发 effect 与 SessionPane 同构），断言补齐只提交一次、补齐期间行渲染总数不超过最终行数的 2 倍、尾窗原有行 DOM 不被替换；`v4SessionDataLayer.test.ts` 覆盖按上限取页、取回 header 即停、游标失效整批丢弃、失败部分提交与空页停止；`v4ConversationTurnRenderUnits.test.ts` 覆盖前插与流式追加下的 flow item key 稳定。
+
 ## 远控边界
 
 本改动只影响 UI 层渲染，不改变 ZCode task 消息流、snapshot、queue 或恢复语义：
