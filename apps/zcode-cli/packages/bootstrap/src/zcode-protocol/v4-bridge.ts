@@ -47,6 +47,7 @@ import type {
 } from "../zcode-protocol-v4/product-projection.js";
 import { PersistentCommandIndex } from "../zcode-protocol-v4/persistent-command-index.js";
 import { queueItemIdForCommand } from "../zcode-protocol-v4/command-inbox.js";
+import type { ColdSessionResumeHooks } from "../zcode-protocol-v4/cold-session-resume.js";
 import { resolveStableForkTargetFromTranscript } from "../zcode-protocol-v4/stable-fork-target.js";
 import { shouldAutoDrainV4QueueHead } from "../zcode-protocol-v4/queue-auto-drain.js";
 import { persistAssistantFeedback } from "../zcode-protocol-v4/assistant-feedback-persistence.js";
@@ -1496,6 +1497,13 @@ export function createConversationV4Gateway(
       return { sessions };
     },
     onDebug: (message) => log?.debug(message),
+    // P11 冷订阅分阶段打点：info 级、无正文（只含耗时、计数、枚举与会话 ID）。
+    onPerf: (event, fields) =>
+      context.logger?.info("ZCode Protocol v4 conversation open timing", {
+        ...fields,
+        event,
+        module: "bootstrap.zcode_protocol",
+      }),
     onTargetCompleted: (sessionId) => {
       const record = context.sessions.get(sessionId);
       if (!record) return;
@@ -1526,6 +1534,7 @@ export function createConversationV4Gateway(
       workspace?: ZCodeWorkspaceRef,
       additionalDirectories?: string[],
       persistedMessages?: MessageWithParts[],
+      hooks?: ColdSessionResumeHooks,
     ) => {
       const persisted = await context.deps.sessionStore?.getSession(sessionId as SessionId);
       if (!persisted || persisted.time.deleted !== undefined) {
@@ -1548,7 +1557,11 @@ export function createConversationV4Gateway(
           ...(additionalDirectories !== undefined ? { additionalDirectories } : {}),
           ...(resumeThoughtLevel ? { thoughtLevel: resumeThoughtLevel } : {}),
         },
-        { reusePersistedMessages: true, persistedMessages },
+        {
+          reusePersistedMessages: true,
+          persistedMessages,
+          ...(hooks?.onRecordRegistered ? { onRecordRegistered: hooks.onRecordRegistered } : {}),
+        },
       );
       return {
         status: "resumed",

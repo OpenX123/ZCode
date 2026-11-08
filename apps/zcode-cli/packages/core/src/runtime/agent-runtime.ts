@@ -361,7 +361,9 @@ export class AgentRuntime {
       runtime.initializeMessageHistoryFromContext(this.contextBuilder, this.rootTraceContext);
       this.contextInitialized = true;
     }
-    if (!isExternalSessionEngine(this.config.engine))
+    // P10 修复：升级后首启 manifest 缓存未命中时，7 个从未发送的草稿在构造时拉起了 28 个 MCP
+    // 进程（连接 p50 8.2s、约 15s CPU 满载）。草稿推迟到首次需要工具（initializeMcp）再启动。
+    if (!isExternalSessionEngine(this.config.engine) && !this.config.deferMcpStartupUntilFirstUse)
       runtime.startMcpStartup(this.rootTraceContext);
   }
 

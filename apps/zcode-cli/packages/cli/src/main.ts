@@ -6,7 +6,7 @@ import { setCliProcessTitle } from "./process-name.js";
 import { applyCliRuntimeEnvSanitization } from "./env.js";
 import { ensureSeaRuntimeTools } from "./sea-runtime-tools.js";
 import { isPluginHostInvocation, runPluginHostCommand } from "./plugin-host-command.js";
-import { scheduleCliExitWatchdog } from "./shutdown.js";
+import { cliOneShotExitPlan, exitCliAfterOneShot, scheduleCliExitWatchdog } from "./shutdown.js";
 import { installCliProcessErrorBoundary } from "./process-errors.js";
 import { installProtocolStderrBoundary } from "./protocol-stderr.js";
 import { createProtocolProcessLifecycle } from "./protocol-lifecycle.js";
@@ -101,10 +101,16 @@ async function main(): Promise<void> {
       // plugin-host 的 main() 在 MCP server.connect() 完成后会返回，但此时
       // stdio handle 正是服务的存活条件。一次性 CLI watchdog 不能把它误判为泄漏并强退。
       const exitCode = normalizeProcessExitCode(process.exitCode);
-      if (!isPluginHostInvocation(argv) || exitCode !== 0) {
-        scheduleCliExitWatchdog({ exitCode });
-      }
+      const exitPlan = cliOneShotExitPlan({
+        argv,
+        exitCode,
+        pluginHost: isPluginHostInvocation(argv),
+      });
+      if (exitPlan === "watchdog") scheduleCliExitWatchdog({ exitCode });
       restoreConsole?.();
+      // --prepare-storage：结果帧写完即按退出码退出，不再等 1s watchdog（Host 实测准备 Worker
+      // 约 1.9s 中约 1.0s 耗在这里）；退出确认语义不变（Host 仍要求 Worker 以 0 退出）。
+      if (exitPlan === "immediate") await exitCliAfterOneShot({ exitCode });
     }
   }
 }

@@ -461,7 +461,25 @@ export const zcodeProtocolNotifications = {
   pluginOperationProgress: "plugins/operationProgress",
   processResourceSample: "process/resourceSample",
   processNetworkRequests: "process/networkRequests",
+  // CLI 会话注册表的常驻会话数（Host 回收工作区 CLI 的守卫事实）；规则见
+  // apps/zcode-cli/docs/design/v2/zcode-protocol-agent-server.md「常驻会话数通知」。
+  processResidentSessions: "process/residentSessions",
 } as const;
+
+/**
+ * `process/residentSessions`：连接建立时发一次当前值，此后注册表 record 数每变化一次发一次。
+ * 收到第一条之前常驻数未知，Host 必须失败关闭（视为可能承载会话）。不含会话 ID、路径或正文。
+ */
+export const zcodeResidentSessionsNotificationSchema = z
+  .object({
+    residentSessionCount: z.number().int().nonnegative(),
+    /** 本 CLI 进程内从 1 起单调递增；同一连接上 NDJSON 保序，Host 以最后一条为准。 */
+    sequence: z.number().int().positive(),
+  })
+  .strict();
+export type ZCodeResidentSessionsNotification = z.infer<
+  typeof zcodeResidentSessionsNotificationSchema
+>;
 
 /** 启动控制面独立于 task stream；数据库身份不可携带路径/凭据。 */
 export const zcodeStorageStartupStateSchema = z

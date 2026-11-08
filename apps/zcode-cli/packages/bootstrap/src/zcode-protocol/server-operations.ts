@@ -1478,7 +1478,12 @@ export async function discardFailedSessionResume(
 export async function activateSessionForResume(
   context: ZCodeProtocolAgentServerContext,
   params: ZCodeSessionResumeParams,
-  options: { reusePersistedMessages?: boolean; persistedMessages?: MessageWithParts[] } = {},
+  options: {
+    reusePersistedMessages?: boolean;
+    persistedMessages?: MessageWithParts[];
+    /** record 入册后、runtime.resume（含外部引擎握手）之前回调；见 ColdSessionResumeHooks。 */
+    onRecordRegistered?: () => void;
+  } = {},
 ): Promise<ActivatedSessionForResume> {
   const resumeStartedAt = Date.now();
   const activeBeforeWait = context.sessions.has(params.sessionId);
@@ -1494,6 +1499,7 @@ export async function activateSessionForResume(
   await context.sessionResidentPool?.waitForDeactivation(params.sessionId);
   const existing = context.sessions.get(params.sessionId);
   if (existing) {
+    options.onRecordRegistered?.();
     return { record: existing };
   }
   let session = await getPersistedSession(context, params.sessionId);
@@ -1561,6 +1567,7 @@ export async function activateSessionForResume(
   record.lastOutcome = session.lastOutcome;
   context.assertServing?.();
   context.sessions.set(params.sessionId, record);
+  options.onRecordRegistered?.();
   try {
     const resumeResult = await runSessionModelConfigMutation(record.app, async () => {
       const result = options.reusePersistedMessages
@@ -3597,6 +3604,11 @@ async function createRecord(
       // params.mcpServers 注入 runtimeConfig，导致日志里 runtimeHasMcpConfig=false，工具永远不启动。
       // MCP 是 runtime 启动期配置，因此必须在 session 创建/恢复边界一次性写入 runtimeConfig.mcp。
       ...(runtimeMcp ? { mcp: runtimeMcp } : {}),
+      // P10：Desktop 草稿（deferred 持久化、非恢复）尚未发送，构造时不拉起 MCP；首次发送或首次需要
+      // 工具时由 runtime 的 initializeMcp 按 lazy 规则启动（docs/desktop/engine-performance-1.1-spec.md §1）。
+      ...(!resume && "persistence" in params && params.persistence === "deferred"
+        ? { deferMcpStartupUntilFirstUse: true }
+        : {}),
       // 之前只有 TUI 路径（tui-prompt-handler）注入 titleGeneration，
       // ZCode Protocol app-server 创建的 session（desktop/web/mobile）没有传，导致
       // shouldAttemptSessionTitleGeneration 的 `if (!config.titleGeneration) return false`

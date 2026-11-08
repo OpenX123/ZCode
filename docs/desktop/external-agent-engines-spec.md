@@ -32,7 +32,7 @@
 ### 草稿只在可见时预热
 
 - 2026-11-08 起：草稿 pane 首次可见（工作台布局中未隐藏）后才启用预热，与已有会话「首次可见前不取租约」同一可见性事实；之后即使隐藏也保留预热，切换 Tab 不重复创建。窗口打开或重载时只有每栏当前 Tab（窄屏或浮窗时只有焦点栏）的草稿预热。
-- 依据（1.1.0 Windows 生产日志 2026-11-07）：窗口重载时 6 个工作区的 8 个草稿同时预热，加上各自补位的备用进程，单次握手被拖到 5–18s；从未发送的草稿预热会话不参与闲置关闭，每个约占私有提交 480MB（工作集 80–135MB，2026-11-08 本机实测：adapter 约 80MB + claude.exe 约 400MB）。
+- 依据（1.1.0 Windows 生产日志 2026-11-07）：窗口重载时 6 个工作区的 8 个草稿同时预热，加上各自补位的备用进程，单次握手被拖到 5–18s；从未发送的草稿预热会话当时不参与闲置关闭，每个约占私有提交 480MB（工作集 80–135MB，2026-11-08 本机实测：adapter 约 80MB + claude.exe 约 400MB）。2026-11-08 起草稿也按下文「闲置连接关闭」在不可见且闲置 10 分钟后关闭。
 
 ### 预建会话（spare）
 
@@ -48,12 +48,63 @@
 
 ### 闲置连接关闭
 
-- 所有者仍是 port 与 pool：port 持有会话连接和该会话的在途计数（prepare、prompt、fork、setConfigOption），pool 按 60 秒节拍扫描已登记的会话连接。
-- 关闭条件（全部满足）：会话连接存在；没有在途操作或准备（外部引擎的待处理交互只出现在运行中的 prompt 内，因此也一并覆盖）；该连接的原生会话已确认可恢复（经 resume/load 建立，或至少提交过一次 prompt）；最近一次使用已超过 15 分钟；不是最近活跃的 3 个可恢复会话之一。即使会话仍被订阅（Tab 打开）也会关闭。
-- 未提交过 prompt 的草稿预热会话不关闭，也不占用这 3 个豁免名额：从未提交 prompt 的原生会话可能无法 resume。
-- 关闭只结束 adapter 进程。订阅、已确认配置、`externalSessionId` 和 `engineConfigState=ready` 都保留。下一次发送时，turn 发现没有健康连接，就投影 connecting，按原会话 resume/load 恢复已确认配置，再投影 ready 并提交 prompt；下一次修改配置时，`setConfigOption` 得到 `not_ready`，经已有空闲恢复路径重连，然后只重试这次幂等配置。prompt 绝不自动重发。
+2026-11-08 起（用户决策，取代“最近 3 个可恢复会话豁免”与“草稿不关闭”）。依据（2026-11-08 本机扫描 P3）：常驻进程私有提交合计 6.66GB，其中发过 prompt 的外部引擎会话 1.48GB 五天内 0 次 `idle_close`（“最近 3 个”按每个 CLI 计，6 个工作区 CLI 各豁免 3 个，规则几乎不触发）；从未发送的草稿引擎会话约 3GB 永不关闭。
+
+- 所有者仍是 port 与 pool：port 持有会话连接、该会话的在途计数（prepare、prompt、fork、setConfigOption）、最近使用时间与“原生会话是否已提交过 prompt”；pool 按 60 秒节拍扫描已登记的会话连接，并持有“可见会话”的 CLI 侧副本（事实由 Renderer 拥有，见下文可见性输入）。
+- 关闭条件（全部满足）：会话连接存在；没有在途操作或准备（外部引擎的待处理权限与交互只出现在运行中的 prompt 内，因此也一并覆盖）；会话当前不可见；最近一次使用已超过该类连接的闲置窗口。不再有“最近 N 个”名额；会话仍被订阅（Tab 打开但不可见）也会关闭。
+
+| 连接类别 | 判定（port） | 闲置窗口 | 关闭后的再准备 |
+| --- | --- | --- | --- |
+| 已提交过 prompt，或经 resume/load/fork 建立 | 可恢复 | 15 分钟 | 按原会话 resume/load，恢复已确认配置 |
+| 草稿：经 `session/new`（含领用预建会话）建立、从未提交 prompt | 草稿 | 10 分钟 | 新的 `session/new`（可领用预建会话），不 resume |
+
+- 已提交过 prompt 的会话：关闭只结束 adapter 进程。订阅、已确认配置、`externalSessionId` 和 `engineConfigState=ready` 都保留。下一次发送时，turn 发现没有健康连接，就投影 connecting，按原会话 resume/load 恢复已确认配置，再投影 ready 并提交 prompt；下一次修改配置时，`setConfigOption` 得到 `not_ready`，经已有空闲恢复路径重连，然后只重试这次幂等配置。prompt 绝不自动重发。
+- 草稿：从未提交 prompt 的原生会话可能无法 resume（2026-11-08 本机实测：两家未提交 prompt 的会话关闭后都不写原生会话历史，见上文「预建会话」），因此草稿关闭后**再次准备必须走新的 `session/new`**。port 是“原生会话从未提交过 prompt”这一事实的唯一所有者：它经 `session/new` 或领用预建会话建立连接时记下该事实，提交第一个 prompt 时清除；连接不在（闲置关闭或进程退出）且该事实仍成立时，下一次准备忽略 Runtime 传入的 `externalSessionId`，按新会话处理（领用同键预建会话或冷启动 `session/new`），经 `onSession` 把新原生 ID 交给 Runtime 覆盖旧 ID（草稿尚未入库，首发提升时与新 ID 一起持久化），草稿已确认的配置（`configValues`，含显式模式）在新会话上按原恢复规则下发。Runtime 的 `engineConfigState` 在关闭期间保持 `ready`；下一次发送或改配置沿与上一条相同的路径（connecting → ready，prompt 只发一次），只是原生方法为 `session/new`。旧原生 ID 从未提交 prompt，不留下原生历史，无需清理。
 - 关闭与使用并发：port 的释放与其他入口取得连接都在同一个同步片内完成，释放前再检查一次在途计数；释放之后到达的操作看不到旧连接，会走恢复路径。
 - 常驻池（未订阅、已持久化会话的 runtime 回收）的闲置时间从 10 分钟延长为 30 分钟，LRU 上限（16 → 8）不变。
+
+#### 可见性输入（V4 `v4/conversation/visibility`）
+
+- 事实所有者：Renderer。“可见”指会话 pane 当前在工作台布局中显示（与「草稿只在可见时预热」同一可见性事实；窗口最小化或隐藏时由 Renderer 决定是否上报为不可见）。Host 只转发；CLI pool 只保存副本并仅用于闲置豁免，不影响订阅、投影、预热或常驻池。
+- 请求：`v4/conversation/visibility`，参数 `{ connectionId, visibleSessionIds }`（strict；`connectionId` 与该下游客户端订阅时使用的相同，由 Host 分配；`visibleSessionIds` 至多 64 个非空会话 ID），结果 `{}`。schema 见 `packages/shared/src/zcode-protocol-v4/transport.ts`：CLI-facing `v4ConversationVisibilityParamsSchema`；Renderer → Host 用 UI-facing `conversationVisibilityParamsSchema`（只有 `visibleSessionIds`，不能自选 `connectionId`，由 Host 按下游客户端注入，与订阅同规则）。
+- 语义：整体替换**该连接**的可见集合，幂等、后到覆盖先到；CLI 的可见集合是所有连接上报的并集。连接关闭（`v4/connection/flow` 的 `state=closed`）时删除该连接的上报；CLI 进程重启后为空。变化时上报即可，无需周期重发。
+- 默认：从未收到上报（旧 Host、Renderer 尚未接入、上报丢失）时一律视为不可见，按闲置规则回收。理由：①资源安全优先，不存在让会话永久常驻的缺省；②关闭可透明恢复，不丢数据、不重发 prompt（已发 prompt 的会话下次发送冷恢复约 2–4.5s，草稿走 `session/new` 并可领用预建会话）；③上报丢失或 Renderer 崩溃不会造成永久豁免。代价：未接入上报前，正在看的会话闲置 15 分钟后也会被关闭，下次发送多一次恢复。
+- 调度：收到即处理（只更新内存集合，不读写会话状态，见 CLI「请求调度分道」）。
+
+```mermaid
+sequenceDiagram
+  participant UI as Renderer（可见性所有者）
+  participant H as Host
+  participant S as CLI server
+  participant P as ProcessPool（可见副本 + 闲置扫描）
+  participant T as ExternalEnginePort（连接、在途、草稿事实）
+  participant A as ACP adapter
+  UI->>H: 可见 pane 变化
+  H->>S: v4/conversation/visibility {connectionId, visibleSessionIds}
+  S->>P: setVisibleSessions(connectionId, ids)（整体替换，收到即处理）
+  loop 每 60 秒
+    P->>T: readConnection()（busy / 草稿 / lastUsedAt）
+    alt 不可见、无在途、闲置 ≥ 15 分钟（草稿 ≥ 10 分钟）
+      P->>T: releaseIdle()（同步复查在途后摘除连接）
+      T->>A: closeAcpProcess
+    else 可见或在途
+      P-->>P: 保留
+    end
+  end
+  Note over T: 草稿事实保留；Runtime 仍为 ready
+  UI->>S: 之后发送（或改配置）
+  S->>T: prepareSession(externalSessionId=旧草稿 ID)
+  alt 草稿（从未提交 prompt）
+    T->>P: claimSpare(engine, profile, cwd)
+    T->>A: session/new（未命中时冷启动）+ 恢复 configValues
+    A-->>S: onSession(新 ID) → Runtime 覆盖 externalSessionId
+  else 已提交过 prompt
+    T->>A: spawn + initialize + session/resume|load(原 ID) + 恢复配置
+  end
+  S-->>UI: ready，提交 prompt（只一次）
+  H->>S: v4/connection/flow {connectionId, state: closed}
+  S->>P: setVisibleSessions(connectionId, [])（删除该连接的上报）
+```
 
 ### 本地性能事件
 
@@ -65,7 +116,7 @@
 | `external_engine.handshake.failed`                             | `engine`、`sessionId`、`code`、`method`、`totalMs`                                                                                                                                 |
 | `external_engine.spare.claimed` / `.miss`                      | `engine`、`connectionProfileId`、`reason`（miss：none/warming/unhealthy/cwd）、`ageMs`（hit）                                                                                      |
 | `external_engine.spare.ready` / `.expired` / `.failed`（warn） | `engine`、`connectionProfileId`、`durationMs` / `idleMs` / `code`                                                                                                                  |
-| `external_engine.idle_close`                                   | `engine`、`sessionId`、`idleMs`                                                                                                                                                    |
+| `external_engine.idle_close`                                   | `engine`、`sessionId`、`idleMs`、`kind`（prompted / draft，2026-11-08 起）                                                                                                         |
 | `external_engine.idle_resume.completed` / `.failed`            | `engine`、`sessionId`、`durationMs`（从发起恢复到 ready）、`code`（失败时）                                                                                                        |
 
 ### 状态所有者与事件顺序
@@ -74,7 +125,9 @@
 | ------------------------------------------- | ----------------------------------------------------------- | --------------------------------------- |
 | 草稿记录、连接配置绑定、`engineConfigState` | CLI Runtime（`prepareExternalEngineSession` single-flight） | V4 snapshot → Renderer                  |
 | 会话 adapter 连接、在途计数、最近使用时间   | CLI ExternalEnginePort（每会话 app 一个）                   | pool 扫描                               |
-| 备用进程、闲置扫描与 3 个豁免               | CLI ExternalEngineProcessPool（每 CLI 进程一个）            | port 领用 / 补位                        |
+| 预建会话、闲置扫描与可见会话副本            | CLI ExternalEngineProcessPool（每 CLI 进程一个）            | port 领用 / 补位；闲置扫描读可见副本    |
+| 会话是否可见（事实）                        | Renderer（工作台布局）                                      | 经 `v4/conversation/visibility` → pool  |
+| 原生会话是否从未提交过 prompt（草稿）       | CLI ExternalEnginePort                                      | pool 扫描选闲置窗口；再准备选 new/resume |
 | 草稿预热 binding                            | Renderer `useDraftSessionPrewarm`                           | SessionPane（就绪阶段由 snapshot 派生） |
 
 ```mermaid
@@ -105,7 +158,7 @@ sequenceDiagram
   P->>S: refillSpare（后台补位：spawn → initialize → session/new）
   Note over UI: 用户随时可点发送：waitForSession → 屏障内 prepare（并入握手）→ 记忆恢复 → sendText
   Note over S,A: 备用进程 10 分钟未领用即关闭
-  Note over P,A: 空闲 15 分钟且不在最近 3 个 → 关闭 adapter，保留 ready 与 externalSessionId
+  Note over P,A: 不可见且空闲 15 分钟（草稿 10 分钟，再准备走 session/new）→ 关闭 adapter，保留 ready 与 externalSessionId
   UI->>V4: 之后发送
   R-->>UI: connecting
   P->>A: spawn + initialize + session/resume（恢复已确认配置）
@@ -121,13 +174,15 @@ sequenceDiagram
 | P03 | 握手中删除草稿                        | 后台握手中止，之后不再发布 ready/error，不启动迟到进程                                                                     | core/adapters              |
 | P04 | 备用进程领用 / 补位 / 过期 / 配置隔离 | 同配置第二个新会话不再 initialize；补位后仍至多一个；10 分钟后关闭；其他配置 ID 不领用                                     | adapters                   |
 | P05 | 闲置关闭后发送与改配置                | adapter 进程退出；`externalSessionId` 与配置保留；下次发送 resume 恢复配置后只发一次 prompt                                | adapters                   |
-| P06 | 最近 3 个会话与草稿                   | 第 4 个起才关闭；从未提交 prompt 的草稿不关闭                                                                              | adapters                   |
+| P06 | 可见豁免与草稿闲置                    | 不可见的已发 prompt 会话 15 分钟关闭、可见的不关（不再有最近 3 个名额）；草稿 10 分钟关闭；有在途操作不关；未收到可见性上报按不可见；连接 closed 后其上报失效 | adapters / bootstrap       |
 | P07 | CLI 关闭时存在备用进程                | pool 关闭全部备用进程与仍在初始化的备用进程，此后不再补位                                                                  | adapters                   |
 | P08 | 草稿就绪阶段与丢弃后恢复              | 除 disabled 外各阶段都可发送；creating/connecting 发送等待就绪与记忆恢复后才 `sendText`；丢弃后发送由 owner 重建并等待就绪 | UI                         |
 | P09 | 领用预建会话                          | 领用时不再发 initialize / `session/new`；会话取得预建的原生 ID 与配置；已保存配置在领用后下发；补位后至多一个              | adapters                   |
 | P10 | 草稿只在可见时预热                    | 隐藏挂载的草稿 pane 不发 createSession；首次可见后发一次，再隐藏不回收                                                     | UI                         |
 | P11 | 连接中立即发送（真实桌面）            | 新草稿出现后立即输入并发送，不出现“正在连接引擎…”；消息只发一次且使用记忆的模型/深度                                       | E2E（待真实 Windows 验收） |
 | P12 | 草稿就绪耗时（真实 Windows）          | 有预建会话时新草稿 createSession → ready ≤ 1s；窗口重载只有可见草稿出现握手日志                                            | 本机日志（待验收）         |
+| P13 | 草稿闲置关闭后再准备                  | 下一次准备不发 `session/resume`/`session/load`，走 `session/new`（同键预建会话可领用）；Runtime 得到新原生 ID；已确认配置下发；prompt 只发一次 | adapters                   |
+| P14 | 可见性协议输入                        | schema strict（拒绝未知字段、空 ID、超过 64 个）；整体替换、跨连接取并集、连接 closed 删除；收到即处理不排队                 | shared / bootstrap         |
 
 单测使用受控 ACP 夹具进程。Windows 整机上 `codex.exe` / `claude.exe` 的真实 spawn 耗时、进程树回收与内存下降需要在本机单独验收，未验收前不写成通过。
 

@@ -179,6 +179,49 @@ describe("会话 MCP 非阻塞启动（runtime）", () => {
   });
 });
 
+// P10（docs/desktop/engine-performance-1.1-spec.md §1「草稿不触发 MCP」）：升级后首启 manifest 缓存
+// 未命中时，7 个从未发送的草稿拉起了 28 个 MCP 进程。草稿推迟到首次需要工具时才登记与启动。
+describe("草稿推迟 MCP 启动", () => {
+  function createRuntime(deferMcpStartupUntilFirstUse: boolean | undefined) {
+    const port = createLazyPort({
+      statuses: { docs: DEFERRED_STATUS },
+      tools: [tool("docs", "create")],
+    });
+    const seen: string[][] = [];
+    const runtime = createTestAgentRuntime(
+      createSessionId(`runtime-draft-mcp-${String(deferMcpStartupUntilFirstUse)}`),
+      {
+        mode: "build",
+        mcp: { enabled: true, servers: { docs: SERVERS.docs } },
+        ...(deferMcpStartupUntilFirstUse === undefined ? {} : { deferMcpStartupUntilFirstUse }),
+      },
+      {
+        eventStore: createTestSessionEventStore(),
+        mcpPort: port,
+        modelFactory: modelFactoryRecordingTools(seen),
+      },
+    );
+    return { port, runtime, seen };
+  }
+
+  it("草稿构造与 context 初始化（如 / 技能目录）都不启动 MCP；首次发送时启动且首个请求已带缓存工具", async () => {
+    const { port, runtime, seen } = createRuntime(true);
+    expect(port.startConfiguredServers).not.toHaveBeenCalled();
+
+    await runtime.getSkillCatalog(createRootTraceContext());
+    expect(port.startConfiguredServers).not.toHaveBeenCalled();
+
+    await runtime.executeTurn("create a document");
+    expect(port.startConfiguredServers).toHaveBeenCalledOnce();
+    expect(seen[0]).toContain("mcp__docs__create");
+  });
+
+  it("非草稿（缺省）保持构造即登记 MCP", () => {
+    const { port } = createRuntime(undefined);
+    expect(port.startConfiguredServers).toHaveBeenCalledOnce();
+  });
+});
+
 describe("子智能体借用待首次使用的 server", () => {
   it("待首次使用的 server 满足必需 server 并可借用其工具", async () => {
     const parent = createLazyPort({

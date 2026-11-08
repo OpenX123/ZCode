@@ -387,6 +387,9 @@ export const V4_METHODS = {
   attachmentPreviewSource: "v4/attachment/previewSource",
   commandsQuery: "v4/commands/query",
   command: "v4/command",
+  // 会话可见性上报（Renderer 拥有可见事实）：按连接整体替换；CLI 仅用作外部引擎闲置关闭的
+  // 豁免依据。规则见 docs/desktop/external-agent-engines-spec.md「可见性输入」。
+  conversationVisibility: "v4/conversation/visibility",
 } as const;
 export type V4Method = (typeof V4_METHODS)[keyof typeof V4_METHODS];
 
@@ -409,6 +412,37 @@ export const v4ConnectionFlowParamsSchema = z
 export type V4ConnectionFlowParams = z.infer<typeof v4ConnectionFlowParamsSchema>;
 
 export const v4ConnectionFlowResultSchema = z.object({}).strict();
+
+/** 单次可见性上报的会话数上限：一个窗口同时显示的 pane 远少于此，超出视为调用方错误。 */
+export const MAX_VISIBLE_SESSIONS_PER_REPORT = 64;
+
+/**
+ * 会话可见性上报（UI-facing 形状）：Renderer 只声明当前可见的会话集合；`connectionId` 由 Host
+ * 按该下游客户端注入（同订阅），UI 不能自选。
+ */
+export const conversationVisibilityParamsSchema = z
+  .object({
+    visibleSessionIds: z
+      .array(z.string().trim().min(1).max(1024))
+      .max(MAX_VISIBLE_SESSIONS_PER_REPORT),
+  })
+  .strict();
+export type ConversationVisibilityParams = z.infer<typeof conversationVisibilityParamsSchema>;
+
+/**
+ * 会话可见性上报（CLI-facing 形状）：整体替换 `connectionId`（与该下游客户端订阅使用的同一个，
+ * 由 Host 分配）当前可见的会话集合；CLI 的可见集合为各连接上报的并集，连接 `v4/connection/flow`
+ * closed 时删除。从未上报视为不可见（外部引擎会话按闲置规则回收）。只更新内存事实，不读写会话状态。
+ */
+export const v4ConversationVisibilityParamsSchema = conversationVisibilityParamsSchema
+  .extend({
+    connectionId: z.string().trim().min(1).max(1024),
+  })
+  .strict();
+export type V4ConversationVisibilityParams = z.infer<typeof v4ConversationVisibilityParamsSchema>;
+
+export const v4ConversationVisibilityResultSchema = z.object({}).strict();
+export type V4ConversationVisibilityResult = z.infer<typeof v4ConversationVisibilityResultSchema>;
 
 export const V4_NOTIFICATIONS = {
   // 下行帧（snapshot / deltas），params = ConversationTopicFrame。

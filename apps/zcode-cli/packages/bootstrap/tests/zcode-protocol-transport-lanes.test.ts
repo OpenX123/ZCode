@@ -11,7 +11,13 @@ import {
 type Handler = (message: ZCodeProtocolMessage) => Promise<unknown>;
 
 /** 每个请求一个可手动放行的闸门；记录开始顺序与已写出的响应 id。 */
-function createHarness(options: { logger?: Logger; now?: () => number } = {}) {
+function createHarness(
+  options: {
+    logger?: Logger;
+    now?: () => number;
+    canServeSessionRead?: (sessionId: string) => boolean;
+  } = {},
+) {
   const input = new PassThrough();
   const output = new PassThrough();
   const started: string[] = [];
@@ -37,6 +43,7 @@ function createHarness(options: { logger?: Logger; now?: () => number } = {}) {
     output,
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.now ? { now: options.now } : {}),
+    ...(options.canServeSessionRead ? { canServeSessionRead: options.canServeSessionRead } : {}),
     handleMessage: async (message) => {
       if (!("method" in message) || !("id" in message)) return undefined;
       const id = String(message.id);
@@ -299,6 +306,84 @@ describe("ZCode Protocol 传输分道", () => {
   });
 });
 
+// P4（docs/design/v2/zcode-protocol-agent-server.md「会话只读不排队」）：2026-11-07 生产日志中
+// plans 在会话分道里等待含 14.2s 外部引擎握手的 READY（16450ms），其后 rowsRange 排队 16465ms。
+describe("会话只读不排在会话分道之后", () => {
+  const command = (id: string, sessionId: string) =>
+    request(id, V4_METHODS.command, {
+      commandId: id,
+      clientId: "client",
+      sessionId,
+      type: "setEngineConfigOption",
+      payload: { configId: "mode", value: "plan" },
+      issuedAt: 0,
+      baseRevision: 0,
+      baseLogEpoch: "epoch",
+    });
+
+  it("会话可读时同会话只读收到即处理，不等在途命令；后续命令仍保持该会话 FIFO", async () => {
+    const harness = createHarness({ canServeSessionRead: (sessionId) => sessionId === "sess_a" });
+    harness.block("cmd-1");
+    harness.send(
+      command("cmd-1", "sess_a"),
+      request("rows", V4_METHODS.conversationRowsRange, { sessionId: "sess_a", limit: 10 }),
+      request("plans", V4_METHODS.conversationPlans, { sessionId: "sess_a" }),
+      request("runs", V4_METHODS.conversationWorkflowRuns, { sessionId: "sess_a" }),
+      command("cmd-2", "sess_a"),
+    );
+    await vi.waitFor(() => expect(harness.responded).toEqual(["rows", "plans", "runs"]));
+    expect(harness.started).not.toContain("cmd-2");
+    harness.release("cmd-1");
+    await vi.waitFor(() =>
+      expect(harness.responded).toEqual(["rows", "plans", "runs", "cmd-1", "cmd-2"]),
+    );
+    harness.input.end();
+    await harness.connection.waitForClose();
+  });
+
+  it("会话不可读（冷会话，读取会触发激活）或未注入判定时，只读仍进会话分道 FIFO", async () => {
+    for (const canServeSessionRead of [() => false, undefined]) {
+      const harness = createHarness(canServeSessionRead ? { canServeSessionRead } : {});
+      harness.block("cmd-1");
+      harness.send(
+        command("cmd-1", "sess_cold"),
+        request("rows", V4_METHODS.conversationRowsRange, { sessionId: "sess_cold", limit: 10 }),
+      );
+      await vi.waitFor(() => expect(harness.started).toEqual(["cmd-1"]));
+      await flush();
+      expect(harness.responded).toEqual([]);
+      harness.release("cmd-1");
+      await vi.waitFor(() => expect(harness.responded).toEqual(["cmd-1", "rows"]));
+      harness.input.end();
+      await harness.connection.waitForClose();
+    }
+  });
+
+  it("越过分道的只读以 session-read 记录慢请求", async () => {
+    const info = vi.fn();
+    const logger = {
+      child: () => logger,
+      debug: () => undefined,
+      error: () => undefined,
+      info,
+      warn: () => undefined,
+    } as unknown as Logger;
+    let clock = 0;
+    const harness = createHarness({ logger, now: () => clock, canServeSessionRead: () => true });
+    harness.onMessage(async () => {
+      clock += 600;
+    });
+    harness.send(request("plans", V4_METHODS.conversationPlans, { sessionId: "sess_a" }));
+    await vi.waitFor(() => expect(harness.responded).toEqual(["plans"]));
+    expect(info).toHaveBeenCalledWith(
+      "ZCode Protocol request slow",
+      expect.objectContaining({ lane: "session-read", method: V4_METHODS.conversationPlans }),
+    );
+    harness.input.end();
+    await harness.connection.waitForClose();
+  });
+});
+
 describe("planProtocolDispatch", () => {
   it.each([
     [request("1", zcodeProtocolMethods.sessionStop, { sessionId: "s" }), "control", ["session:s"]],
@@ -315,6 +400,20 @@ describe("planProtocolDispatch", () => {
     [request("8", "unknown/method", {}), "lane", ["global"]],
     [request("9", zcodeProtocolMethods.providerRefreshRegistry, {}), "immediate", undefined],
     [request("10", V4_METHODS.connectionFlow, {}), "immediate", undefined],
+    [request("11", V4_METHODS.conversationVisibility, {}), "immediate", undefined],
+    [
+      request("12", V4_METHODS.conversationRowsRange, { sessionId: "s" }),
+      "session-read",
+      ["session:s"],
+    ],
+    [request("13", V4_METHODS.conversationPlans, { sessionId: "s" }), "session-read", ["session:s"]],
+    [
+      request("14", V4_METHODS.conversationWorkflowRunEvents, { sessionId: "s", runId: "r" }),
+      "session-read",
+      ["session:s"],
+    ],
+    [request("15", V4_METHODS.conversationUsage, { sessionId: "s" }), "session-read", ["session:s"]],
+    [request("16", V4_METHODS.conversationPlans, {}), "lane", ["global"]],
   ] as const)("把 %j 分到 %s", (message, kind, laneKeys) => {
     const plan = planProtocolDispatch(message);
     expect(plan.kind).toBe(kind);

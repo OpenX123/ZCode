@@ -1,6 +1,10 @@
 import { querySessionDebug } from "./session-debug.js";
 import { createNodeNetworkCapture } from "@zcode/shared/node";
-import { networkCaptureControlSchema, zcodeProtocolNotifications } from "@zcode/shared";
+import {
+  networkCaptureControlSchema,
+  zcodeProtocolNotifications,
+  type ZCodeResidentSessionsNotification,
+} from "@zcode/shared";
 import {
   zcodeExternalEngineCancelConnectionTestParamsSchema,
   zcodeExternalEngineTestConnectionParamsSchema,
@@ -29,6 +33,8 @@ import {
   parseConversationTopic,
   parseSessionsIndexTopic,
   parseWorkspaceConfigTopic,
+  v4ConnectionFlowParamsSchema,
+  v4ConversationVisibilityParamsSchema,
 } from "@zcode/shared/zcode-protocol-v4";
 import type {
   ZCodeProtocolError,
@@ -129,7 +135,7 @@ import {
   resolveV4InteractionRegistryOptionsFromEnv,
 } from "../zcode-protocol-v4/interaction-registry.js";
 import { createConversationV4Gateway } from "./v4-bridge.js";
-import { createSessionResidentPoolHost } from "./session-residency.js";
+import { createSessionResidentPoolHost, ResidentSessionRegistry } from "./session-residency.js";
 import {
   DEFAULT_SESSION_RESIDENT_HIGH_WATER_COUNT,
   SessionResidentPool,
@@ -275,6 +281,8 @@ export class ZCodeProtocolAgentServer {
   private readonly workspaceGenerateTextControllers = new Map<string, AbortController>();
   private readonly externalEngineConnectionTests = new Map<string, AbortController>();
   private readonly externalEngineProcessPool: ExternalEngineProcessPool;
+  /** `process/residentSessions` 的进程内序号（从 1 起单调递增）。 */
+  private residentSessionsSequence = 0;
   /**
    * subscribe initial frame 按 JSON-RPC request id 隔离。connection 必须先 take，
    * 再写 response line，最后按数组顺序写 notification，不能靠 microtask 猜时序。
@@ -320,7 +328,11 @@ export class ZCodeProtocolAgentServer {
       notify: (notification) => this.messageSink?.(notification),
       requestClient: (method, params, resultSchema, options) =>
         this.requestClient(method, params, resultSchema, options),
-      sessions: new Map<string, ZCodeProtocolSessionRecord>(),
+      // 常驻会话数变化即通知 Host（回收工作区 CLI 的守卫事实，见 zcode-protocol-agent-server.md
+      // 「常驻会话数通知」）；与注册表变化在同一同步片内发出，NDJSON 保序。
+      sessions: new ResidentSessionRegistry<ZCodeProtocolSessionRecord>(() =>
+        this.notifyResidentSessions(),
+      ),
       // 交互应答登记表（broker 反向请求 × v4 resolveInteraction 命令的汇合点）。
       v4Interactions: new V4InteractionRegistry(
         resolveV4InteractionRegistryOptionsFromEnv(deps.env ?? process.env),
@@ -404,6 +416,20 @@ export class ZCodeProtocolAgentServer {
     this.runtimeResources.assertServing();
     this.clientDisconnectError = undefined;
     this.messageSink = sink;
+    // 初始快照：Host 收到第一条之前按“未知”失败关闭，连接建立即给出当前值。
+    this.notifyResidentSessions();
+  }
+
+  private notifyResidentSessions(): void {
+    if (!this.messageSink) return;
+    this.residentSessionsSequence += 1;
+    this.messageSink({
+      method: zcodeProtocolNotifications.processResidentSessions,
+      params: {
+        residentSessionCount: this.context.sessions.size,
+        sequence: this.residentSessionsSequence,
+      } satisfies ZCodeResidentSessionsNotification,
+    });
   }
 
   disconnectClient(error: Error): void {
@@ -472,6 +498,14 @@ export class ZCodeProtocolAgentServer {
       }
     }
     return this.shutdownPromise;
+  }
+
+  /**
+   * 传输层调度判定（同步）：会话只读能否越过会话分道（P4）。只在读取不会触发新的冷激活时为真；
+   * 规则见 docs/design/v2/zcode-protocol-agent-server.md「会话只读不排队」。
+   */
+  canServeSessionRead(sessionId: string): boolean {
+    return this.context.v4Gateway?.canServeSessionRead(sessionId) ?? false;
   }
 
   /** app drain 有界结束后释放投影；即使某个 app.close 挂起也必须执行。 */
@@ -561,6 +595,20 @@ export class ZCodeProtocolAgentServer {
       // ── v4 conversation 通道（竖切，与旧 session/* 并存）──
       case V4_METHODS.connectionFlow: {
         this.requireV4Gateway().setConnectionFlowState(request.params);
+        const flow = v4ConnectionFlowParamsSchema.parse(request.params);
+        // 连接关闭：删除该连接的可见性上报，关闭的窗口不能让会话永久豁免闲置关闭。
+        if (flow.state === "closed")
+          this.externalEngineProcessPool.setVisibleSessions(flow.connectionId, []);
+        return {};
+      }
+      case V4_METHODS.conversationVisibility: {
+        // Renderer 拥有可见事实；池只保存副本作为外部引擎闲置关闭的豁免依据（P3，
+        // docs/desktop/external-agent-engines-spec.md「可见性输入」）。整体替换该连接的上报。
+        const params = v4ConversationVisibilityParamsSchema.parse(request.params);
+        this.externalEngineProcessPool.setVisibleSessions(
+          params.connectionId,
+          params.visibleSessionIds,
+        );
         return {};
       }
       case V4_METHODS.conversationSubscribe: {

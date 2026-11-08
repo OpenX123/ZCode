@@ -285,6 +285,7 @@ export async function runZCodeProtocolAgent(
       onTransportClosed: (error) => server.disconnectClient(error),
       output,
       takePostResponseBatch: (requestId) => server.takePostResponseBatch(requestId),
+      canServeSessionRead: (sessionId) => server.canServeSessionRead(sessionId),
     });
     server.setNotificationSink((notification) => connection.send(notification));
     mcpResourceSink = (samples) =>

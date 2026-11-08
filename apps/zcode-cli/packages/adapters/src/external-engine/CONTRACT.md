@@ -28,4 +28,6 @@ PATH 缺 node 时，为 ACP 子进程补充托管运行时入口（POSIX 符号�
 
 2026-11-08（1.1）：备用进程升级为预建会话。池补位时调用 `AcpConnection.prebuild(engine, cwd)`：initialize（含 providers/set）→ 该 cwd 的 `session/new` → 新会话默认配置（Claude Auto），从不提交 prompt、不调用会话回调；领用前的通知留在初始通知缓冲。新会话（无 externalSessionId、非 fork）领用后，`prepare` 跳过 initialize 与 `session/new`，以预建原生 ID 调 `onSession`，按原规则下发 `configValues`（含显式模式）后 `onConfigOptions`，再回放缓冲通知；预建连接不接受 resume/load/fork。本机实测两家未提交 prompt 的会话关闭后不写原生会话历史，关闭不做额外清理。
 
+2026-11-08（1.1，闲置回收）：取消“最近 3 个可恢复会话”豁免与草稿不关闭。`pool.setVisibleSessions(sourceId, sessionIds)` 整体替换某来源（V4 连接 ID）的可见会话，空集删除该来源；可见集合为各来源并集，从未上报视为不可见。池每 60 秒关闭不可见、无在途、闲置满窗口的连接：可恢复会话 15 分钟，草稿（经 `session/new` 或领用预建会话建立、从未 prompt）10 分钟；`external_engine.idle_close` 带 `kind`（prompted / draft）。port 记录草稿的原生 ID（`draftNativeSessionId`，提交第一个 prompt 时清除）；连接不在时若 `prepareSession` 收到的 `externalSessionId` 正是该草稿 ID，就忽略它改走 `session/new`（可领用预建会话），经 `onSession` 交回新 ID 并按 `configValues` 恢复配置，绝不 resume 从未 prompt 的原生会话。
+
 2026-11（1.1.0）原生子智能体：initialize 两家都声明 `clientCapabilities.subagents`（Codex 保持 AIR，Claude 不是 AIR）。`subagent-frames.ts` 把 AIR 草案与 RFD 帧归一为 `onSubagent` 事件，连接级登记已宣告子 sessionId；其更新经 `onChildUpdate`，权限请求带 `childNativeSessionId`（判定前先排空已到达的通知，保证 spawned 先登记）。未宣告的非主 ID 丢弃、权限回 cancelled，并经 `onDiagnostic` 留无正文诊断；load/fork 回放丢弃全部子智能体帧。`cancelSubagent` 只对声明 cancel 的子会话发送 `session/cancel`，否则抛 unsupported。无效子智能体帧不判定连接故障。

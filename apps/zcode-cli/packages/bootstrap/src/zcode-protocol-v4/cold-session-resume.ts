@@ -12,6 +12,15 @@
 import type { MessageWithParts } from "@zcode/contracts";
 import type { ZCodeWorkspaceRef } from "@zcode/shared";
 
+/** 恢复过程中的进度回调（不改变恢复结果）。 */
+export interface ColdSessionResumeHooks {
+  /**
+   * 会话 record 已入册（runtime.resume 之前，外部引擎握手之前）。只读 journal 的查询据此不必
+   * 等待整个恢复（含外部引擎握手，生产 14.2s）完成。
+   */
+  onRecordRegistered?: () => void;
+}
+
 export type ColdSessionResumeOutcome =
   | {
       status: "resumed";
@@ -28,6 +37,7 @@ export interface ColdSessionResumeHost {
     workspace?: ZCodeWorkspaceRef,
     additionalDirectories?: string[],
     persistedMessages?: MessageWithParts[],
+    hooks?: ColdSessionResumeHooks,
   ): Promise<ColdSessionResumeOutcome>;
   onDebug?(message: string): void;
   onError?(scope: string, error: unknown, context?: Record<string, unknown>): void;
@@ -59,6 +69,7 @@ export class ColdSessionResumeCoordinator {
     additionalDirectories?: string[],
     persistedMessages?: MessageWithParts[],
     onActivated?: (outcome: Extract<ColdSessionResumeOutcome, { status: "resumed" }>) => void,
+    hooks?: ColdSessionResumeHooks,
   ): Promise<MessageWithParts[] | undefined> {
     const inFlight = this.flights.get(sessionId);
     if (inFlight) {
@@ -73,6 +84,7 @@ export class ColdSessionResumeCoordinator {
       additionalDirectories,
       persistedMessages,
       onActivated,
+      hooks,
     ).finally(() => {
       this.flights.delete(sessionId);
       this.host.onDebug?.(`cold resume flight cleared session=${sessionId}`);
@@ -92,6 +104,7 @@ export class ColdSessionResumeCoordinator {
     additionalDirectories?: string[],
     persistedMessages?: MessageWithParts[],
     onActivated?: (outcome: Extract<ColdSessionResumeOutcome, { status: "resumed" }>) => void,
+    hooks?: ColdSessionResumeHooks,
   ): Promise<MessageWithParts[] | undefined> {
     const resume = this.host.resumePersistedSession;
     if (!resume) {
@@ -103,6 +116,7 @@ export class ColdSessionResumeCoordinator {
     }
     let outcome: ColdSessionResumeOutcome;
     try {
+      // 只有提供了进度钩子（history-first 打开）才传第 6 个参数，其余入口保持原调用形状。
       outcome = await resume.call(
         this.host,
         sessionId,
@@ -110,6 +124,7 @@ export class ColdSessionResumeCoordinator {
         workspace,
         additionalDirectories,
         persistedMessages,
+        ...(hooks ? [hooks] : []),
       );
     } catch (error) {
       this.host.onError?.("v4.subscribe.resume", error, {

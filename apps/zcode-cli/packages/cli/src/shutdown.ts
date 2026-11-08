@@ -125,6 +125,58 @@ export async function runCliCleanupWithTimeout(
   }
 }
 
+const PREPARE_STORAGE_FLAG = "--prepare-storage";
+
+export type CliOneShotExitPlan = "immediate" | "watchdog" | "none";
+
+/**
+ * 一次性 CLI 命令 run() 返回后的退出方式（协议服务由 protocol lifecycle 退出，不经此处）：
+ * - `--prepare-storage`：immediate。Host 在 Worker 中运行它，实测约 1.9s 中约 1.0s 在等 1s watchdog
+ *   （Worker 的 stdio 句柄让事件循环不会自然排空）；Host 仍以 Worker 退出码作为退出确认（SILENTDB-06）。
+ * - plugin-host 成功返回：none，其 stdio 句柄正是服务的存活条件。
+ * - 其余：watchdog，保留原 1s 兜底以免未知句柄让进程悬挂。
+ */
+export function cliOneShotExitPlan(options: {
+  argv: readonly string[];
+  exitCode: number;
+  pluginHost?: boolean;
+}): CliOneShotExitPlan {
+  if (options.argv.includes(PREPARE_STORAGE_FLAG)) return "immediate";
+  if (options.pluginHost && options.exitCode === 0) return "none";
+  return "watchdog";
+}
+
+/** 等该流此前已排队的写全部完成（写回调按序触发）；已结束或已销毁的流直接返回。 */
+function flushWritable(stream: NodeJS.WritableStream): Promise<void> {
+  const writable = stream as NodeJS.WritableStream & {
+    destroyed?: boolean;
+    writableEnded?: boolean;
+  };
+  if (writable.destroyed || writable.writableEnded) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    try {
+      writable.write("", () => resolve());
+    } catch {
+      resolve();
+    }
+  });
+}
+
+/**
+ * immediate 退出：先等 stdout/stderr 已排队的写（结果帧、诊断）完成，再以原退出码退出。
+ * 不引入任何等待期限；Worker 中 `process.exit` 只结束该 Worker 线程。
+ */
+export async function exitCliAfterOneShot(options: {
+  exitCode: number;
+  streams?: readonly NodeJS.WritableStream[];
+  exitProcess?: (code: number) => void;
+}): Promise<void> {
+  const exitProcess = options.exitProcess ?? ((code: number) => process.exit(code));
+  await Promise.all((options.streams ?? [process.stdout, process.stderr]).map(flushWritable));
+  await flushE2ECoverage();
+  exitProcess(options.exitCode);
+}
+
 export function scheduleCliExitWatchdog(options: CliExitWatchdogOptions): () => void {
   const exitProcess = options.exitProcess ?? ((code: number) => process.exit(code));
   const timeoutMs = Math.max(

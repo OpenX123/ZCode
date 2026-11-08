@@ -3,8 +3,10 @@
 // - 预建会话（spare）：每个（引擎，连接配置 ID）至多一个已完成 initialize（与 providers/set）、
 //   在其 cwd 的 session/new 与新会话默认配置、但从未提交 prompt 的 adapter；新会话 cwd 一致时同步
 //   领用（不一致按未命中，补位时替换），新会话就绪后后台补位，闲置 10 分钟关闭。
-// - 闲置连接关闭：各会话 port 登记自己的连接事实，池按节拍扫描，关闭空闲 15 分钟且不在最近
-//   3 个可恢复会话内的 adapter 进程；会话状态（ready、配置、externalSessionId）不在此处，保持不变。
+// - 闲置连接关闭：各会话 port 登记自己的连接事实，池按节拍扫描，关闭不可见、无在途且闲置满窗口
+//   （发过 prompt 的会话 15 分钟、草稿 10 分钟）的 adapter 进程；会话状态（ready、配置、
+//   externalSessionId）不在此处，保持不变。可见事实由 Renderer 拥有，经 V4
+//   `v4/conversation/visibility` 按连接上报，池只保存副本用作豁免。
 //
 // 规则见 docs/desktop/external-agent-engines-spec.md「外部引擎进程与异步准备」。
 import type { Logger } from "@zcode/contracts";
@@ -14,7 +16,11 @@ import type { AcpConnection } from "./connection.js";
 
 export const EXTERNAL_ENGINE_SPARE_IDLE_MS = 10 * 60 * 1_000;
 export const EXTERNAL_ENGINE_IDLE_CLOSE_MS = 15 * 60 * 1_000;
-export const EXTERNAL_ENGINE_IDLE_EXEMPT_COUNT = 3;
+/**
+ * 从未提交 prompt 的草稿连接闲置窗口。2026-11-08 用户决策：草稿 10 分钟关闭（扫描证据：
+ * 草稿引擎会话约 3GB 私有提交永不关闭）；关闭后的再准备由 port 改走 session/new。
+ */
+export const EXTERNAL_ENGINE_DRAFT_IDLE_CLOSE_MS = 10 * 60 * 1_000;
 export const EXTERNAL_ENGINE_IDLE_SWEEP_INTERVAL_MS = 60 * 1_000;
 const LOG_MODULE = "adapters.external_engine.process_pool";
 
@@ -34,7 +40,10 @@ export interface ExternalEngineTrackedSession {
   readConnection():
     | {
         busy: boolean;
-        /** 原生会话经 resume/load 建立或已提交过 prompt；从未 prompt 的新会话不一定能 resume。 */
+        /**
+         * 原生会话经 resume/load/fork 建立或已提交过 prompt。false = 草稿（session/new 或领用预建
+         * 建立、从未 prompt）：闲置窗口更短，关闭后 port 的再准备改走 session/new。
+         */
         resumable: boolean;
         lastUsedAt: number;
       }
@@ -50,6 +59,11 @@ export interface ExternalEngineProcessPool {
   refillSpare(key: ExternalEngineSpareKey, launch: () => Promise<AcpConnection>): void;
   trackSession(sessionId: string, session: ExternalEngineTrackedSession): void;
   untrackSession(sessionId: string): void;
+  /**
+   * 整体替换某个上报来源（V4 连接 ID）当前可见的会话；可见集合为各来源的并集，空集即删除该来源。
+   * 可见会话不参与闲置关闭；从未上报的会话视为不可见。
+   */
+  setVisibleSessions(sourceId: string, sessionIds: readonly string[]): void;
   /** 闲置扫描（节拍自动调用；测试可直接调用）。 */
   sweepIdle(): Promise<void>;
   /** CLI 关闭：停止补位与扫描，关闭全部预建会话进程（含仍在准备的）。 */
@@ -61,7 +75,7 @@ export interface ExternalEngineProcessPoolOptions {
   now?: () => number;
   spareIdleMs?: number;
   idleCloseMs?: number;
-  idleExemptCount?: number;
+  draftIdleCloseMs?: number;
   sweepIntervalMs?: number;
 }
 
@@ -90,11 +104,17 @@ export function createExternalEngineProcessPool(
   const now = options.now ?? Date.now;
   const spareIdleMs = options.spareIdleMs ?? EXTERNAL_ENGINE_SPARE_IDLE_MS;
   const idleCloseMs = options.idleCloseMs ?? EXTERNAL_ENGINE_IDLE_CLOSE_MS;
-  const exemptCount = options.idleExemptCount ?? EXTERNAL_ENGINE_IDLE_EXEMPT_COUNT;
+  const draftIdleCloseMs = options.draftIdleCloseMs ?? EXTERNAL_ENGINE_DRAFT_IDLE_CLOSE_MS;
   const sweepIntervalMs = options.sweepIntervalMs ?? EXTERNAL_ENGINE_IDLE_SWEEP_INTERVAL_MS;
   const logger = options.logger;
   const spares = new Map<string, SpareEntry>();
   const sessions = new Map<string, ExternalEngineTrackedSession>();
+  /** 上报来源（V4 连接 ID）→ 该来源可见的会话；Renderer 事实的 CLI 侧副本，只用于闲置豁免。 */
+  const visibleBySource = new Map<string, ReadonlySet<string>>();
+  const isVisible = (sessionId: string) => {
+    for (const visible of visibleBySource.values()) if (visible.has(sessionId)) return true;
+    return false;
+  };
   let sweepTimer: ReturnType<typeof setInterval> | undefined;
   let sweeping: Promise<void> | undefined;
   let closed = false;
@@ -138,22 +158,22 @@ export function createExternalEngineProcessPool(
     // 同一时刻只跑一轮扫描；释放是异步的，上一轮未完成时不能用旧事实重复关闭。
     sweeping ??= (async () => {
       const observedAt = now();
-      const connected = [...sessions.entries()]
-        .map(([sessionId, session]) => ({ sessionId, session, facts: session.readConnection() }))
-        .filter(
-          (item): item is typeof item & { facts: NonNullable<typeof item.facts> } =>
-            item.facts?.resumable === true,
-        )
-        .map((item) => ({
-          ...item,
-          lastUsedAt: item.facts.busy ? observedAt : item.facts.lastUsedAt,
-        }))
-        .sort((left, right) => right.lastUsedAt - left.lastUsedAt);
-      for (const item of connected.slice(exemptCount)) {
+      // 2026-11-08 起只豁免可见会话（取代“最近 3 个可恢复会话”，该名额按每个 CLI 计，生产上
+      // 5 天 0 次关闭）；草稿也参与关闭，窗口更短。在途操作（含运行中 prompt 的待处理权限）不关。
+      const candidates = [...sessions.entries()].map(([sessionId, session]) => ({
+        sessionId,
+        session,
+        facts: session.readConnection(),
+      }));
+      for (const item of candidates) {
         if (closed) break;
-        if (item.facts.busy || observedAt - item.lastUsedAt < idleCloseMs) continue;
+        const facts = item.facts;
+        if (!facts || facts.busy || isVisible(item.sessionId)) continue;
+        const idleMs = observedAt - facts.lastUsedAt;
+        if (idleMs < (facts.resumable ? idleCloseMs : draftIdleCloseMs)) continue;
         if (sessions.get(item.sessionId) !== item.session) continue;
-        const idleMs = observedAt - item.lastUsedAt;
+        // 释放是异步的；await 前同一会话可能刚变为可见，按最新可见事实再确认一次。
+        if (isVisible(item.sessionId)) continue;
         if (await item.session.releaseIdle())
           logger?.info("External engine idle adapter closed", {
             module: LOG_MODULE,
@@ -161,6 +181,7 @@ export function createExternalEngineProcessPool(
             engine: item.session.engine,
             sessionId: item.sessionId,
             idleMs,
+            kind: facts.resumable ? "prompted" : "draft",
           });
       }
     })().finally(() => {
@@ -249,9 +270,14 @@ export function createExternalEngineProcessPool(
       sessions.delete(sessionId);
       stopSweepIfIdle();
     },
+    setVisibleSessions(sourceId, sessionIds) {
+      if (sessionIds.length === 0) visibleBySource.delete(sourceId);
+      else visibleBySource.set(sourceId, new Set(sessionIds));
+    },
     sweepIdle,
     async close() {
       closed = true;
+      visibleBySource.clear();
       stopSweepIfIdle();
       const entries = [...spares.values()];
       await Promise.all(

@@ -181,6 +181,12 @@ export interface AgentRuntimeConfig {
     browserDocumentationRoot?: string;
   };
   modelAnomalyGuard?: Partial<ModelAnomalyGuardConfig>;
+  /**
+   * 草稿（协议 server 以 deferred 持久化创建、尚未发送）为 true：构造与 context 初始化不启动
+   * MCP，首次发送 / compact / 插件引用经 initializeMcp 时才按 lazy 规则启动。
+   * 规则见 docs/desktop/engine-performance-1.1-spec.md §1「草稿不触发 MCP」。
+   */
+  deferMcpStartupUntilFirstUse?: boolean;
   mcp?: {
     enabled?: boolean;
     servers?: Record<string, McpServerConfig>;

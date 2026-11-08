@@ -136,6 +136,7 @@ import { AttachmentUploadRegistry } from "./attachment-upload-registry.js";
 import {
   ColdSessionResumeCoordinator,
   V4SubscribeSessionUnavailableError,
+  type ColdSessionResumeHooks,
   type ColdSessionResumeOutcome,
 } from "./cold-session-resume.js";
 import { CommandInbox } from "./command-inbox.js";
@@ -232,6 +233,7 @@ export interface V4GatewayHost {
     workspace?: ZCodeWorkspaceRef,
     additionalDirectories?: string[],
     persistedMessages?: MessageWithParts[],
+    hooks?: ColdSessionResumeHooks,
   ): Promise<ColdSessionResumeOutcome>;
   /**
    * 下行物理帧出口（宿主负责投递：stdio notification / MessagePort / ws）。
@@ -455,7 +457,38 @@ export interface V4GatewayHost {
   ): Promise<PersistedEventsLoadResult>;
   /** 仅用于低频生命周期和恢复裁决；高频 event/stream trace 禁止走生产日志。 */
   onDebug?(message: string): void;
+  /**
+   * 低频性能事件（info，生产可落盘）：每次冷打开至多两条，字段只含耗时、计数、枚举与会话 ID，
+   * 不含正文与路径（docs/desktop/engine-performance-1.1-spec.md §6）。
+   */
+  onPerf?(event: string, fields: Record<string, string | number | boolean>): void;
   onError?(scope: string, error: unknown, context?: V4GatewayErrorContext): void;
+}
+
+/** 冷打开各阶段耗时（P11 打点）；hydration 由 performHydration 记录，打开阶段由入口记录。 */
+interface HydrationTiming {
+  loadEventsMs: number;
+  rehydrateMs: number;
+  replayMs: number;
+  seedUsageMs: number;
+  hydrateMs: number;
+  eventCount: number;
+  synthesized: boolean;
+}
+
+interface ColdOpenTiming {
+  loadMessagesMs?: number;
+  resumeMs?: number;
+  messageCount?: number;
+  partCount?: number;
+}
+
+function countParts(messages: readonly MessageWithParts[] | undefined): number {
+  return messages?.reduce((total, message) => total + message.parts.length, 0) ?? 0;
+}
+
+function elapsedMs(startedAt: number): number {
+  return Math.max(0, Math.round(performance.now() - startedAt));
 }
 
 export interface ConversationV4GatewayOptions {
@@ -607,10 +640,19 @@ export class ConversationV4Gateway {
     string,
     {
       history: Promise<ConversationTopicPublisher>;
+      /**
+       * 会话 record 已入册（或本次打开已结束）。journal 只读据此不必等待含外部引擎握手的 READY
+       * （P4，docs/design/v2/zcode-protocol-agent-server.md「会话只读不排队」）。
+       */
+      recordRegistered: Promise<void>;
       start: () => void;
       cancel: () => void;
     }
   >();
+  /** 最近一次 hydration 的阶段耗时（P11）；由冷打开打点取走。 */
+  private readonly hydrationTimings = new Map<string, HydrationTiming>();
+  /** 冷打开入口阶段（读 messages / 冷恢复）耗时（P11）；由冷打开打点取走。 */
+  private readonly coldOpenTimings = new Map<string, ColdOpenTiming>();
   private readonly readyFlights = new Map<string, Promise<ConversationTopicPublisher>>();
   /** load await 窗口内的 raw accepted events；重建后按 cursor/eventId 补回。 */
   private readonly hydrationBuffers = new Map<string, HydrationBuffer>();
@@ -1499,6 +1541,11 @@ export class ConversationV4Gateway {
     // - 有 publisher 且事件日志完整（流式 live）→ 保留，重放会双计且打断流。
     const restoreStartedAt = performance.now();
     const existingReady = this.readyFlights.get(sessionId);
+    if (!isLiveConversation && !existingReady && !this.historyOpenings.has(sessionId)) {
+      // 本次订阅将发起冷打开：丢弃其它读路径留下的阶段计时，避免把旧 hydration 记到这次打开上。
+      this.hydrationTimings.delete(sessionId);
+      this.coldOpenTimings.delete(sessionId);
+    }
     const historyFirst = params.historyFirst === true && Boolean(this.host.loadPersistedMessages);
     const initialState = this.publishers.get(sessionId)?.getSnapshot().runtimeInitialization;
     if (!historyFirst && initialState?.status === "failed") {
@@ -1582,6 +1629,10 @@ export class ConversationV4Gateway {
       result.rollback();
       throw error;
     }
+    if (!isLiveConversation)
+      this.logColdOpen(sessionId, historyFirst, restoreStartedAt, publisher, {
+        snapshotEncodeMs: elapsedMs(initialFrameEncodeStartedAt),
+      });
     // encode 成功后 replacement 才 admission；此时再清旧调度状态，失败路径不碰旧 owner。
     for (const [staleRouteKey, staleState] of this.flushStates) {
       if (staleState.sessionId !== sessionId) continue;
@@ -1601,6 +1652,33 @@ export class ConversationV4Gateway {
       timer: null,
     });
     return dispatch;
+  }
+
+  /**
+   * P11：冷订阅首帧前各阶段耗时（info，无正文）。依据：2026-11-07 生产日志 4389 parts 会话
+   * history-first 订阅 4918ms、无排队，原有 session_snapshot.slow 不覆盖 V4 订阅，无法定位阶段。
+   */
+  private logColdOpen(
+    sessionId: string,
+    historyFirst: boolean,
+    restoreStartedAt: number,
+    publisher: ConversationTopicPublisher,
+    frame: { snapshotEncodeMs: number },
+  ): void {
+    if (!this.host.onPerf) return;
+    const open = this.coldOpenTimings.get(sessionId);
+    const hydration = this.hydrationTimings.get(sessionId);
+    this.coldOpenTimings.delete(sessionId);
+    this.hydrationTimings.delete(sessionId);
+    const fields: Record<string, string | number | boolean> = {
+      sessionId,
+      path: historyFirst ? "historyFirst" : "coldReady",
+      rowCount: publisher.getSnapshot().rows.totalCount,
+      totalMs: elapsedMs(restoreStartedAt),
+    };
+    for (const [key, value] of Object.entries({ ...open, ...hydration, ...frame }))
+      if (value !== undefined) fields[key] = value;
+    this.host.onPerf("zcode_protocol.v4.subscribe.cold_open", fields);
   }
 
   /**
@@ -1702,17 +1780,7 @@ export class ConversationV4Gateway {
    */
   async rowsRange(rawParams: unknown): Promise<V4ConversationRowsRangeResult> {
     const params = v4ConversationRowsRangeParamsSchema.parse(rawParams);
-    const existingReady = this.readyFlights.get(params.sessionId);
-    const publisher = this.historyOpenings.has(params.sessionId)
-      ? await this.historyOpenings.get(params.sessionId)!.history
-      : this.publishers.get(params.sessionId)?.getSnapshot().runtimeInitialization?.status ===
-          "failed"
-        ? this.publishers.get(params.sessionId)!
-        : existingReady
-          ? await existingReady
-          : !this.hasLiveConversation(params.sessionId)
-            ? await this.ensureColdReadyPublisher(params.sessionId)
-            : await this.hydratePublisher(params.sessionId);
+    const publisher = await this.readablePublisher(params.sessionId);
     return publisher.getRowsRange(
       {
         ...(params.beforeRowId !== undefined ? { beforeRowId: params.beforeRowId } : {}),
@@ -1723,16 +1791,46 @@ export class ConversationV4Gateway {
     );
   }
 
-  /** 完整有效 projection 的终态计划目录；冷会话复用订阅 hydration。 */
+  /**
+   * 完整有效 projection 的终态计划目录；冷会话复用订阅 hydration。
+   * P4 修复：history-first 打开期间曾等待含外部引擎握手的 READY（生产 16450ms，并在会话分道里
+   * 挡住其后的 rowsRange 16465ms）；现与 rowsRange 一样读 history publisher（已持久化数据）。
+   */
   async plans(rawParams: unknown): Promise<V4ConversationPlansResult> {
     const params = v4ConversationPlansParamsSchema.parse(rawParams);
-    const existingReady = this.readyFlights.get(params.sessionId);
-    const publisher = existingReady
-      ? await existingReady
-      : !this.hasLiveConversation(params.sessionId)
-        ? await this.ensureColdReadyPublisher(params.sessionId)
-        : await this.hydratePublisher(params.sessionId);
-    return publisher.getPlans();
+    return (await this.readablePublisher(params.sessionId)).getPlans();
+  }
+
+  /**
+   * 只读 projection 的读源（rowsRange / plans）：history-first 打开期间读 history publisher（已持久化
+   * messages + 事件合成的完整投影），初始化失败时读该 publisher，READY 在途时等待它，热会话按需
+   * hydration，冷会话才触发激活。一致性论证见 docs/design/v2/zcode-protocol-agent-server.md
+   * 「会话只读不排队」：恢复握手只投影 connecting/ready 配置，不改历史行。
+   */
+  private async readablePublisher(sessionId: string): Promise<ConversationTopicPublisher> {
+    const opening = this.historyOpenings.get(sessionId);
+    if (opening) return await opening.history;
+    const existing = this.publishers.get(sessionId);
+    if (existing?.getSnapshot().runtimeInitialization?.status === "failed") return existing;
+    const existingReady = this.readyFlights.get(sessionId);
+    if (existingReady) return await existingReady;
+    return !this.hasLiveConversation(sessionId)
+      ? await this.ensureColdReadyPublisher(sessionId)
+      : await this.hydratePublisher(sessionId);
+  }
+
+  /**
+   * 传输层调度判定（同步）：该会话的只读能否越过会话分道。只有读取不会触发新的冷激活时才可越过
+   * ——history-first 打开中、READY 在途、record 已在内存或初始化已失败。冷会话的读取仍进会话
+   * 分道，避免抢在同会话订阅之前触发非 history-first 的冷激活。
+   */
+  canServeSessionRead(sessionId: string): boolean {
+    return (
+      this.historyOpenings.has(sessionId) ||
+      this.readyFlights.has(sessionId) ||
+      this.hasLiveConversation(sessionId) ||
+      this.publishers.get(sessionId)?.getSnapshot().runtimeInitialization?.status === "failed"
+    );
   }
 
   /**
@@ -2024,6 +2122,13 @@ export class ConversationV4Gateway {
    * 双写把序列账搞乱，transcript 从此定格（症状是直播冻结在「已工作 xx 秒」）。
    */
   private async ensureHostRecordForJournalRead(sessionId: string): Promise<void> {
+    // P4：history-first 打开期间只等 record 入册（activateSessionForResume 先入册再 runtime.resume），
+    // 不等含外部引擎握手（生产 14.2s）的 READY。journal 读经 run service 直读 SQLite，不依赖恢复进度。
+    const opening = this.historyOpenings.get(sessionId);
+    if (opening) {
+      if (!this.host.sessionExists(sessionId)) await opening.recordRegistered;
+      if (this.host.sessionExists(sessionId)) return;
+    }
     const ready = this.readyFlights.get(sessionId);
     if (ready) await ready;
     if (this.publishers.get(sessionId)?.getSnapshot().runtimeInitialization?.status === "failed")
@@ -2931,6 +3036,8 @@ export class ConversationV4Gateway {
     this.hydrationInFlight.delete(sessionId);
     this.readyFlights.delete(sessionId);
     this.historyOpenings.get(sessionId)?.cancel();
+    this.hydrationTimings.delete(sessionId);
+    this.coldOpenTimings.delete(sessionId);
     this.rawSequenceStates.delete(sessionId);
     if (options.clearCommandInbox) this.inbox.clearSession(sessionId);
     this.telemetryNormalizer.clearSession(sessionId);
@@ -2985,6 +3092,8 @@ export class ConversationV4Gateway {
     this.readyFlights.clear();
     for (const opening of this.historyOpenings.values()) opening.cancel();
     this.historyOpenings.clear();
+    this.hydrationTimings.clear();
+    this.coldOpenTimings.clear();
     this.rawSequenceStates.clear();
     this.telemetryEventIds.clear();
     this.detachedLiveSessions.clear();
@@ -3074,6 +3183,13 @@ export class ConversationV4Gateway {
     // 没有旧客户端等待时失败也由状态条消费，避免无人 await 的 rejection。
     void ready.catch(() => undefined);
     this.readyFlights.set(sessionId, ready);
+    // record 入册信号：恢复钩子先到则提前放行；打开以任何方式结束（就绪、失败、取消）也放行，
+    // 等待方随后按 sessionExists / READY 结果裁决，不会悬挂在一个永不触发的信号上。
+    let markRecordRegistered!: () => void;
+    const recordRegistered = new Promise<void>((resolve) => {
+      markRecordRegistered = resolve;
+    });
+    void ready.then(markRecordRegistered, markRecordRegistered);
     let messages: MessageWithParts[] | undefined;
     let started = false;
     const clear = () => {
@@ -3086,9 +3202,16 @@ export class ConversationV4Gateway {
         rejectReady(new Error("cold opening disposed"));
         clear();
       },
+      recordRegistered,
       history: Promise.resolve()
         .then(async () => {
+          const loadStartedAt = performance.now();
           messages = await this.host.loadPersistedMessages!(sessionId);
+          this.coldOpenTimings.set(sessionId, {
+            loadMessagesMs: elapsedMs(loadStartedAt),
+            messageCount: messages.length,
+            partCount: countParts(messages),
+          });
           if (this.disposed || this.historyOpenings.get(sessionId) !== opening)
             throw new Error("cold opening disposed");
           const result = await this.hydratePublisher(sessionId, messages, true);
@@ -3113,6 +3236,7 @@ export class ConversationV4Gateway {
             releaseRuntime = await this.host.retainSessionRuntime?.(sessionId);
             if (this.disposed || this.historyOpenings.get(sessionId) !== opening)
               throw new Error("cold opening disposed");
+            const resumeStartedAt = performance.now();
             const restored = await this.coldResume.ensureResumed(
               sessionId,
               thought,
@@ -3122,11 +3246,23 @@ export class ConversationV4Gateway {
               (outcome) => {
                 disposeOnFailure = outcome.disposeOnFailure;
               },
+              { onRecordRegistered: markRecordRegistered },
             );
+            const resumeMs = elapsedMs(resumeStartedAt);
             if (this.disposed || this.historyOpenings.get(sessionId) !== opening)
               throw new Error("cold opening disposed");
             const result = await this.hydratePublisher(sessionId, restored ?? messages, true);
             this.setInitialization(sessionId, result, { status: "ready", attemptId });
+            const hydration = this.hydrationTimings.get(sessionId);
+            this.hydrationTimings.delete(sessionId);
+            // P11：后台恢复（含外部引擎握手）与就绪重建的耗时，无正文。
+            this.host.onPerf?.("zcode_protocol.v4.subscribe.runtime_ready", {
+              sessionId,
+              resumeMs,
+              rehydrateMs: hydration?.rehydrateMs ?? 0,
+              hydrateMs: hydration?.hydrateMs ?? 0,
+              totalMs: elapsedMs(initializationStartedAt),
+            });
             this.host.onDebug?.(
               `v4 runtime ready session=${sessionId} attempt=${attemptId} runtimeReadyMs=${Math.round(performance.now() - initializationStartedAt)}`,
             );
@@ -3193,12 +3329,18 @@ export class ConversationV4Gateway {
     if (existingFlight) return existingFlight;
     // 先登记同一个 READY，再开始所有耗时工作。
     const operation = Promise.resolve().then(async () => {
+      const resumeStartedAt = performance.now();
       const persistedMessages = await this.coldResume.ensureResumed(
         sessionId,
         resumeThoughtLevel,
         workspace,
         additionalDirectories,
       );
+      this.coldOpenTimings.set(sessionId, {
+        resumeMs: elapsedMs(resumeStartedAt),
+        messageCount: persistedMessages?.length ?? 0,
+        partCount: countParts(persistedMessages),
+      });
       return this.hydratePublisher(sessionId, persistedMessages);
     });
     this.readyFlights.set(sessionId, operation);
@@ -3283,6 +3425,16 @@ export class ConversationV4Gateway {
         `synthesized=${String(loaded.synthesized)} sourceEventSeq=${String(loaded.sourceEventSeq ?? 0)} ` +
         `durationMs=${String(Math.max(0, Math.round(performance.now() - hydrationStartedAt)))}`,
     );
+    // P11：分阶段计时（无正文），由冷打开打点取走；4389 parts 会话生产订阅 4.9s 时无法区分阶段。
+    const timing: HydrationTiming = {
+      loadEventsMs: elapsedMs(hydrationStartedAt),
+      rehydrateMs: 0,
+      replayMs: 0,
+      seedUsageMs: 0,
+      hydrateMs: 0,
+      eventCount: loaded.events.length,
+      synthesized: loaded.synthesized,
+    };
 
     if (this.disposed || buffer.cancelled) {
       throw new Error(`v4 hydration cancelled for session ${sessionId}`);
@@ -3307,12 +3459,16 @@ export class ConversationV4Gateway {
       if (loaded.sharedContextImport) {
         latestPublisher.seedSharedContextImport(loaded.sharedContextImport);
       }
+      const seedUsageStartedAt = performance.now();
       await this.seedPublisherUsage(
         sessionId,
         latestPublisher,
         persistedMessages,
         loaded.usageSeed,
       );
+      timing.seedUsageMs = elapsedMs(seedUsageStartedAt);
+      timing.hydrateMs = elapsedMs(hydrationStartedAt);
+      this.hydrationTimings.set(sessionId, timing);
       this.hydratedSessions.add(sessionId);
       this.publishCurrentSummaryToIndex(sessionId);
       return latestPublisher;
@@ -3329,6 +3485,7 @@ export class ConversationV4Gateway {
         `conversation projection rehydrated while waiting for event commit: ${sessionId}`,
       ),
     );
+    const rehydrateStartedAt = performance.now();
     publisher.rehydrate(loaded.events, {
       // 恢复时 transcript/event store 可能仍含运行期已拒绝的超大正文。不能让同一事实
       // 在 CLI 重启后再次把 subscribe 卡死；跳过该不可传输 projection event，继续归约
@@ -3345,6 +3502,8 @@ export class ConversationV4Gateway {
     if (loaded.subagentsSeed) publisher.seedSubagents(loaded.subagentsSeed);
     // 同次恢复的种子先应用，再补 live buffer；较新的使用量和选模事件始终获胜。
     if (loaded.usageSeed) publisher.seedUsage(loaded.usageSeed);
+    timing.rehydrateMs = elapsedMs(rehydrateStartedAt);
+    const replayStartedAt = performance.now();
     const sourceEventSeq = Math.max(
       0,
       loaded.sourceEventSeq ??
@@ -3420,9 +3579,12 @@ export class ConversationV4Gateway {
     // （reconcileResumedRuntimeSettings），而合成/持久化事件里可能没有 ModelSelected——
     // 种子只填事件未触碰的字段，日志有值时以日志为准（冷恢复口径）。
     this.seedPublisherConfig(sessionId, publisher);
+    timing.replayMs = elapsedMs(replayStartedAt);
+    const seedUsageStartedAt = performance.now();
     if (loaded.usageSeed === undefined) {
       await this.seedPublisherUsage(sessionId, publisher, persistedMessages);
     }
+    timing.seedUsageMs = elapsedMs(seedUsageStartedAt);
     for (const [routeKey, state] of this.flushStates) {
       if (state.sessionId !== sessionId) continue;
       if (!publisher.hasSubscription(state.subscriptionId, state.connectionId)) continue;
@@ -3443,6 +3605,8 @@ export class ConversationV4Gateway {
         this.scheduleFlush(routeKey, state, publisher);
       }
     }
+    timing.hydrateMs = elapsedMs(hydrationStartedAt);
+    this.hydrationTimings.set(sessionId, timing);
     this.hydratedSessions.add(sessionId);
     this.publishCurrentSummaryToIndex(sessionId);
     return publisher;

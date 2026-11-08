@@ -45,13 +45,14 @@ sequenceDiagram
 - `createSession`（外部引擎）调用 `AgentRuntime.startExternalEngineSessionPreparation({connectionProfileId?})`：同步绑定所选连接配置，复用 `prepareExternalEngineSession` 的 single-flight，在 `ExternalEngineConfigUpdated(connecting)` 写入后返回；握手结果只经 `engineConfigState` 投影 ready / error，后台拒绝不再冒泡到 ACK。发布 connecting 前的失败仍删除 deferred 记录并 ACK failed。Runtime 进入 `shuttingDown` 后，迟到的 `onConfigOptions` 与错误不再发布。
 - `ExternalEngineProcessPool`（`adapters/src/external-engine/process-pool.ts`）由协议 server 为每个 CLI 进程创建，经 `ZCodeAppOptions.externalEngineProcessPool` 注入各会话 app 的 `createExternalEnginePort`；`server.shutdown()` 调用 `pool.close()`。TUI、headless 与测试连接不传 pool，行为与 1.0.x 相同。
 - 预建会话（2026-11-08 起取代只 initialize 的备用进程）键为（engine, connectionProfileId, cwd）；预建时完成 spawn、`initialize`（含连接级 setup）、该 cwd 的 `session/new` 与新会话默认配置（Claude Auto），缓存 `session/new` 响应、配置选项与领用前到达的通知，从不提交 prompt。只在新会话时领用（同步、健康、键一致），领用前已按会话完成连接配置解析与 `onConnectionProfile` 持久化；领用后 `execute()` 跳过 initialize 与 `session/new`，以缓存的原生会话 ID 调用 `onSession`，再按原规则下发会话自带的 `configValues` 并 `onConfigOptions`。补位在该键的新会话就绪后后台进行，至多一个；10 分钟未领用关闭；失败只写日志。实现为 `AcpConnection.prebuild(engine, cwd)`：不调用任何会话回调，领用前 `sessionReady` 保持 false，期间的通知留在初始通知缓冲；领用时 `handshake.completed` 的 `initializeMs` 为 0，`sessionMs` 只含 `onSession` 持久化耗时。2026-11-08 本机实测两家未提交 prompt 的会话关闭后都不写原生会话历史，adapter 不做关闭清理。规则与依据见根仓 docs/desktop/external-agent-engines-spec.md「预建会话」。
-- 闲置关闭：port 按会话记录在途计数、最近使用时间与“可恢复”（resume/load 建立或已提交过 prompt）；pool 每 60 秒扫描，关闭满 15 分钟、不在最近 3 个可恢复会话内、无在途操作的连接。只关闭进程，Runtime 状态不变；下次 turn / 配置沿既有恢复路径重连。
+- 闲置关闭（2026-11-08 起，取代最近 3 个豁免与草稿不关闭）：port 按会话记录在途计数、最近使用时间与原生会话类别（可恢复 = resume/load/fork 建立或已提交过 prompt；草稿 = 经 `session/new` 或领用预建会话建立且从未提交 prompt）；pool 每 60 秒扫描，关闭**不可见**、无在途操作、可恢复会话闲置满 15 分钟 / 草稿闲置满 10 分钟的连接。只关闭进程，Runtime 状态不变；可恢复会话下次 turn / 配置沿既有恢复路径 resume，草稿的下一次准备由 port 忽略 Runtime 传入的旧 `externalSessionId` 改走 `session/new`（可领用预建会话），经 `onSession` 交回新 ID 并按 `configValues` 恢复配置。
+- 可见性：协议 server 收到 `v4/conversation/visibility {connectionId, visibleSessionIds}`（收到即处理，不进分道）后调用 `pool.setVisibleSessions(connectionId, ids)`，整体替换该连接的上报；可见集合为各连接并集；`v4/connection/flow state=closed` 时以空集删除该连接的上报。从未上报时视为不可见。产品规则与默认值理由见根仓 docs/desktop/external-agent-engines-spec.md「可见性输入」。
 - 常驻池 `DEFAULT_SESSION_RESIDENT_IDLE_TIMEOUT_MS` 改为 30 分钟。
 - V4 `setEngineConfigOption` 的 ACK 结果（2026-11-08 起）为 `{ type: "setEngineConfigOption", engineConfigOptions }`，即 `runtime.setEngineConfigOption` 发布配置后的确认列表。依据：草稿首发要等本机记忆恢复收口，引擎接受却保留旧值时只靠后续 snapshot 无法区分"帧未到"与"未生效"，首发会一直等待；Renderer 改按 ACK 结果推进恢复。schema 见 `packages/shared/src/zcode-protocol-v4/command.ts`，旧客户端按可选字段读取。
 - 不新增环境变量；时间与数量常量在 pool 内具名定义，测试经 options 覆盖。
-- 性能事件（info，无正文）：`external_engine.handshake.completed|failed`、`external_engine.spare.claimed|miss|ready|expired|failed`、`external_engine.idle_close`、`external_engine.idle_resume.completed|failed`。
+- 性能事件（info，无正文）：`external_engine.handshake.completed|failed`、`external_engine.spare.claimed|miss|ready|expired|failed`、`external_engine.idle_close`（含 `kind`：prompted / draft）、`external_engine.idle_resume.completed|failed`。
 
-验收：受控 ACP 夹具覆盖 ACK 先于握手、后台 ready/error、握手中关闭、预建会话领用/补位/过期/配置隔离（P09：领用不再 initialize 与 `session/new`、取得预建 ID 与配置、已保存配置领用后下发、领用前通知交给会话）、闲置关闭后透明恢复（ID 与配置保留、prompt 只发一次）、最近 3 个豁免与草稿不关闭、关闭 pool 清理备用进程。
+验收：受控 ACP 夹具覆盖 ACK 先于握手、后台 ready/error、握手中关闭、预建会话领用/补位/过期/配置隔离（P09：领用不再 initialize 与 `session/new`、取得预建 ID 与配置、已保存配置领用后下发、领用前通知交给会话）、闲置关闭后透明恢复（ID 与配置保留、prompt 只发一次）、可见豁免与草稿 10 分钟关闭、草稿关闭后再准备走 `session/new`（不 resume、可领用预建会话、新 ID 交回 Runtime）、关闭 pool 清理备用进程。
 
 ## 原生子智能体（2026-11，1.1.0）
 

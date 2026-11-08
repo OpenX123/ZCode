@@ -14,6 +14,37 @@ export {
 } from "../session-execution/index.js";
 
 /**
+ * 协议 server 的会话 record 注册表（唯一注册表，常驻池与所有创建 / 恢复 / 分叉 / 关闭 / 去激活路径共用）。
+ * record 数变化时同步回调，供 `process/residentSessions` 通知 Host：Host 回收工作区 CLI 需要“0 个常驻
+ * 会话”的事实，此前 CLI 不暴露，Host 只能失败关闭地近似（承载过会话的 CLI 本代永不回收）。
+ * 同一 ID 的替换不改变数量，不回调。
+ */
+export class ResidentSessionRegistry<Record> extends Map<string, Record> {
+  constructor(private readonly onSizeChange: (size: number) => void) {
+    super();
+  }
+
+  override set(sessionId: string, record: Record): this {
+    const before = this.size;
+    super.set(sessionId, record);
+    if (this.size !== before) this.onSizeChange(this.size);
+    return this;
+  }
+
+  override delete(sessionId: string): boolean {
+    const deleted = super.delete(sessionId);
+    if (deleted) this.onSizeChange(this.size);
+    return deleted;
+  }
+
+  override clear(): void {
+    const before = this.size;
+    super.clear();
+    if (before !== 0) this.onSizeChange(0);
+  }
+}
+
+/**
  * 只释放 resident runtime，不删除任何持久 session/task 事实。
  *
  * 若先 await app.close，再从 registry 摘除，新的 cold subscribe 会在 await

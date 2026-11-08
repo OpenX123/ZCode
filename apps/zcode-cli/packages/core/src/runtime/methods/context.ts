@@ -69,7 +69,9 @@ export async function ensureContextInitialized(
   // Bash cd 之后 workingDirectory 会变化，但 workspaceRoot 仍表示会话初始工作区边界。
   this.workspaceRoot = snapshot.workingDirectory;
   this.contextSourceSnapshot = snapshot;
-  this.startMcpStartup(traceContext);
+  // 草稿的 context 初始化可能来自 / 技能目录等只读入口，不能因此拉起 MCP；首次发送的 turn 仍会经
+  // initializeMcp 启动（startMcpStartup 幂等）。
+  if (!this.config.deferMcpStartupUntilFirstUse) this.startMcpStartup(traceContext);
   this.skillLoadOutcome = await this.discoverSkillsForContext(traceContext);
   this.memoryRoot = await this.loadProjectMemoryRoot(traceContext);
   this.memoryIndexContent = await loadProjectMemoryIndexContent(

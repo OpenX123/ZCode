@@ -122,6 +122,10 @@ export class AcpConnection {
   get healthy(): boolean {
     return !this.failure;
   }
+  /** 已建立（或领用）的原生会话 ID；port 据此记录“从未提交 prompt 的草稿原生会话”。 */
+  get nativeSessionId(): string | undefined {
+    return this.prebuilt ? undefined : this.externalSessionId;
+  }
   private diagnose(event: string, sessionId: unknown): void {
     this.active?.onDiagnostic?.(event, { nativeSessionId: String(sessionId) });
   }

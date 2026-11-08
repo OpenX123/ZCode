@@ -53,6 +53,12 @@ interface SessionActivity {
   inFlight: number;
   lastUsedAt: number;
   resumable: boolean;
+  /**
+   * 本 port 经 session/new（或领用预建会话）建立、尚未提交过 prompt 的原生会话 ID（草稿）。
+   * 从未 prompt 的原生会话可能无法 resume（2026-11-08 本机实测两家都不写原生历史），连接不在时
+   * 下一次准备若仍拿到这个 ID，必须改走 session/new；提交第一个 prompt 后清除。
+   */
+  draftNativeSessionId?: string;
   idleClosedAt?: number;
 }
 
@@ -229,6 +235,7 @@ export function createExternalEnginePort(
       }
       if (established) {
         activity.resumable = Boolean(input.externalSessionId) || mode === "fork";
+        activity.draftNativeSessionId = activity.resumable ? undefined : connection.nativeSessionId;
         const handshake = connection.lastHandshake;
         const setupMs = providersSetMs.get(connection);
         logger?.info("External engine handshake completed", {
@@ -295,10 +302,18 @@ export function createExternalEnginePort(
     const signal = AbortSignal.any([input.signal, controller.signal]);
     const preparing = { controller, promise: Promise.resolve() };
     preparations.set(input.sessionId, preparing);
-    const idleClosedAt = activities.get(input.sessionId)?.idleClosedAt;
+    const activity = activities.get(input.sessionId);
+    const idleClosedAt = activity?.idleClosedAt;
     const startedAt = Date.now();
+    // 草稿（从未提交 prompt）的连接被闲置关闭或进程退出后，Runtime 仍持有旧原生 ID；旧会话可能
+    // 无法 resume，规则要求改走新的 session/new（可领用预建会话），经 onSession 把新 ID 交回 Runtime。
+    // 只丢弃本 port 确认过的草稿 ID：持久化会话或其它来源的 ID 仍按原会话恢复。
+    const discardDraftNativeSession =
+      input.externalSessionId !== undefined &&
+      activity?.draftNativeSessionId === input.externalSessionId &&
+      sessions.get(input.sessionId)?.healthy !== true;
     preparing.promise = (async () => {
-      let externalSessionId = input.externalSessionId;
+      let externalSessionId = discardDraftNativeSession ? undefined : input.externalSessionId;
       let connectionProfileId = input.connectionProfileId;
       for (let attempt = 0; ; attempt++) {
         signal.throwIfAborted();
@@ -410,7 +425,10 @@ export function createExternalEnginePort(
       return execute(input, (connection) => {
         // 提交过 prompt 的原生会话已落盘，闲置关闭后可经 resume 恢复。
         const activity = activities.get(input.sessionId);
-        if (activity) activity.resumable = true;
+        if (activity) {
+          activity.resumable = true;
+          activity.draftNativeSessionId = undefined;
+        }
         return connection.run(input);
       });
     },

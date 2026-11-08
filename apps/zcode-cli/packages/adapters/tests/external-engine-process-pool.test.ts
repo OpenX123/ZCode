@@ -1,4 +1,4 @@
-// 外部引擎进程池：预建会话（spare）与闲置连接关闭（docs/desktop/external-agent-engines-spec.md P04–P07、P09）。
+// 外部引擎进程池：预建会话（spare）与闲置连接关闭（docs/desktop/external-agent-engines-spec.md P04–P07、P09、P13）。
 // 真实 stdio 子进程 + 磁盘调用日志（含 pid），验证进程归属而非模拟内部实现。
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
@@ -433,10 +433,7 @@ describe("闲置连接关闭", () => {
   test.each(["claude-code", "codex"] as const)(
     "%s 关闭空闲 adapter 后下一轮按原会话恢复已确认配置，prompt 只发一次",
     async (engine) => {
-      const { pool, log, openPort, calls } = await setup([engine], {
-        now: later,
-        idleExemptCount: 0,
-      });
+      const { pool, log, openPort, calls } = await setup([engine], { now: later });
       const port = openPort("s1");
       let externalSessionId: string | undefined;
       const turn = () =>
@@ -472,32 +469,169 @@ describe("闲置连接关闭", () => {
     },
   );
 
-  test("最近 3 个可恢复会话与未 prompt 的草稿不关闭，运行中的会话不关闭", async () => {
+  // 2026-11-08 用户决策：取消“每个 CLI 最近 3 个可恢复会话”豁免，只豁免当前可见的会话
+  // （扫描证据：发过 prompt 的会话 1.48GB 五天 0 次 idle_close）。
+  test("不可见的会话闲置 15 分钟后关闭，只豁免可见会话；可见集合按连接整体替换并取并集", async () => {
     const { pool, log, openPort } = await setup(["codex"], { now: later });
-    const draft = openPort("draft");
-    await draft.prepareSession(input("draft", "codex"));
-    const ports = [];
+    const ports = new Map<string, ReturnType<typeof openPort>>();
     for (const id of ["s1", "s2", "s3", "s4"]) {
       const port = openPort(id);
       await port.runTurn(input(id, "codex"));
-      ports.push(port);
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      ports.set(id, port);
     }
+    const connected = () =>
+      [...ports].filter(([id, port]) => port.isSessionConnected?.(id)).map(([id]) => id);
+    pool.setVisibleSessions("conn-a", ["s2"]);
+    pool.setVisibleSessions("conn-b", ["s3"]);
     await pool.sweepIdle();
-    expect(log.named("external_engine.idle_close").map((item) => item.context.sessionId)).toEqual([
-      "s1",
+    expect(connected()).toEqual(["s2", "s3"]);
+    expect(
+      log
+        .named("external_engine.idle_close")
+        .map((item) => [item.context.sessionId, item.context.kind]),
+    ).toEqual([
+      ["s1", "prompted"],
+      ["s4", "prompted"],
     ]);
+
+    // 同一连接再次上报是整体替换：conn-a 不再包含 s2；conn-b 的 s3 仍可见。
+    pool.setVisibleSessions("conn-a", []);
+    await pool.sweepIdle();
+    expect(connected()).toEqual(["s3"]);
+    // 连接关闭时以空集删除该连接的上报。
+    pool.setVisibleSessions("conn-b", []);
+    await pool.sweepIdle();
+    expect(connected()).toEqual([]);
+  });
+
+  test("草稿闲置 10 分钟关闭，发过 prompt 的会话要满 15 分钟；未上报可见性按不可见", async () => {
+    let offsetMs = 0;
+    const { pool, log, openPort } = await setup(["codex"], {
+      now: () => Date.now() + offsetMs,
+    });
+    const draft = openPort("draft");
+    await draft.prepareSession(input("draft", "codex"));
+    const prompted = openPort("s1");
+    await prompted.runTurn(input("s1", "codex"));
+
+    offsetMs = 9 * 60 * 1_000;
+    await pool.sweepIdle();
     expect(draft.isSessionConnected?.("draft")).toBe(true);
-    expect(ports.map((port, index) => port.isSessionConnected?.(`s${index + 1}`))).toEqual([
-      false,
-      true,
-      true,
-      true,
+
+    offsetMs = 11 * 60 * 1_000;
+    await pool.sweepIdle();
+    expect(draft.isSessionConnected?.("draft")).toBe(false);
+    expect(prompted.isSessionConnected?.("s1")).toBe(true);
+
+    offsetMs = 16 * 60 * 1_000;
+    await pool.sweepIdle();
+    expect(prompted.isSessionConnected?.("s1")).toBe(false);
+    expect(
+      log
+        .named("external_engine.idle_close")
+        .map((item) => [item.context.sessionId, item.context.kind]),
+    ).toEqual([
+      ["draft", "draft"],
+      ["s1", "prompted"],
     ]);
   });
 
+  test("可见的草稿不关闭", async () => {
+    const { pool, openPort } = await setup(["codex"], { now: later });
+    const draft = openPort("draft");
+    await draft.prepareSession(input("draft", "codex"));
+    pool.setVisibleSessions("conn-a", ["draft"]);
+    await pool.sweepIdle();
+    expect(draft.isSessionConnected?.("draft")).toBe(true);
+  });
+
+  // 从未提交 prompt 的原生会话可能无法 resume（两家未 prompt 的会话关闭后都不写原生历史），
+  // 草稿关闭后的再准备必须是新的 session/new，并可领用同键预建会话。
+  test.each(["claude-code", "codex"] as const)(
+    "%s 草稿闲置关闭后再准备走 session/new（领用预建会话），不 resume，prompt 只发一次",
+    async (engine) => {
+      const { pool, log, openPort, calls } = await setup([engine], { now: later });
+      const port = openPort("draft");
+      let externalSessionId: string | undefined;
+      const draftInput = (extra: Partial<ExternalEngineTurnInput> = {}) =>
+        input("draft", engine, {
+          externalSessionId,
+          configValues: [{ id: "mode", value: "fast" }],
+          async onSession(id) {
+            externalSessionId = id;
+          },
+          ...extra,
+        });
+      await port.prepareSession(draftInput());
+      const draftNativeId = externalSessionId;
+      // 新会话就绪后后台补位一个预建会话。
+      await vi.waitFor(() => expect(log.named("external_engine.spare.ready")).toHaveLength(1));
+
+      await pool.sweepIdle();
+      expect(port.isSessionConnected?.("draft")).toBe(false);
+      expect(log.named("external_engine.idle_close")[0]?.context.kind).toBe("draft");
+
+      await port.runTurn(draftInput());
+      const all = await calls();
+      expect(all.filter((call) => call.method === "session/resume")).toEqual([]);
+      expect(all.filter((call) => call.method === "session/load")).toEqual([]);
+      expect(log.named("external_engine.spare.claimed")).toHaveLength(1);
+      expect(externalSessionId).toBeDefined();
+      expect(externalSessionId).not.toBe(draftNativeId);
+      const prompts = all.filter((call) => call.method === "session/prompt");
+      expect(prompts).toEqual([expect.objectContaining({ sessionId: externalSessionId })]);
+      // 草稿已确认的配置在新原生会话上恢复。
+      expect(
+        all.filter(
+          (call) =>
+            call.method === "session/set_config_option" &&
+            call.pid === prompts[0]!.pid &&
+            call.value === "fast",
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
+  test("草稿 adapter 进程退出后的再准备同样走 session/new；发过 prompt 之后才按原会话 resume", async () => {
+    const { openPort, calls } = await setup(["codex"]);
+    const port = openPort("draft");
+    let externalSessionId: string | undefined;
+    const draftInput = () =>
+      input("draft", "codex", {
+        externalSessionId,
+        async onSession(id) {
+          externalSessionId = id;
+        },
+      });
+    await port.prepareSession(draftInput());
+    const draftPid = (await calls()).find((call) => call.method === "session/new")!.pid;
+    process.kill(draftPid);
+    await vi.waitFor(() => expect(port.isSessionConnected?.("draft")).toBe(false));
+
+    const draftNativeId = externalSessionId;
+    await port.runTurn(draftInput());
+    let all = await calls();
+    expect(all.filter((call) => call.method === "session/resume")).toEqual([]);
+    expect(externalSessionId).not.toBe(draftNativeId);
+    const promptedId = externalSessionId;
+    const promptPid = all.find((call) => call.method === "session/prompt")!.pid;
+    expect(all.filter((call) => call.method === "session/prompt")).toEqual([
+      expect.objectContaining({ sessionId: promptedId }),
+    ]);
+
+    // 提交过 prompt 后原生会话已落盘：进程退出后按原会话 resume。
+    process.kill(promptPid);
+    await vi.waitFor(() => expect(port.isSessionConnected?.("draft")).toBe(false));
+    await port.runTurn(draftInput());
+    all = await calls();
+    expect(all.filter((call) => call.method === "session/resume")).toEqual([
+      expect.objectContaining({ sessionId: promptedId }),
+    ]);
+    expect(externalSessionId).toBe(promptedId);
+  });
+
   test("运行中（等待权限）的会话不关闭，结束后才可关闭", async () => {
-    const { pool, log, openPort } = await setup(["codex"], { now: later, idleExemptCount: 0 });
+    const { pool, log, openPort } = await setup(["codex"], { now: later });
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;

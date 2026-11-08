@@ -28,7 +28,7 @@ import {
   serializeZCodeBuiltinRelease,
 } from "@zcode/provider-node";
 import { ModelConfigRules, ProviderConfigMap, ProviderTemplateMap } from "@zcode/provider";
-import { zcodeStorageStartupStateSchema } from "@zcode/shared";
+import { zcodeProtocolNotifications, zcodeStorageStartupStateSchema } from "@zcode/shared";
 import {
   LogLevel,
   SESSION_ENTRY_BASH_SHELL_SELECTION,
@@ -2888,14 +2888,19 @@ async function createProtocolProviderEnv(root: string): Promise<Record<string, s
 }
 
 function readStorageStartupStates(output: string) {
-  return output
-    .trim()
-    .split("\n")
-    .map((line) => {
-      const message = JSON.parse(line);
-      expect(message.method).toBe("startup/storageState");
-      return zcodeStorageStartupStateSchema.parse(message.params);
-    });
+  return (
+    output
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      // 连接建立后 server 立即发出常驻会话数初始通知（process/residentSessions，2026-11-08），
+      // 排在 storageState ready 之后；它有专门测试覆盖，这里只断言存储启动帧。
+      .filter((message) => message.method !== zcodeProtocolNotifications.processResidentSessions)
+      .map((message) => {
+        expect(message.method).toBe("startup/storageState");
+        return zcodeStorageStartupStateSchema.parse(message.params);
+      })
+  );
 }
 
 async function readLogEntries(logDir: string): Promise<LogEntry[]> {

@@ -124,7 +124,11 @@ it("无人应答在总时限后失败并取消，迟到响应失效且下一请�
   try {
     const server = new ZCodeProtocolAgentServer({ createZCodeApp: vi.fn() });
     const sink = vi.fn();
-    server.setNotificationSink(sink);
+    // 常驻会话数通知另有专门测试；这里只计反向请求与取消通知。
+    server.setNotificationSink((message) => {
+      if ("method" in message && message.method === "process/residentSessions") return;
+      sink(message);
+    });
     const context = (server as unknown as { context: ZCodeProtocolAgentServerContext }).context;
     const port = createProviderRuntimeHeadersPort(context, workspace);
     const input = {

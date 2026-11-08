@@ -9,6 +9,7 @@ import {
   BUILTIN_MODEL_PROVIDER_IDS,
   ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
   zcodeProtocolMethods,
+  zcodeProtocolNotifications,
   zcodeMessagePartSchema,
   zcodeSessionCancelBackgroundTaskResultSchema,
   zcodeSessionCompactResultSchema,
@@ -7863,6 +7864,9 @@ function setTestNotificationSink(
       });
       return;
     }
+    // 常驻会话数通知由 resident-sessions-notification.test.ts 专门覆盖；这里只观察业务通知序列。
+    if (!("id" in message) && message.method === zcodeProtocolNotifications.processResidentSessions)
+      return;
     sink(message);
   });
 }

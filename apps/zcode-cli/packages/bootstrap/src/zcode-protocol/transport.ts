@@ -31,7 +31,7 @@ const REQUEST_QUEUE_WAIT_LOG_THRESHOLD_MS = 50;
 const SLOW_REQUEST_LOG_THRESHOLD_MS = 500;
 const TRANSPORT_LOG_MODULE = "bootstrap.zcode_protocol";
 
-type RequestTimingLane = ProtocolLaneKind | "control" | "immediate";
+type RequestTimingLane = ProtocolLaneKind | "control" | "immediate" | "session-read";
 
 /** 某条分道上最后入队的请求：后来者等 done，控制请求等 started。 */
 interface ProtocolLaneTail {
@@ -47,6 +47,11 @@ interface ZCodeProtocolNdjsonConnectionOptions {
   logger?: Logger;
   /** 单调时钟，仅用于排队与耗时观测；测试可注入。 */
   now?: () => number;
+  /**
+   * 会话只读是否可越过会话分道（server 按 gateway 状态同步判定：该会话已有可读投影或激活在途，
+   * 读取不会触发新的冷激活）。缺省 = 不可越过，只读仍进会话分道（旧行为）。
+   */
+  canServeSessionRead?: (sessionId: string) => boolean;
   onTransportClosed?: (error: Error) => void;
   output: NodeJS.WritableStream;
   takePostResponseMessages?: (
@@ -221,6 +226,21 @@ export class ZCodeProtocolNdjsonConnection {
     }
     const plan = planProtocolDispatch(message);
     const enqueuedAt = this.now();
+    if (plan.kind === "session-read") {
+      // P4 修复：外部引擎会话恢复握手（生产 14.2s）期间，同会话 plans 在分道里等 READY（16450ms），
+      // 其后 rowsRange 排队 16465ms。会话已有可读投影或激活在途时，只读直接读已持久化数据，
+      // 不排在会话分道之后也不阻塞它；冷会话的读取会触发激活，仍按原规则进分道，避免抢在
+      // 同会话订阅之前触发非 history-first 的冷激活。
+      const readable = plan.laneKeys.every((key) =>
+        this.options.canServeSessionRead?.(key.slice(SESSION_LANE_PREFIX.length)),
+      );
+      if (readable) {
+        this.track(this.runTimed(message, "session-read", enqueuedAt));
+        return;
+      }
+      this.enqueueInLanes(message, "session", plan.laneKeys, enqueuedAt);
+      return;
+    }
     if (plan.kind === "immediate") {
       // Bugfix：插件详情与列表曾排在串行队列里，安装 A 下载期间打开详情卡在组件 loading，
       // 新建右侧标签页（新 store 首次加载 list/overview）卡在骨架屏。无会话纯读不依赖前序请求的
@@ -397,6 +417,11 @@ export type ProtocolDispatchPlan =
   | { kind: "immediate" }
   /** 控制面：等这些分道上最后一个请求进入 handler 后旁路执行，不等其完成。 */
   | { kind: "control"; laneKeys: readonly string[] }
+  /**
+   * 会话只读：会话可读（连接注入的判定为真）时收到即处理，不排队也不占分道；否则按
+   * `laneKeys` 进会话分道 FIFO。
+   */
+  | { kind: "session-read"; laneKeys: readonly string[] }
   /** 进入分道：等这些分道的前序请求全部完成后开始，开始前后续同道请求都排在它后面。 */
   | { kind: "lane"; laneKind: ProtocolLaneKind; laneKeys: readonly string[] };
 
@@ -436,6 +461,8 @@ const IMMEDIATE_METHODS = new Set<string>([
   // 连接级流控（saturated/ready/closed）：同步更新本连接的投递状态，必须及时生效，
   // 不能排在长请求之后；它不读写任何会话状态。
   V4_METHODS.connectionFlow,
+  // 会话可见性上报：只整体替换内存中的可见集合（外部引擎闲置豁免依据），不读写会话状态。
+  V4_METHODS.conversationVisibility,
   // 连接测试最长需等待一次真实模型请求，且只使用独立 port 与临时 cwd；排队会阻塞同 workspace
   // 的会话请求，取消请求也会排在测试之后失效，因此二者收到即处理。
   zcodeProtocolMethods.externalEngineTestConnection,
@@ -462,6 +489,30 @@ const MCP_APP_CONTROL_METHODS = new Set<string>([
   zcodeProtocolMethods.mcpUiUnregisterAppTools,
   zcodeProtocolMethods.mcpUiClaimAppToolCall,
   zcodeProtocolMethods.mcpUiResolveAppToolCall,
+]);
+
+/**
+ * 携带 sessionId 的纯读（不写会话状态、不进 CommandInbox）。会话可读时越过会话分道；
+ * 读源与一致性论证见 docs/design/v2/zcode-protocol-agent-server.md「会话只读不排队」。
+ */
+const SESSION_READ_METHODS = new Set<string>([
+  V4_METHODS.conversationRowsRange,
+  V4_METHODS.conversationPlans,
+  V4_METHODS.conversationFileChanges,
+  V4_METHODS.conversationFileRewindPreview,
+  V4_METHODS.backgroundBashOutput,
+  V4_METHODS.conversationUsage,
+  V4_METHODS.conversationAttachmentRead,
+  V4_METHODS.conversationAttachmentStat,
+  V4_METHODS.attachmentRead,
+  V4_METHODS.attachmentPreviewSource,
+  V4_METHODS.conversationWorkflowRuns,
+  V4_METHODS.conversationWorkflowRunEvents,
+  V4_METHODS.conversationWorkflowRunArtifacts,
+  V4_METHODS.conversationWorkflowRunArtifactData,
+  V4_METHODS.conversationWorkflowRunArtifactRead,
+  V4_METHODS.conversationWorkflowRunWorkspace,
+  V4_METHODS.conversationWorkflowRunNodeResult,
 ]);
 
 /** 无状态的长耗时模型/网络调用：彼此保序，但不阻塞全局写，也不被全局写阻塞。 */
@@ -500,6 +551,7 @@ export function planProtocolDispatch(message: ZCodeProtocolMessage): ProtocolDis
   }
   const sessionLaneKeys = collectSessionLaneKeys(method, params);
   if (sessionLaneKeys.length > 0) {
+    if (SESSION_READ_METHODS.has(method)) return { kind: "session-read", laneKeys: sessionLaneKeys };
     return { kind: "lane", laneKind: "session", laneKeys: sessionLaneKeys };
   }
   const topicLaneKey = collectTopicLaneKey(params);
