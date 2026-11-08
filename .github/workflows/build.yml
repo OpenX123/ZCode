@@ -96,7 +96,7 @@ jobs:
         include:
           - os: mac
             arch: arm64
-            runner: macos-14
+            runner: macos-15
           - os: mac
             arch: x64
             runner: macos-15-intel
