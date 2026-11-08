@@ -7,6 +7,7 @@
 // - agentService 换代：远程条目保持 layer/transport 身份并单向切换最新 proxy；
 //   本地 __base__ 用新 service 重建条目。
 import type { IZCodeAgentService } from "@zcode/services";
+import { MAX_VISIBLE_SESSIONS_PER_REPORT } from "@zcode/shared/zcode-protocol-v4";
 import { createAgentConversationTransport } from "@/v4/agentConversationTransport.js";
 import { remoteAgentServiceGeneration } from "@/lib/remoteAgentServiceGeneration.js";
 import { ReplaceableConversationTransport } from "@/v4/replaceableConversationTransport.js";
@@ -44,7 +45,8 @@ export type WorkspaceConnectionAgentService = Pick<
   | "onDynamicConversationFrame"
   | "onDynamicLocalTtftFacts"
   | "onAgentRuntimeRestarted"
->;
+> &
+  Partial<Pick<IZCodeAgentService, "onAgentRuntimeLifecycle" | "reportConversationVisibilityV4">>;
 
 export interface WorkspaceConnectionScope {
   /** = pane 绑定的 primary workspace（连接路由键）。 */
@@ -64,6 +66,11 @@ export interface WorkspaceConnectionLease {
   readonly transport: ConversationTransport;
   /** React commit 后激活本租约携带的远程 service；本地租约为 no-op。 */
   activateRemoteService(): void;
+  /**
+   * 登记某个 pane 当前可见的会话（不可见或无租约传 null）。同一工作区连接的全部 pane 由
+   * 本连接的可见性上报器合并后整体上报（docs/desktop/engine-performance-1.1-spec.md「会话可见性上报」）。
+   */
+  setPaneVisibleSession(ownerKey: string, sessionId: string | null): void;
   release(): void;
 }
 
@@ -74,10 +81,151 @@ interface RegistryEntry {
   transport: ConversationTransport;
   replaceableTransport: ReplaceableConversationTransport | null;
   layer: SessionDataLayer;
+  visibility: ConversationVisibilityReporter;
   refCount: number;
   keepWarmTimer: ReturnType<typeof setTimeout> | null;
   /** 本地 service 换代后被移出注册表的旧条目：末位 lease release 时立即 dispose。 */
   stale: boolean;
+}
+
+type VisibilityDocument = Pick<
+  Document,
+  "visibilityState" | "addEventListener" | "removeEventListener"
+>;
+
+function currentDocument(): VisibilityDocument | undefined {
+  return typeof document === "undefined" ? undefined : document;
+}
+
+/**
+ * 工作区连接的会话可见性上报器（P3，2026-11-08）。
+ *
+ * 修复原因：CLI 以 Renderer 上报的可见集合豁免外部引擎会话的闲置关闭，从未上报一律视为不可见；
+ * 未接入前，正在看的外部引擎会话闲置 15 分钟也会被关闭。CLI 按连接整体替换集合，所以同一工作区
+ * 连接只能有一个上报者，否则多个 pane 各报各的会互相覆盖——本对象就是该连接可见集合的唯一所有者。
+ *
+ * - 可见事实来自 pane 登记（SessionPane 的 paneVisible + 租约）与窗口 document.visibilityState；
+ * - 同一提交周期的变化合并为一次上报（microtask）；集合未变不重报；
+ * - 串行：至多一个在途上报，在途期间的变化在返回后按最新集合补发（后到覆盖先到）；
+ * - 不拉起 CLI：失败（CLI 不在、旧 Host/CLI）只记 debug，不轮询；runtime available 或远端
+ *   proxy 换代后 CLI 侧集合为空，按当前集合重报。
+ */
+class ConversationVisibilityReporter {
+  private readonly owners = new Map<string, string>();
+  /** CLI 侧已确认的集合（排序后 join）；"" = 空集合（CLI 缺省），null = 未知（上次失败）。 */
+  private confirmedKey: string | null = "";
+  private inFlight = false;
+  private pendingAfterFlight = false;
+  private scheduled = false;
+  private disposed = false;
+  private listening = false;
+  private readonly offListeners: Array<() => void> = [];
+
+  constructor(
+    private readonly transport: ConversationTransport,
+    private readonly key: string,
+  ) {}
+
+  set(ownerKey: string, sessionId: string | null): void {
+    if (this.disposed) return;
+    const previous = this.owners.get(ownerKey);
+    if (sessionId === null) this.owners.delete(ownerKey);
+    else this.owners.set(ownerKey, sessionId);
+    if (previous === (sessionId ?? undefined)) return;
+    this.listen();
+    this.schedule();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    for (const off of this.offListeners.splice(0)) off();
+    this.owners.clear();
+  }
+
+  private listen(): void {
+    if (this.listening || !this.transport.reportVisibility) return;
+    this.listening = true;
+    const doc = currentDocument();
+    if (doc) {
+      const onVisibilityChange = () => this.schedule();
+      doc.addEventListener("visibilitychange", onVisibilityChange);
+      this.offListeners.push(() => doc.removeEventListener("visibilitychange", onVisibilityChange));
+    }
+    // 与 sessionsIndexStore 同一模式：有 runtime lifecycle 时只用它判定 CLI 新生；
+    // onRuntimeRestart 只补远端 proxy 换代（新连接上 CLI 侧集合为空）。
+    if (this.transport.onRuntimeLifecycle) {
+      this.offListeners.push(
+        this.transport.onRuntimeLifecycle((state) => {
+          if (state === "available") this.resetConfirmed();
+        }),
+      );
+    }
+    const lifecycleTracked = Boolean(this.transport.onRuntimeLifecycle);
+    this.offListeners.push(
+      this.transport.onRuntimeRestart((reason) => {
+        if (!lifecycleTracked || reason === "transportReplaced") this.resetConfirmed();
+      }),
+    );
+  }
+
+  /** CLI 新生或连接换代：CLI 侧集合已为空，按当前集合重报（当前为空则无需上报）。 */
+  private resetConfirmed(): void {
+    this.confirmedKey = "";
+    this.schedule();
+  }
+
+  private desired(): string[] {
+    if (currentDocument()?.visibilityState === "hidden") return [];
+    const ids = [...new Set(this.owners.values())].sort();
+    if (ids.length > MAX_VISIBLE_SESSIONS_PER_REPORT) {
+      logger.warn("[v4-visibility] 可见会话超过上报上限，截断", {
+        key: this.key,
+        count: ids.length,
+        max: MAX_VISIBLE_SESSIONS_PER_REPORT,
+      });
+      return ids.slice(0, MAX_VISIBLE_SESSIONS_PER_REPORT);
+    }
+    return ids;
+  }
+
+  private schedule(): void {
+    if (this.scheduled || this.disposed) return;
+    this.scheduled = true;
+    queueMicrotask(() => {
+      this.scheduled = false;
+      void this.flush();
+    });
+  }
+
+  private async flush(): Promise<void> {
+    if (this.disposed || !this.transport.reportVisibility) return;
+    if (this.inFlight) {
+      this.pendingAfterFlight = true;
+      return;
+    }
+    const ids = this.desired();
+    const key = ids.join("\n");
+    if (key === this.confirmedKey) return;
+    this.inFlight = true;
+    try {
+      await this.transport.reportVisibility(ids);
+      this.confirmedKey = key;
+    } catch (error) {
+      // CLI 不在（existing-only）或旧 Host/CLI 不支持：不重试；CLI 新生时按当前集合重报。
+      this.confirmedKey = null;
+      logger.debug("[v4-visibility] 可见性上报未送达", {
+        key: this.key,
+        count: ids.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.inFlight = false;
+      if (this.pendingAfterFlight) {
+        this.pendingAfterFlight = false;
+        this.schedule();
+      }
+    }
+  }
 }
 
 const registry = new Map<string, RegistryEntry>();
@@ -99,6 +247,7 @@ function disposeEntry(entry: RegistryEntry): void {
     clearTimeout(entry.keepWarmTimer);
     entry.keepWarmTimer = null;
   }
+  entry.visibility.dispose();
   entry.layer.dispose();
 }
 
@@ -131,6 +280,7 @@ function releaseEntry(entry: RegistryEntry): void {
     if (registry.get(entry.key) === entry) {
       registry.delete(entry.key);
     }
+    entry.visibility.dispose();
     entry.layer.dispose();
     logger.lifecycle.info("v4 workspace connection keep-warm expired", {
       event: "v4.workspace_connection.keep_warm_expired",
@@ -210,6 +360,7 @@ export function acquireWorkspaceConnection(
       transport,
       replaceableTransport,
       layer: new SessionDataLayer({ transport }),
+      visibility: new ConversationVisibilityReporter(transport, key),
       refCount: 1,
       keepWarmTimer: null,
       stale: false,
@@ -254,6 +405,9 @@ export function acquireWorkspaceConnection(
           ...(scope.workspaceIdentity ? { workspaceIdentity: scope.workspaceIdentity } : {}),
         }),
       );
+    },
+    setPaneVisibleSession: (ownerKey, sessionId) => {
+      entry.visibility.set(ownerKey, sessionId);
     },
     release: () => {
       if (released) return;

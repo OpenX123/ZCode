@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   timelineRenders: [] as Array<{ rows: readonly unknown[]; paused: unknown }>,
   releases: [] as Array<ReturnType<typeof vi.fn>>,
   layer: { acquire: vi.fn() },
+  setPaneVisibleSession: vi.fn(),
 }));
 
 const servicesMock = vi.hoisted(() => ({
@@ -47,6 +48,7 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
     layer: mocks.layer,
     sendCommand: vi.fn(),
     workflowRuns: vi.fn(() => new Promise(() => {})),
+    setPaneVisibleSession: mocks.setPaneVisibleSession,
   }),
 }));
 vi.mock("@/store/StoreProvider.js", () => ({
@@ -316,6 +318,7 @@ afterEach(() => {
   mocks.timelineRenders.length = 0;
   mocks.releases.length = 0;
   mocks.layer.acquire.mockReset();
+  mocks.setPaneVisibleSession.mockReset();
   delete (globalThis as { document?: unknown }).document;
   delete (globalThis as { window?: unknown }).window;
   delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: unknown }).IS_REACT_ACT_ENVIRONMENT;
@@ -378,5 +381,53 @@ describe("SessionPane 隐藏面板暂停渲染", () => {
     expect(mocks.releases[0]).not.toHaveBeenCalled();
     await act(async () => root.unmount());
     expect(mocks.releases[0]).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SessionPane 会话可见性登记", () => {
+  it("VR04：可见且持有租约时登记租约 sessionId，隐藏与卸载时登记为空；首次可见前不登记会话", async () => {
+    const store = createFakeStore();
+    mocks.layer.acquire.mockImplementation((sessionId: string) => {
+      const release = vi.fn();
+      mocks.releases.push(release);
+      return { sessionId, openKind: "cold", startedAt: 0, store, release };
+    });
+    const root: Root = createRoot(installMinimalDom());
+    const latestFor = () => {
+      const calls = mocks.setPaneVisibleSession.mock.calls;
+      const owner = calls[0]?.[0] as string | undefined;
+      const own = calls.filter(([key]) => key === owner);
+      return { owner, latest: own.at(-1)?.[1] ?? null, sessions: own.map(([, id]) => id) };
+    };
+
+    await act(async () => {
+      root.render(renderPane(false));
+      await flushMicrotasks();
+    });
+    // 隐藏挂载：没有租约，也就没有可见会话。
+    expect(latestFor().sessions.every((id) => id === null)).toBe(true);
+
+    await act(async () => {
+      root.render(renderPane(true));
+      await flushMicrotasks();
+    });
+    expect(latestFor().latest).toBe("session-1");
+
+    await act(async () => {
+      root.render(renderPane(false));
+      await flushMicrotasks();
+    });
+    expect(latestFor().latest).toBeNull();
+
+    await act(async () => {
+      root.render(renderPane(true));
+      await flushMicrotasks();
+    });
+    expect(latestFor().latest).toBe("session-1");
+
+    await act(async () => root.unmount());
+    expect(latestFor().latest).toBeNull();
+    // 同一 pane 始终用同一个登记键，聚合方据此整体替换该 pane 的贡献。
+    expect(new Set(mocks.setPaneVisibleSession.mock.calls.map(([key]) => key)).size).toBe(1);
   });
 });

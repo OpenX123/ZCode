@@ -153,6 +153,12 @@ export interface ConversationTransport {
    * 避免同一次换代被两条通道各处理一次。承载方未暴露 runtime lifecycle 时本方法不存在。
    */
   onRuntimeLifecycle?(listener: (state: "available" | "unavailable") => void): () => void;
+  /**
+   * 整体替换本连接在该 workspace CLI 上的可见会话集合（docs/desktop/engine-performance-1.1-spec.md
+   * 「会话可见性上报」）。只由工作区连接的可见性上报器调用；不拉起 CLI，CLI 不在时拒绝。
+   * 承载方不支持时不存在。
+   */
+  reportVisibility?(visibleSessionIds: readonly string[]): Promise<void>;
 }
 
 export interface ConversationAttachmentReadParams {

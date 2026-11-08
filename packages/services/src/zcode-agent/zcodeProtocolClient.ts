@@ -1,7 +1,11 @@
 import { ZCodeStorageStartupGate } from "#src/zcode-agent/zcodeStorageStartupGate.js";
 import { Emitter } from "@zcode/rpc";
 import type { IDisposable } from "@zcode/rpc";
-import { zcodeProtocolMethods } from "@zcode/shared";
+import {
+  zcodeProtocolMethods,
+  zcodeProtocolNotifications,
+  zcodeResidentSessionsNotificationSchema,
+} from "@zcode/shared";
 import type {
   ZCodeProtocolMethod,
   ZCodeProtocolNotification,
@@ -81,6 +85,9 @@ const SESSIONLESS_METHODS = new Set<string>([
   V4_METHODS.sessionsIndexReconcile,
   V4_METHODS.connectionFlow,
   V4_METHODS.usageStats,
+  // 可见性上报只替换 CLI 内存中的可见集合（外部引擎闲置豁免），不创建、恢复或常驻会话
+  // （docs/desktop/engine-performance-1.1-spec.md「会话可见性上报」）。
+  V4_METHODS.conversationVisibility,
 ]);
 
 /** 这些方法按 topic 区分：sessions-index / workspace-config 是工作区级被动订阅，不是会话订阅。 */
@@ -155,11 +162,13 @@ export class ZCodeProtocolClient implements IDisposable {
   private readonly requestTimeoutEmitter = new Emitter<ZCodeProtocolRequestTimeoutEvent>();
   // 业务请求归零时触发；观测完成不能给被观察进程续命。
   private readonly pendingDrainedEmitter = new Emitter<void>();
+  private readonly residentSessionsEmitter = new Emitter<number>();
   private readonly closeEmitter = new Emitter<void>();
   private readonly disposables: IDisposable[] = [];
   private nextRequestId = 1;
   private disposed = false;
   private sessionHostingRequestSent = false;
+  private residentSessions: { count: number; sequence: number } | undefined;
   private readonly requestTimeoutMs: number;
 
   /**
@@ -176,6 +185,8 @@ export class ZCodeProtocolClient implements IDisposable {
   readonly onRequest = this.requestEmitter.event;
   readonly onRequestTimeout = this.requestTimeoutEmitter.event;
   readonly onPendingRequestsDrained = this.pendingDrainedEmitter.event;
+  /** 常驻会话数变化（只在被接受的通知改变计数时触发）。 */
+  readonly onResidentSessionsChanged = this.residentSessionsEmitter.event;
   readonly onClose = this.closeEmitter.event;
 
   /** 当前尚未收到响应的请求数。 */
@@ -195,6 +206,15 @@ export class ZCodeProtocolClient implements IDisposable {
    */
   get mayHostSessions(): boolean {
     return this.sessionHostingRequestSent;
+  }
+
+  /**
+   * CLI 会话注册表的常驻会话数（`process/residentSessions` 最近一条，含草稿）。
+   * undefined = 尚未收到（含旧 CLI 永不发送）：调用方必须失败关闭，回落 mayHostSessions 近似
+   * （docs/desktop/host-idle-resources-1.1-spec.md §2「常驻会话数事实」）。
+   */
+  get residentSessionCount(): number | undefined {
+    return this.residentSessions?.count;
   }
 
   constructor(
@@ -435,7 +455,27 @@ export class ZCodeProtocolClient implements IDisposable {
           );
         }
       }
+      if (message.method === zcodeProtocolNotifications.processResidentSessions) {
+        this.acceptResidentSessions((message as ZCodeProtocolNotification).params);
+      }
       this.notificationEmitter.fire(message as ZCodeProtocolNotification);
+    }
+  }
+
+  /**
+   * 2026-11-08（host-idle-resources §2）：Host 此前看不到 CLI 常驻会话，承载过会话的 CLI 本代永不回收。
+   * 只接受通过 strict schema 且 sequence 递增的通知（同一连接 NDJSON 保序，回退即迟到旧值）；
+   * 不合法的通知不改变已知事实。
+   */
+  private acceptResidentSessions(params: unknown): void {
+    const parsed = zcodeResidentSessionsNotificationSchema.safeParse(params);
+    if (!parsed.success) return;
+    const { residentSessionCount, sequence } = parsed.data;
+    const previous = this.residentSessions;
+    if (previous && sequence <= previous.sequence) return;
+    this.residentSessions = { count: residentSessionCount, sequence };
+    if (previous?.count !== residentSessionCount) {
+      this.residentSessionsEmitter.fire(residentSessionCount);
     }
   }
 
@@ -512,6 +552,7 @@ export class ZCodeProtocolClient implements IDisposable {
     this.requestEmitter.dispose();
     this.requestTimeoutEmitter.dispose();
     this.pendingDrainedEmitter.dispose();
+    this.residentSessionsEmitter.dispose();
     this.closeEmitter.dispose();
   }
 

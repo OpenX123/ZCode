@@ -77,7 +77,11 @@ sequenceDiagram
 - "没有会话订阅"的判定来源：Host 只有两条建立会话订阅的路径——v4 `conversation/subscribe`（成功后登记到 `v4SubscriptionRoutes`）与旧 `session/subscribe`（参数带 `sessionId`）。两者都是带会话的请求，发送时即让该 CLI 进入下条"可能承载会话"状态，因此守卫同时检查路由表与会话承载事实，不存在"有订阅却判为可回收"的组合。sessions-index 与 workspace-config 订阅不算会话订阅（见下）。
 - "没有常驻会话"的判定来源：CLI 目前没有向 Host 暴露常驻会话数（常驻池只写本机日志），Host 不能观察 CLI 何时卸载会话。因此 Host 采用**失败关闭**的近似：`ZCodeProtocolClient` 记录本连接是否发送过任何"可能让会话常驻"的业务请求（`mayHostSessions`，单调置位）。判定沿用 CLI 传输层的会话分道规则：参数里带 `sessionId`、`conversation/` topic、命令信封或 `createSession` 预留会话 ID 的请求，以及不在"无会话方法"白名单内的任何方法，都会置位；只有白名单内且不带会话标识的请求不置位。白名单：`workspace/readPresentation`、`session/list`、`provider/refreshRegistry`、三个 `workspace/update*Preferences|Policy`、插件/技能/工作流目录读取、用量、进程与能力查询、`v4/sessionsIndex/reconcile`、`v4/connection/flow`、`v4/usage/stats`、`v4/commands/query`（`clock: true`），以及 topic 为 `sessions-index/` 或 `workspace-config/` 的订阅/重同步/退订。
   - 结果：承载过会话（打开过会话、预热过草稿、发过命令）的 CLI 在本代进程内不会被 Host 回收；只服务过工作区展示、任务列表等无会话读取的 CLI 会被回收。
-  - 后续：CLI 若暴露常驻会话数（如进程级通知），守卫改读该事实，即可在常驻池卸载全部会话 10 分钟后回收；回收机制与事件顺序不变。
+  - 2026-11-08 起该近似只用于旧 CLI，见下条。
+- 常驻会话数事实（2026-11-08，取代上条近似）：CLI 发通知 `process/residentSessions` `{ residentSessionCount, sequence }`（连接建立时发一次当前值，之后会话注册表 record 数每变化一次发一次，含草稿；协议见 `apps/zcode-cli/docs/design/v2/zcode-protocol-agent-server.md`「常驻会话数通知」）。
+  - `ZCodeProtocolClient` 以 `zcodeResidentSessionsNotificationSchema` 校验并保存最近一条（`sequence` 不大于已收值的通知丢弃）；不合法的通知忽略，不改变已知值。
+  - 守卫：已收到通知时，条件 3 用 `residentSessionCount === 0` 判定，不再看 `mayHostSessions`（条件 1、2、4 不变）；收到第一条之前（含旧 CLI 永不发送）常驻数未知，沿用上条 `mayHostSessions` 近似，失败关闭。
+  - 计时：常驻数变为 0 时 chat 泳道 manager 重新开始 10 分钟计时（无在途请求时），常驻池卸载全部会话后无需新请求即可回收；变为非 0 时立即取消计时。到期判定与回收动作同上。
 - 活动续期：Host 每次取得该 CLI 的 client（包括 service 缓存命中与 `existing-only` 观察者读取）都视为活动，重置 10 分钟计时。这样"取得 client → 其它异步准备 → 发请求"之间的空档不会被回收打断（空档需要超过 10 分钟才可能撞上）。
 - 回收动作与原 idle-timeout 相同：先同步从进程表摘除并发布 runtime `unavailable`（service 同步清理该 client 的缓存与挂起表），再异步回收进程树，退出归因 `expected / idle-timeout`。
 - 回收后：sessions-index / workspace-config 等被动订阅方（任务索引同步器、窗口 sessions-index 观察器、UI 列表）只使用 `existing-only`，收到 `unavailable` 后挂起，不会为此拉起进程；下一次需要 CLI 的操作按现有方式拉起新一代进程，新进程 spawn 后发布 `available` 与 `runtimeRestarted`，被动订阅方按已有换代重订路径恢复。
@@ -85,13 +89,14 @@ sequenceDiagram
 
 ### 状态所有者
 
-| 状态                       | 唯一所有者                                    | 其他层                                         |
-| -------------------------- | --------------------------------------------- | ---------------------------------------------- |
-| 进程表、闲置计时、回收动作 | chat 泳道 `ZCodeAgentProcessManager`          | service 通过 `noteActivity` 续期、守卫回调确认 |
-| 在途业务请求数             | `ZCodeProtocolClient`（`pending`）            | manager 只读                                   |
-| 本连接是否可能承载会话     | `ZCodeProtocolClient`（`mayHostSessions`）    | service 守卫只读                               |
-| 会话订阅路由               | `zcodeAgentService` 的 `v4SubscriptionRoutes` | service 守卫只读                               |
-| service client 缓存        | `activeClientsByWorkspaceKey`                 | 由 runtime `unavailable` 事件同步失效          |
+| 状态                       | 唯一所有者                                                                  | 其他层                                               |
+| -------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------- |
+| 进程表、闲置计时、回收动作 | chat 泳道 `ZCodeAgentProcessManager`                                        | service 通过 `noteActivity` 续期、守卫回调确认       |
+| 在途业务请求数             | `ZCodeProtocolClient`（`pending`）                                          | manager 只读                                         |
+| 本连接是否可能承载会话     | `ZCodeProtocolClient`（`mayHostSessions`）                                  | service 守卫只读（仅未收到常驻数时）                 |
+| 常驻会话数（最近一条通知） | CLI 会话注册表；Host 副本在 `ZCodeProtocolClient`（`residentSessionCount`） | service 守卫只读；manager 订阅变化重新计时或取消计时 |
+| 会话订阅路由               | `zcodeAgentService` 的 `v4SubscriptionRoutes`                               | service 守卫只读                                     |
+| service client 缓存        | `activeClientsByWorkspaceKey`                                               | 由 runtime `unavailable` 事件同步失效                |
 
 ### 事件顺序（回收与新请求并发）
 
@@ -122,6 +127,25 @@ sequenceDiagram
 - 失败关闭：守卫不确定（会话承载事实已置位、存在会话路由、守卫抛错）时一律不回收。
 - 已知边界：调用方若在取得 client 后超过 10 分钟才发出第一个请求，会拿到已回收的 client 并失败；Host 内所有取得到请求之间只有有界的异步准备（注册表刷新、150ms 浏览器上下文、本地索引读取），不存在这种调用方。
 
+常驻会话数驱动的回收（2026-11-08）：
+
+```mermaid
+sequenceDiagram
+  participant S as zcodeAgentService
+  participant M as chat ProcessManager
+  participant P as ProtocolClient
+  participant C as CLI（会话注册表所有者）
+  C-->>P: process/residentSessions {count: 0, sequence: 1}（连接建立）
+  S->>P: 打开会话（mayHostSessions 置位，但已有常驻数事实）
+  C-->>P: {count: 1, sequence: 2}
+  P-->>M: 常驻数变为非 0 → 取消计时
+  Note over C: 常驻池去激活（未订阅且闲置 30 分钟）
+  C-->>P: {count: 0, sequence: 3}
+  P-->>M: 常驻数变为 0 → 无在途请求时重新计时 10 分钟
+  M->>S: 到期守卫：无 conversation 路由且 residentSessionCount === 0
+  M->>M: 摘除并回收（expected / idle-timeout）
+```
+
 ### 验收
 
 | Case   | 场景                                              | 断言                                                                      | 验证层              |
@@ -133,6 +157,10 @@ sequenceDiagram
 | IDLE05 | 请求分类                                          | 无会话读取不置位；会话标识、`createSession`、未知方法置位；观测请求不置位 | services 单测       |
 | IDLE06 | 插件管理通道闲置                                  | 回收后下一次插件请求重新拉起                                              | services 单测       |
 | IDLE07 | 真实桌面：打开 6 个工作区、只浏览不进会话 10 分钟 | 未承载会话的工作区 CLI 退出，任务列表在再次使用时恢复                     | 待真实 Windows 验证 |
+| IDLE08 | 已收到常驻数 0，连接发过会话请求                  | 回收（不再按 `mayHostSessions` 失败关闭）                                 | services 单测       |
+| IDLE09 | 已收到常驻数 > 0，连接只发过无会话读取            | 不回收                                                                    | services 单测       |
+| IDLE10 | 常驻数由 1 变 0，此后没有任何请求                 | 闲置窗口后回收；变为非 0 时取消计时                                       | services 单测       |
+| IDLE11 | 通知解析                                          | 保存最近一条；`sequence` 回退与不合法的通知被忽略                         | services 单测       |
 
 ## 3. 插件管理通道 CLI 闲置回收（P3）
 

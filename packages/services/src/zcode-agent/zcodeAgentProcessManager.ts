@@ -1203,6 +1203,14 @@ export class ZCodeAgentProcessManager {
     publishStorage();
     if (this.idleTimeoutMs) {
       client.onPendingRequestsDrained(() => this.scheduleIdleReclaim(workspaceKey, managed));
+      // 2026-11-08（host-idle-resources §2「常驻会话数事实」）：守卫读 CLI 常驻会话数。常驻池卸载
+      // 全部会话时没有任何请求会重新计时，进程会一直留着；因此归零即重新计时（有在途请求时交给
+      // 请求归零），变为非 0 立即停表。
+      client.onResidentSessionsChanged((count) => {
+        if (this.processesByWorkspaceKey.get(workspaceKey) !== managed) return;
+        if (count === 0) this.touchIdleReclaim(workspaceKey, managed);
+        else this.clearIdleTimer(managed);
+      });
     }
     child.once("spawn", () => {
       managed.spawned = true;

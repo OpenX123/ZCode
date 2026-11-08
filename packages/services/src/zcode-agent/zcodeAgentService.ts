@@ -171,6 +171,7 @@ import type {
 } from "@zcode/shared";
 import type {
   IZCodeAgentService,
+  ZCodeAgentConversationVisibilityParams,
   ZCodeAgentBackgroundBashOutputParams,
   ZCodeAgentAppRuntimePreferences,
   ZCodeAgentRuntimeLifecycleEvent,
@@ -305,6 +306,9 @@ import {
   v4ConversationAttachmentStatParamsSchema,
   v4ConversationAttachmentStatResultSchema,
   v4ConnectionFlowResultSchema,
+  conversationVisibilityParamsSchema,
+  v4ConversationVisibilityParamsSchema,
+  v4ConversationVisibilityResultSchema,
   v4ConversationFileChangesResultSchema,
   v4ConversationFileRewindPreviewResultSchema,
   v4ConversationRowsRangeResultSchema,
@@ -1590,13 +1594,17 @@ export function createZCodeAgentService(
    * - 没有会话订阅：路由表中没有该 workspace 的 `conversation/` 路由；旧 session/subscribe
    *   带 sessionId，发送时已让连接置位 mayHostSessions。sessions-index / workspace-config 是
    *   工作区级被动订阅，回收后由 existing-only 观察者按换代重订路径恢复，不阻止回收。
-   * - 没有常驻会话：CLI 不暴露常驻会话数，以连接是否发过可能让会话常驻的请求近似。
+   * - 没有常驻会话：已收到 CLI 的 `process/residentSessions` 时以 `residentSessionCount === 0`
+   *   为准；收到之前（含旧 CLI）未知，沿用"连接发过可能让会话常驻的请求"近似失败关闭。
+   *   2026-11-08 修复：只有近似时，承载过会话的 CLI 本代永不回收，即使常驻池已卸载全部会话。
    */
   function canReclaimIdleSessionRuntime(
     workspaceKey: string,
     client: ZCodeProtocolClient,
   ): boolean {
-    if (client.mayHostSessions) return false;
+    const residentSessionCount = client.residentSessionCount;
+    if (residentSessionCount === undefined ? client.mayHostSessions : residentSessionCount > 0)
+      return false;
     for (const route of v4SubscriptionRoutes.values()) {
       if (route.workspaceKey === workspaceKey && route.topic.startsWith("conversation/")) {
         return false;
@@ -5304,6 +5312,30 @@ export function createZCodeAgentService(
         V4_METHODS.connectionFlow,
         { connectionId: trusted.connectionId, state: params.state },
         v4ConnectionFlowResultSchema,
+      );
+    },
+
+    async reportConversationVisibilityV4(params: ZCodeAgentConversationVisibilityParams) {
+      // P3（2026-11-08）：CLI 以可见集合豁免外部引擎闲置关闭，Renderer 是可见事实所有者，Host 只转发。
+      // connectionId 只取 facade 注入的可信连接（与订阅同一个）；existing-only——可见性不是拉起 CLI 的理由，
+      // CLI 不在时没有可豁免的会话，Renderer 在 runtime available 后重报。
+      const trusted = readTrustedZCodeAgentV4Connection(params);
+      if (!trusted) throw new Error("fault.visibility.connectionUntrusted");
+      const { visibleSessionIds } = conversationVisibilityParamsSchema.parse({
+        visibleSessionIds: params.visibleSessionIds,
+      });
+      // 直接读进程表：不像 getReadOnlyClient 那样把取得记为活动（续期闲置回收），也不登记 service 缓存。
+      const client = processManager.getExistingClient(params);
+      if (!client || client.isDisposed) throw createRuntimeUnavailableError(params);
+      // 观测请求：只替换 CLI 内存集合，不计在途业务请求、不续期闲置回收、超时不判 runtime 故障。
+      await client.request(
+        V4_METHODS.conversationVisibility,
+        v4ConversationVisibilityParamsSchema.parse({
+          connectionId: trusted.connectionId,
+          visibleSessionIds,
+        }),
+        v4ConversationVisibilityResultSchema,
+        { lifecycle: "observation" },
       );
     },
 

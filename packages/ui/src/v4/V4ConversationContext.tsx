@@ -102,6 +102,11 @@ export interface V4ConversationContextValue {
    * unavailable 在 workspace-dispose 当场到达，是草稿预热重建唯一可依赖的换代信号。
    */
   onRuntimeLifecycle?(listener: (state: "available" | "unavailable") => void): () => void;
+  /**
+   * 登记本 pane 当前可见的会话（隐藏或无租约传 null）；只有工作区连接注册表提供（P3 可见性上报，
+   * docs/desktop/engine-performance-1.1-spec.md「会话可见性上报」）。缺席时不上报。
+   */
+  setPaneVisibleSession?(ownerKey: string, sessionId: string | null): void;
 }
 
 // 导出 context 本体：静态回放视图用静态 transport 自己
@@ -390,6 +395,8 @@ function ReadyV4PaneConversationProvider({
         attachmentRead: (params) => lease.transport.attachmentRead(params),
         attachmentReadRange: (params) => lease.transport.attachmentReadRange(params),
         onRuntimeRestart: (listener: () => void) => lease.transport.onRuntimeRestart(listener),
+        setPaneVisibleSession: (ownerKey: string, sessionId: string | null) =>
+          lease.setPaneVisibleSession(ownerKey, sessionId),
         ...(lease.transport.onRuntimeLifecycle
           ? {
               onRuntimeLifecycle: (listener: (state: "available" | "unavailable") => void) =>

@@ -86,7 +86,7 @@ type ConversationV4AgentService = Pick<
   | "onDynamicLocalTtftFacts"
   | "onAgentRuntimeRestarted"
 > &
-  Partial<Pick<IZCodeAgentService, "onAgentRuntimeLifecycle">>;
+  Partial<Pick<IZCodeAgentService, "onAgentRuntimeLifecycle" | "reportConversationVisibilityV4">>;
 
 /**
  * 一条 host 连接（= 一个 workspace）上的 v4 conversation 传输面。
@@ -650,6 +650,19 @@ export function createAgentConversationTransport(
         }
       };
     },
+    ...(agentService.reportConversationVisibilityV4
+      ? {
+          async reportVisibility(visibleSessionIds: readonly string[]) {
+            // P3：只做连接握手、不走 ensureHandshake——后者顺带 TTFT 时钟校准，校准请求是
+            // start-if-needed，会为一次可见性上报拉起 CLI。Host 侧取 client 为 existing-only。
+            await ensureAgentV4ConnectionHandshake(agentService);
+            await agentService.reportConversationVisibilityV4?.({
+              ...workspace,
+              visibleSessionIds: [...visibleSessionIds],
+            });
+          },
+        }
+      : {}),
     ...(agentService.onAgentRuntimeLifecycle
       ? {
           onRuntimeLifecycle(listener: (state: "available" | "unavailable") => void) {

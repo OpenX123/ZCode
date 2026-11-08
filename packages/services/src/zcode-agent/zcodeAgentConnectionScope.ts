@@ -7,6 +7,7 @@ import {
   clientHelloSchema,
   clientSupportsWorkflowRunDeltas,
   conversationTopic,
+  conversationVisibilityParamsSchema,
   sessionsIndexTopic,
   workspaceConfigTopic,
   type ConversationTopicWireCandidate,
@@ -265,6 +266,12 @@ export function createZCodeAgentConnectionScope(
   const forwardedFlowStateByRoute = new Map<string, V4ConnectionFlowState>();
   /** attachment 曾触及的 workspace route 留到 port dispose，保证无 subscription 也能 trusted closed。 */
   const attachmentFlowRoutes = new Map<string, ConnectionFlowRoute>();
+  /**
+   * 收过可见性上报的 workspace route（P3，2026-11-08）：连接关闭时 CLI 靠 flow closed 删除本连接的
+   * 可见集合，只上报过可见性、没有订阅的 workspace 也必须收到 closed。runtime unavailable 时撤销——
+   * 新一代 CLI 没有旧集合，关闭时不能为了发 closed 再拉起进程。
+   */
+  const visibilityFlowRoutes = new Map<string, ConnectionFlowRoute>();
 
   const forwardedConnection = (params: unknown): ZCodeAgentV4ConnectionContext => {
     const downstream = readTrustedZCodeAgentV4Connection(params);
@@ -315,7 +322,10 @@ export function createZCodeAgentConnectionScope(
     } satisfies ZCodeAgentV4ConnectionContext,
   });
   const currentFlowRoutes = () => {
-    const routes = new Map<string, ConnectionFlowRoute>(attachmentFlowRoutes);
+    const routes = new Map<string, ConnectionFlowRoute>([
+      ...attachmentFlowRoutes,
+      ...visibilityFlowRoutes,
+    ]);
     for (const entry of owned.values()) {
       const route = flowRouteForEntry(entry);
       routes.set(route.key, route);
@@ -638,6 +648,9 @@ export function createZCodeAgentConnectionScope(
         forwardedFlowStateByRoute.delete(key);
       }
     }
+    for (const key of visibilityFlowRoutes.keys()) {
+      if (key.startsWith(`${invalidatedWorkspaceKey}\0`)) visibilityFlowRoutes.delete(key);
+    }
     const invalidatedPending = [...pendingByOwnership.values()]
       .flatMap((group) => [...group])
       .filter((pending) => workspaceKey(pending.target) === invalidatedWorkspaceKey);
@@ -699,6 +712,7 @@ export function createZCodeAgentConnectionScope(
       const forwarded = forwardedConnection(params);
       const ownsRoute =
         attachmentFlowRoutes.has(flowRouteKey(params, forwarded.connectionId)) ||
+        visibilityFlowRoutes.has(flowRouteKey(params, forwarded.connectionId)) ||
         [...owned.values()].some(
           (entry) =>
             workspaceKey(entry.target) === workspaceKey(params) &&
@@ -706,6 +720,20 @@ export function createZCodeAgentConnectionScope(
         );
       if (!ownsRoute) throw new Error("fault.subscription.notOwned");
       await base.setConnectionFlowStateV4(withTrustedConnection(params, forwarded));
+    },
+    async reportConversationVisibilityV4(params) {
+      assertReady();
+      // UI-facing 形状只声明可见会话；connectionId 与订阅同一规则由本 facade 注入，入参同名字段被剥离。
+      conversationVisibilityParamsSchema.parse({ visibleSessionIds: params.visibleSessionIds });
+      const forwarded = forwardedConnection(params);
+      await base.reportConversationVisibilityV4(withTrustedConnection(params, forwarded));
+      if (disposed || flowClosed) return;
+      const key = flowRouteKey(params, forwarded.connectionId);
+      visibilityFlowRoutes.set(key, {
+        key,
+        target: workspaceTarget(params),
+        connection: forwarded,
+      });
     },
     async sendConversationCommandV4(params) {
       assertOpen();
@@ -1077,6 +1105,7 @@ export function createZCodeAgentConnectionScope(
       runtimeRestartDisposable?.dispose();
       runtimeGenerationByWorkspaceKey.clear();
       attachmentFlowRoutes.clear();
+      visibilityFlowRoutes.clear();
       forwardedFlowStateByRoute.clear();
       await Promise.allSettled(entries.map((entry) => unsubscribeBase(entry)));
     },

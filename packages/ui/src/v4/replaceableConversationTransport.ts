@@ -221,6 +221,11 @@ export class ReplaceableConversationTransport implements ConversationTransport {
     return this.current.attachmentReadRange(params);
   }
 
+  // 可见性上报总是发往最新 proxy；换代后的新连接集合为空，由上报器在 transportReplaced 后重报。
+  reportVisibility(visibleSessionIds: readonly string[]): Promise<void> {
+    return this.current.reportVisibility?.(visibleSessionIds) ?? Promise.resolve();
+  }
+
   onFrame(listener: FrameListener): () => void {
     this.frameListeners.add(listener);
     this.bindFrameListener();

@@ -574,6 +574,14 @@ export interface ZCodeAgentConnectionFlowParams extends ZCodeAgentWorkspaceTarge
   state: V4ConnectionFlowState;
 }
 
+/**
+ * 会话可见性上报（UI-facing）：只声明该 workspace 当前可见的会话；connectionId 由连接 facade
+ * 按下游客户端注入，UI 不能自选（docs/desktop/engine-performance-1.1-spec.md「会话可见性上报」）。
+ */
+export interface ZCodeAgentConversationVisibilityParams extends ZCodeAgentWorkspaceTarget {
+  visibleSessionIds: string[];
+}
+
 /** sessions-index：workspace 级列表订阅（无 sessionId 维度）。 */
 export interface ZCodeAgentSessionsIndexSubscribeParams extends ZCodeAgentWorkspaceTarget {
   base?: { logEpoch: string; seq: number };
@@ -906,6 +914,11 @@ export interface IZCodeAgentService {
   initializeConversationV4(clientHello: ClientHello): Promise<void>;
   /** 仅供 trusted host relay/facade；terminal RPC caller 必须被 connection scope 拒绝。 */
   setConnectionFlowStateV4(params: ZCodeAgentConnectionFlowParams): Promise<void>;
+  /**
+   * 整体替换本连接在该 workspace CLI 上的可见会话集合（existing-only：不拉起 CLI，CLI 不在时
+   * 拒绝为 runtime unavailable）。只经连接 facade 调用，base 拒绝无可信连接的入参。
+   */
+  reportConversationVisibilityV4(params: ZCodeAgentConversationVisibilityParams): Promise<void>;
   subscribeConversationV4(
     params: ZCodeAgentConversationSubscribeParams,
   ): Promise<V4ConversationSubscribeResult>;

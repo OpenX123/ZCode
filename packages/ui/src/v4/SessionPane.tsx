@@ -25,6 +25,7 @@ import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -567,6 +568,7 @@ export function SessionPane({
     onRuntimeLifecycle,
     fileChanges,
     fileRewindPreview,
+    setPaneVisibleSession,
   } = useV4Conversation();
   const { modelSelectionService, zcodeSessionService, zcodeTaskService } = useServices();
   const { intl, locale } = useZCodeIntl();
@@ -2407,6 +2409,17 @@ export function SessionPane({
       nextLease.release();
     };
   }, [layer, effectiveSessionId, leaseDeferredUntilVisible]);
+
+  // P3（2026-11-08）：CLI 以 Renderer 上报的可见集合豁免外部引擎会话闲置关闭，从未上报即不可见——
+  // 未接入时正在看的会话闲置 15 分钟也会被关闭。可见 = 工作台布局可见且持有租约（已有会话或草稿
+  // 预热会话）；由工作区连接的上报器合并同工作区全部 pane 后整体上报（窗口隐藏在上报器内处理）。
+  const visibilityOwnerKey = useId();
+  const visibleLeaseSessionId = paneVisible && lease ? lease.sessionId : null;
+  useEffect(() => {
+    if (!setPaneVisibleSession) return;
+    setPaneVisibleSession(visibilityOwnerKey, visibleLeaseSessionId);
+    return () => setPaneVisibleSession(visibilityOwnerKey, null);
+  }, [setPaneVisibleSession, visibilityOwnerKey, visibleLeaseSessionId]);
 
   useEffect(() => {
     if (!sessionId || !lease || snapshot?.sessionId !== sessionId) return;
