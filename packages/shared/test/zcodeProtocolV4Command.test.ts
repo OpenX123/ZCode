@@ -756,6 +756,36 @@ describe("zcode-protocol-v4 command", () => {
     expect(ack.result).toEqual({ type: "inputDisposition", delivery: "queue" });
   });
 
+  // external-agent-engines-spec「按引擎记忆模型与思考深度」：恢复推进以 ACK 带回的确认配置为准，
+  // 不等可能永不变化的 snapshot 帧（引擎保留旧值时 runtime 只会再发一次相同配置）。
+  it("validates setEngineConfigOption ack result with confirmed engine options", () => {
+    const engineConfigOptions = [
+      {
+        id: "model",
+        name: "Model",
+        currentValue: "gpt-a",
+        options: [
+          { value: "gpt-a", name: "GPT A" },
+          { value: "gpt-b", name: "GPT B", description: "faster" },
+        ],
+      },
+    ];
+    const ack = commandAckSchema.parse({
+      commandId: "cmd-engine-option",
+      status: "accepted",
+      revisionAtDecision: 3,
+      result: { type: "setEngineConfigOption", engineConfigOptions },
+    });
+    expect(ack.result).toEqual({ type: "setEngineConfigOption", engineConfigOptions });
+    expect(() =>
+      commandResultSchema.parse({
+        type: "setEngineConfigOption",
+        engineConfigOptions: [{ id: "", name: "Model", currentValue: "x", options: [] }],
+      }),
+    ).toThrow();
+    expect(() => commandResultSchema.parse({ type: "setEngineConfigOption" })).toThrow();
+  });
+
   it("validates applyFileRewind ack result", () => {
     const ack = commandAckSchema.parse({
       commandId: "cmd-file-rewind-2",

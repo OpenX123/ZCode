@@ -360,6 +360,18 @@ describe("外部引擎 V4 接线", () => {
     expect(test.setEngineConfigOption).toHaveBeenCalledWith("model", "sonnet");
   });
 
+  // 引擎可能接受后保留旧值或改用其它值；ACK 带回 runtime 确认后的配置，客户端的记忆恢复据此
+  // 确定推进，不依赖之后是否还有 snapshot 帧（external-agent-engines-spec「按引擎记忆」）。
+  it("配置切换 ACK 结果带回 runtime 确认后的配置列表", async () => {
+    const test = host("claude-code");
+    const confirmed = [{ ...options[0]!, currentValue: "opus" }];
+    test.setEngineConfigOption.mockResolvedValueOnce(confirmed);
+    const result = await new V4CommandExecutor(test.service).execute(
+      command("setEngineConfigOption", { configId: "model", value: "sonnet" }),
+    );
+    expect(result).toEqual({ type: "setEngineConfigOption", engineConfigOptions: confirmed });
+  });
+
   it.each([
     "compact",
     "switchModelConfig",

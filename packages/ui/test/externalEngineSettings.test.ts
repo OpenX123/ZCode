@@ -328,7 +328,8 @@ it("会话创建后引擎只读，原生配置值原样回传", async () => {
   expect(onConfigChange).toHaveBeenCalledExactlyOnceWith("permission-mode", "agent-full-access");
 });
 
-it("配置初始化中与失败时有明确反馈，并保留引擎切换入口", async () => {
+// 已有会话的空闲重连 / 停止后恢复仍显示连接中（CONTRACT.md「历史会话的连接状态」）；草稿见下一用例。
+it("已有会话配置连接中与失败时有明确反馈，并保留引擎切换入口", async () => {
   const { EngineControls } = await import("@/external-engine/index.js");
   const onSelectEngine = vi.fn();
   const tree = (props: { loading?: boolean; error?: string }) =>
@@ -342,4 +343,39 @@ it("配置初始化中与失败时有明确反馈，并保留引擎切换入口"
   view.rerender(tree({ error: "ACP adapter exited (code 7)" }));
   expect(screen.queryByRole("status")).toBeNull();
   expect(screen.getByRole("alert").textContent).toContain("ACP adapter exited (code 7)");
+});
+
+// 2026-11-08 草稿无感（external-agent-engines-spec「草稿连接中提示」）：草稿就绪前不显示
+// “正在连接引擎…”，只把原生配置选择器显示为禁用；引擎选择仍可用，就绪后选择器可用。
+it("草稿原生配置就绪前选择器禁用且无连接中文案，就绪后可用", async () => {
+  const { EngineControls } = await import("@/external-engine/index.js");
+  const options = [
+    {
+      id: "model",
+      name: "Model",
+      currentValue: "gpt-a",
+      options: [
+        { value: "gpt-a", name: "GPT A" },
+        { value: "gpt-b", name: "GPT B" },
+      ],
+    },
+  ];
+  const tree = (configPending: boolean) =>
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN",
+      children: createElement(EngineControls, {
+        engine: "codex",
+        onSelectEngine: vi.fn(),
+        onConfigChange: vi.fn(),
+        options,
+        configPending,
+      }),
+    });
+  const view = render(tree(true));
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(document.body.textContent).not.toContain("正在连接引擎");
+  expect(screen.getByTestId("engine-config-model").hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("combobox", { name: "会话引擎" }).hasAttribute("disabled")).toBe(false);
+  view.rerender(tree(false));
+  expect(screen.getByTestId("engine-config-model").hasAttribute("disabled")).toBe(false);
 });

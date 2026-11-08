@@ -28,6 +28,7 @@ import {
   zcodeProtocolMcpServerSchema,
 } from "../zcode-protocol/index.js";
 import { sharedContextRefSchema } from "./shared-context-ref.js";
+import { engineConfigOptionSchema } from "../external-engine/contract.js";
 import { conversationInputSourceSchema } from "./input-intent.js";
 export type { SharedContextRef } from "./shared-context-ref.js";
 export * from "./workflow-command-rejections.js";
@@ -431,6 +432,13 @@ export const commandResultSchema = z.discriminatedUnion("type", [
     // 持久事实，不能由客户端按当前 UI phase 猜测。
     type: z.literal("inputDisposition"),
     delivery: z.enum(["startNow", "queue", "guide"]),
+  }),
+  z.object({
+    // 外部引擎配置写入后 runtime 确认的完整配置列表（2026-11-08）。引擎可能接受却保留旧值或
+    // 改用其它值，此时 runtime 只会再发布一次相同配置、之后没有新帧；客户端的记忆恢复必须据此
+    // 确定推进，不能等 snapshot“值变化”。旧 CLI 不带此结果，客户端按可选读取。
+    type: z.literal("setEngineConfigOption"),
+    engineConfigOptions: z.array(engineConfigOptionSchema),
   }),
 ]);
 export type CommandResult = z.infer<typeof commandResultSchema>;

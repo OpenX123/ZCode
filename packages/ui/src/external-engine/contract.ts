@@ -28,7 +28,10 @@ export interface EngineControlsProps {
   /** 返回 false 表示提交失败，控件撤销该次局部显示；确认配置仍只读 snapshot。 */
   onConfigChange?: (configId: string, value: string) => void | Promise<boolean>;
   disabled?: boolean;
+  /** 已有会话连接中：显示连接中文案，原生配置不可写。 */
   loading?: boolean;
+  /** 草稿原生配置就绪前：只禁用原生配置选择器，不显示连接中文案；引擎与连接配置仍可改选。 */
+  configPending?: boolean;
   error?: string;
   connectionFailure?: EngineConnectionFailure;
   onRetry?: () => void;

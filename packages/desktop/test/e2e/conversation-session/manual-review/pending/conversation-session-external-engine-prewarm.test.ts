@@ -457,8 +457,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     );
   });
 
-  // 1.1：createSession 记录建立即确认，握手在后台；连接中可编辑草稿但不能发送，就绪后只发一次。
-  it("后台握手期间草稿显示连接中且不能发送，就绪后首发只提交一次", async () => {
+  // P11（external-agent-engines-spec「草稿预热 owner」2026-11-08 草稿无感）：草稿 creating/connecting
+  // 即可发送，不显示“正在连接引擎…”；首发排在握手与按引擎记忆恢复（模型→深度）之后，只提交一次。
+  it("P11 连接中立即发送：不显示连接中，消息只发一次且使用记忆的模型与深度", async () => {
     await installExternalEngineFixtures();
     await prepareV4ConversationE2E({ skipProvider: true });
     const descriptor = EXTERNAL_ENGINE_RUNTIMES.codex;
@@ -468,47 +469,111 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       managedAdapterInstallDirName(descriptor),
       ...managedAdapterEntrySegments(descriptor),
     );
-    await writeFile(
-      join(dirname(entry), "initialize-control.json"),
-      JSON.stringify({ delayMs: 3000 }),
-    );
+    const initializeControlPath = join(dirname(entry), "initialize-control.json");
+    await writeFile(initializeControlPath, JSON.stringify({ delayMs: 0 }));
     const promptPath = join(dirname(entry), "prompt-count.json");
     const promptCount = async () =>
       JSON.parse(await readFile(promptPath, "utf8").catch(() => "0")) as number;
-    const before = await promptCount();
+
+    // 1. 就绪草稿中显式选择模型与深度：snapshot 确认后写入 Codex 的本机记忆；首发提升为真实会话。
     await startNewV4Draft();
     await (await displayed('[data-testid="session-engine-select"]')).click();
     await (await displayed('[role="option"]=Codex')).click();
-    const paneId = await getV4FocusedPaneId();
-    if (!paneId) throw new Error("缺少焦点 pane");
-    await setV4ComposerText("E2E_ASYNC_PREPARE");
+    await (
+      await displayed('[data-testid="engine-config-model"]')
+    ).waitForEnabled({
+      timeout: 30000,
+    });
+    await (await displayed('[data-testid="engine-config-model"]')).click();
+    await (await displayed('[role="menuitemradio"]=codex fixture model 3')).click();
+    await browser.waitUntil(
+      async () =>
+        (await (await displayed('[data-testid="engine-config-model"]')).getText()) ===
+        "codex fixture model 3",
+      { timeoutMsg: "记忆用模型必须被引擎确认" },
+    );
+    await (await displayed('[data-testid="engine-config-reasoning_effort"]')).click();
+    await (
+      await displayed('[data-testid="engine-effort-slider-reasoning_effort"]')
+    ).waitForDisplayed();
     await browser.waitUntil(
       async () =>
         browser.execute(
-          (shellTestId, sendTestId) => {
-            const shell = document.querySelector<HTMLElement>(`[data-testid="${shellTestId}"]`);
-            const status = shell?.querySelector<HTMLElement>(
-              '[data-testid="external-engine-controls"] [role="status"]',
-            );
-            const button = shell?.querySelector<HTMLButtonElement>(`[data-testid="${sendTestId}"]`);
-            return Boolean(status?.innerText) && button?.disabled === true;
-          },
-          testId(TID_V4_PANE_SHELL, paneId),
-          TID_V4_COMPOSER_SEND,
+          (testId) => document.activeElement?.getAttribute("data-testid") === testId,
+          "engine-effort-slider-reasoning_effort",
         ),
-      { timeout: 10000, timeoutMsg: "握手期间必须显示连接中且发送按钮禁用" },
+      { timeoutMsg: "打开深度弹层后，键盘焦点必须落在滑动条上" },
     );
-    expect(await promptCount()).toBe(before);
-    await displayed('[data-testid="engine-config-model"]');
-    await sendV4PromptInPane(paneId, "E2E_ASYNC_PREPARE");
-    await browser.waitUntil(async () => (await promptCount()) === before + 1, {
-      timeout: 30000,
-      timeoutMsg: "就绪后首发必须且只提交一次 prompt",
-    });
-    await writeFile(
-      join(dirname(entry), "initialize-control.json"),
-      JSON.stringify({ delayMs: 0 }),
+    await browser.keys("End");
+    await browser.waitUntil(
+      async () =>
+        (await (await displayed('[data-testid="engine-effort-value"]')).getText()) === "High",
+      { timeoutMsg: "记忆用深度必须被引擎确认" },
     );
+    await browser.keys("Escape");
+    await sendV4Prompt("E2E_MEMORY_SEED");
+    await waitForV4AssistantMessageContaining("E2E_ENGINE_REPLY_safe_fixture-3_high_1");
+    await waitForV4ConversationState((s) => s.state === "idle", "记忆种子轮完成");
+
+    // 2. 重启后冷握手（initialize 延迟 3s，且没有补位预建会话）：新草稿出现即输入并发送。
+    await writeFile(initializeControlPath, JSON.stringify({ delayMs: 3000 }));
+    await reloadElectronSessionPreservingBrowserProfile(browser);
+    await startNewV4Draft();
+    const paneId = await getV4FocusedPaneId();
+    if (!paneId) throw new Error("缺少焦点 pane");
+    const shellTestId = testId(TID_V4_PANE_SHELL, paneId);
+    const connectingPattern = "正在连接引擎|Connecting to engine";
+    // 观察整个草稿 pane：一旦出现连接中文案即记录，不依赖轮询时机。
+    await browser.execute(
+      (selector, pattern) => {
+        const shell = document.querySelector<HTMLElement>(`[data-testid="${selector}"]`);
+        if (!shell) throw new Error("缺少草稿 pane");
+        const regex = new RegExp(pattern);
+        const state = window as typeof window & { __e2eEngineConnectingSeen?: boolean };
+        state.__e2eEngineConnectingSeen = regex.test(shell.innerText);
+        new MutationObserver(() => {
+          if (regex.test(shell.innerText)) state.__e2eEngineConnectingSeen = true;
+        }).observe(shell, { subtree: true, childList: true, characterData: true });
+      },
+      shellTestId,
+      connectingPattern,
+    );
+    const before = await promptCount();
+    await setV4ComposerText("E2E_CONNECTING_SEND");
+    const atSend = await browser.execute(
+      (selector, sendTestId) => {
+        const shell = document.querySelector<HTMLElement>(`[data-testid="${selector}"]`);
+        const button = shell?.querySelector<HTMLButtonElement>(`[data-testid="${sendTestId}"]`);
+        const model = shell?.querySelector<HTMLButtonElement>(
+          '[data-testid="engine-config-model"]',
+        );
+        const status = shell?.querySelector(
+          '[data-testid="external-engine-controls"] [role="status"]',
+        );
+        const result = {
+          sendEnabled: Boolean(button && !button.disabled),
+          // 就绪前原生配置选择器为禁用（或尚无配置）；用来确认确实在连接中发送。
+          modelPickerReady: Boolean(model && !model.disabled),
+          status: status?.textContent ?? null,
+        };
+        if (result.sendEnabled) button!.click();
+        return result;
+      },
+      shellTestId,
+      TID_V4_COMPOSER_SEND,
+    );
+    expect(atSend).toEqual({ sendEnabled: true, modelPickerReady: false, status: null });
+    await waitForV4AssistantMessageContaining("E2E_ENGINE_REPLY_safe_fixture-3_high_1");
+    await waitForV4ConversationState((s) => s.state === "idle", "连接中首发完成");
+    expect(await promptCount()).toBe(before + 1);
+    expect(
+      await browser.execute(
+        () =>
+          (window as typeof window & { __e2eEngineConnectingSeen?: boolean })
+            .__e2eEngineConnectingSeen,
+      ),
+    ).toBe(false);
+    await writeFile(initializeControlPath, JSON.stringify({ delayMs: 0 }));
   });
 
   it("两家引擎都先展示配置，首发使用所选模式且续聊复用进程", async () => {

@@ -1,7 +1,8 @@
 // 外部引擎进程池：每个 CLI 进程一个，负责 adapter 进程的“会话之外”的生命周期。
 //
-// - 预热备用进程（spare）：每个（引擎，连接配置 ID）至多一个已完成 initialize（与 providers/set）
-//   但没有原生会话的 adapter，session/new 时同步领用，成功建会话后后台补位，闲置 10 分钟关闭。
+// - 预建会话（spare）：每个（引擎，连接配置 ID）至多一个已完成 initialize（与 providers/set）、
+//   在其 cwd 的 session/new 与新会话默认配置、但从未提交 prompt 的 adapter；新会话 cwd 一致时同步
+//   领用（不一致按未命中，补位时替换），新会话就绪后后台补位，闲置 10 分钟关闭。
 // - 闲置连接关闭：各会话 port 登记自己的连接事实，池按节拍扫描，关闭空闲 15 分钟且不在最近
 //   3 个可恢复会话内的 adapter 进程；会话状态（ready、配置、externalSessionId）不在此处，保持不变。
 //
@@ -43,15 +44,15 @@ export interface ExternalEngineTrackedSession {
 }
 
 export interface ExternalEngineProcessPool {
-  /** session/new 前同步领用；未命中返回 undefined，由调用方冷启动。 */
+  /** 新会话握手前同步领用预建会话；未命中返回 undefined，由调用方冷启动。 */
   claimSpare(key: ExternalEngineSpareKey): AcpConnection | undefined;
-  /** 该（引擎，配置）session/new 成功后后台补位；失败只写日志。 */
+  /** 该（引擎，配置，cwd）新会话就绪后后台补位：spawn → initialize → session/new；失败只写日志。 */
   refillSpare(key: ExternalEngineSpareKey, launch: () => Promise<AcpConnection>): void;
   trackSession(sessionId: string, session: ExternalEngineTrackedSession): void;
   untrackSession(sessionId: string): void;
   /** 闲置扫描（节拍自动调用；测试可直接调用）。 */
   sweepIdle(): Promise<void>;
-  /** CLI 关闭：停止补位与扫描，关闭全部备用进程（含仍在初始化的）。 */
+  /** CLI 关闭：停止补位与扫描，关闭全部预建会话进程（含仍在准备的）。 */
   close(): Promise<void>;
 }
 
@@ -213,7 +214,9 @@ export function createExternalEngineProcessPool(
         try {
           entry.connection = await launch();
           if (!isCurrent()) throw new Error("External engine spare superseded");
-          await entry.connection.initialize(key.engine);
+          // 预建到 session/new（含 Claude Auto 默认）：Claude 的 session/new 要拉起官方 CLI（本机约 1.5s），
+          // 只预热到 initialize 时命中仍需约 1.76s。连接先登记再预建，关闭池时可直接结束仍在准备的进程。
+          await entry.connection.prebuild(key.engine, key.cwd);
           if (!isCurrent()) throw new Error("External engine spare superseded");
           entry.readyAt = now();
           armExpiry(entry);
@@ -223,7 +226,7 @@ export function createExternalEngineProcessPool(
             durationMs: entry.readyAt - entry.startedAt,
           });
         } catch (error) {
-          // 备用进程只是加速手段：失败不进入任何会话状态，下一次 session/new 冷启动。
+          // 预建会话只是加速手段：失败不进入任何会话状态，下一次新会话冷启动。
           if (isCurrent())
             logger?.warn("External engine spare failed", {
               ...fields(key),
@@ -254,7 +257,7 @@ export function createExternalEngineProcessPool(
       await Promise.all(
         entries.map(async (entry) => {
           await discardSpare(entry);
-          // 仍在 spawn/initialize 的备用进程：等启动任务收口（其 catch 会再次关闭），不留孤儿。
+          // 仍在 spawn/initialize/session/new 的预建会话：等启动任务收口（其 catch 会再次关闭），不留孤儿。
           await entry.task;
         }),
       );

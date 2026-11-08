@@ -1121,6 +1121,60 @@ describe("useDraftSessionPrewarm workspace owner", () => {
     expect(observed.at(-1)?.sessionId).toBe("draft-2");
   });
 
+  // P08：首发在屏障外等待记忆恢复；binding 被丢弃、换代回收或卸载时必须让等待结束，不能永久“正在发送”。
+  it("binding 生命周期信号：丢弃、换代回收与卸载都中止，存活期间不中止", async () => {
+    let createCount = 0;
+    const { dispatch } = createDispatchRecorder({
+      onCreate: () => acceptedCreateAck(`signal-draft-${++createCount}`),
+    });
+    const transportIdentity = {};
+    const observed: Array<ReturnType<typeof useDraftSessionPrewarm>["binding"]> = [];
+    const root = createRoot(installMinimalDom());
+    const renderVersion = (invalidationVersion: number) =>
+      createElement(PrewarmHarness, {
+        workspaceKey: "/signal/workspace",
+        paneId: "signal-pane",
+        invalidationVersion,
+        transportIdentity,
+        dispatchCommand: dispatch,
+        onRender: (binding) => observed.push(binding),
+      });
+
+    await act(async () => {
+      root.render(renderVersion(0));
+      await flushMicrotasks();
+    });
+    const first = observed.at(-1)!;
+    expect(first.sessionId).toBe("signal-draft-1");
+    expect(first.signal.aborted).toBe(false);
+    await act(async () => {
+      first.discard();
+      await flushMicrotasks();
+    });
+    expect(first.signal.aborted).toBe(true);
+
+    // 改选引擎/连接配置 → invalidationVersion 递增 → 旧代回收，新代信号独立。
+    await act(async () => {
+      root.render(renderVersion(1));
+      await flushMicrotasks();
+    });
+    const second = observed.at(-1)!;
+    expect(second.sessionId).toBe("signal-draft-2");
+    expect(second.signal.aborted).toBe(false);
+    await act(async () => {
+      root.render(renderVersion(2));
+      await flushMicrotasks();
+    });
+    expect(second.signal.aborted).toBe(true);
+
+    const third = observed.at(-1)!;
+    expect(third.sessionId).toBe("signal-draft-3");
+    act(() => root.unmount());
+    expect(third.signal.aborted).toBe(false);
+    await flushCleanupTimers();
+    expect(third.signal.aborted).toBe(true);
+  });
+
   it("createSession 失败 → 有界退避自动重试，重试成功后上抛 binding", async () => {
     vi.useFakeTimers();
     const calls: Array<{ type: string; sessionId: string | null }> = [];
@@ -1304,7 +1358,8 @@ describe("外部引擎草稿就绪阶段（1.1 异步 ACK）", () => {
   const binding = { sessionId: "draft-1" };
   const base = { enabled: true, binding, pending: false, error: null };
 
-  it("ACK 只建立 binding：snapshot 未到或 connecting 时仍在连接，发送不可用", () => {
+  // P08（2026-11-08 草稿无感）：creating / connecting 不再阻止发送；发送链负责等待就绪与记忆恢复。
+  it("P08：ACK 只建立 binding；snapshot 未到或 connecting 时仍为连接中，但可以发送", () => {
     for (const snapshot of [
       null,
       { sessionId: "other-session", engineConfigState: "ready" as const },
@@ -1313,11 +1368,16 @@ describe("外部引擎草稿就绪阶段（1.1 异步 ACK）", () => {
     ]) {
       const readiness = resolveDraftEngineReadiness({ ...base, snapshot });
       expect(readiness).toBe("connecting");
-      expect(draftEngineSubmissionAllowed(readiness)).toBe(false);
+      expect(draftEngineSubmissionAllowed(readiness)).toBe(true);
     }
-    expect(
-      resolveDraftEngineReadiness({ ...base, pending: true, binding: null, snapshot: null }),
-    ).toBe("creating");
+    const creating = resolveDraftEngineReadiness({
+      ...base,
+      pending: true,
+      binding: null,
+      snapshot: null,
+    });
+    expect(creating).toBe("creating");
+    expect(draftEngineSubmissionAllowed(creating)).toBe(true);
   });
 
   it("只有预热会话 snapshot 为 ready 才就绪；error 允许发送（发送前重试准备）", () => {

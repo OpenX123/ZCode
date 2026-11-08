@@ -3,8 +3,8 @@
 会话创建前由已有 Composer 草稿保存 engine 选择；创建后只读 snapshot.config.engine。
 本机 AppSettings.defaultSessionEngine 只给后续全新草稿提供种子；种子读取完成前不预热。输入框显式改选与独立设置页默认选择共用本机设置写入，其他窗口通过 SettingsChanged 刷新，旧草稿及已有会话不改写。
 工作区没有引擎服务（远程工作区、Web）时草稿使用 YCode，不写回默认偏好；桌面远程工作区的草稿选择器保留，外部引擎经 `externalEngineUnavailableReason` 灰显并就地说明原因。
-`hooks/external-engine` 的 `useEngineConfigMemory` 按引擎记忆 snapshot 确认的显式模型与思考深度（`engineConfigOptionKind` 判定，权限模式不记），写本机 AppSettings.externalEngineConfigPreferences 增量；只对本生命周期新固定外部引擎的草稿，在预热会话原生配置 ready 后经既有 setEngineConfigOption 链路按目录恢复一次（模型先于深度）。
-草稿的连接中提示只读预热 owner 的 `pending`（在途 createSession）与 snapshot connecting，预热禁用、失败或丢弃时不显示。
+`hooks/external-engine` 的 `useEngineConfigMemory` 按引擎记忆 snapshot 确认的显式模型与思考深度（`engineConfigOptionKind` 判定，权限模式不记），写本机 AppSettings.externalEngineConfigPreferences 增量；只对本生命周期新固定外部引擎的草稿，在预热会话原生配置 ready 后经既有 setEngineConfigOption 链路按目录恢复一次（模型先于深度）；逐项推进以 ACK 带回的确认配置为准，引擎改用其它值或保留旧值即停止。
+2026-11-08 起草稿不显示“正在连接引擎…”：creating（owner `pending`）与 connecting 阶段经 `configPending` 只把原生配置选择器显示为禁用，引擎与连接配置仍可改选，发送入口可用；首发由 SessionPane 发送链等待就绪与 `useEngineConfigMemory.waitForRestore` 收口后才 `sendText`。预热只在 pane 首次可见后启动。`loading`（连接中文案）只用于已有会话。
 创建后的输入框仅用固定小尺寸灰色 Logo 标识引擎，复用 TaskClientLogo 的可访问名称和悬停标题，不提供切换动作；草稿继续使用引擎选择器。
 历史会话行经公开 TaskClientLogo 消费 CLI 镜像的 task.engine，缺省使用应用自有 Logo；图标为本地资源，无网络请求或状态写入。
 引擎配置来自 snapshot.config.engineConfigOptions，选择原样回传 setEngineConfigOption。模型与普通枚举菜单复用共享下拉层的可用高度、视口宽度和纵向滚动，保持目录顺序且菜单不越出视口，所有选项均可滚动到达并点击。

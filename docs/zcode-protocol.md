@@ -128,7 +128,7 @@ Host 把带 revision 的 registry 同步给对应 workspace CLI。聊天 UI 用 
 `createSession.config.engine` 可选 `zcode`（缺省）、`claude-code`、`codex`，创建后不可变；snapshot
 `config.engine` 缺省按 `zcode` 读取（`resolveSessionEngine`）。外部引擎会话不使用 Provider Registry：
 模式、模型、effort 等由引擎返回，投影为 `config.engineConfigOptions`，并通过 CAS 命令
-`setEngineConfigOption {configId, value}` 切换；历史恢复连接状态投影为 `config.engineConfigState`，失败后通过 CAS 命令 `prepareExternalEngineSession {}` 重试，保持原生会话 ID 与保存的配置值；`switchModelConfig`、`switchCollaborationMode` 在这类会话中
+`setEngineConfigOption {configId, value}` 切换（accepted ACK 带回 runtime 确认后的配置：`result = { type: "setEngineConfigOption", engineConfigOptions }`，旧 CLI 不带，客户端按可选读取）；历史恢复连接状态投影为 `config.engineConfigState`，失败后通过 CAS 命令 `prepareExternalEngineSession {}` 重试，保持原生会话 ID 与保存的配置值；`switchModelConfig`、`switchCollaborationMode` 在这类会话中
 被拒绝。外部引擎会话不下发 `canEdit`/`canRetry` row actions，`fork`、`compact`、`switchModelConfig`
 availability 为 `external_engine_unsupported`。未就绪时写路径返回 `engine_not_ready`。契约见
 `packages/shared/src/external-engine/contract.ts`，规则见 [external-agent-engines-spec](./desktop/external-agent-engines-spec.md)。

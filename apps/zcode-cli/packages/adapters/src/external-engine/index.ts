@@ -198,7 +198,8 @@ export function createExternalEnginePort(
         // 路径探测含异步 IO；关闭会话后不能由迟到的探测重新创建进程。
         input.signal.throwIfAborted();
         const key = { engine: input.engine, connectionProfileId: launch.profileId, cwd: input.cwd };
-        // 只有 session/new 领用备用进程：resume/load/fork 走原连接恢复语义。
+        // 只有新会话领用预建会话（已完成 session/new）：resume/load/fork 走原连接恢复语义。
+        // 领用后 AcpConnection 跳过 initialize 与 session/new，以预建的原生 ID 走 onSession 与配置恢复。
         const fresh = mode === "session" && !input.externalSessionId;
         const claimed = fresh ? pool?.claimSpare(key) : undefined;
         connection = claimed ?? spawnConnection(launch, input.cwd);
@@ -253,7 +254,7 @@ export function createExternalEnginePort(
             : {}),
           totalMs: Date.now() - startedAt,
         });
-        // 新会话成功后才补位：配置与引擎已证实可用，且补位不与本次握手争抢启动资源。
+        // 新会话成功后才补位（预建到 session/new）：配置与引擎已证实可用，且补位不与本次握手争抢启动资源。
         if (established.fresh && pool) {
           const { key } = established;
           pool.refillSpare(key, async () =>

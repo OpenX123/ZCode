@@ -183,9 +183,13 @@ export function resolveDraftEngineReadiness(input: {
   return "connecting";
 }
 
-/** 发送入口是否可用：就绪、失败（发送即重试）或可重建；创建/连接中与禁用时不可发送。 */
+/**
+ * 发送入口是否可用：只有预热被禁用时不可发送。
+ * 2026-11-08（草稿无感）：creating / connecting 也可发送，由 SessionPane 发送链按
+ * waitForSession → 屏障内 prepare → 记忆恢复收口 → sendText 的顺序等待，不在入口拦截。
+ */
 export function draftEngineSubmissionAllowed(readiness: DraftEngineReadiness): boolean {
-  return readiness === "ready" || readiness === "failed" || readiness === "recreatable";
+  return readiness !== "disabled";
 }
 
 export interface DraftSessionPrewarm {
@@ -201,6 +205,11 @@ export interface DraftSessionPrewarm {
 export interface DraftPrewarmBinding {
   workspaceKey: string;
   sessionId: string;
+  /**
+   * binding 生命周期结束（丢弃、换代回收、owner 卸载）时中止。首发在配置屏障外等待记忆恢复，
+   * 需要据此结束等待并抛错保留输入，不能停在“正在发送…”。
+   */
+  signal: AbortSignal;
   /** 首条 admission 命令发出前同步占住生命周期；false 表示 binding 已不是当前 owner。 */
   beginPromotion(): boolean;
   /** 首发成功后标记（阻止清理路径 deleteSession 已提升的会话）。 */
@@ -221,6 +230,8 @@ interface DraftPrewarmCurrent {
   invalidationVersion: number;
   controller: DraftPrewarmController;
   binding: DraftPrewarmBinding | null;
+  /** 当前 binding 的生命周期；丢弃或回收时中止，见 DraftPrewarmBinding.signal。 */
+  bindingLifetime: AbortController | null;
   settled: boolean;
   completion: Promise<void>;
   retiring: boolean;
@@ -238,6 +249,14 @@ interface DraftPrewarmCurrent {
  * 成功，所以这里做有界退避而不是放弃。
  */
 const PREWARM_RETRY_DELAYS_MS = [500, 1000, 2000];
+
+/** binding 被丢弃或随本代回收：中止其生命周期信号，让仍在等待的首发抛错保留输入。 */
+function abortBindingLifetime(current: DraftPrewarmCurrent): void {
+  const lifetime = current.bindingLifetime;
+  if (!lifetime) return;
+  current.bindingLifetime = null;
+  lifetime.abort(new Error("草稿会话已切换，请重新发送"));
+}
 
 /**
  * 同一逻辑 draft pane 的预热协调器。
@@ -432,10 +451,12 @@ class DraftSessionPrewarmCoordinator {
         if (this.current !== current || current.retiring) {
           return;
         }
+        const lifetime = new AbortController();
         let binding!: DraftPrewarmBinding;
         binding = {
           workspaceKey: this.workspaceKey,
           sessionId,
+          signal: lifetime.signal,
           beginPromotion: () => {
             if (this.current !== current || current.binding !== binding) {
               return false;
@@ -455,11 +476,13 @@ class DraftSessionPrewarmCoordinator {
             }
             current.controller.markDiscarded();
             current.binding = null;
+            abortBindingLifetime(current);
             this.blockedInvalidationVersion = current.invalidationVersion;
             this.emitBindings();
           },
         };
         current.binding = binding;
+        current.bindingLifetime = lifetime;
         this.emitBindings();
       },
       onError: (error) => {
@@ -476,7 +499,7 @@ class DraftSessionPrewarmCoordinator {
             this.scheduleRetryAfterFailure(current);
           }
           // 原因：onReady 在 settled 之前上抛，订阅者此时仍看到在途；收口后补发一次，
-          // 让“正在连接引擎”只覆盖真实在途的创建。
+          // 让 pending（creating 阶段）只覆盖真实在途的创建。
           if (this.current === current) this.emitBindings();
           return;
         }
@@ -494,6 +517,7 @@ class DraftSessionPrewarmCoordinator {
       invalidationVersion,
       controller,
       binding: null,
+      bindingLifetime: null,
       settled: false,
       completion,
       retiring: false,
@@ -511,6 +535,7 @@ class DraftSessionPrewarmCoordinator {
     this.clearRetryTimer();
     current.retiring = true;
     current.binding = null;
+    abortBindingLifetime(current);
     current.controller.dispose();
     // 已收口的一代立即释放；先释放再广播，订阅者才不会把已结束的创建当成在途。
     if (current.settled) {
@@ -596,7 +621,10 @@ function getDraftSessionPrewarmCoordinator(params: {
 }
 
 export function useDraftSessionPrewarm(params: {
-  /** pane 未绑定会话（sessionId===null）时启用。 */
+  /**
+   * pane 未绑定会话（sessionId===null）且首次可见后启用；调用方对可见性锁存，
+   * 之后隐藏也保持启用（关闭会回收预热，切换 Tab 不应回收或重建）。
+   */
   enabled: boolean;
   workspaceKey: string;
   /** 同一 workspace 内的逻辑 pane 身份；同步重挂必须保持稳定。 */

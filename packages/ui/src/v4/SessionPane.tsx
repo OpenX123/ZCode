@@ -619,7 +619,9 @@ export function SessionPane({
   const [lease, setLease] = useSessionPaneLease(sessionId, layer);
   // 1.1 启动恢复：重启后所有已打开 Tab 同时订阅，CLI 并发冷恢复 6 个会话（每个 4.5–10.6s），
   // 发送被拖到 18–31s。绑定已有会话的 pane 首次可见前不取租约（不订阅 → 不冷恢复 runtime、
-  // 外部引擎不做后台连接）；首次可见后锁存，之后隐藏也保留租约。草稿预热不受此门控。
+  // 外部引擎不做后台连接）；首次可见后锁存，之后隐藏也保留租约。
+  // 2026-11-08 起草稿预热复用同一可见性事实（见下方 draftPrewarmEnabled）：窗口重载时 8 个草稿
+  // 同时预热曾把单次握手拖到 5–18s。
   const [paneActivated, setPaneActivated] = useState(paneVisible);
   if (paneVisible && !paneActivated) setPaneActivated(true);
   const leaseDeferredUntilVisible = sessionId !== null && !paneActivated;
@@ -2210,7 +2212,11 @@ export function SessionPane({
   // ── 草稿态 v4 draft session 预热（m5）──
   // pane 未绑定会话时后台建 phase=draft 会话作预热载体：配置写 CAS 直达、首发复用。
   // 对外绑定语义不变（shell activeTaskId 仍 null），预热会话只是 pane 内部 effective 订阅目标。
+  // 修复（1.1.0 Windows 生产日志 2026-11-07）：预热曾不看可见性，窗口重载时所有已打开的草稿
+  // Tab 同时 createSession，外部引擎握手互相争抢被拖到 5–18s。现在与已有会话取租约共用
+  // paneActivated 锁存：首次可见后才预热，之后隐藏也保留（不回收、不重复创建）。
   const draftPrewarmEnabled =
+    paneActivated &&
     sessionId === null &&
     (externalEngine
       ? remoteAvailable && Boolean(externalEngineService)
@@ -2261,6 +2267,11 @@ export function SessionPane({
   );
   const ensureDraftEngineReadyBeforeSendRef = useRef<(targetSessionId: string) => Promise<void>>(
     async () => undefined,
+  );
+  // 外部引擎草稿首发在配置屏障外的前置阶段（dispatchSendText 调用）；依赖稍后声明的记忆恢复
+  // hook，与上面的 ref 一样在其声明之后赋值。
+  const prepareExternalDraftForSendRef = useRef<() => Promise<"ready" | "blocked">>(
+    async () => "ready",
   );
   const effectiveSessionId = sessionId ?? recoveringDraft?.sessionId ?? prewarmSessionId;
   useEffect(() => {
@@ -2520,6 +2531,16 @@ export function SessionPane({
     [dispatchCommand, intl, settleCurrentQueueInputs],
   );
 
+  // 外部引擎能否启动（Host 按引擎 single-flight 并缓存）；未就绪时显示安装/登录引导而不是发送失败。
+  const checkExternalEngineLaunchReady = useCallback(async () => {
+    if (!isExternalSessionEngine(sessionEngine)) return true;
+    const ready = externalEngineService?.isLaunchReady
+      ? await externalEngineService.isLaunchReady(sessionEngine)
+      : (await externalEngineService?.getStatus(sessionEngine))?.ready === true;
+    setEngineNotReady(!ready);
+    return ready;
+  }, [externalEngineService, sessionEngine, setEngineNotReady]);
+
   const dispatchSendTextAfterConfig = useCallback(
     async (
       text: string,
@@ -2564,14 +2585,7 @@ export function SessionPane({
           });
 
       if (externalEngine && isExternalSessionEngine(sessionEngine)) {
-        const ready = externalEngineService?.isLaunchReady
-          ? await externalEngineService.isLaunchReady(sessionEngine)
-          : (await externalEngineService?.getStatus(sessionEngine))?.ready === true;
-        if (!ready) {
-          setEngineNotReady(true);
-          return "blocked" as const;
-        }
-        setEngineNotReady(false);
+        if (!(await checkExternalEngineLaunchReady())) return "blocked" as const;
         submission = null;
       }
       if (!externalEngine && !(await ensureDraftModelReadyForSend())) {
@@ -2745,9 +2759,8 @@ export function SessionPane({
       }
     },
     [
-      setEngineNotReady,
+      checkExternalEngineLaunchReady,
       externalEngine,
-      externalEngineService,
       sessionEngine,
       dispatchCommand,
       baseWorkspaceServices,
@@ -2781,31 +2794,42 @@ export function SessionPane({
             : useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
                 .draftTaskGroupId
           : undefined;
+      const handleSendError = (error: unknown) => {
+        if (isEngineNotReadyError(error)) {
+          setEngineNotReady(true);
+          return "blocked" as const;
+        }
+        if (sessionId === null && isProviderNotReadyError(error)) {
+          // UI 预检查与 Host getClient 之间 registry 仍可能失效。竞态命中时收敛成
+          // 同一个正常等待态，不走异常发送路径，也不清空 composer。
+          markDraftProviderNotReady();
+          return "blocked" as const;
+        }
+        throw error;
+      };
       // followupMode 仍通过 Session CAS 同步；模型和模式已封装进 Submission，不再
       // 依赖“配置命令先到、sendText 后到”的跨命令时序。
-      return configCommandBarrier.enqueue(async () => {
-        try {
-          return await dispatchSendTextAfterConfig(text, submissionOptions, taskGroupId);
-        } catch (error) {
-          if (isEngineNotReadyError(error)) {
-            setEngineNotReady(true);
-            return "blocked" as const;
+      const send = () =>
+        configCommandBarrier.enqueue(async () => {
+          try {
+            return await dispatchSendTextAfterConfig(text, submissionOptions, taskGroupId);
+          } catch (error) {
+            return handleSendError(error);
           }
-          if (sessionId === null && isProviderNotReadyError(error)) {
-            // UI 预检查与 Host getClient 之间 registry 仍可能失效。竞态命中时收敛成
-            // 同一个正常等待态，不走异常发送路径，也不清空 composer。
-            markDraftProviderNotReady();
-            return "blocked" as const;
-          }
-          throw error;
-        }
-      });
+        });
+      if (sessionId !== null || !externalEngine) return send();
+      // 外部引擎草稿：先在屏障外等待就绪与记忆恢复收口（见 prepareExternalDraftForSendRef），
+      // 再把发送排入屏障；等待期间 Composer 保持“正在发送…”，失败抛错保留输入。
+      return prepareExternalDraftForSendRef
+        .current()
+        .then((outcome) => (outcome === "blocked" ? outcome : send()), handleSendError);
     },
     [
       setEngineNotReady,
       configCommandBarrier,
       createSubmissionFromComposer,
       dispatchSendTextAfterConfig,
+      externalEngine,
       draftTabId,
       draftTaskGroupId,
       markDraftProviderNotReady,
@@ -3243,7 +3267,8 @@ export function SessionPane({
   ensureDraftPrewarmConfigBeforeSendRef.current = ensureDraftPrewarmConfigBeforeSend;
   // 1.1：ACK 早于握手完成。外部引擎草稿发送仍须等就绪：snapshot 未确认 ready（连接中、失败或
   // 刚由 owner 重建）时，先并入/重试 CLI 的单飞准备，成功才提交，绝不在准备期间提交 prompt。
-  // 发送本身已在配置屏障内执行，这里直接发 CAS；再次入队屏障会等待自己而死锁。
+  // 调用方负责屏障：发送链内已在屏障中直接调用（再次入队会等待自己而死锁），屏障外的前置阶段
+  // 则把它作为一条屏障命令入队。
   ensureDraftEngineReadyBeforeSendRef.current = async (targetSessionId: string) => {
     const current = snapshotRef.current;
     if (current?.sessionId === targetSessionId && current.config.engineConfigState === "ready")
@@ -3262,7 +3287,12 @@ export function SessionPane({
           { configId, value },
           { targetSessionId },
         );
-        return ack?.status === "accepted" || ack?.status === "noop";
+        if (ack?.status !== "accepted" && ack?.status !== "noop") return null;
+        // 恢复推进以 ACK 带回的 runtime 确认配置为准（引擎可能保留旧值，之后不再有新帧）；
+        // noop 或旧 CLI 不带结果时由记忆 hook 视为已是当前值。
+        return ack.result?.type === "setEngineConfigOption"
+          ? { confirmedOptions: ack.result.engineConfigOptions }
+          : {};
       }),
     [configCommandBarrier, dispatchConfigCas],
   );
@@ -3283,6 +3313,23 @@ export function SessionPane({
       snapshot?.sessionId === prewarmSessionId,
     applyOption: applyRememberedEngineOption,
   });
+  // 2026-11-08 外部引擎草稿 creating/connecting 也可发送（external-agent-engines-spec「草稿预热
+  // owner」）。顺序：waitForSession → 屏障内 prepare（并入后台握手或失败后重试）→ 本草稿记忆恢复
+  // （模型→深度）收口 → 由 dispatchSendText 把 sendText 排入屏障。
+  // 竞态依据：恢复由 ready snapshot 触发后才排入同一屏障，而发送链本身在屏障内执行。在屏障内等待
+  // 恢复会与恢复命令互等死锁；不等待则 prepare ACK 先于 ready snapshot 到达时 sendText 会抢在恢复
+  // 之前，首轮使用引擎缺省配置。因此等待放在屏障外，恢复收口后发送才入队。binding 被丢弃、换代或
+  // owner 卸载时其 signal 中止等待，发送抛错保留输入。
+  prepareExternalDraftForSendRef.current = async () => {
+    if (!(await checkExternalEngineLaunchReady())) return "blocked";
+    const binding = await waitForDraftSession();
+    await configCommandBarrier.enqueue(() =>
+      ensureDraftEngineReadyBeforeSendRef.current(binding.sessionId),
+    );
+    if (engineConfigRestorable)
+      await engineConfigMemory.waitForRestore(binding.sessionId, binding.signal);
+    return "ready";
+  };
 
   const followupModeSyncKeyRef = useRef<string | null>(null);
   useEffect(() => {
@@ -3986,13 +4033,18 @@ export function SessionPane({
                   ? snapshot.config.engineConfigOptions
                   : undefined
               }
+              // 已有会话（空闲重连、停止后恢复）仍显示“正在连接引擎…”。
               loading={
                 externalEngine &&
-                (sessionId === null
-                  ? // 原因：曾用“无 binding 且无错误”推断在途，预热被禁用（待恢复首发、远程不可用）时
-                    // 两者都为空，草稿永久显示“正在连接引擎…”；改为 owner 在途状态与 snapshot 派生。
-                    draftEngineReadiness === "creating" || draftEngineReadiness === "connecting"
-                  : connecting || snapshot?.config.engineConfigState === "connecting")
+                sessionId !== null &&
+                (connecting || snapshot?.config.engineConfigState === "connecting")
+              }
+              // 2026-11-08 草稿无感：creating / connecting 不显示连接中文案、可直接发送，只把原生配置
+              // 选择器显示为禁用；阶段仍由 owner 在途状态与预热 snapshot 派生。
+              configPending={
+                externalEngine &&
+                sessionId === null &&
+                (draftEngineReadiness === "creating" || draftEngineReadiness === "connecting")
               }
               error={
                 externalEngine

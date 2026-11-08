@@ -1,6 +1,7 @@
 export {
   nextEngineConfigRestoreStep,
   useEngineConfigMemory,
+  type EngineConfigApplyResult,
   type EngineConfigMemory,
   type EngineConfigMemoryParams,
   type EngineConfigRestoreStep,

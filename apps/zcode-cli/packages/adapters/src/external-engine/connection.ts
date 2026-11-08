@@ -11,6 +11,7 @@ import {
   readExternalEngineFailure,
   type EngineConfigOption,
   type EngineConnectionFailure,
+  type ExternalSessionEngine,
 } from "@zcode/shared";
 import { closeAcpProcess } from "../exec/acp-process.js";
 import {
@@ -73,6 +74,16 @@ function configOptions(value: unknown): EngineConfigOption[] {
   if (!parsed.success) throw new ExternalEngineConnectionError({ code: "protocol" });
   return parsed.data;
 }
+type SessionMethod = NonNullable<EngineConnectionFailure["method"]>;
+/** 已建立（或已预建）的原生会话；回调与配置恢复由 execute 继续完成。 */
+interface OpenedSession {
+  method: SessionMethod;
+  initializeMs: number;
+  /** 原生返回的配置目录（预建会话为已应用新会话默认值后的目录）。 */
+  configOptions: unknown;
+  /** 预建时已应用新会话默认配置（Claude Auto），领用时不再重复判断。 */
+  defaultsApplied: boolean;
+}
 export class AcpConnection {
   private sequence = 0;
   private pending = new Map<
@@ -94,6 +105,11 @@ export class AcpConnection {
   private forking = false;
   private initialUpdates: Array<{ sessionId: unknown; update: JsonObject }> = [];
   private initialized?: Promise<JsonObject>;
+  /**
+   * 预建会话（spare）尚未被领用时的配置目录。领用前 sessionReady 保持 false：这段时间到达的通知
+   * 留在 initialUpdates，领用会话的握手按初始通知缓冲规则把它们交给该会话，而不是因无 active 被丢弃。
+   */
+  private prebuilt?: { options: EngineConfigOption[] };
   /** 最近一次握手的阶段耗时（毫秒），只供 port 写本地性能事件，不含任何正文。 */
   lastHandshake?: {
     method: string;
@@ -390,8 +406,8 @@ export class AcpConnection {
     });
   }
   /**
-   * initialize 与连接级 setup（Codex API Key 的 providers/set），每个进程只做一次。
-   * 预热备用进程预先完成；会话领用后 execute 直接复用缓存的能力声明，不重复握手。
+   * initialize 与连接级 setup（Codex API Key 的 providers/set），每个进程只做一次；
+   * 预建会话在补位时完成，领用后不再重复。
    */
   initialize(engine: ExternalEngineSessionInput["engine"]): Promise<JsonObject> {
     this.initialized ??= (async () => {
@@ -404,6 +420,26 @@ export class AcpConnection {
       return initialized;
     })();
     return this.initialized;
+  }
+  /**
+   * 预建会话（docs/desktop/external-agent-engines-spec.md「预建会话（spare）」）：initialize → 在 cwd
+   * session/new → 新会话默认配置（Claude Auto），从不提交 prompt。此时还没有 YCode 会话，不调用任何
+   * 会话回调；原生 ID、配置目录与领用前到达的通知由领用会话的 prepare 交付。
+   * 依据：Claude adapter 的 session/new 需拉起官方 CLI 并等待其初始化（本机约 1.5s），只预热到
+   * initialize 时命中仍需约 1.76s；本机实测两家未提交 prompt 的会话关闭后都不留下原生会话历史。
+   */
+  async prebuild(engine: ExternalSessionEngine, cwd: string): Promise<void> {
+    if (this.active || this.externalSessionId)
+      throw new Error("ACP connection already has a session");
+    const options = await this.withHandshakeTimeout(async () => {
+      const opened = await this.openSession({ engine, cwd });
+      return this.newSessionDefaults(
+        engine,
+        undefined,
+        await this.initialConfigOptions(configOptions(opened.configOptions)),
+      );
+    });
+    this.prebuilt = { options };
   }
   async prepare(input: ExternalEngineSessionInput): Promise<void> {
     await this.execute(input);
@@ -458,142 +494,8 @@ export class AcpConnection {
     input.signal.addEventListener("abort", cancel, { once: true });
     try {
       if (input.signal.aborted) throw input.signal.reason;
-      if (!this.externalSessionId) {
-        const timer = setTimeout(() => {
-          this.fail(
-            new ExternalEngineConnectionError({
-              code: "timeout",
-              method: this.pending.values().next().value?.method ?? "initialize",
-            }),
-          );
-          void this.close();
-        }, HANDSHAKE_TIMEOUT_MS);
-        timer.unref();
-        try {
-          const initializeStartedAt = Date.now();
-          const initialized = await this.initialize(input.engine);
-          const sessionStartedAt = Date.now();
-          const capabilities = initialized.agentCapabilities as
-            | { loadSession?: boolean; sessionCapabilities?: { resume?: unknown; fork?: unknown } }
-            | undefined;
-          if (parentExternalSessionId && !capabilities?.sessionCapabilities?.fork)
-            throw new ExternalEngineConnectionError({
-              code: "unsupported",
-              method: "session/fork",
-            });
-          let method: NonNullable<EngineConnectionFailure["method"]> = parentExternalSessionId
-            ? "session/fork"
-            : !input.externalSessionId
-              ? "session/new"
-              : capabilities?.loadSession && !capabilities.sessionCapabilities?.resume
-                ? "session/load"
-                : "session/resume";
-          const params = {
-            cwd: input.cwd,
-            mcpServers: [],
-            ...(parentExternalSessionId || input.externalSessionId
-              ? { sessionId: parentExternalSessionId ?? input.externalSessionId }
-              : {}),
-          };
-          this.loadingHistory = method === "session/load" || method === "session/fork";
-          let response: JsonObject;
-          try {
-            response = await this.request(method, params);
-          } catch (error) {
-            // 仅明确 method-not-found 才回退同一原生会话；业务错误不能靠换方法掩盖。
-            if (
-              !(error instanceof ExternalEngineConnectionError) ||
-              error.failure.rpcCode !== -32601 ||
-              method !== "session/resume" ||
-              !capabilities?.loadSession
-            )
-              throw error;
-            method = "session/load";
-            this.loadingHistory = true;
-            response = await this.request(method, params);
-          }
-          const id = response.sessionId ?? input.externalSessionId;
-          if (typeof id !== "string") throw new Error("ACP session id missing");
-          if (parentExternalSessionId && id === parentExternalSessionId)
-            throw new ExternalEngineConnectionError(
-              { code: "protocol", method: "session/fork" },
-              "ACP fork reused parent session",
-            );
-          if (input.externalSessionId && id !== input.externalSessionId)
-            throw new ExternalEngineConnectionError(
-              { code: "protocol" },
-              "ACP resumed a different session",
-            );
-          this.externalSessionId = id;
-          await input.onSession(id);
-          const configStartedAt = Date.now();
-          let restoredOptions = await this.initialConfigOptions(
-            configOptions(response.configOptions),
-          );
-          // ACP 缺省仍是 Manual，不会继承终端切换的 Auto；仅给未确认模式的新 Claude 会话选默认值。
-          // 复用原生配置 RPC，并接纳其模型限制后的实际值；已有会话和用户选择继续走恢复路径。
-          if (
-            input.engine === "claude-code" &&
-            !parentExternalSessionId &&
-            !input.externalSessionId &&
-            !input.configValues?.some((saved) => saved.id === "mode") &&
-            restoredOptions.some(
-              (option) =>
-                option.id === "mode" &&
-                option.currentValue === "default" &&
-                option.options.some((item) => item.value === "auto"),
-            )
-          )
-            restoredOptions = await this.initialConfigOptions(
-              await this.setConfigOption("mode", "auto"),
-            );
-          for (const saved of input.configValues ?? []) {
-            const option = restoredOptions.find((item) => item.id === saved.id);
-            if (!option)
-              throw new ExternalEngineConnectionError(
-                { code: "configuration", method: "session/set_config_option" },
-                "Saved ACP config option is unavailable",
-              );
-            if (option.currentValue === saved.value) continue;
-            if (!option.options.some((item) => item.value === saved.value))
-              throw new ExternalEngineConnectionError(
-                { code: "configuration", method: "session/set_config_option" },
-                "Saved ACP config value is unavailable",
-              );
-            restoredOptions = await this.initialConfigOptions(
-              await this.setConfigOption(saved.id, saved.value),
-            );
-          }
-          if (
-            input.configValues?.some(
-              (saved) =>
-                !restoredOptions.some(
-                  (option) => option.id === saved.id && option.currentValue === saved.value,
-                ),
-            )
-          )
-            throw new ExternalEngineConnectionError({
-              code: "configuration",
-              method: "session/set_config_option",
-            });
-          await input.onConfigOptions(restoredOptions);
-          this.lastHandshake = {
-            method,
-            initializeMs: sessionStartedAt - initializeStartedAt,
-            sessionMs: configStartedAt - sessionStartedAt,
-            configRestoreMs: Date.now() - configStartedAt,
-          };
-          this.notifications = this.notifications.then(async () => {
-            for (const update of this.initialUpdates) await this.update(update);
-            this.initialUpdates = [];
-            this.sessionReady = true;
-            this.loadingHistory = false;
-          });
-          await this.notifications;
-        } finally {
-          clearTimeout(timer);
-        }
-      }
+      if (!this.externalSessionId || this.prebuilt)
+        await this.withHandshakeTimeout(() => this.handshake(input, parentExternalSessionId));
       if (input.signal.aborted) {
         cancel();
         throw input.signal.reason;
@@ -629,6 +531,189 @@ export class AcpConnection {
       this.active = undefined;
       this.forking = false;
     }
+  }
+  /** 握手整体超时：卡住的阶段以结构化 timeout 失败并回收进程，不让准备无限等待。 */
+  private async withHandshakeTimeout<T>(run: () => Promise<T>): Promise<T> {
+    const timer = setTimeout(() => {
+      this.fail(
+        new ExternalEngineConnectionError({
+          code: "timeout",
+          method: this.pending.values().next().value?.method ?? "initialize",
+        }),
+      );
+      void this.close();
+    }, HANDSHAKE_TIMEOUT_MS);
+    timer.unref();
+    try {
+      return await run();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  /** initialize 后建立原生会话（new / resume / load / fork）；不调用会话回调。 */
+  private async openSession(
+    input: Pick<ExternalEngineSessionInput, "engine" | "cwd" | "externalSessionId">,
+    parentExternalSessionId?: string,
+  ): Promise<OpenedSession> {
+    const initializeStartedAt = Date.now();
+    const initialized = await this.initialize(input.engine);
+    const initializeMs = Date.now() - initializeStartedAt;
+    const capabilities = initialized.agentCapabilities as
+      | { loadSession?: boolean; sessionCapabilities?: { resume?: unknown; fork?: unknown } }
+      | undefined;
+    if (parentExternalSessionId && !capabilities?.sessionCapabilities?.fork)
+      throw new ExternalEngineConnectionError({ code: "unsupported", method: "session/fork" });
+    let method: SessionMethod = parentExternalSessionId
+      ? "session/fork"
+      : !input.externalSessionId
+        ? "session/new"
+        : capabilities?.loadSession && !capabilities.sessionCapabilities?.resume
+          ? "session/load"
+          : "session/resume";
+    const params = {
+      cwd: input.cwd,
+      mcpServers: [],
+      ...(parentExternalSessionId || input.externalSessionId
+        ? { sessionId: parentExternalSessionId ?? input.externalSessionId }
+        : {}),
+    };
+    this.loadingHistory = method === "session/load" || method === "session/fork";
+    let response: JsonObject;
+    try {
+      response = await this.request(method, params);
+    } catch (error) {
+      // 仅明确 method-not-found 才回退同一原生会话；业务错误不能靠换方法掩盖。
+      if (
+        !(error instanceof ExternalEngineConnectionError) ||
+        error.failure.rpcCode !== -32601 ||
+        method !== "session/resume" ||
+        !capabilities?.loadSession
+      )
+        throw error;
+      method = "session/load";
+      this.loadingHistory = true;
+      response = await this.request(method, params);
+    }
+    const id = response.sessionId ?? input.externalSessionId;
+    if (typeof id !== "string") throw new Error("ACP session id missing");
+    if (parentExternalSessionId && id === parentExternalSessionId)
+      throw new ExternalEngineConnectionError(
+        { code: "protocol", method: "session/fork" },
+        "ACP fork reused parent session",
+      );
+    if (input.externalSessionId && id !== input.externalSessionId)
+      throw new ExternalEngineConnectionError(
+        { code: "protocol" },
+        "ACP resumed a different session",
+      );
+    this.externalSessionId = id;
+    return { method, initializeMs, configOptions: response.configOptions, defaultsApplied: false };
+  }
+  /** 会话握手：建立或领用原生会话 → onSession → 配置恢复 → onConfigOptions → 回放初始通知。 */
+  private async handshake(
+    input: ExternalEngineSessionInput,
+    parentExternalSessionId?: string,
+  ): Promise<void> {
+    const startedAt = Date.now();
+    let opened: OpenedSession;
+    if (this.prebuilt) {
+      // 预建会话只服务新会话（port 只在新会话时领用）；resume/load/fork 必须走原生恢复语义。
+      if (input.externalSessionId || parentExternalSessionId)
+        throw new Error("Prebuilt ACP session only serves a new session");
+      // 领用：initialize 与 session/new 已在补位时完成，这里只交付缓存的原生 ID 与配置目录。
+      opened = {
+        method: "session/new",
+        initializeMs: 0,
+        configOptions: this.prebuilt.options,
+        defaultsApplied: true,
+      };
+      this.prebuilt = undefined;
+    } else opened = await this.openSession(input, parentExternalSessionId);
+    await input.onSession(this.externalSessionId!);
+    const configStartedAt = Date.now();
+    let restoredOptions = await this.initialConfigOptions(configOptions(opened.configOptions));
+    if (!opened.defaultsApplied && !parentExternalSessionId && !input.externalSessionId)
+      restoredOptions = await this.newSessionDefaults(
+        input.engine,
+        input.configValues,
+        restoredOptions,
+      );
+    // 会话自带的已保存配置（含显式模式）始终在默认值之后下发；领用预建会话时同样如此。
+    restoredOptions = await this.restoreConfigValues(input.configValues, restoredOptions);
+    await input.onConfigOptions(restoredOptions);
+    this.lastHandshake = {
+      method: opened.method,
+      initializeMs: opened.initializeMs,
+      // 领用预建会话时 initialize 与 session/new 都已提前完成，这里只剩 onSession 持久化的真实耗时。
+      sessionMs: configStartedAt - startedAt - opened.initializeMs,
+      configRestoreMs: Date.now() - configStartedAt,
+    };
+    this.notifications = this.notifications.then(async () => {
+      for (const update of this.initialUpdates) await this.update(update);
+      this.initialUpdates = [];
+      this.sessionReady = true;
+      this.loadingHistory = false;
+    });
+    await this.notifications;
+  }
+  /**
+   * ACP 缺省仍是 Manual，不会继承终端切换的 Auto；仅给未确认模式的新 Claude 会话选默认值。
+   * 复用原生配置 RPC，并接纳其模型限制后的实际值；已有会话和用户选择继续走恢复路径。
+   */
+  private async newSessionDefaults(
+    engine: ExternalSessionEngine,
+    configValues: ExternalEngineSessionInput["configValues"],
+    options: EngineConfigOption[],
+  ): Promise<EngineConfigOption[]> {
+    if (
+      engine !== "claude-code" ||
+      configValues?.some((saved) => saved.id === "mode") ||
+      !options.some(
+        (option) =>
+          option.id === "mode" &&
+          option.currentValue === "default" &&
+          option.options.some((item) => item.value === "auto"),
+      )
+    )
+      return options;
+    return this.initialConfigOptions(await this.setConfigOption("mode", "auto"));
+  }
+  /** 按 Runtime 上次确认的选择恢复配置；缺失值明确失败，不静默回落。 */
+  private async restoreConfigValues(
+    configValues: ExternalEngineSessionInput["configValues"],
+    options: EngineConfigOption[],
+  ): Promise<EngineConfigOption[]> {
+    let restoredOptions = options;
+    for (const saved of configValues ?? []) {
+      const option = restoredOptions.find((item) => item.id === saved.id);
+      if (!option)
+        throw new ExternalEngineConnectionError(
+          { code: "configuration", method: "session/set_config_option" },
+          "Saved ACP config option is unavailable",
+        );
+      if (option.currentValue === saved.value) continue;
+      if (!option.options.some((item) => item.value === saved.value))
+        throw new ExternalEngineConnectionError(
+          { code: "configuration", method: "session/set_config_option" },
+          "Saved ACP config value is unavailable",
+        );
+      restoredOptions = await this.initialConfigOptions(
+        await this.setConfigOption(saved.id, saved.value),
+      );
+    }
+    if (
+      configValues?.some(
+        (saved) =>
+          !restoredOptions.some(
+            (option) => option.id === saved.id && option.currentValue === saved.value,
+          ),
+      )
+    )
+      throw new ExternalEngineConnectionError({
+        code: "configuration",
+        method: "session/set_config_option",
+      });
+    return restoredOptions;
   }
   private async initialConfigOptions(options: EngineConfigOption[]): Promise<EngineConfigOption[]> {
     await this.notifications;

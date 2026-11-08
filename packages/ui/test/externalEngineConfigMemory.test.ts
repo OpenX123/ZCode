@@ -61,7 +61,32 @@ interface HookProps {
   restoreEnabled?: boolean;
 }
 
-function renderMemory(initial: HookProps, applyOption = vi.fn(async () => true)) {
+type ApplyResult = { confirmedOptions?: EngineConfigOption[] } | null;
+type ApplyOption = (sessionId: string, configId: string, value: string) => Promise<ApplyResult>;
+
+/**
+ * 受控引擎替身：按所选值更新状态，并像 CLI 一样在 ACK 中带回 runtime 确认后的配置。
+ * gpt-a 的深度目录没有 high，切到 gpt-b 后才出现（模型决定深度目录）。
+ */
+function fakeEngine(model = "gpt-a", effort = "low") {
+  const state = { model, effort };
+  return vi.fn<ApplyOption>(async (_sessionId, configId, value) => {
+    if (configId === "model") state.model = value;
+    else state.effort = value;
+    const efforts = state.model === "gpt-a" ? ["low", "medium"] : ["low", "medium", "high"];
+    return { confirmedOptions: catalog(state.model, state.effort, efforts) };
+  });
+}
+
+function deferredAck() {
+  let resolve!: (value: ApplyResult) => void;
+  const promise = new Promise<ApplyResult>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function renderMemory(initial: HookProps, applyOption = fakeEngine()) {
   const view = renderHook(
     (props: HookProps) =>
       useEngineConfigMemory({
@@ -78,8 +103,7 @@ function renderMemory(initial: HookProps, applyOption = vi.fn(async () => true))
 
 async function flush() {
   await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
   });
 }
 
@@ -145,7 +169,7 @@ describe("按引擎记忆模型与思考深度", () => {
     expect(preferences.update).toHaveBeenCalledTimes(2);
   });
 
-  it("新草稿原生配置就绪后先恢复模型，确认后再按新目录恢复深度，且不写回记忆", async () => {
+  it("新草稿原生配置就绪后先恢复模型，再按 ACK 确认的新目录恢复深度，且不写回记忆", async () => {
     preferences.settings = {
       externalEngineConfigPreferences: { codex: { model: "gpt-b", reasoning_effort: "high" } },
     } as AppSettings;
@@ -155,11 +179,11 @@ describe("按引擎记忆模型与思考深度", () => {
       options: catalog("gpt-a", "low", ["low", "medium"]),
     });
     await flush();
-    expect(applyOption).toHaveBeenCalledExactlyOnceWith("draft-1", "model", "gpt-b");
-    // 模型确认后深度目录随新模型刷新，才能恢复原目录中不存在的 high。
-    rerender({ sessionId: "draft-1", restoreEnabled: true, options: catalog("gpt-b", "low") });
-    await flush();
-    expect(applyOption).toHaveBeenLastCalledWith("draft-1", "reasoning_effort", "high");
+    // 模型 ACK 带回的目录里才有 high：深度按确认后的新目录恢复，不依赖之后的 snapshot 帧。
+    expect(applyOption.mock.calls).toEqual([
+      ["draft-1", "model", "gpt-b"],
+      ["draft-1", "reasoning_effort", "high"],
+    ]);
     rerender({ sessionId: "draft-1", restoreEnabled: true, options: catalog("gpt-b", "high") });
     await flush();
     expect(applyOption).toHaveBeenCalledTimes(2);
@@ -192,12 +216,171 @@ describe("按引擎记忆模型与思考深度", () => {
     await flush();
     expect(applyOption).not.toHaveBeenCalled();
     // 被拒绝的恢复项不重试，下一个预热会话重新按记忆恢复一次。
-    applyOption.mockResolvedValueOnce(false);
+    applyOption.mockResolvedValueOnce(null);
     rerender({ sessionId: "draft-3", restoreEnabled: true, options: catalog("gpt-a", "low") });
     await flush();
     rerender({ sessionId: "draft-3", restoreEnabled: true, options: catalog("gpt-a", "low") });
     await flush();
     expect(applyOption).toHaveBeenCalledExactlyOnceWith("draft-3", "model", "gpt-b");
+  });
+
+  // P08：creating/connecting 发送在屏障外等待本草稿记忆恢复收口，之后才把 sendText 排入屏障。
+  it("首发等待恢复：模型与深度依次 ACK 确认后才收口；未就绪前不收口", async () => {
+    preferences.settings = {
+      externalEngineConfigPreferences: { codex: { model: "gpt-b", reasoning_effort: "high" } },
+    } as AppSettings;
+    const acks: Array<ReturnType<typeof deferredAck>> = [];
+    const applyOption = vi.fn<ApplyOption>(() => {
+      const ack = deferredAck();
+      acks.push(ack);
+      return ack.promise;
+    });
+    const { rerender, result } = renderMemory(
+      { sessionId: "draft-w1", restoreEnabled: false, options: undefined },
+      applyOption,
+    );
+    let settled = false;
+    void result.current.waitForRestore("draft-w1").then(() => {
+      settled = true;
+    });
+    await flush();
+    // 发送链在 prepare ACK 后到达，snapshot 仍是 connecting：恢复尚未开始，不能放行 sendText。
+    expect(settled).toBe(false);
+    rerender({
+      sessionId: "draft-w1",
+      restoreEnabled: true,
+      options: catalog("gpt-a", "low", ["low", "medium"]),
+    });
+    await flush();
+    expect(applyOption).toHaveBeenCalledExactlyOnceWith("draft-w1", "model", "gpt-b");
+    expect(settled).toBe(false);
+    await act(async () => acks[0]!.resolve({ confirmedOptions: catalog("gpt-b", "low") }));
+    await flush();
+    expect(applyOption).toHaveBeenLastCalledWith("draft-w1", "reasoning_effort", "high");
+    expect(settled).toBe(false);
+    await act(async () => acks[1]!.resolve({ confirmedOptions: catalog("gpt-b", "high") }));
+    await flush();
+    expect(settled).toBe(true);
+    // 已收口的会话再次等待立即返回。
+    await expect(result.current.waitForRestore("draft-w1")).resolves.toBeUndefined();
+  });
+
+  // 修复回归：引擎接受配置却原样保留旧值时，runtime 只再发布一次相同配置，之后没有新帧；
+  // 旧逻辑按 snapshot 等“值变化”永远等不到，首发卡在“正在发送”。现在以 ACK 确认值判定。
+  it("首发等待恢复：引擎接受但保留旧值 → 恢复停止并收口，不再等 snapshot 帧", async () => {
+    preferences.settings = {
+      externalEngineConfigPreferences: { codex: { model: "gpt-b", reasoning_effort: "high" } },
+    } as AppSettings;
+    const applyOption = vi.fn<ApplyOption>(async () => ({
+      confirmedOptions: catalog("gpt-a", "low"),
+    }));
+    const { result } = renderMemory(
+      { sessionId: "draft-kept", restoreEnabled: true, options: catalog("gpt-a", "low") },
+      applyOption,
+    );
+    let settled = false;
+    void result.current.waitForRestore("draft-kept").then(() => {
+      settled = true;
+    });
+    await flush();
+    expect(settled).toBe(true);
+    // 模型未被确认为所选值：不再按未确认的目录恢复深度。
+    expect(applyOption).toHaveBeenCalledExactlyOnceWith("draft-kept", "model", "gpt-b");
+  });
+
+  it("首发等待恢复：noop 或旧 CLI 无确认结果视为已是当前值，按最新 snapshot 目录继续", async () => {
+    preferences.settings = {
+      externalEngineConfigPreferences: { codex: { model: "gpt-b", reasoning_effort: "high" } },
+    } as AppSettings;
+    const applyOption = vi.fn<ApplyOption>(async () => ({}));
+    const { result } = renderMemory(
+      { sessionId: "draft-noop", restoreEnabled: true, options: catalog("gpt-a", "low") },
+      applyOption,
+    );
+    await flush();
+    await expect(result.current.waitForRestore("draft-noop")).resolves.toBeUndefined();
+    expect(applyOption.mock.calls).toEqual([
+      ["draft-noop", "model", "gpt-b"],
+      ["draft-noop", "reasoning_effort", "high"],
+    ]);
+  });
+
+  it("首发等待恢复：无记忆、用户接管与引擎改用其它值都收口；中止与卸载拒绝", async () => {
+    preferences.settings = {} as AppSettings;
+    const noMemory = renderMemory({
+      sessionId: "draft-w2",
+      restoreEnabled: true,
+      options: catalog("gpt-a", "low"),
+    });
+    await flush();
+    await expect(noMemory.result.current.waitForRestore("draft-w2")).resolves.toBeUndefined();
+    noMemory.unmount();
+
+    preferences.settings = {
+      externalEngineConfigPreferences: { codex: { model: "gpt-b", reasoning_effort: "high" } },
+    } as AppSettings;
+    const pendingAck = deferredAck();
+    const takeover = renderMemory(
+      { sessionId: "draft-w3", restoreEnabled: true, options: catalog("gpt-a", "low") },
+      vi.fn<ApplyOption>(() => pendingAck.promise),
+    );
+    await flush();
+    const takeoverWait = takeover.result.current.waitForRestore("draft-w3");
+    act(() => takeover.result.current.recordExplicitChange("model", "gpt-a"));
+    await expect(takeoverWait).resolves.toBeUndefined();
+    // 接管后在途恢复项的 ACK 回来也不再继续后续项。
+    await act(async () => pendingAck.resolve({ confirmedOptions: catalog("gpt-b", "low") }));
+    await flush();
+    expect(takeover.applyOption).toHaveBeenCalledTimes(1);
+    takeover.unmount();
+
+    // 引擎接受后改用其它模型：不再按未确认的目录恢复深度，也不能让首发无限等待。
+    const coercedCatalog = catalog("gpt-a", "low").map((option) =>
+      option.id === "model"
+        ? {
+            ...option,
+            currentValue: "gpt-c",
+            options: [...option.options, { value: "gpt-c", name: "gpt-c" }],
+          }
+        : option,
+    );
+    const coerced = renderMemory(
+      { sessionId: "draft-w4", restoreEnabled: true, options: catalog("gpt-a", "low") },
+      vi.fn<ApplyOption>(async () => ({ confirmedOptions: coercedCatalog })),
+    );
+    await flush();
+    await expect(coerced.result.current.waitForRestore("draft-w4")).resolves.toBeUndefined();
+    expect(coerced.applyOption).toHaveBeenCalledExactlyOnceWith("draft-w4", "model", "gpt-b");
+    coerced.unmount();
+
+    const aborted = renderMemory({
+      sessionId: "draft-w5",
+      restoreEnabled: true,
+      options: undefined,
+    });
+    const controller = new AbortController();
+    const abortedWait = aborted.result.current.waitForRestore("draft-w5", controller.signal);
+    controller.abort(new Error("草稿会话已切换，请重新发送"));
+    await expect(abortedWait).rejects.toThrow("草稿会话已切换");
+    const unmountedWait = aborted.result.current.waitForRestore("draft-w5");
+    aborted.unmount();
+    await expect(unmountedWait).rejects.toThrow();
+  });
+
+  it("首发等待恢复：恢复开始后连接不再就绪即拒绝，由发送链保留输入", async () => {
+    preferences.settings = {
+      externalEngineConfigPreferences: { codex: { model: "gpt-b", reasoning_effort: "high" } },
+    } as AppSettings;
+    const pendingAck = deferredAck();
+    const { rerender, result, applyOption } = renderMemory(
+      { sessionId: "draft-w6", restoreEnabled: true, options: catalog("gpt-a", "low") },
+      vi.fn<ApplyOption>(() => pendingAck.promise),
+    );
+    await flush();
+    expect(applyOption).toHaveBeenCalledTimes(1);
+    const wait = result.current.waitForRestore("draft-w6");
+    rerender({ sessionId: "draft-w6", restoreEnabled: true, options: undefined });
+    await expect(wait).rejects.toThrow();
   });
 
   it("设置首次读取完成前等待，YCode 草稿不访问记忆", async () => {

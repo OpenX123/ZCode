@@ -243,7 +243,8 @@ sequenceDiagram
 - 所有者：Renderer 工作台拥有 Tab 布局与可见性；SessionPane 决定何时订阅会话；CLI 在订阅到达时冷恢复 runtime（含外部引擎 `session/load` 连接），该行为不变。
 - 规则：绑定已有会话的 SessionPane 在首次可见（工作台布局中未隐藏）前不取得 `SessionDataLayer` 租约，因此不订阅、不触发 CLI 冷恢复和外部引擎后台连接。首次可见后取得租约；之后即使隐藏也保留租约，切换 Tab 不重复订阅。
 - 启动时只有每栏当前 Tab（窄屏或浮窗时只有焦点栏）会恢复；其他已打开 Tab 激活时恢复。
-- 不受影响：草稿 Tab 的预热、自动化、定时任务、机器人与后台任务。它们经 Host 命令进入 CLI，CLI 在命令 admission 前按原冷恢复路径恢复 runtime，不依赖界面订阅。
+- 草稿 Tab 的预热（2026-11-08 起）复用同一可见性事实：首次可见后才 `createSession`，之后隐藏也保留，不回收、不重复创建（见 [外部引擎规范](./external-agent-engines-spec.md)「草稿只在可见时预热」）。
+- 不受影响：自动化、定时任务、机器人与后台任务。它们经 Host 命令进入 CLI，CLI 在命令 admission 前按原冷恢复路径恢复 runtime，不依赖界面订阅。
 - 隐藏 Tab 的恢复守卫（删除检测）仍走 sessions-index，不依赖会话订阅。
 
 ```mermaid
@@ -296,7 +297,7 @@ sequenceDiagram
 范围：外部引擎 `createSession` 的握手时机、预热备用进程、闲置 adapter 关闭以及相关性能事件。完整规则、状态所有者与时序图见 [外部 Agent 引擎](external-agent-engines-spec.md)「外部引擎进程与异步准备」，CLI 契约见 `apps/zcode-cli/docs/design/v2/external-agent-engines.md`。
 
 - `createSession` 在记录建立、connecting 发布后即确认；握手在后台完成，进度沿用 `engineConfigState`（connecting → ready / error）。草稿就绪由预热会话 snapshot 派生，发送仍要等就绪。
-- 每个（引擎，连接配置 ID）至多一个已完成 `initialize`（与 `providers/set`）的备用进程，只在桌面本地工作区、该对 `session/new` 成功后补位；`session/new` 时同步领用，10 分钟未领用关闭，失败只写日志并回落冷启动。
+- 每个（引擎，连接配置 ID，cwd）至多一个已完成 `initialize` 与 `session/new` 的预建会话（2026-11-08 起取代只 initialize 的备用进程），只在桌面本地工作区、该键的新会话就绪后补位；新会话时同步领用并直接取得原生会话 ID，10 分钟未领用关闭，失败只写日志并回落冷启动。草稿只在首次可见后预热，`creating` / `connecting` 阶段可直接发送（发送链等待就绪与记忆恢复）。
 - 会话无在途操作、空闲 15 分钟、不在最近 3 个可恢复会话内时关闭 adapter（即使 Tab 打开），保留订阅、配置与 `externalSessionId`；下次发送或改配置经原会话恢复。常驻池对未订阅会话的回收由 10 分钟延长至 30 分钟。
 - 性能事件：`external_engine.handshake.completed|failed`（各阶段耗时）、`external_engine.spare.claimed|miss|ready|expired|failed`、`external_engine.idle_close`、`external_engine.idle_resume.completed|failed`，均为 info（备用进程失败为 warn），不含正文。
 

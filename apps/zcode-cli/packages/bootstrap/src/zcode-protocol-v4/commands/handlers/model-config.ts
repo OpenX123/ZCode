@@ -272,8 +272,14 @@ async function setEngineConfigOption(
 ): Promise<CommandResult | undefined> {
   const record = requireRecord(host, envelope.sessionId);
   const payload = envelope.payload as CommandPayloadMap["setEngineConfigOption"];
-  await record.app.runtime.setEngineConfigOption(payload.configId, payload.value);
-  return undefined;
+  // 修复依据（2026-11-08）：引擎可能接受却保留旧值，此时 runtime 只再发布一次相同配置、之后没有
+  // 新帧，客户端按 snapshot 等“值变化”会永远等不到，草稿首发卡在“正在发送”。ACK 直接带回 runtime
+  // 发布后的确认配置，客户端的记忆恢复据此确定推进。
+  const engineConfigOptions = await record.app.runtime.setEngineConfigOption(
+    payload.configId,
+    payload.value,
+  );
+  return { type: "setEngineConfigOption", engineConfigOptions };
 }
 
 async function prepareExternalEngineSession(

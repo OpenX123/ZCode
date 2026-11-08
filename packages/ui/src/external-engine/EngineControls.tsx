@@ -30,6 +30,7 @@ export function EngineControls({
   onConfigChange,
   disabled,
   loading,
+  configPending,
   error,
   connectionFailure,
   onRetry,
@@ -200,7 +201,8 @@ export function EngineControls({
         const picker = `config:${option.id}`;
         const props = {
           option,
-          disabled: disabled || loading || Boolean(failureMessage) || !onConfigChange,
+          disabled:
+            disabled || loading || configPending || Boolean(failureMessage) || !onConfigChange,
           open: activePicker === picker,
           restoreFocus: activePicker === null || activePicker === picker,
           onOpenChange: (open: boolean) =>

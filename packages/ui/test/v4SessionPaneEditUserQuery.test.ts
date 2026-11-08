@@ -160,7 +160,9 @@ vi.mock("@/v4/composer/useDraftConfigControl.js", () => ({
   }),
 }));
 
-vi.mock("@/v4/composer/useDraftSessionPrewarm.js", () => ({
+// 只替换预热 hook；SessionPane 还导入就绪判定纯函数（M2-B1），沿用真实实现。
+vi.mock("@/v4/composer/useDraftSessionPrewarm.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/v4/composer/useDraftSessionPrewarm.js")>()),
   useDraftSessionPrewarm: () => ({
     binding: null,
   }),
