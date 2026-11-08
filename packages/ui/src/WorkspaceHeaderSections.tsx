@@ -573,6 +573,7 @@ export function WorkspaceHeaderTitleSection({
                     : undefined
                 }
                 showWorkbenchLayoutActions={false}
+                menuKind="dropdown"
                 isPinned={isPinned}
                 fileManagerLabel={fileManagerLabel}
                 taskSessionFile={taskSessionFile}

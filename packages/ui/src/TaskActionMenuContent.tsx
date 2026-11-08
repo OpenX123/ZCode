@@ -1,5 +1,6 @@
 import {
   WorkbenchSessionMenuItems,
+  type SessionMenuKind,
   type WorkbenchSessionBinding,
 } from "@/v4/workbench-tabs/index.js";
 
@@ -19,6 +20,7 @@ export function TaskActionMenuContent({
   intl,
   workbenchSession,
   showWorkbenchLayoutActions = true,
+  menuKind = "context",
   isPinned,
   isArchived = false,
   fileManagerLabel,
@@ -50,6 +52,7 @@ export function TaskActionMenuContent({
   };
   workbenchSession?: WorkbenchSessionBinding;
   showWorkbenchLayoutActions?: boolean;
+  menuKind?: SessionMenuKind;
   isPinned: boolean;
   isArchived?: boolean;
   fileManagerLabel: string;
@@ -93,6 +96,7 @@ export function TaskActionMenuContent({
           disabled={disableTaskActions}
           disabledReason={disabledReason}
           showLayoutActions={showWorkbenchLayoutActions}
+          menuKind={menuKind}
         />
       ) : null}
       <Item

@@ -99,6 +99,9 @@ describe("会话菜单链接与分叉 E2E", () => {
 
       await $('[data-testid="session-copy-link"]').waitForExist({ reverse: true });
       await $(`[data-testid="${TID_WORKSPACE_MORE_BUTTON}"]`).click();
+      // 分叉与分栏同构：先展开“分叉”主项，再选择子项。
+      await $('[data-testid="session-fork-submenu"]').waitForDisplayed();
+      await $('[data-testid="session-fork-submenu"]').click();
       await $('[data-testid="session-fork-same-directory"]').waitForDisplayed();
       await $('[data-testid="session-fork-same-directory"]').click();
       const child = await waitForV4ConversationState(
@@ -117,6 +120,9 @@ describe("会话菜单链接与分叉 E2E", () => {
       const sameDirectoryChildId = child.sessionId || child.taskId;
       await $('[data-testid="session-fork-same-directory"]').waitForExist({ reverse: true });
       await $(`[data-testid="${TID_WORKSPACE_MORE_BUTTON}"]`).click();
+      // 分叉与分栏同构：先展开“分叉”主项，再选择子项。
+      await $('[data-testid="session-fork-submenu"]').waitForDisplayed();
+      await $('[data-testid="session-fork-submenu"]').click();
       await $('[data-testid="session-fork-worktree"]').waitForDisplayed();
       await $('[data-testid="session-fork-worktree"]').click();
       const worktreeChild = await waitForV4ConversationState(

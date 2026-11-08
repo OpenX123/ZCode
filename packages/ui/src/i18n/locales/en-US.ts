@@ -6815,8 +6815,9 @@ const enUS: Record<string, string> = {
   "sessionAction.copyLink": "Copy session link",
   "sessionAction.linkCopied": "Session link copied",
   "sessionAction.copyFailed": "Failed to copy session link",
-  "sessionAction.forkSameDirectory": "Fork in current directory",
-  "sessionAction.forkWorktree": "Fork in new worktree",
+  "sessionAction.fork": "Fork",
+  "sessionAction.forkSameDirectory": "In current directory",
+  "sessionAction.forkWorktree": "In new worktree",
   "sessionAction.forking": "Creating fork…",
   "sessionAction.forkFailed": "Failed to create fork",
   "sessionAction.handoffCreated":

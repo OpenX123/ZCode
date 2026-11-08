@@ -1,5 +1,5 @@
 export * from "./contract.js";
-export { WorkbenchSessionMenuItems } from "./WorkbenchSessionMenuItems.js";
+export { WorkbenchSessionMenuItems, type SessionMenuKind } from "./WorkbenchSessionMenuItems.js";
 export { openSessionNavigation } from "./openSessionNavigation.js";
 export {
   createWorkbenchTabsStore,

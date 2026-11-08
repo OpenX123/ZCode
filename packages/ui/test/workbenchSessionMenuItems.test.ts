@@ -47,6 +47,13 @@ vi.mock("@/components/ui/context-menu.js", () => ({
     createElement("div", {}, children),
   ContextMenuSubTrigger: (props: ComponentProps<typeof Item>) => createElement(Item, props),
 }));
+vi.mock("@/components/ui/dropdown-menu.js", () => ({
+  DropdownMenuSub: ({ children }: { children: ReactNode }) =>
+    createElement("div", { "data-menu-kind": "dropdown" }, children),
+  DropdownMenuSubContent: ({ children }: { children: ReactNode }) =>
+    createElement("div", {}, children),
+  DropdownMenuSubTrigger: (props: ComponentProps<typeof Item>) => createElement(Item, props),
+}));
 vi.mock("@/ControlHintTooltip.js", () => ({
   SidebarNativeTooltip: ({ children }: { children: ReactNode }) => children,
 }));
@@ -63,7 +70,12 @@ const taskActions = {
   onCopyTaskLogPath: vi.fn(),
   onOpenProviderConfig: vi.fn(),
 };
-function renderCommonMenu(sessionId = "session", disabled = false, enabled = true) {
+function renderCommonMenu(
+  sessionId = "session",
+  disabled = false,
+  enabled = true,
+  menuKind?: "context" | "dropdown",
+) {
   const file = { loading: false, path: null, exists: false };
   return render(
     createElement(
@@ -80,6 +92,7 @@ function renderCommonMenu(sessionId = "session", disabled = false, enabled = tru
         taskNativeSessionLogFile: file,
         providerConfigFile: file,
         disableTaskActions: disabled,
+        ...(menuKind ? { menuKind } : {}),
         ...taskActions,
       }),
     ),
@@ -107,6 +120,29 @@ describe("侧栏会话工作台右键操作", () => {
     });
     expect(getByTestId("session-fork-same-directory")).toBeTruthy();
     expect(getByTestId("session-fork-worktree")).toBeTruthy();
+  });
+  it("分叉与分栏同构：一个“分叉”主项收纳当前目录与新工作树两个子项", () => {
+    const { getByTestId } = renderCommonMenu();
+    const trigger = getByTestId("session-fork-submenu");
+    expect(trigger.textContent).toBe("sessionAction.fork");
+    const sub = trigger.parentElement!;
+    expect(sub.contains(getByTestId("session-fork-same-directory"))).toBe(true);
+    expect(sub.contains(getByTestId("session-fork-worktree"))).toBe(true);
+    expect(getByTestId("session-fork-same-directory").textContent).toBe(
+      "sessionAction.forkSameDirectory",
+    );
+  });
+  it("受限会话禁用分叉主项，不展开子项动作", () => {
+    const { getByTestId } = renderCommonMenu("session", true);
+    expect(getByTestId("session-fork-submenu").hasAttribute("disabled")).toBe(true);
+  });
+  it("标题栏下拉菜单使用 Dropdown 子菜单原语承载分叉", async () => {
+    actions.fork.mockResolvedValue({ taskId: "child", workspacePath: "/project" });
+    const { getByTestId } = renderCommonMenu("session", false, true, "dropdown");
+    const sub = getByTestId("session-fork-submenu").parentElement!;
+    expect(sub.getAttribute("data-menu-kind")).toBe("dropdown");
+    fireEvent.click(getByTestId("session-fork-same-directory"));
+    await waitFor(() => expect(actions.fork).toHaveBeenCalledWith("same-directory"));
   });
   it("工作树分叉打开返回的精确 child scope；不自动提交输入", async () => {
     const result = {

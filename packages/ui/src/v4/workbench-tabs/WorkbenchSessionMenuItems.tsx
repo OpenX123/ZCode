@@ -11,6 +11,11 @@ import {
   ContextMenuSubContent,
   ContextMenuSubTrigger,
 } from "@/components/ui/context-menu.js";
+import {
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+} from "@/components/ui/dropdown-menu.js";
 import { useV4SplitPaneEntry } from "@/v4/splitPaneEntryContext.js";
 import { workbenchWorkspaceKey, type WorkbenchSessionBinding } from "./contract.js";
 import { useWorkbenchTabsStore } from "./store.js";
@@ -24,6 +29,18 @@ interface MenuItemProps {
   title?: string;
 }
 
+/** 右键菜单与下拉菜单的子菜单原语不能混用（Radix 依赖各自的 Root context），按宿主菜单选择。 */
+export type SessionMenuKind = "context" | "dropdown";
+
+const SUB_MENU_PRIMITIVES = {
+  context: { Sub: ContextMenuSub, Trigger: ContextMenuSubTrigger, Content: ContextMenuSubContent },
+  dropdown: {
+    Sub: DropdownMenuSub,
+    Trigger: DropdownMenuSubTrigger,
+    Content: DropdownMenuSubContent,
+  },
+} as const;
+
 /** 列表、置顶、分组和标题菜单共用会话动作；布局与 CLI 事实分属各自所有者。 */
 export function WorkbenchSessionMenuItems({
   binding,
@@ -33,6 +50,7 @@ export function WorkbenchSessionMenuItems({
   disabled = false,
   disabledReason,
   showLayoutActions = true,
+  menuKind = "context",
 }: {
   binding: WorkbenchSessionBinding;
   intl: { formatMessage: (desc: { id: string }) => string };
@@ -41,6 +59,7 @@ export function WorkbenchSessionMenuItems({
   disabled?: boolean;
   disabledReason?: string;
   showLayoutActions?: boolean;
+  menuKind?: SessionMenuKind;
 }) {
   const enabled = useV4SplitPaneEntry().enabled;
   const forkAction = useSessionForkAction(binding.workspaceScope, binding.sessionId);
@@ -55,6 +74,8 @@ export function WorkbenchSessionMenuItems({
   );
   const groupIndex = tab ? groups.findIndex((group) => group.tabIds.includes(tab.id)) : -1;
   if (!binding.sessionId) return null;
+  const SubMenu = SUB_MENU_PRIMITIVES[menuKind];
+  const forkDisabled = disabled || Boolean(binding.readOnly) || forkAction.pending;
   const open = (side: "left" | "right") => {
     if (!disabled) useWorkbenchTabsStore.getState().openSession(binding, side);
   };
@@ -84,7 +105,7 @@ export function WorkbenchSessionMenuItems({
     }
   };
   const fork = async (mode: "same-directory" | "worktree") => {
-    if (disabled || binding.readOnly || forkAction.pending) return;
+    if (forkDisabled) return;
     try {
       const result = await forkAction.fork(mode);
       useZCodeSessionStore
@@ -122,28 +143,40 @@ export function WorkbenchSessionMenuItems({
       >
         {intl.formatMessage({ id: "sessionAction.copyLink" })}
       </Item>
-      <Item
-        data-testid="session-fork-same-directory"
-        disabled={disabled || binding.readOnly || forkAction.pending}
-        title={disabledReason}
-        onSelect={() => {
-          void fork("same-directory");
-        }}
-      >
-        {intl.formatMessage({
-          id: forkAction.pending ? "sessionAction.forking" : "sessionAction.forkSameDirectory",
-        })}
-      </Item>
-      <Item
-        data-testid="session-fork-worktree"
-        disabled={disabled || binding.readOnly || forkAction.pending}
-        title={disabledReason}
-        onSelect={() => {
-          void fork("worktree");
-        }}
-      >
-        {intl.formatMessage({ id: "sessionAction.forkWorktree" })}
-      </Item>
+      {/* 分叉与“分栏”同构：一个主项收纳两种分叉方式，挂起时主项提示进度并整体禁用。 */}
+      <SubMenu.Sub>
+        <SubMenu.Trigger
+          data-testid="session-fork-submenu"
+          disabled={forkDisabled}
+          title={disabledReason}
+        >
+          {intl.formatMessage({
+            id: forkAction.pending ? "sessionAction.forking" : "sessionAction.fork",
+          })}
+        </SubMenu.Trigger>
+        <SubMenu.Content className="w-52">
+          <Item
+            data-testid="session-fork-same-directory"
+            disabled={forkDisabled}
+            title={disabledReason}
+            onSelect={() => {
+              void fork("same-directory");
+            }}
+          >
+            {intl.formatMessage({ id: "sessionAction.forkSameDirectory" })}
+          </Item>
+          <Item
+            data-testid="session-fork-worktree"
+            disabled={forkDisabled}
+            title={disabledReason}
+            onSelect={() => {
+              void fork("worktree");
+            }}
+          >
+            {intl.formatMessage({ id: "sessionAction.forkWorktree" })}
+          </Item>
+        </SubMenu.Content>
+      </SubMenu.Sub>
       <Separator />
       {enabled && showLayoutActions ? (
         <>
