@@ -307,3 +307,7 @@ sequenceDiagram
 | EP01 | 同配置连续新建两个外部草稿 | 第二个不再 spawn / initialize         | adapters 单测       |
 | EP02 | 闲置 15 分钟后发送         | 恢复原会话，prompt 只发一次           | adapters 单测       |
 | EP03 | 真实 Windows 连续使用一天  | 引擎子进程数与内存相对 1.0.5 显著下降 | 待真实 Windows 验证 |
+
+## Host 闲置资源与启动关键路径
+
+Bot 状态只读快照与私聊恢复轮询按需运行、会话/插件通道 CLI 10 分钟闲置回收、定时任务调度器按需运行、Host 存储准备分阶段打点与编译缓存，规则、状态所有者与时序图见 [Host 闲置资源回收与启动关键路径](host-idle-resources-1.1-spec.md)。

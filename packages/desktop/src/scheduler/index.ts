@@ -17,6 +17,7 @@ import {
   type ZCodeAutomationTrigger,
   type ZCodeAutomationRun,
 } from "@zcode/shared";
+// 只导入类型：同目录保留着旧的 schedulerProtocol.js 编译产物，esbuild 会优先解析到它。
 import type { MainToSchedulerMessage, SchedulerToMainMessage } from "./schedulerProtocol.js";
 import { settleManualClaimForDispatchResult } from "./manualClaimRelease.js";
 import {
@@ -46,6 +47,13 @@ const inFlight = new Map<string, InFlight>();
 
 let ticking = false;
 let tickRequested = false;
+/**
+ * 已收到的最大唤醒序号（初值由 main 拉起时经环境变量传入）。空闲报告回带它，main 只在序号
+ * 等于自己发出的最新唤醒时让本进程退出（docs/desktop/host-idle-resources-1.1-spec.md §4）。
+ */
+const initialWakeSeq = Number(process.env.ZCODE_SCHEDULER_WAKE_SEQ);
+let latestWakeSeq =
+  Number.isSafeInteger(initialWakeSeq) && initialWakeSeq >= 0 ? initialWakeSeq : 0;
 let schedulerReady = false;
 let disposed = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -90,11 +98,33 @@ async function tick(): Promise<void> {
       } catch (error) {
         log("error", `tick failed: ${error instanceof Error ? error.message : String(error)}`);
       }
+      // 按需运行：本轮之后没有待处理唤醒时确认是否还有调度工作，没有就请 main 让本进程退出。
+      // 修复原因（2026-11-08 本机扫描）：scheduler 112MB 无条件常驻，本机没有启用的自动化也一直在跑。
+      if (!tickRequested && !disposed) await reportIdleIfNoWork();
       // manual run 的唤醒可能与当前 tick 重叠；因 ticking=true 直接丢弃会让
       // 用户仍需等待下一轮 20 秒轮询。记录 pending，并在本轮完成后立即补跑。
     } while (tickRequested && !disposed);
   } finally {
     ticking = false;
+  }
+}
+
+/**
+ * 先记下已收到的最大唤醒序号，再查询调度工作。Host 先提交再发唤醒，因此序号不大于该值的唤醒
+ * 所对应的提交一定能被这次查询读到；之后到达的唤醒序号更大，main 会忽略这次空闲报告。
+ * 有在途派发或库中仍有调度工作时不报告。
+ */
+async function reportIdleIfNoWork(): Promise<void> {
+  try {
+    if (inFlight.size > 0) return;
+    const wakeSeq = latestWakeSeq;
+    if (await repo.hasSchedulerWork()) return;
+    if (disposed) return;
+    const msg: SchedulerToMainMessage = { type: "scheduler-idle", wakeSeq };
+    parentPort?.postMessage(msg);
+  } catch (error) {
+    // 查询失败按"仍有工作"处理：保持运行，下一轮再判定。
+    log("warn", `idle check failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -313,7 +343,8 @@ parentPort?.on("message", (event: Electron.MessageEvent) => {
     return;
   }
   if (msg.type === "scheduler-wake") {
-    log("info", `manual run wake requested automation=${msg.automationId}`);
+    if (typeof msg.wakeSeq === "number" && msg.wakeSeq > latestWakeSeq) latestWakeSeq = msg.wakeSeq;
+    log("info", `wake requested automation=${msg.automationId} wakeSeq=${latestWakeSeq}`);
     requestTick();
   }
 });

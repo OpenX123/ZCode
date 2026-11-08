@@ -31,6 +31,8 @@ describe("zcodeAgentService Plugin operation progress", () => {
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class {
+        // 1.1 闲置回收：service 取得 client 时续期计时（host-idle-resources-1.1-spec §2）。
+        noteActivity() {}
         onRuntimeLifecycle() {
           return { dispose() {} };
         }

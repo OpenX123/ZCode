@@ -80,6 +80,7 @@ import {
   type BotWorkspaceRef,
   type ModelSelection,
   type BotsConfigFile,
+  type BotsStateFile,
   type Locale,
   type SelectionPrompt,
 } from "@zcode/shared";
@@ -737,6 +738,8 @@ const REMOTE_RECONNECT_DEDUPE_TTL_MS = 3_000;
 const REMOTE_RECONNECT_DELIVERY_DEDUPE_TTL_MS = 2 * 60_000;
 const BOT_INBOUND_DELIVERY_DEDUPE_TTL_MS = 2 * 60_000;
 const BOT_AUTOMATION_DELIVERY_WARNING_TTL_MS = 5 * 60_000;
+/** 私聊恢复扫描间隔：远端连接没有 Bot 专属事件源，只能周期检查既有连接。 */
+const PRIVATE_RECOVERY_INTERVAL_MS = 10_000;
 const BOT_ELICITATION_CUSTOM_OPTION_ID = "__custom__";
 const BOT_ELICITATION_SUBMIT_OPTION_ID = "__submit__";
 const BOT_ELICITATION_SKIP_OPTION_ID = "__skip__";
@@ -747,6 +750,10 @@ export function createBotsService(
 ): IBotsService & { disposeAll(): void; disposeAllAndWait(): Promise<void> } {
   const runStartupBackgroundTasks = deps.runStartupBackgroundTasks !== false;
   const repo = deps.repo ?? new BotsRepo();
+  // 只读路径（getBotStates、私聊恢复扫描）不加文件锁，依据见 BotsRepo.readStateSnapshot。
+  // 注入的旧测试替身与 E2E harness 只实现 readState，按原加锁语义读取。
+  const readStateSnapshot = (): Promise<BotsStateFile> =>
+    typeof repo.readStateSnapshot === "function" ? repo.readStateSnapshot() : repo.readState();
   const bindCodes = new Map<string, BindCodeRecord>();
   const automationDeliveryWarningAtByKey = new Map<string, number>();
   const streamSubscriptions = new Map<
@@ -1396,7 +1403,47 @@ export function createBotsService(
     ].join("::");
   }
 
+  /**
+   * 私聊恢复轮询只在需要时运行（docs/desktop/host-idle-resources-1.1-spec.md §1）。
+   * 修复原因：原实现每 10 秒无条件加锁读取 bot-state.v3.json，本机没有任何机器人也在跑
+   * （实测 .lock 每 10.0s 创建删除一次）。任何一次私聊对账请求或建立私聊订阅都会启动轮询；
+   * 某次扫描发现没有任务态私聊上下文、没有私聊订阅且没有进行中的对账时停表。
+   */
+  function armPrivateRecovery(): void {
+    if (!runStartupBackgroundTasks || shutdownPromise || privateRecoveryTimer) return;
+    privateRecoveryTimer = setInterval(() => {
+      void scanPrivateRecovery();
+    }, PRIVATE_RECOVERY_INTERVAL_MS);
+    privateRecoveryTimer.unref();
+  }
+
+  function disarmPrivateRecovery(): void {
+    if (privateRecoveryTimer) clearInterval(privateRecoveryTimer);
+    privateRecoveryTimer = undefined;
+  }
+
+  async function scanPrivateRecovery(): Promise<void> {
+    if (shutdownPromise || privateRecoveryPending) return;
+    privateRecoveryPending = true;
+    try {
+      // 远端连接没有 Bot 专属事件源；只检查已存在的连接，不建立额外连接或重放历史。
+      const state = await readStateSnapshot();
+      const privateContexts = Object.values(state.bots).filter((context) => !context.group);
+      for (const context of privateContexts) await reconcilePrivateSynchronization(context.botId);
+      const recoverable = privateContexts.some(
+        (context) => context.mode === "task" && Boolean(context.activeTaskId),
+      );
+      if (!recoverable && privateWatches.size === 0 && privateReconciliations.size === 0)
+        disarmPrivateRecovery();
+    } catch {
+      botsLogger.warn(undefined, "Private Bot recovery state unavailable");
+    } finally {
+      privateRecoveryPending = false;
+    }
+  }
+
   async function reconcilePrivateSynchronization(botId: string): Promise<void> {
+    armPrivateRecovery();
     const previous = privateReconciliations.get(botId) ?? Promise.resolve();
     const pending = previous
       .catch(() => undefined)
@@ -1489,6 +1536,8 @@ export function createBotsService(
     const key = taskStreamKey(context, actor);
     await watchTaskStream(bot, actor, context, bot);
     privateWatches.set(botId, { signature, key });
+    // 持有私聊订阅期间必须保持轮询：远端断开/重连只能靠扫描发现。
+    armPrivateRecovery();
   }
 
   function weixinContextKey(bot: BotConfig, userId: string): string {
@@ -8497,7 +8546,8 @@ export function createBotsService(
       });
     },
     async getBotStates() {
-      return Object.entries((await repo.readState()).bots).map(([key, context]) => {
+      // 只读：不加文件锁（修复 12 个并发读取 0.21→1.94s 的锁排队阶梯）；没有上下文时直接返回空。
+      return Object.entries((await readStateSnapshot()).bots).map(([key, context]) => {
         if (context.group)
           context = {
             ...context,
@@ -9816,7 +9866,7 @@ export function createBotsService(
       }
       streamSubscriptions.clear();
       taskStreamHub.dispose();
-      if (privateRecoveryTimer) clearInterval(privateRecoveryTimer);
+      disarmPrivateRecovery();
       privateImTraces.clear();
       privateWatches.clear();
       failedPrivateDeliveries.clear();
@@ -9849,22 +9899,7 @@ export function createBotsService(
     },
   };
   if (runStartupBackgroundTasks) {
-    // 远端连接没有 Bot 专属事件源；只检查已存在的连接，不建立额外连接或重放历史。
-    privateRecoveryTimer = setInterval(() => {
-      if (shutdownPromise || privateRecoveryPending) return;
-      privateRecoveryPending = true;
-      void repo
-        .readState()
-        .then(async (state) => {
-          for (const context of Object.values(state.bots))
-            if (!context.group) await reconcilePrivateSynchronization(context.botId);
-        })
-        .catch(() => botsLogger.warn(undefined, "Private Bot recovery state unavailable"))
-        .finally(() => {
-          privateRecoveryPending = false;
-        });
-    }, 10_000);
-    privateRecoveryTimer.unref();
+    // 私聊恢复轮询不再无条件启动：下方启动对账遇到私聊上下文时经 reconcilePrivateSynchronization 启动。
     void telegramRuntime.refresh();
     void weixinRuntime.refresh();
     void feishuRuntime.refresh();

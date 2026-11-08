@@ -44,6 +44,8 @@ class MockProcessManagerBase {
   // Bug 根因：service 在 provider/model 门禁通过后会标记 runtime ready；共享 mock
   // 缺少该生命周期方法会让所有进入模型执行路径的用例在业务断言前统一失败。
   markReady() {}
+  // 1.1 闲置回收：service 取得 client 时续期计时（host-idle-resources-1.1-spec §2）。
+  noteActivity() {}
 }
 
 function createSessionSnapshot(params: {
@@ -982,6 +984,8 @@ describe("createZCodeAgentService provider registry", () => {
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class {
+        // 1.1 闲置回收：service 取得 client 时续期计时（host-idle-resources-1.1-spec §2）。
+        noteActivity() {}
         getClient = getClient;
         // Bug 原因同共享 mock：service 构造期新增 runtime 生命周期订阅；本用例只驱动
         // stdio 重试，因此用空 disposable 补齐局部测试桩契约。

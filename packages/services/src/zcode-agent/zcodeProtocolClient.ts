@@ -1,6 +1,7 @@
 import { ZCodeStorageStartupGate } from "#src/zcode-agent/zcodeStorageStartupGate.js";
 import { Emitter } from "@zcode/rpc";
 import type { IDisposable } from "@zcode/rpc";
+import { zcodeProtocolMethods } from "@zcode/shared";
 import type {
   ZCodeProtocolMethod,
   ZCodeProtocolNotification,
@@ -8,7 +9,7 @@ import type {
   ZCodeProtocolRequestId,
   ZCodeProtocolTrace,
 } from "@zcode/shared";
-import type { V4Method } from "@zcode/shared/zcode-protocol-v4";
+import { V4_METHODS, parseConversationTopic, type V4Method } from "@zcode/shared/zcode-protocol-v4";
 import type { z } from "zod";
 import type { ZCodeProtocolTransport } from "./zcodeProtocolTransport.js";
 
@@ -47,6 +48,81 @@ interface ZCodeProtocolClientRequestOptions {
   timeoutMs?: number;
 }
 
+/**
+ * 判定一条发往工作区 CLI 的业务请求是否"可能让会话常驻"。
+ *
+ * CLI 目前不向 Host 暴露常驻会话数，Host 无法观察常驻池何时卸载会话；chat 泳道闲置回收因此采用
+ * 失败关闭的近似：连接上发过任何可能让会话常驻的请求，本代进程就不由 Host 回收
+ * （docs/desktop/host-idle-resources-1.1-spec.md §2）。会话标识的识别与 CLI 传输层的会话分道一致
+ * （params.sessionId、conversation topic、commands[].sessionId；createSession 不在白名单内），
+ * 只有白名单内且不带会话标识的请求才视为无会话读取，未知方法一律视为可能承载会话。
+ */
+const SESSIONLESS_METHODS = new Set<string>([
+  zcodeProtocolMethods.workspaceReadPresentation,
+  // 精确 ID + includeDrafts 也只读已驻留记录，不创建 runtime。
+  zcodeProtocolMethods.sessionList,
+  zcodeProtocolMethods.providerRefreshRegistry,
+  zcodeProtocolMethods.workspaceUpdateInteractionPreferences,
+  zcodeProtocolMethods.workspaceUpdateModelIoPreferences,
+  zcodeProtocolMethods.workspaceUpdateDynamicWorkflowPolicy,
+  zcodeProtocolMethods.pluginsList,
+  zcodeProtocolMethods.pluginsDescribe,
+  zcodeProtocolMethods.pluginsOverview,
+  zcodeProtocolMethods.pluginsReferenceCatalog,
+  zcodeProtocolMethods.pluginsReferenceCatalogWithCategory,
+  zcodeProtocolMethods.pluginsListUiSurfaces,
+  zcodeProtocolMethods.skillsReferenceCatalog,
+  zcodeProtocolMethods.workflowsList,
+  zcodeProtocolMethods.workflowsGet,
+  zcodeProtocolMethods.workflowsRuns,
+  zcodeProtocolMethods.usageStats,
+  zcodeProtocolMethods.processChildProcesses,
+  zcodeProtocolMethods.runtimeCapabilities,
+  V4_METHODS.sessionsIndexReconcile,
+  V4_METHODS.connectionFlow,
+  V4_METHODS.usageStats,
+]);
+
+/** 这些方法按 topic 区分：sessions-index / workspace-config 是工作区级被动订阅，不是会话订阅。 */
+const TOPIC_METHODS = new Set<string>([
+  V4_METHODS.conversationSubscribe,
+  V4_METHODS.conversationResync,
+  V4_METHODS.conversationUnsubscribe,
+]);
+const SESSIONLESS_TOPIC_PREFIXES = ["sessions-index/", "workspace-config/"] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function carriesSessionIdentity(params: Record<string, unknown>): boolean {
+  if (isNonEmptyString(params.sessionId)) return true;
+  if (typeof params.topic === "string" && parseConversationTopic(params.topic)) return true;
+  if (Array.isArray(params.commands)) {
+    for (const command of params.commands) {
+      if (isRecord(command) && isNonEmptyString(command.sessionId)) return true;
+    }
+  }
+  return false;
+}
+
+export function mayRequestHostSessions(method: string, params: unknown): boolean {
+  const record = isRecord(params) ? params : {};
+  if (carriesSessionIdentity(record)) return true;
+  if (SESSIONLESS_METHODS.has(method)) return false;
+  if (TOPIC_METHODS.has(method)) {
+    const topic = typeof record.topic === "string" ? record.topic : "";
+    return !SESSIONLESS_TOPIC_PREFIXES.some((prefix) => topic.startsWith(prefix));
+  }
+  // `clock: true` 只是 TTFT 时钟探测，不触发命令账本查询、恢复或 admission。
+  if (method === V4_METHODS.commandsQuery && record.clock === true) return false;
+  return true;
+}
+
 export const DEFAULT_ZCODE_PROTOCOL_REQUEST_TIMEOUT_MS = 3 * 60_000;
 
 class ZCodeProtocolClientError extends Error {
@@ -83,6 +159,7 @@ export class ZCodeProtocolClient implements IDisposable {
   private readonly disposables: IDisposable[] = [];
   private nextRequestId = 1;
   private disposed = false;
+  private sessionHostingRequestSent = false;
   private readonly requestTimeoutMs: number;
 
   /**
@@ -110,6 +187,14 @@ export class ZCodeProtocolClient implements IDisposable {
     let count = 0;
     for (const pending of this.pending.values()) if (!pending.observation) count += 1;
     return count;
+  }
+
+  /**
+   * 本连接是否发过可能让会话常驻的业务请求（单调置位，观测请求不计）。
+   * CLI 不暴露常驻会话数，chat 泳道闲置回收以此失败关闭（docs/desktop/host-idle-resources-1.1-spec.md §2）。
+   */
+  get mayHostSessions(): boolean {
+    return this.sessionHostingRequestSent;
   }
 
   constructor(
@@ -167,6 +252,10 @@ export class ZCodeProtocolClient implements IDisposable {
     const requestKey = String(id);
     const requestTimeoutMs = options?.timeoutMs ?? this.requestTimeoutMs;
     const observation = options?.lifecycle === "observation";
+    // 发送前置位（失败关闭）：即使随后发送失败，也不能让 chat 泳道把可能已有常驻会话的进程判为可回收。
+    if (!observation && !this.sessionHostingRequestSent && mayRequestHostSessions(method, params)) {
+      this.sessionHostingRequestSent = true;
+    }
 
     const resultPromise = new Promise<T>((resolve, reject) => {
       const expire = () => {

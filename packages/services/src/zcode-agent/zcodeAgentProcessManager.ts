@@ -73,11 +73,16 @@ export interface ZCodeAgentProcessManagerOptions {
    */
   lane?: string;
   /**
-   * 空闲回收阈值：连接上没有请求在飞持续超过该时长，就主动回收整棵进程树，
-   * 下次 getClient 透明重新拉起。只给 mcp-status 这类“按需探测、进程内挂着 MCP 子进程”
-   * 的控制面 lane 使用；chat / plugin 缺省不回收。
+   * 空闲回收阈值：连接上没有业务请求在飞、也没有被取得持续超过该时长，就主动回收整棵进程树，
+   * 下次 getClient 透明重新拉起。mcp-status（5 分钟）、plugin 与 chat（10 分钟）泳道使用；
+   * 缺省不回收。见 docs/desktop/host-idle-resources-1.1-spec.md。
    */
   idleTimeoutMs?: number;
+  /**
+   * 闲置到期时的额外守卫（chat 泳道：没有会话订阅、连接未承载过会话）。在回收判定的同一同步片内
+   * 调用；返回 false 则本次不回收，等下一次请求归零或 noteActivity 重新计时。
+   */
+  idleReclaimGuard?: (target: { workspaceKey: string; client: ZCodeProtocolClient }) => boolean;
   /**
    * 仅当默认进程 cwd 等于目标 workspace 且该目录不可用时使用。
    * 业务 workspacePath/workspaceKey 不随 cwd 兜底改变。
@@ -579,6 +584,7 @@ export class ZCodeAgentProcessManager {
   private readonly spawnFallbackCwd: string | undefined;
   private readonly lane: string | undefined;
   private readonly idleTimeoutMs: number | undefined;
+  private readonly idleReclaimGuard: ZCodeAgentProcessManagerOptions["idleReclaimGuard"];
   private readonly runtimeRestartedEmitter = new Emitter<ZCodeAgentRuntimeRestartedEvent>();
   private readonly runtimeLifecycleEmitter = new Emitter<ZCodeAgentRuntimeLifecycleEvent>();
   private disposeAllInFlight: Promise<void> | undefined;
@@ -600,6 +606,7 @@ export class ZCodeAgentProcessManager {
     this.lane = options?.lane?.trim() || undefined;
     this.idleTimeoutMs =
       options?.idleTimeoutMs && options.idleTimeoutMs > 0 ? options.idleTimeoutMs : undefined;
+    this.idleReclaimGuard = options?.idleReclaimGuard;
   }
 
   private reportProcessLifecycle(
@@ -650,6 +657,10 @@ export class ZCodeAgentProcessManager {
       ) {
         return;
       }
+      // chat 泳道：守卫在同一同步片内确认没有会话订阅、连接未承载过会话；不确定即不回收。
+      if (!this.isIdleReclaimAllowed(workspaceKey, managed)) {
+        return;
+      }
       log("ZCode agent process idle timeout; reclaiming", {
         workspaceKey,
         pid: managed.child.pid,
@@ -668,6 +679,42 @@ export class ZCodeAgentProcessManager {
     // 空闲计时器不能把 host 进程钉在事件循环里。
     timer.unref?.();
     managed.idleTimer = timer;
+  }
+
+  private isIdleReclaimAllowed(workspaceKey: string, managed: ManagedZCodeAgentProcess): boolean {
+    if (!this.idleReclaimGuard) return true;
+    try {
+      return this.idleReclaimGuard({ workspaceKey, client: managed.client });
+    } catch (error) {
+      // 守卫读取失败按"不确定"处理：失败关闭，不回收。
+      warnLog("ZCode agent idle reclaim guard failed; keeping process", { workspaceKey, error });
+      return false;
+    }
+  }
+
+  /**
+   * Host 侧对该 workspace 的一次活动（取得 client 等）：空闲时从现在重新计时，有请求在飞时
+   * 交给请求归零事件计时。取得 client 到真正发请求之间可能还有其它异步准备，续期保证这段空档
+   * 不会被回收打断（docs/desktop/host-idle-resources-1.1-spec.md §2 事件顺序）。
+   */
+  noteActivity(params: { workspacePath: string; workspaceIdentity?: string }): void {
+    const workspaceKey = resolveWorkspaceKey(params);
+    const managed = this.processesByWorkspaceKey.get(workspaceKey);
+    if (!managed) return;
+    this.touchIdleReclaim(workspaceKey, managed);
+  }
+
+  private touchIdleReclaim(workspaceKey: string, managed: ManagedZCodeAgentProcess): void {
+    if (!this.idleTimeoutMs) return;
+    if (
+      managed.client.pendingOperationRequestCount > 0 ||
+      managed.client.storageStartup.isWaiting
+    ) {
+      // 请求归零 / 存储就绪事件会重新计时；这里先停表，避免旧计时在在途期间到期再确认。
+      this.clearIdleTimer(managed);
+      return;
+    }
+    this.scheduleIdleReclaim(workspaceKey, managed);
   }
 
   private recordTerminationIntent(
@@ -852,6 +899,8 @@ export class ZCodeAgentProcessManager {
     const workspaceKey = resolveWorkspaceKey(params);
     const existing = this.processesByWorkspaceKey.get(workspaceKey);
     if (existing && !existing.child.killed) {
+      // 取得即活动：闲置计时从这里重新起算。
+      this.touchIdleReclaim(workspaceKey, existing);
       return existing.client;
     }
 

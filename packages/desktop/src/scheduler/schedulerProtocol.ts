@@ -29,6 +29,12 @@ export type SchedulerToMainMessage =
       // main 只取其中的 heap 作 scheduler 角色事件的 heap 维度，CPU 与 RSS 仍以 getAppMetrics 为准。
       type: "scheduler-resource-sample";
       sample: NodeSelfResourceSample;
+    }
+  | {
+      // 本轮查询确认没有调度工作；wakeSeq 是查询前已收到的最大唤醒序号。
+      // main 只在它等于自己发出的最新唤醒序号时让 scheduler 退出（host-idle-resources-1.1-spec §4）。
+      type: "scheduler-idle";
+      wakeSeq: number;
     };
 
 /** main → scheduler */
@@ -47,7 +53,9 @@ export type MainToSchedulerMessage =
       type: "scheduler-dispose";
     }
   | {
-      // manual run 已提交，立即触发一次 tick；automationId 仅用于日志关联。
+      // 自动化定义或认领已提交，立即触发一次 tick；automationId 仅用于日志关联。
+      // wakeSeq 由 main 单调递增分配，scheduler 在空闲报告中回带。
       type: "scheduler-wake";
       automationId: string;
+      wakeSeq?: number;
     };

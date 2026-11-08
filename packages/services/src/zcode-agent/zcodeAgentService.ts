@@ -373,6 +373,10 @@ const cuaOperationLogger = createServiceLogger("cua-operation-turn");
 const PLUGIN_MANAGEMENT_WORKSPACE_DIR_NAME = "plugin-workspace";
 // 状态探测完成后释放闲置的 MCP 子进程；只作用于控制面，不回收会话进程。
 const MCP_STATUS_LANE_IDLE_TIMEOUT_MS = 5 * 60_000;
+// 1.1 闲置回收（2026-11-08 本机扫描：6 个工作区 CLI 约 1.0GB、插件管理 CLI 160MB 闲置 14.5h 从不回收）。
+// 会话通道另有守卫：没有会话订阅、连接未承载过会话（docs/desktop/host-idle-resources-1.1-spec.md）。
+const SESSION_LANE_IDLE_TIMEOUT_MS = 10 * 60_000;
+const PLUGIN_LANE_IDLE_TIMEOUT_MS = 10 * 60_000;
 // 官方 Claude marketplace 首次接入需要 clone/copy GitHub 仓库，30s 默认协议超时会杀掉健康 agent。
 // 插件市场管理属于低频网络 I/O 操作，单独放宽超时，不影响普通会话消息的实时失败边界。
 const PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS = 5 * 60_000;
@@ -961,8 +965,15 @@ interface CreateZCodeAgentServiceOptions extends Omit<
   /** 仅桌面本地装配；远端明确为 false，拒绝读取到的外部引擎会话。 */
   externalEnginesSupported?: boolean;
   externalEngineService?: IExternalEngineService;
-  /** 仅供 MCP 状态探测进程使用，不能把空闲回收传给 chat。 */
+  /** 仅供 MCP 状态探测进程使用（默认 5 分钟）。 */
   mcpStatusIdleTimeoutMs?: number;
+  /**
+   * 会话通道工作区 CLI 的闲置回收阈值（默认 10 分钟）；只在没有会话订阅、连接未承载过会话时回收。
+   * 见 docs/desktop/host-idle-resources-1.1-spec.md §2。
+   */
+  sessionIdleTimeoutMs?: number;
+  /** 插件管理通道 CLI 的闲置回收阈值（默认 10 分钟），在途安装/卸载由在途计数保护。 */
+  pluginIdleTimeoutMs?: number;
   /** Desktop Host 请求 Main 登记 Agent 已授权的精确本地视频路径。 */
   authorizeLocalMediaPreviewPath?: (path: string) => Promise<string>;
   modelSelectionReadinessSource?: ModelSelectionReadinessSource;
@@ -984,6 +995,11 @@ interface CreateZCodeAgentServiceOptions extends Omit<
   resolveSessionRuntimePreferences?: (
     scope: ZCodeSessionRuntimePreferencesScope,
   ) => Promise<ZCodeSessionRuntimePreferencesResult>;
+  /**
+   * 自动化定义或认领变更已提交后调用（desktop Host 转发为 cron-scheduler-wake-request，
+   * Main 据此唤醒或拉起按需运行的 scheduler）。见 docs/desktop/host-idle-resources-1.1-spec.md §4。
+   */
+  onAutomationsChanged?: (automationId: string) => void;
   /** manual run 落库后由当前 host 直接派发；返回时 prompt 必须已被 session 接受。 */
   onAutomationManualRunRequested?: (params: {
     automation: ZCodeAutomation;
@@ -1057,7 +1073,13 @@ function toProtocolAutomation(automation: ZCodeAutomation) {
 export function createZCodeAgentService(
   options?: CreateZCodeAgentServiceOptions,
 ): IZCodeAgentService & { disposeAllAndWait(): Promise<void> } {
-  const processManager = new ZCodeAgentProcessManager(options);
+  const processManager = new ZCodeAgentProcessManager({
+    ...options,
+    idleTimeoutMs: options?.sessionIdleTimeoutMs ?? SESSION_LANE_IDLE_TIMEOUT_MS,
+    // 守卫在 manager 回收判定的同一同步片内调用（此时下方路由表已初始化）。
+    idleReclaimGuard: ({ workspaceKey, client }) =>
+      canReclaimIdleSessionRuntime(workspaceKey, client),
+  });
   // Windows indicator 与 macOS producer lifecycle client 共用已校验、去重的 sideband facts。
   const cuaOperationTurnTracker =
     options?.cuaOperationStateReporter || options?.onCuaPipSessionLifecycle
@@ -1077,7 +1099,11 @@ export function createZCodeAgentService(
       : undefined;
   // AutomationRepo 也持有 tasks-index.sqlite 连接，disposeAll 需一并收口（见下方 disposeAll 注释）
   const automationRepo = new AutomationRepo();
-  const automationService = new AutomationService(automationRepo, options?.prepareProjectExecution);
+  const automationService = new AutomationService(
+    automationRepo,
+    options?.prepareProjectExecution,
+    options?.onAutomationsChanged ? { onChanged: options.onAutomationsChanged } : undefined,
+  );
   const automationTaskIndexRepo = new TaskIndexRepo();
   const pluginProcessManager = new ZCodeAgentProcessManager({
     commandResolver: options?.commandResolver,
@@ -1085,6 +1111,8 @@ export function createZCodeAgentService(
     requestTimeoutMs: options?.requestTimeoutMs,
     resolveSpawnEnv: options?.resolveSpawnEnv,
     waitForSpawnAdmission: options?.waitForSpawnAdmission,
+    // 插件安装/卸载等都是请求-响应，执行期间计为在途请求，计时不会到期。
+    idleTimeoutMs: options?.pluginIdleTimeoutMs ?? PLUGIN_LANE_IDLE_TIMEOUT_MS,
   });
   // 合并时误删了独立进程：mcp/list 的慢握手会堵住串行 stdio 队列，连带卡住插件卸载。
   // 恢复专用控制面进程及空闲回收；共享 workspace 路径，不共享请求队列或 watchdog。
@@ -1555,6 +1583,26 @@ export function createZCodeAgentService(
 
   function isCurrentV4SubscriptionRoute(route: V4SubscriptionRoute): boolean {
     return v4SubscriptionRoutes.get(v4SubscriptionRouteKey(route)) === route;
+  }
+
+  /**
+   * chat 泳道闲置回收守卫（docs/desktop/host-idle-resources-1.1-spec.md §2），失败关闭：
+   * - 没有会话订阅：路由表中没有该 workspace 的 `conversation/` 路由；旧 session/subscribe
+   *   带 sessionId，发送时已让连接置位 mayHostSessions。sessions-index / workspace-config 是
+   *   工作区级被动订阅，回收后由 existing-only 观察者按换代重订路径恢复，不阻止回收。
+   * - 没有常驻会话：CLI 不暴露常驻会话数，以连接是否发过可能让会话常驻的请求近似。
+   */
+  function canReclaimIdleSessionRuntime(
+    workspaceKey: string,
+    client: ZCodeProtocolClient,
+  ): boolean {
+    if (client.mayHostSessions) return false;
+    for (const route of v4SubscriptionRoutes.values()) {
+      if (route.workspaceKey === workspaceKey && route.topic.startsWith("conversation/")) {
+        return false;
+      }
+    }
+    return true;
   }
 
   function clearV4SubscriptionRoutes(workspaceKey?: string): void {
@@ -2576,6 +2624,8 @@ export function createZCodeAgentService(
     const active = activeClientsByWorkspaceKey.get(workspaceKey);
     if (active && isReusableActiveClientEntry(params, active)) {
       active.workspace = params;
+      // 缓存命中也是一次取得：闲置计时从这里重新起算，取得到发请求之间的空档不会被回收打断。
+      processManager.noteActivity(params);
       await active.interactionPreferencesReady;
       return active;
     }
@@ -2643,6 +2693,7 @@ export function createZCodeAgentService(
     const active = activeClientsByWorkspaceKey.get(workspaceKey);
     if (active?.modelExecutionEnabled && isReusableActiveClientEntry(params, active)) {
       active.workspace = params;
+      processManager.noteActivity(params);
       return active.client;
     }
 
@@ -2726,6 +2777,7 @@ export function createZCodeAgentService(
       // 绝不为观察者拉起新进程（保持 existing-only 语义）。
       if (active && isReusableActiveClientEntry(params, active)) {
         active.workspace = params;
+        processManager.noteActivity(params);
         return active.client;
       }
       // runtime available 可能先于原启动调用的 await continuation 到达。这里允许把
@@ -2734,6 +2786,7 @@ export function createZCodeAgentService(
       if (!existingClient) {
         throw createRuntimeUnavailableError(params);
       }
+      processManager.noteActivity(params);
       wireClient(existingClient, params, "chat");
       activeClientsByWorkspaceKey.set(workspaceKey, {
         client: existingClient,

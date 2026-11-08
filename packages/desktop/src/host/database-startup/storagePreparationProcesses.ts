@@ -78,6 +78,23 @@ export function prepareHostStorage(
   });
 }
 
+/** 会话库准备各段耗时（毫秒）；只含数字与枚举，供 Host 启动打点。 */
+export interface SessionStoragePreparationTiming {
+  /** Worker 启动到 `startup/storagePath`：主要是 14.6MB CLI bundle 的加载与编译。 */
+  workerLoadMs: number;
+  /** `startup/storagePath` 到回复 `startup/storagePathReady`（路径解析与磁盘基线）。 */
+  observeMs: number;
+  /** 回复确认到 `startup/storagePrepared`（打开会话库、迁移检查）。 */
+  prepareMs: number;
+  /**
+   * `startup/storagePrepared` 到 Worker 退出。成功判定仍要求 Worker 以 0 退出（SILENTDB-06
+   * "仍需退出确认"），这段等待因此在关键路径上；CLI 侧收尾若不能自然排空，要等它的 1s 退出 watchdog。
+   */
+  exitMs: number;
+  reuse: boolean;
+  compileCache: "enabled" | "disabled";
+}
+
 /** 在 Host 所属 Worker 运行同一 CLI bundle 的存储入口；Host 退出不会留下持锁孤儿进程。 */
 export async function prepareSessionStorage(options: {
   cwd: string;
@@ -89,7 +106,12 @@ export async function prepareSessionStorage(options: {
   ) => void;
   preparedPaths?: Set<string>;
   observePath: (path: string) => Promise<void>;
-}): Promise<void> {
+  /**
+   * Node 编译缓存目录：只放进这个 Worker 的环境（NODE_COMPILE_CACHE），不改 Host 进程环境，
+   * 也不会传给 CLI 子进程或用户命令。执行的代码与顺序不变，V8 按版本与源码校验缓存。
+   */
+  compileCacheDir?: string;
+}): Promise<SessionStoragePreparationTiming> {
   const command = resolveDefaultZCodeAgentCommand({
     workspacePath: options.cwd,
     workspaceKey: options.cwd,
@@ -98,10 +120,20 @@ export async function prepareSessionStorage(options: {
   if (!command?.supportsStorageStartup || !command.storagePreparationEntry)
     throw statusError("unsupported_runtime");
   const entry = command.storagePreparationEntry;
+  const startedAt = performance.now();
+  let pathAt: number | undefined;
+  let readyAt: number | undefined;
+  let preparedAt: number | undefined;
+  let reused = false;
+  // 修复原因（2026-11-08 本机实测，Electron 41 Node 24.14）：该 Worker 每次启动都重新编译 14.6MB
+  // zcode.cjs，到发出 storagePath 约 0.95–1.03s；启用编译缓存后第二次起约 0.65–0.76s。
+  const compileCacheEnv = options.compileCacheDir
+    ? { NODE_COMPILE_CACHE: options.compileCacheDir }
+    : {};
   await new Promise<void>((resolve, reject) => {
     const child = new Worker(entry, {
       argv: ["app-server", "--stdio", "--prepare-storage", "--cwd", command.cwd ?? options.cwd],
-      env: { ...process.env, ...options.env, ...command.env },
+      env: { ...process.env, ...options.env, ...command.env, ...compileCacheEnv },
       stdin: true,
       stdout: true,
       stderr: true,
@@ -139,6 +171,7 @@ export async function prepareSessionStorage(options: {
         if (frame.method === "startup/storagePath") {
           if (pathReceived) throw statusError("transport_closed");
           pathReceived = true;
+          pathAt = performance.now();
           void (async () => {
             // 仅复用同一次准备中已成功关闭的真实库，不能按不同 cwd 误判为不同数据库。
             preparedPath = await realpath(frame.params.path).catch(
@@ -149,15 +182,19 @@ export async function prepareSessionStorage(options: {
             );
             if (settled || failure || options.signal.aborted) return;
             const reuse = options.preparedPaths?.has(preparedPath) ?? false;
+            reused = reuse;
             if (!reuse) await options.observePath(frame.params.path);
-            if (!settled && !failure && !options.signal.aborted)
+            if (!settled && !failure && !options.signal.aborted) {
+              readyAt = performance.now();
               input.write(`${JSON.stringify({ method: "startup/storagePathReady", reuse })}\n`);
+            }
           })().catch((error) => {
             failure ??= error;
             terminate();
           });
         } else if (frame.method === "startup/storagePrepared") {
           prepared = pathReceived;
+          preparedAt = performance.now();
           input.end();
         } else if (frame.params.phase === "failed")
           failure ??= statusError(
@@ -190,4 +227,15 @@ export async function prepareSessionStorage(options: {
     });
     if (options.signal.aborted) abort();
   });
+  const exitedAt = performance.now();
+  const span = (from: number | undefined, to: number | undefined) =>
+    from === undefined || to === undefined ? 0 : Math.max(0, Math.round(to - from));
+  return {
+    workerLoadMs: span(startedAt, pathAt),
+    observeMs: span(pathAt, readyAt),
+    prepareMs: span(readyAt, preparedAt),
+    exitMs: span(preparedAt, exitedAt),
+    reuse: reused,
+    compileCache: options.compileCacheDir ? "enabled" : "disabled",
+  };
 }

@@ -3181,6 +3181,8 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           `local database startup failed attempt=${databaseStartup?.coordinator.snapshot.attemptId}`,
           error,
         ),
+      // 启动关键路径分阶段打点（只含毫秒与枚举），见 docs/desktop/host-idle-resources-1.1-spec.md §5。
+      logStage: (stage, fields) => logger.info(`[database-startup] stage ${stage}`, fields),
       initializeServices: async () => {
         logger.info("initializing local services");
         activeSessionRealtimePort = createTaskRealtimeBridgeForHostInit(msg, parentPort);
@@ -3387,6 +3389,14 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                 });
               },
               onAutomationManualRunRequested: dispatchManualAutomationRun,
+              // scheduler 只在有调度工作时运行（docs/desktop/host-idle-resources-1.1-spec.md §4）：
+              // 定义/认领提交后请 Main 唤醒或重新拉起它；SQLite 已提交，scheduler 下一轮必能读到。
+              onAutomationsChanged: (automationId) => {
+                parentPort?.postMessage({
+                  type: HostResponseTypes.CronSchedulerWakeRequest,
+                  automationId,
+                });
+              },
               onProviderProvisioningSourceChanged: (trigger) => {
                 parentPort?.postMessage({
                   type: HostResponseTypes.ProviderProvisioningSourceChanged,

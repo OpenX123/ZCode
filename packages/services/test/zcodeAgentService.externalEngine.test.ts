@@ -30,6 +30,8 @@ async function setup(ready: boolean, supported = true) {
   vi.resetModules();
   vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
     ZCodeAgentProcessManager: class {
+      // 1.1 闲置回收：service 取得 client 时续期计时（host-idle-resources-1.1-spec §2）。
+      noteActivity() {}
       getClient = getClient;
       onRuntimeLifecycle() {
         return { dispose() {} };

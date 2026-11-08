@@ -728,6 +728,28 @@ export class AutomationRepo {
     }
   }
 
+  /**
+   * scheduler 是否还有调度工作（docs/desktop/host-idle-resources-1.1-spec.md §4）：
+   * 启用的自动化（可能到期）、未释放的认领（running=1，含 Host 直派的立即运行）、
+   * 待崩溃恢复的手动运行。全部为否时 scheduler 可以退出，下一次定义变更由 Host 唤醒。
+   * 只读本表事实，不另建计数。
+   */
+  async hasSchedulerWork(): Promise<boolean> {
+    await this.ensureReady();
+    const row = this.getDatabase()
+      .prepare(
+        `SELECT (
+          EXISTS(SELECT 1 FROM automations WHERE enabled = 1 OR running = 1)
+          OR EXISTS(
+            SELECT 1 FROM automation_runs
+            WHERE trigger = 'manual' AND dispatch_status = 'claimed'
+          )
+        ) AS has_work`,
+      )
+      .get() as { has_work: number | bigint };
+    return Number(row.has_work) === 1;
+  }
+
   // ---- 调度状态机 ----
 
   /**

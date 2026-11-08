@@ -68,12 +68,18 @@ export class InvalidAutomationRelativeDelayError extends Error {
  * 仓库只做存储；这里承载「create 时算 next_run_at」「改 cron_expr 重算」「改 recurring/max_runs 重算生命周期」
  * 「restart 重算」等 cron 相关业务，供 UI 管理面 / RPC 调用。
  */
+export interface AutomationServiceOptions {
+  /** 定义或认领变更已提交后调用（每次成功写入一次）；参数为变更的 automationId。 */
+  onChanged?: (automationId: string) => void;
+}
+
 export class AutomationService {
   constructor(
     private readonly repo: AutomationRepo = new AutomationRepo(),
     private readonly prepareProjectExecution?: (
       projectId: string,
     ) => Promise<ProjectExecutionSnapshot>,
+    private readonly options?: AutomationServiceOptions,
   ) {}
 
   async create(params: ZCodeAutomationCreateParams): Promise<ZCodeAutomation> {
@@ -165,13 +171,15 @@ export class AutomationService {
       if (!this.prepareProjectExecution) throw new Error("project.creation-unavailable");
       execution = await this.prepareProjectExecution(createParams.projectId);
     }
-    return this.repo.create(
+    const created = await this.repo.create(
       { ...createParams, ...execution },
       {
         nextRunAt: endedBeforeFirstRun ? null : nextRunAt,
         ...(endedBeforeFirstRun ? { lifecycleStatus: "completed" as const } : {}),
       },
     );
+    this.notifyChanged(created.automationId);
+    return created;
   }
 
   async list(scope?: {
@@ -365,11 +373,15 @@ export class AutomationService {
       }
     }
 
-    return this.repo.update(automationId, updateParams, options, workspaceKey);
+    const updated = await this.repo.update(automationId, updateParams, options, workspaceKey);
+    if (updated) this.notifyChanged(automationId);
+    return updated;
   }
 
   async delete(automationId: string, scope?: AutomationWorkspaceScope): Promise<boolean> {
-    return this.repo.delete(automationId, resolveScopeKey(scope));
+    const deleted = await this.repo.delete(automationId, resolveScopeKey(scope));
+    if (deleted) this.notifyChanged(automationId);
+    return deleted;
   }
 
   /** 暂停 / 恢复。 */
@@ -378,7 +390,8 @@ export class AutomationService {
     enabled: boolean,
     scope?: AutomationWorkspaceScope,
   ): Promise<void> {
-    return this.repo.setEnabled(automationId, enabled, resolveScopeKey(scope));
+    await this.repo.setEnabled(automationId, enabled, resolveScopeKey(scope));
+    this.notifyChanged(automationId);
   }
 
   /** 失败任务手动重跑：回 active、清计数，按 cron 重算下次时间。 */
@@ -390,7 +403,8 @@ export class AutomationService {
     // 只有 failed 代表可恢复异常，允许用户手动重排下一次运行。
     if (existing.lifecycleStatus !== "failed") return;
     const nextRunAt = computeAutomationNextRunAt(existing);
-    return this.repo.restart(automationId, { nextRunAt }, workspaceKey);
+    await this.repo.restart(automationId, { nextRunAt }, workspaceKey);
+    this.notifyChanged(automationId);
   }
 
   /** 立即运行：创建供当前 host 直接派发的 manual run，不修改原 cron 计划。 */
@@ -401,7 +415,22 @@ export class AutomationService {
     const workspaceKey = resolveScopeKey(scope);
     const existing = await this.repo.get(automationId, workspaceKey);
     if (!existing) return null;
-    return this.repo.runNow(automationId, { now: Date.now() }, workspaceKey);
+    const claimed = await this.repo.runNow(automationId, { now: Date.now() }, workspaceKey);
+    // 立即运行由 Host 直派，但占用了 running 认领；scheduler 需要在线做崩溃恢复。
+    if (claimed) this.notifyChanged(automationId);
+    return claimed;
+  }
+
+  /**
+   * 定义或认领变更已提交后通知宿主（desktop Host → Main 唤醒/拉起 cron scheduler）。
+   * 通知失败不能影响已提交的写入结果。见 docs/desktop/host-idle-resources-1.1-spec.md §4。
+   */
+  private notifyChanged(automationId: string): void {
+    try {
+      this.options?.onChanged?.(automationId);
+    } catch {
+      // 旁路唤醒失败时 scheduler 仍会在下次唤醒或应用重启后读取已提交的数据。
+    }
   }
 
   async listRuns(

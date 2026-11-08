@@ -1010,7 +1010,11 @@ export function createLocalServices(options: {
     automation: ZCodeAutomation;
     run: ZCodeAutomationRun;
   }) => Promise<void>;
-  /** 闲时任务翻 schedulable 后请求宿主立即唤醒 scheduler（desktop host 注入 parentPort 转发）。 */
+  /**
+   * 自动化定义或认领变更已提交后请求宿主唤醒 scheduler（desktop local Host 注入 parentPort 转发）；
+   * scheduler 只在有调度工作时运行，见 docs/desktop/host-idle-resources-1.1-spec.md §4。
+   */
+  onAutomationsChanged?: (automationId: string) => void;
   // 注入点：默认 resolver 已能覆盖 dev/桌面/SSH 远端三类形态；
   // 测试或特殊宿主想强制走自定义 binary/参数时从这里注入。
   zcodeAgentCommandResolver?: ZCodeAgentCommandResolver;
@@ -1799,6 +1803,7 @@ export function createLocalServices(options: {
       desktopContextPromptEnabled,
     }),
     onAutomationManualRunRequested: options?.onAutomationManualRunRequested,
+    onAutomationsChanged: options?.onAutomationsChanged,
     // createLocalServices 虽然暴露了 reporter 注入点，旧装配却没有继续传给
     // ZCodeAgentProcessManager，导致 host 永远不向 main 上报 Agent spawn/exit，进程监控器
     // 因而看不到实际运行的 Agent，也无法验证只读到可写升级是否复用同一进程。

@@ -131,7 +131,7 @@ import {
   listDisposingHostProcesses,
   spawnHostProcess,
 } from "./desktopHostProcess.js";
-import { spawnCronScheduler, type CronSchedulerHandle } from "./desktopCronScheduler.js";
+import { createCronSchedulerSupervisor, type CronSchedulerHandle } from "./desktopCronScheduler.js";
 import {
   clearDeepLinkRoutesForWindow,
   handleOpenWorkspacePath,
@@ -565,7 +565,7 @@ const windowsCuaOperationIndicator = createWindowsCuaOperationIndicator({
   logger,
 });
 
-// 常驻 cron scheduler 进程句柄；app ready 后拉起，退出前销毁。
+// cron scheduler 按需运行的 supervisor；本地数据库就绪后创建，退出前销毁。
 let cronScheduler: CronSchedulerHandle | null = null;
 // host → main 的定时任务派发结果，转交给 scheduler 结算。经模块变量转发以避免 spawn 顺序耦合。
 function forwardCronRunResult(
@@ -1338,15 +1338,15 @@ app.whenReady().then(async () => {
     app.quit();
   });
   onLocalDatabaseStartupReady(() => {
-    try {
-      cronScheduler = spawnCronScheduler({
-        hostProcessLocalEnv,
-        logger,
-        resolveDispatchHost: resolveCronDispatchHost,
-      });
-    } catch (error) {
-      logger.error("[cron-scheduler] failed to spawn scheduler process:", error);
-    }
+    // scheduler 按需运行（docs/desktop/host-idle-resources-1.1-spec.md §4）：首轮处理错过窗口与
+    // 僵尸认领后，没有调度工作即退出；Host 提交自动化定义/认领后经 wake 重新拉起。
+    const supervisor = createCronSchedulerSupervisor({
+      hostProcessLocalEnv,
+      logger,
+      resolveDispatchHost: resolveCronDispatchHost,
+    });
+    cronScheduler = supervisor;
+    supervisor.start();
   });
 
   if (process.platform === "win32") {

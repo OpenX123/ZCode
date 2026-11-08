@@ -38,7 +38,8 @@ export interface StartupWorkspaceWarmupTarget {
   workspaceIdentity?: string;
 }
 
-// 修复原因：会话 CLI 没有 idle 回收，启动预热 3 个会让每个窗口常驻 3 份 Agent 进程内存；
+// 修复原因：会话 CLI 承载过会话后不会被 Host 闲置回收（1.1 起只回收未承载会话的 CLI，见
+// docs/desktop/host-idle-resources-1.1-spec.md §2），启动预热 3 个会让每个窗口常驻 3 份 Agent 进程内存；
 // 切到最近项目的冷启动收益抵不上常驻成本，收敛为只预热 active workspace。
 // 与 @zcode/protocol 的 init-local `agentWarmupTargets.max(1)` 保持一致。
 export const STARTUP_AGENT_WARMUP_LIMIT = 1;
