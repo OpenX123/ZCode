@@ -964,7 +964,10 @@ export function SessionPane({
     draftTaskGroupId,
     inheritRootDraft,
     sessionConfig: runtimeReady && snapshot?.sessionId === sessionId ? snapshot.config : null,
-    agentStartupAllowed: remoteAvailable,
+    // 2026-11-08 P2：workspace 目录水合（readWorkspacePresentation）在 Host 侧 start-if-needed，
+    // 曾让每个已挂载的隐藏 Tab 各为所在工作区拉起一个 CLI（11-07 窗口打开 5 次读取、6 个 CLI，
+    // 每个 spawn→就绪约 3s、常驻约 160MB）。与租约/预热共用 paneActivated：首次可见后才读。
+    agentStartupAllowed: remoteAvailable && paneActivated,
     externalEnginesSupported: Boolean(externalEngineService),
     modelSelectionService,
   });
