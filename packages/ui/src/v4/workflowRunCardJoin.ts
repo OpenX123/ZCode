@@ -5,7 +5,8 @@ import {
   type ZCodeWorkflowsForRunCandidate,
 } from "@zcode/shared";
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
-import type { WorkflowRunCardSummary } from "@/ToolCallBlocks/shared.js";
+import type { WorkflowDraftPosition, WorkflowRunCardSummary } from "@/ToolCallBlocks/shared.js";
+import { buildWorkflowDraftByToolCallId } from "@/v4/workflowDraftJoin.js";
 import { readWorkflowHoleTarget } from "@/ToolCallBlocks/renderers/createWorkflowHoleInput.js";
 import { isFillWorkflowHoleToolCall } from "@/lib/workflowToolNames.js";
 
@@ -302,4 +303,64 @@ export function buildWorkflowSaveCandidatesByRunId(
     byRunId.set(found.runId, list);
   }
   return byRunId;
+}
+
+/** 行窗口派生的四张工作流联接表；宿主一次取齐，交给 rowContext。 */
+export interface WorkflowRowTables {
+  readonly graphByToolCallId: ReadonlyMap<string, WorkflowCausalityGraphData>;
+  readonly fillGraphByRunId: ReadonlyMap<string, WorkflowFillGraph>;
+  readonly draftByToolCallId: ReadonlyMap<string, WorkflowDraftPosition>;
+  readonly saveCandidatesByRunId: ReadonlyMap<string, readonly WorkflowSaveCandidate[]>;
+}
+
+/**
+ * 四张表读到的行的并集（有意取超集）：工具行（发起图、补全图、稿号、保存候选都只看工具行）与带
+ * `workflowLaunch` 的轮首/用户行（直接启动的发起图）。其余行（正文、思考、子智能体……）不影响任何一张表。
+ */
+function isWorkflowTableSourceRow(row: ConversationRow): boolean {
+  if (row.kind === "toolCall") return true;
+  return (
+    (row.kind === "turnHeader" || row.kind === "userInput") && row.workflowLaunch !== undefined
+  );
+}
+
+function sameRowReferences(
+  left: readonly ConversationRow[],
+  right: readonly ConversationRow[],
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+/**
+ * 四张工作流联接表的增量选择器（docs/desktop/engine-performance-1.1-spec.md「隐藏面板暂停渲染」HP04）。
+ *
+ * 修复原因（2026-11-08 P9）：宿主曾在每个流式帧按全部行各重建一遍四张表，表引用每帧变化又让
+ * rowContext 与可见行跟着重渲染。协议 apply 对未改动行保持引用（`apply.ts` 的 upsert / delta 只替换
+ * 命中的那一行），所以只要相关行的引用序列不变，四张表的内容必然不变：此时复用上一份表（引用不变）；
+ * 任一相关行增删改才用相关行整体重建——build* 只读相关行且只依赖它们的相对顺序，结果与全量构建一致。
+ */
+export function createWorkflowRowTablesSelector(): (
+  rows: readonly ConversationRow[] | undefined,
+) => WorkflowRowTables {
+  let lastRows: readonly ConversationRow[] | undefined;
+  let lastSources: readonly ConversationRow[] = [];
+  let lastTables: WorkflowRowTables | null = null;
+  return (rows) => {
+    if (lastTables !== null && rows === lastRows) return lastTables;
+    lastRows = rows;
+    const sources = (rows ?? []).filter(isWorkflowTableSourceRow);
+    if (lastTables !== null && sameRowReferences(sources, lastSources)) return lastTables;
+    lastSources = sources;
+    lastTables = {
+      graphByToolCallId: buildWorkflowGraphByToolCallId(sources),
+      fillGraphByRunId: buildWorkflowFillGraphByRunId(sources),
+      draftByToolCallId: buildWorkflowDraftByToolCallId(sources),
+      saveCandidatesByRunId: buildWorkflowSaveCandidatesByRunId(sources),
+    };
+    return lastTables;
+  };
 }

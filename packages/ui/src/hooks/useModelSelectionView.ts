@@ -6,8 +6,42 @@ import type {
 } from "@zcode/services";
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import { logger } from "@/logger.js";
+import { createSharedServiceRead, type SharedServiceRead } from "@/store/serviceAuthorityKey.js";
 
 type ModelSelectionCatalog = Pick<ModelSelectionView, "revision" | "providers">;
+
+type ModelSelectionSource = Pick<IModelSelectionService, "getView" | "onDidChange">;
+
+export type SharedModelSelectionReader = SharedServiceRead<
+  ModelSelectionViewInput | undefined,
+  ModelSelectionView,
+  ModelSelectionView
+>;
+
+// JSON.stringify(对象) 不会得到空串，空串专指“无输入”的目录 View。
+const NO_INPUT_KEY = "";
+const sharedModelSelectionReaders = new WeakMap<ModelSelectionSource, SharedModelSelectionReader>();
+
+/**
+ * Model Selection 的窗口级共享读取（P5，docs/desktop/engine-performance-1.1-spec.md「窗口级只读数据共享」）。
+ * 修复原因：窗口打开时每个 SessionPane 的就绪门禁与 Composer 各读一次 getView（实测 27 次），每次变化事件
+ * 各自重读。按服务实例（同一 Host authority）共享：同输入键只读一次；事件负载即无输入 View（Host 以
+ * getView() 生成），直接作为无输入键的最新值；带输入的键在事件后只重读一次。
+ */
+export function getSharedModelSelectionReader(
+  service: ModelSelectionSource,
+): SharedModelSelectionReader {
+  const existing = sharedModelSelectionReaders.get(service);
+  if (existing) return existing;
+  const created: SharedModelSelectionReader = createSharedServiceRead({
+    keyOf: (input) => (input === undefined ? NO_INPUT_KEY : JSON.stringify(input)),
+    fetch: (input) => (input === undefined ? service.getView() : service.getView(input)),
+    subscribe: (onEvent) => service.onDidChange(onEvent),
+    valueOfEvent: (view) => ({ key: NO_INPUT_KEY, value: view }),
+  });
+  sharedModelSelectionReaders.set(service, created);
+  return created;
+}
 
 export type ModelSelectionState =
   | { status: "loading"; catalog?: ModelSelectionCatalog }
@@ -100,6 +134,7 @@ export function useModelSelectionServiceView(
   ownedRef.current = owned;
   const generationRef = useRef(0);
   const readRef = useRef<(() => Promise<ModelSelectionRefreshResult>) | null>(null);
+  const lastReloadVersionRef = useRef(reloadVersion);
   const ownerMatches =
     owned.service === normalizedService &&
     owned.enabled === enabled &&
@@ -158,10 +193,12 @@ export function useModelSelectionServiceView(
         state: { status: "ready", view: candidate },
       });
     };
-    const read = (): Promise<ModelSelectionRefreshResult> => {
+    // P5：经窗口级共享读取器读取与订阅，同服务实例同输入的多个实例合并为一次请求。
+    const reader = getSharedModelSelectionReader(normalizedService);
+    const read = (fresh = false): Promise<ModelSelectionRefreshResult> => {
       cancelRetry();
       const request = ++requestId;
-      return normalizedService.getView(stableInput).then(
+      return reader.read(stableInput, fresh ? { fresh: true } : undefined).then(
         (candidate) => {
           if (generation !== generationRef.current || request !== requestId)
             return { kind: "superseded" };
@@ -207,20 +244,26 @@ export function useModelSelectionServiceView(
       );
     };
     // 原因：相同目录不会再发事件；显式重读与订阅读取共享请求序号，迟到旧失败不能覆盖重试。
-    readRef.current = read;
-    const subscription = normalizedService.onDidChange((candidate) => {
+    // refresh 是显式重读，不读共享缓存。
+    const refresh = () => read(true);
+    readRef.current = refresh;
+    const subscription = reader.onDidChange((candidate) => {
       if (generation !== generationRef.current) return;
       if (stableInput === undefined) commit(candidate);
       else {
         // 公共事件没有某个调用者的原意图；只能用它触发当前输入重读，不能直接接管结果。
+        // 共享读取器已在通知前作废缓存，同输入的各实例重读合并为一次请求。
         latestRevision = Math.max(latestRevision, candidate.revision);
         void read().catch(() => {});
       }
     });
-    void read().catch(() => {});
+    // reload 是显式重试入口：本次 effect 因 reloadVersion 变化重跑时发新请求，不读共享缓存。
+    const explicitReload = lastReloadVersionRef.current !== reloadVersion;
+    lastReloadVersionRef.current = reloadVersion;
+    void read(explicitReload).catch(() => {});
     return () => {
       generationRef.current += 1;
-      if (readRef.current === read) readRef.current = null;
+      if (readRef.current === refresh) readRef.current = null;
       cancelRetry();
       subscription.dispose();
     };

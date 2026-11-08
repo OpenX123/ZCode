@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BotConfig, BotState } from "@zcode/shared";
+import { getSharedBotStatesReader } from "@/hooks/useBotGroupTask.js";
 import { useServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
 
@@ -43,40 +44,53 @@ export function useBotBoundGroups(bot: BotConfig) {
   const alive = useRef(false);
   const revision = useRef(0);
   const savingRef = useRef(false);
-  const refresh = useCallback(async () => {
-    const requested = ++revision.current;
-    const next = await botsService.getBotStates();
-    if (alive.current && requested === revision.current) {
-      setStates(next);
-      setLoading(false);
-    }
-    return next;
-  }, [botsService]);
-  const reload = useCallback(async () => {
-    const requested = revision.current + 1;
-    setError(null);
-    try {
-      await refresh();
-    } catch (cause) {
-      // 迟到的失败不能覆盖广播触发的新读取结果。
-      if (!alive.current || requested !== revision.current) return;
-      logger.warn("读取已绑定群聊失败", { error: String(cause) });
-      setError("load");
-      setLoading(false);
-    }
-  }, [refresh]);
+  // P5：与会话面板共用同一 Bot 状态共享读取器（同服务实例只读一次、只订阅一次广播）。
+  // 挂载与广播触发的读取可复用共享结果；手动刷新与保存后确认是显式重读（fresh）。
+  const refresh = useCallback(
+    async (fresh: boolean) => {
+      const requested = ++revision.current;
+      const next = await getSharedBotStatesReader(botsService, broadcastService).read(
+        undefined,
+        fresh ? { fresh: true } : undefined,
+      );
+      if (alive.current && requested === revision.current) {
+        setStates(next);
+        setLoading(false);
+      }
+      return next;
+    },
+    [botsService, broadcastService],
+  );
+  const load = useCallback(
+    async (fresh: boolean) => {
+      const requested = revision.current + 1;
+      setError(null);
+      try {
+        await refresh(fresh);
+      } catch (cause) {
+        // 迟到的失败不能覆盖广播触发的新读取结果。
+        if (!alive.current || requested !== revision.current) return;
+        logger.warn("读取已绑定群聊失败", { error: String(cause) });
+        setError("load");
+        setLoading(false);
+      }
+    },
+    [refresh],
+  );
+  const reload = useCallback(() => load(true), [load]);
   useEffect(() => {
     alive.current = true;
-    void reload();
-    const subscription = broadcastService.onMessage((message) => {
-      if (message.channel === "bots:group-state") void reload();
-    });
+    // 先订阅再读取：读取器只在有订阅者期间缓存结果。
+    const subscription = getSharedBotStatesReader(botsService, broadcastService).onDidChange(
+      () => void load(false),
+    );
+    void load(false);
     return () => {
       alive.current = false;
       ++revision.current;
       subscription.dispose();
     };
-  }, [broadcastService, reload]);
+  }, [botsService, broadcastService, load]);
   const toggle = useCallback(
     async (chatId: string, enabled: boolean) => {
       if (savingRef.current || !bot.enabled || !botsService.setGroupEnabled) return;
@@ -85,7 +99,7 @@ export function useBotBoundGroups(bot: BotConfig) {
       setError(null);
       try {
         await botsService.setGroupEnabled({ botId: bot.id, chatId, enabled });
-        const next = await refresh();
+        const next = await refresh(true);
         // 旧接口可能返回成功但未改变授权，必须读取权威状态再确认。
         const actual = projectBoundGroups(next, bot.id, bot.providerUserId).find(
           (row) => row.chatId === chatId,

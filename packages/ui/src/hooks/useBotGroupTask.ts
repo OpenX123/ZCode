@@ -1,7 +1,48 @@
 import { useCallback, useEffect, useState } from "react";
 import { isFeishuBotProvider, type BotContextState, type FeishuBotProvider } from "@zcode/shared";
+import type { IServiceAccessor } from "@zcode/services";
 import { useServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
+import { createSharedServiceRead, type SharedServiceRead } from "@/store/serviceAuthorityKey.js";
+
+type BotStatesSource = Pick<IServiceAccessor["botsService"], "getBotStates">;
+type BotStatesBroadcastSource = Pick<IServiceAccessor["broadcastService"], "onMessage">;
+type SharedBotStatesReader = SharedServiceRead<void, BotContextState[], void>;
+
+const BOT_GROUP_STATE_CHANNEL = "bots:group-state";
+const sharedBotStatesReaders = new WeakMap<
+  BotStatesSource,
+  WeakMap<BotStatesBroadcastSource, SharedBotStatesReader>
+>();
+
+/**
+ * Bot 状态的窗口级共享读取（P5，docs/desktop/engine-performance-1.1-spec.md「窗口级只读数据共享」）。
+ * 修复原因：每个 SessionPane 的 BotGroupDeliveryProvider 各读一次全量 getBotStates（窗口打开实测 12 次，
+ * Host 0.21→1.94s 阶梯），每次 bots:group-state 广播再各自重读。按（botsService, broadcastService）
+ * 服务实例共享：只读一次、只订阅一次广播；广播只作失效信号，到达后各实例的重读合并为一次请求。
+ */
+export function getSharedBotStatesReader(
+  botsService: BotStatesSource,
+  broadcastService: BotStatesBroadcastSource,
+): SharedBotStatesReader {
+  let byBroadcast = sharedBotStatesReaders.get(botsService);
+  if (!byBroadcast) {
+    byBroadcast = new WeakMap();
+    sharedBotStatesReaders.set(botsService, byBroadcast);
+  }
+  const existing = byBroadcast.get(broadcastService);
+  if (existing) return existing;
+  const created: SharedBotStatesReader = createSharedServiceRead({
+    keyOf: () => BOT_GROUP_STATE_CHANNEL,
+    fetch: () => botsService.getBotStates(),
+    subscribe: (onEvent) =>
+      broadcastService.onMessage((message) => {
+        if (message.channel === BOT_GROUP_STATE_CHANNEL) onEvent();
+      }),
+  });
+  byBroadcast.set(broadcastService, created);
+  return created;
+}
 
 export function useBotGroupTask(
   taskId: string | null,
@@ -16,14 +57,15 @@ export function useBotGroupTask(
   useEffect(() => {
     let disposed = false;
     let revision = 0;
+    setContext(null);
+    setProvider(undefined);
+    // 草稿没有任务，不读取也不订阅群状态。
+    if (!taskId) return;
+    const reader = getSharedBotStatesReader(botsService, broadcastService);
     const refresh = async () => {
       const requested = ++revision;
-      if (!taskId) {
-        setContext(null);
-        return;
-      }
       try {
-        const states = await botsService.getBotStates();
+        const states = await reader.read();
         if (disposed || revision !== requested) return;
         const nextContext =
           states.find(
@@ -47,12 +89,9 @@ export function useBotGroupTask(
         if (!disposed) logger.warn("读取群任务同步状态失败", { error: String(error) });
       }
     };
-    setContext(null);
-    setProvider(undefined);
+    // 先订阅再读取：读取器只在有订阅者期间缓存结果。
+    const subscription = reader.onDidChange(() => void refresh());
     void refresh();
-    const subscription = broadcastService.onMessage((message) => {
-      if (message.channel === "bots:group-state") void refresh();
-    });
     return () => {
       disposed = true;
       subscription.dispose();

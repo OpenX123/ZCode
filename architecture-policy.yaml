@@ -1007,3 +1007,10 @@ exceptions:
       - apps/zcode-cli/packages/adapters/src/model/runner-attribution.ts
       - apps/zcode-cli/packages/adapters/src/model/tool-search.ts
     reason: 两个文件均已存在于当前 HEAD；仅去掉套餐归因说明和官方账号工具搜索能力判断，保留普通请求关联及用户 API 协议能力解析，不增加模块依赖或架构 baseline。
+
+  - id: bot-states-shared-read-existing-edit
+    rule: unmanaged-new-file
+    paths:
+      - packages/ui/src/hooks/useBotGroupTask.ts
+      - packages/ui/src/hooks/useBotBoundGroups.ts
+    reason: 已准入的上游 Bot 状态 hook 仅把 getBotStates 读取与 bots:group-state 广播订阅改经窗口级共享读取器（docs/desktop/engine-performance-1.1-spec.md「窗口级只读数据共享」P5），读取器复用 store/serviceAuthorityKey.ts 的 createSharedServiceRead；Host 仍是唯一事实源，hook 返回形状、写路径与模块边界不变。精确准入这两个文件，不接管整个 hooks 目录，也不增加架构 baseline。

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isZCodeAgentProvider, ZCODE_AGENT_PROVIDER, type ZCodeProvider } from "@zcode/shared";
 import type { IModelSelectionService, ModelSelectionView } from "@zcode/services";
+import { getSharedModelSelectionReader } from "@/hooks/useModelSelectionView.js";
 import {
   buildModelConfigMissingUiError,
   type ModelConfigMissingUiError,
@@ -115,13 +116,16 @@ export function useDraftModelReadinessGate(params: {
       if (disposed) return;
       commitStatus(status);
     };
-    const subscription = modelSelectionService.onDidChange((view) => {
+    // P5：每个草稿门禁原先各读一次 getView、各订阅一次事件；改经窗口级共享读取器，
+    // 同一服务实例上的门禁与 Root 共用一次无输入读取与一次事件订阅。
+    const reader = getSharedModelSelectionReader(modelSelectionService);
+    const subscription = reader.onDidChange((view) => {
       registryEventVersion += 1;
       applyStatus(resolveModelSelectionReadinessStatus(view));
     });
     const initialReadVersion = registryEventVersion;
-    const initialRead = modelSelectionService
-      .getView()
+    const initialRead = reader
+      .read(undefined)
       .then((view) => {
         // 读取在变更事件之前发起、之后才返回时，事件快照更新；禁止旧读取覆盖新状态。
         if (registryEventVersion !== initialReadVersion) return;
@@ -164,8 +168,11 @@ export function useDraftModelReadinessGate(params: {
     // 订阅投影已确认有模型直接放行；读取失败与挂载检查一致交给 Host 门禁。
     if (known?.status === "ready" || known?.status === "check-failed") return true;
     // 只有“没有模型”会拦截发送：拦截前做一次权威读取，避免变更事件在途时误拦。
+    // 权威复查不读共享缓存（fresh），结果仍会刷新同服务实例的共享缓存。
     try {
-      const view = await modelSelectionService.getView();
+      const view = await getSharedModelSelectionReader(modelSelectionService).read(undefined, {
+        fresh: true,
+      });
       const status = resolveModelSelectionReadinessStatus(view);
       commitStatus(status, { revealMissing: status === "missing" });
       if (status === "missing") {

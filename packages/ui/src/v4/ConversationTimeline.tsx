@@ -356,6 +356,11 @@ export interface ConversationTimelineProps {
   };
   /** 范围编辑时，左侧 rail 由分享选择面板独占。 */
   hideTurnNavigator?: boolean;
+  /**
+   * 所在面板隐藏（docs/desktop/engine-performance-1.1-spec.md「隐藏面板暂停渲染」）：停止运行计时器，
+   * 重新可见时立即以当前时间重算一次。
+   */
+  paused?: boolean;
 }
 
 /**
@@ -405,6 +410,7 @@ function ConversationTimelineImpl({
   scrollToQueryActionRef,
   selectionActions,
   hideTurnNavigator = false,
+  paused = false,
 }: ConversationTimelineProps) {
   const { intl } = useZCodeIntl();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -675,7 +681,9 @@ function ConversationTimelineImpl({
   }, [hasBottomDock, onComposerDockHeightChange]);
 
   useEffect(() => {
-    if (!hasRunningUnit) {
+    // 2026-11-08 P9：隐藏面板的计时器曾每秒重算整条时间线的 render unit；隐藏时停止，
+    // 恢复可见时 effect 重跑，先以当前时间重算一次再按秒推进。
+    if (!hasRunningUnit || paused) {
       return;
     }
 
@@ -687,7 +695,7 @@ function ConversationTimelineImpl({
     }, RUNNING_WORK_DURATION_TICK_MS);
 
     return () => window.clearInterval(timer);
-  }, [hasRunningUnit]);
+  }, [hasRunningUnit, paused]);
 
   useLayoutEffect(() => {
     const element = timelineRootRef.current;

@@ -291,6 +291,92 @@ sequenceDiagram
 - 修复：Main 在本地 Windows 路径进入工作区前，把每一段替换为磁盘上的实际大小写（逐级 `readdir` 匹配，盘符大写），不解析 junction、符号链接、subst 或网络映射。入口为 `activateOrSetWorkspace`（返回规范路径，Renderer 用它建 Tab 与草稿）和冷启动的显式工作区参数。`workspaceIdentity` 规则不变：远端 identity 与非 Windows 路径不做处理，共享 `resolveWorkspaceKey` 不变，已持久化的数据不迁移。
 - 匹配失败（权限不足、路径段不存在、8.3 短名）时保留该段原文。
 - 已有存量：旧版本以非规范大小写保存的 Tab、项目根或会话不会被改写；它们与规范路径仍是不同 key，需要在真实 Windows 上确认是否需要迁移。
+### 隐藏面板暂停渲染（2026-11-08，P9）
+
+- 依据（2026-11-08 本机扫描 P9，代码推导）：Tab 首次可见后租约保留，隐藏后 `useConversationProjection` 仍订阅 projection store；CLI 每 30ms 合并一帧时，隐藏的 SessionPane（4500+ 行）连同时间线每秒最多重渲染约 33 次；有运行中轮次时时间线还每秒按计时器重算一次。前台面板每帧按全部行重建 4 张工作流联接表，表引用每帧变化又让 `rowContext` 与可见行跟着重渲染。
+- 所有者不变：projection store（`SessionDataLayer` 租约下的 `ConversationProjectionStore`）是会话投影的唯一事实；SessionPane 只是它的渲染订阅者。暂停只停渲染通知，不停数据。
+- 规则：
+  - SessionPane 隐藏（`paneVisible=false`）时，`useConversationProjection(lease, { paused: true })` 不向 store 注册渲染监听；store 照常应用每一帧，租约、订阅、pending 命令与恢复账本全部不变。
+  - 重新可见的那次渲染直接读取 store 当前状态，一次补齐隐藏期间的全部变化，随后恢复监听。隐藏期间若因其他原因（父组件 props 变化）渲染，也读取当前状态，不使用冻结副本。
+  - 时间线运行计时器（“工作中 N 秒”）在隐藏时停止，重新可见时立即以当前时间重算一次。
+  - 隐藏期间依赖投影的面板内副作用（冷快照首轮补齐、计划目录刷新、预热订阅失败丢弃、状态面板分区开合、会话配置写入任务缓存）推迟到再次可见时按最新状态执行。Host/CLI 驱动的后台行为（命令 admission、自动化、机器人、外部引擎闲置回收）不依赖界面订阅，不受影响。隐藏面板不接收用户输入；回调经 `snapshotRef` 读取的是隐藏前最后一次渲染的快照。
+  - 不使用 `<Activity mode="hidden">`：它在隐藏时清理子树全部 effect，而租约、草稿预热、选区副屏注册都挂在 effect 上，会违反“首次可见后隐藏仍保留租约”。
+  - 前台工作流联接表（发起图、补全图、草稿位置、保存候选）只由工具行与带 `workflowLaunch` 的轮首/用户行决定。行窗口变化而这些行的引用（协议 apply 对未改动行保持引用）都未变时复用上一份表（引用不变）；任一相关行变化才整体重建，结果与全量构建逐项一致。
+- 未覆盖（保留现状）：状态面板内后台任务/子智能体/工作流的秒级计时器只重渲染各自小组件，隐藏时仍运行；CLI 帧解码开销另行处理。
+
+```mermaid
+sequenceDiagram
+  participant C as CLI（每 30ms 一帧）
+  participant S as ProjectionStore（租约内，唯一事实）
+  participant P as SessionPane（已激活）
+  participant T as 时间线
+  Note over P: 可见：订阅 store
+  C->>S: frame n
+  S-->>P: notify → 渲染
+  P->>P: 变为隐藏（paneVisible=false）
+  P--xS: 取消渲染监听（租约与订阅保留）
+  P->>T: paused=true，停止运行计时器
+  C->>S: frame n+1 … n+k（store 照常应用）
+  Note over P,T: 不渲染
+  P->>P: 变为可见
+  P->>S: getState()（一次补齐到 n+k）
+  P->>S: 恢复渲染监听
+  P->>T: paused=false，计时器以当前时间重算
+```
+
+| Case | 场景                                | 断言                                              | 验证层  |
+| ---- | ----------------------------------- | ------------------------------------------------- | ------- |
+| HP01 | 已激活 Tab 隐藏后收到 N 帧          | SessionPane 与时间线渲染 0 次；不释放、不重取租约 | UI 单测 |
+| HP02 | HP01 后恢复可见                     | 一次渲染即显示第 N 帧的行，之后新帧继续触发渲染   | UI 单测 |
+| HP03 | 运行中轮次所在时间线隐藏            | 计时器停止，隐藏期间不重算；可见后立即重算        | UI 单测 |
+| HP04 | 流式帧只改正文行 / 工作流相关行变化 | 四张联接表引用不变 / 重建，且与全量构建结果一致   | UI 单测 |
+
+### 窗口级只读数据共享（2026-11-08，P5）
+
+- 依据（2026-11-08 本机扫描 P5）：窗口打开时每个 SessionPane（含隐藏 Tab）各自读取窗口级数据：`getBotStates` 12 次（Host 0.21→1.94s 阶梯）、`model-selection.getView` 27 次、`getConnectionProfiles` 9 次；每次变化事件后各实例再各自重读。
+- 所有者：Host 仍是这些数据的唯一事实源与唯一写者；Renderer 不另存服务端事实。Renderer 内每个**服务实例**至多一个共享读取器，以服务实例为键（`WeakMap`）——服务实例即 RPC authority：本地 workspace 共用窗口 Local Host 的服务实例，远程 workspace 使用连接注册表中该连接的服务实例，因此不会跨 Host 复用，也不按路径或 identity 字符串分桶。通用机制 `createSharedServiceRead`（`packages/ui/src/store/serviceAuthorityKey.ts`），三个所有者：
+  - Model Selection：`getSharedModelSelectionReader(modelSelectionService)`（`hooks/useModelSelectionView.ts`），键为输入（无输入 / `JSON.stringify({ selection })`）；`useModelSelectionServiceView` 与 `useDraftModelReadinessGate` 经它读取与订阅。
+  - Bot 状态：`getSharedBotStatesReader(botsService, broadcastService)`（`hooks/useBotGroupTask.ts`），单键；`useBotGroupTask`（每个 SessionPane 的 `BotGroupDeliveryProvider`）与 `useBotBoundGroups` 经它读取，`bots:group-state` 广播只作失效信号。草稿（无 taskId）不读取也不订阅。
+  - 外部引擎连接配置：`getSharedConnectionProfilesReader(externalEngineService)`（`hooks/external-engine/useEngineConnectionProfiles.ts`），单键；只有本地 workspace 存在该服务。
+- 规则：
+  - 同一键的并发读取合并为一次请求（in-flight 去重）。
+  - 读取器只在有订阅者期间缓存成功结果，后挂载的实例直接复用；最后一个订阅者离开时退订上游、清空缓存与在途表，下次挂载重新读取（未订阅期间收不到变化事件，缓存不可信）。读取失败不缓存。
+  - 每个读取器对上游变化事件只订阅一次。事件到达先作废缓存与在途请求（epoch +1，旧请求的结果仍交给各自的调用者，但不写缓存、不被新读取复用），再通知各实例；各实例的重读按键合并，一次事件每个键至多一次请求。Model Selection 事件负载即无输入 View（Host 以 `getView()` 生成），直接写入无输入键；连接配置事件负载即完整视图，直接写入。
+  - 显式重读总是发新请求、不读缓存（可被同时到达的普通读取合并）：Model Selection 的 `reload` / `refresh`、草稿首发在投影为 `missing` 时的权威复查、引擎设置页刷新、Bot 绑定群的手动刷新与保存后确认。
+  - 各实例原有的迟到/取代判定（revision、请求序号、generation、草稿 scope）保持不变；Hook 返回形状不变；Host 接口、事件与写路径不变。
+
+```mermaid
+sequenceDiagram
+  participant A as SessionPane A
+  participant B as SessionPane B（隐藏 Tab）
+  participant R as 共享读取器（按服务实例）
+  participant H as Host 服务
+  A->>R: onDidChange（首个订阅者）
+  R->>H: 订阅变化事件（一次）
+  A->>R: read(key)
+  R->>H: getView(key)
+  B->>R: onDidChange
+  B->>R: read(key)
+  Note over R: 合并到同一在途请求
+  H-->>R: view（写缓存）
+  R-->>A: view
+  R-->>B: view
+  H-->>R: onDidChange(event)
+  R->>R: 作废缓存与在途（epoch+1）
+  R-->>A: 通知
+  R-->>B: 通知
+  A->>R: read(key)
+  B->>R: read(key)
+  R->>H: getView(key)（一次）
+```
+
+| Case | 场景                                     | 断言                                                       | 验证层  |
+| ---- | ---------------------------------------- | ---------------------------------------------------------- | ------- |
+| WR01 | 同一服务实例上挂载多个实例（同键）       | 每个键只读取一次；后挂载实例复用缓存                       | UI 单测 |
+| WR02 | 上游变化事件                             | 每个键只重读一次；Model Selection 无输入键直接采用事件负载 | UI 单测 |
+| WR03 | 最后一个实例卸载后再挂载 / 不同服务实例  | 重新读取 / 互不复用                                        | UI 单测 |
+| WR04 | 显式重读（reload、权威复查、设置页刷新） | 总是发新请求                                               | UI 单测 |
+
 
 ## 外部引擎进程
 

@@ -149,13 +149,10 @@ import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversation
 import { buildSubagentAvatarIndex } from "@/subagent-display/index.js";
 import {
   buildWorkflowRunByRunId,
-  buildWorkflowSaveCandidatesByRunId,
   buildWorkflowRunByToolCallId,
   buildWorkflowRunPendingQuestionsByRunId,
-  buildWorkflowFillGraphByRunId,
-  buildWorkflowGraphByToolCallId,
+  createWorkflowRowTablesSelector,
 } from "@/v4/workflowRunCardJoin.js";
-import { buildWorkflowDraftByToolCallId } from "@/v4/workflowDraftJoin.js";
 import {
   WORKFLOW_RUN_DIRECTORY_LIMIT,
   countEndedWorkflowRuns,
@@ -625,7 +622,9 @@ export function SessionPane({
   const [paneActivated, setPaneActivated] = useState(paneVisible);
   if (paneVisible && !paneActivated) setPaneActivated(true);
   const leaseDeferredUntilVisible = sessionId !== null && !paneActivated;
-  const state = useConversationProjection(lease);
+  // 2026-11-08 P9：隐藏时只暂停渲染通知（store 照常应用帧，租约保持），重新可见的首个渲染一次补齐。
+  // 不用 <Activity mode="hidden">：它会清理本组件全部 effect，租约与草稿预热随之释放。
+  const state = useConversationProjection(lease, { paused: !paneVisible });
   const snapshot = state.snapshot;
   const runtimeReady =
     sessionId === null ||
@@ -1676,30 +1675,24 @@ export function SessionPane({
     () => buildWorkflowRunByRunId(snapshot?.workflowRuns?.runs),
     [snapshot?.workflowRuns],
   );
-  // 发起 toolCallId → 静态图：图是 run 的属性，
-  // 三种来源的轮尾 run 卡都到这一张表取图。行窗口一遍建成，随窗口重建。
-  const workflowGraphByToolCallId = useMemo(
-    () => buildWorkflowGraphByToolCallId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  // 四张由行窗口派生的工作流联接表（规则见各 build* 函数）：
+  // - 发起 toolCallId → 静态图：图是 run 的属性，三种来源的轮尾 run 卡都到这一张表取图；
+  // - runId → 最新补全的有效脚本图（docs/dynamic-workflow/presentation.md「Holes on the timeline」）；
+  // - 工作流工具行 → 草稿位置：稿号与「后面还有更新的一稿」只能从行序读出；
+  // - runId → 转写里认领过它的 SaveWorkflow 候选（docs/dynamic-workflow/transcript-and-notifications.md
+  //   「Which workflow a run is saved as」规则 1）。
+  // 2026-11-08 P9：原先每个流式帧按全部行各重建一遍，表引用每帧变化又让 rowContext 与可见行跟着
+  // 重渲染。选择器只在工作流相关行（工具行、带 workflowLaunch 的轮首/用户行）引用变化时重建，
+  // 只改正文的帧复用上一份表（docs/desktop/engine-performance-1.1-spec.md「隐藏面板暂停渲染」）。
+  const selectWorkflowRowTables = useMemo(() => createWorkflowRowTablesSelector(), []);
+  const workflowRowTables = useMemo(
+    () => selectWorkflowRowTables(snapshot?.rows.window),
+    [selectWorkflowRowTables, snapshot?.rows.window],
   );
-  // runId → 最新补全的有效脚本图（docs/dynamic-workflow/presentation.md「Holes on the timeline」）：补全之后
-  // run 卡与侧板取它。行窗口一遍建成，随窗口重建。
-  const workflowFillGraphByRunId = useMemo(
-    () => buildWorkflowFillGraphByRunId(snapshot?.rows.window),
-    [snapshot?.rows.window],
-  );
-  // 工作流工具行 → 草稿位置：稿号与
-  // 「后面还有更新的一稿」都只能从行序读出，行窗口一遍建成，随窗口重建。
-  const workflowDraftByToolCallId = useMemo(
-    () => buildWorkflowDraftByToolCallId(snapshot?.rows.window),
-    [snapshot?.rows.window],
-  );
-  // runId → 转写里认领过它的 SaveWorkflow 候选（docs/dynamic-workflow/transcript-and-notifications.md
-  // 「Which workflow a run is saved as」规则 1）。行窗口一遍建成，随窗口重建。
-  const workflowSaveCandidatesByRunId = useMemo(
-    () => buildWorkflowSaveCandidatesByRunId(snapshot?.rows.window),
-    [snapshot?.rows.window],
-  );
+  const workflowGraphByToolCallId = workflowRowTables.graphByToolCallId;
+  const workflowFillGraphByRunId = workflowRowTables.fillGraphByRunId;
+  const workflowDraftByToolCallId = workflowRowTables.draftByToolCallId;
+  const workflowSaveCandidatesByRunId = workflowRowTables.saveCandidatesByRunId;
   // Workflow 通知 manifest 的升级条目 Waiting→Answered 联查表（runId → 停驻 qid 集合）。
   const workflowRunPendingQuestionsByRunId = useMemo(
     () => buildWorkflowRunPendingQuestionsByRunId(snapshot?.workflowRuns?.runs),
@@ -4518,6 +4511,7 @@ export function SessionPane({
                   searchResultHighlightRequest={isDraft ? null : searchResultHighlightRequest}
                   onSearchResultHighlightDone={onSearchResultHighlightDone}
                   sessionPhase={isDraft ? undefined : snapshot?.control.phase}
+                  paused={!paneVisible}
                   selectionActions={
                     !isDraft &&
                     sessionId &&
