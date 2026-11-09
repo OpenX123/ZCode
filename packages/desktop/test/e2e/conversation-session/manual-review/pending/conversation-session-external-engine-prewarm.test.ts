@@ -872,7 +872,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     );
     try {
       await startNewV4Draft();
-      await (await displayed('[data-testid="session-engine-option-codex"]')).click();
+      await selectDraftEngine("codex");
       const paneId = await getV4FocusedPaneId();
       if (!paneId) throw new Error("缺少焦点 pane");
       const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
