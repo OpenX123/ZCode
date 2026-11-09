@@ -832,6 +832,10 @@ global:
   acceptedUpstreamSnapshot: scripts/architecture/upstream-snapshot.json
 
 exceptions:
+  - id: draft-submission-overlay
+    rule: unmanaged-new-file
+    paths: [packages/ui/src/v4/draftSubmissionOverlay.ts]
+    reason: 草稿首发的 pending optimistic overlay（docs/desktop/engine-performance-1.1-spec.md「草稿首发的即时会话布局」），仅由 SessionPane 持有与消费，不进 projection store、不参与发送屏障；接管整个 v4 目录不在本次范围内，不为同目录其他文件开放例外。
   - id: ycode-brand-indicator-copy
     rule: unmanaged-new-file
     paths: [packages/desktop/src/main/windowsCuaOperationIndicatorContent.ts]
