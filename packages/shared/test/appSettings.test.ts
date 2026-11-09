@@ -3,6 +3,30 @@ import { z } from "zod";
 import { appSettingsPatchSchema, appSettingsSchema } from "#src/validationAppSettings.js";
 
 describe("app settings", () => {
+  it("连接偏好往返、拒绝权限和速度，读取时坏连接不丢弃其他连接", () => {
+    const values = {
+      codex: { alpha: { model: "gpt-a", reasoning_effort: "high" }, beta: { model: "gpt-b" } },
+    };
+    const patch = appSettingsPatchSchema.parse({
+      externalEngineConnectionConfigPreferences: values,
+    });
+    expect(patch).toEqual({ externalEngineConnectionConfigPreferences: values });
+    expect(appSettingsSchema.parse(patch)).toMatchObject(patch);
+    expect(
+      appSettingsPatchSchema.safeParse({
+        externalEngineConnectionConfigPreferences: { codex: { alpha: { fast: "on" } } },
+      }).success,
+    ).toBe(false);
+    expect(
+      appSettingsSchema.parse({
+        externalEngineConnectionConfigPreferences: {
+          codex: { alpha: { mode: "auto" }, beta: { model: "gpt-b" } },
+        },
+      }),
+    ).toMatchObject({
+      externalEngineConnectionConfigPreferences: { codex: { beta: { model: "gpt-b" } } },
+    });
+  });
   it("默认引擎和关闭更新偏好可往返，旧设置无需迁移", () => {
     const original = appSettingsSchema.parse({});
     expect(original.defaultSessionEngine).toBeUndefined();

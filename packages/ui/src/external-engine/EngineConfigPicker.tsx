@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   BrainIcon,
   ChevronDownIcon,
@@ -49,7 +49,8 @@ export function EngineConfigMenu({
   onOpenChange,
   onValueChange,
   icon,
-}: PickerProps & { icon?: LucideIcon }) {
+  footer,
+}: PickerProps & { icon?: LucideIcon; footer?: ReactNode }) {
   const Icon =
     icon ?? (option.id === "model" ? CpuIcon : option.id === "mode" ? ShieldIcon : Settings2Icon);
   // 自测高分列曾覆盖共享限高并让长目录越出视口；直接沿用下拉层的尺寸和滚动约束。
@@ -105,6 +106,7 @@ export function EngineConfigMenu({
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
+        {footer}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -113,12 +115,20 @@ export function EngineConfigMenu({
 export function EngineEffortPicker({
   option,
   modelLabel,
+  modelControl,
+  moreControls,
+  triggerLabel,
   disabled,
   open,
   restoreFocus,
   onOpenChange,
   onValueChange,
-}: PickerProps & { modelLabel?: string }) {
+}: PickerProps & {
+  modelLabel?: string;
+  modelControl?: ReactNode;
+  moreControls?: ReactNode;
+  triggerLabel?: string;
+}) {
   // 手势与等待确认期间共用局部预览；新目录或确认值回流后仍由 snapshot 接管。
   const scope = JSON.stringify([option.currentValue, option.options]);
   const [preview, setPreview] = useState<{ scope: string; index: number } | null>(null);
@@ -154,16 +164,28 @@ export function EngineEffortPicker({
           type="button"
           variant="ghost"
           className={engineTriggerClassName}
-          disabled={disabled || option.options.length === 0}
-          aria-label={option.name}
-          title={currentLabel(option)}
+          // 空深度目录仍可能伴随有效模型或 Fast，不能连带禁用它们唯一的合并入口。
+          disabled={disabled || (option.options.length === 0 && !modelControl && !moreControls)}
+          aria-label={triggerLabel ?? option.name}
+          title={triggerLabel ?? currentLabel(option)}
           data-composer-collapse-priority="3"
-          data-testid={`engine-config-${option.id}`}
+          data-testid={modelControl ? "engine-config-model-effort" : `engine-config-${option.id}`}
         >
           <BrainIcon className="hidden size-4 group-data-[composer-compact=true]/engine-option:block" />
-          <span className="truncate group-data-[composer-compact=true]/engine-option:hidden">
-            {currentLabel(option)}
-          </span>
+          {modelControl && triggerLabel ? (
+            <>
+              <span className="min-w-0 truncate group-data-[composer-compact=true]/engine-option:hidden">
+                {modelLabel}
+              </span>
+              <span className="shrink-0 group-data-[composer-compact=true]/engine-option:hidden">
+                · {currentLabel(option)}
+              </span>
+            </>
+          ) : (
+            <span className="truncate group-data-[composer-compact=true]/engine-option:hidden">
+              {currentLabel(option)}
+            </span>
+          )}
           <ChevronDownIcon className="size-3.5 text-foreground-subtle group-data-[composer-compact=true]/engine-option:hidden" />
         </Button>
       </PopoverTrigger>
@@ -175,6 +197,16 @@ export function EngineEffortPicker({
         aria-label={option.name}
         className="w-64 max-w-[calc(100vw-1.5rem)] gap-2 bg-menu p-3 text-foreground"
         data-testid={`engine-effort-menu-${option.id}`}
+        onOpenAutoFocus={(event) => {
+          // 合并模型入口后首个按钮变成模型菜单；深度弹层仍让原生滑条接收键盘操作。
+          const slider = (
+            event.currentTarget as HTMLElement | null
+          )?.querySelector<HTMLInputElement>('input[type="range"]');
+          if (slider) {
+            event.preventDefault();
+            slider.focus();
+          }
+        }}
         onEscapeKeyDown={() => setPreview(null)}
         onCloseAutoFocus={(event) => {
           if (!restoreFocus) event.preventDefault();
@@ -187,9 +219,11 @@ export function EngineEffortPicker({
           >
             {label}
           </span>
-          <span className="max-w-full truncate text-ui-sm text-foreground-subtle">
-            {modelLabel ?? option.name}
-          </span>
+          {modelControl ?? (
+            <span className="max-w-full truncate text-ui-sm text-foreground-subtle">
+              {modelLabel ?? option.name}
+            </span>
+          )}
         </div>
         <div
           className="composer-thought-slider relative h-8 w-full rounded-full"
@@ -247,6 +281,7 @@ export function EngineEffortPicker({
             }}
           />
         </div>
+        {moreControls}
       </PopoverContent>
     </Popover>
   );

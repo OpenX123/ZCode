@@ -1,5 +1,84 @@
 # 外部 Agent 引擎（Claude Code / Codex）
 
+## ACP 体验改造（2026-11-09，实施合同）
+
+用户确认优化方案并要求按参考图实现。2026-11-09 最新反馈以 Codex 输入框为准：输入区上方保留紧凑引擎切换；项目、运行位置与 Git 分支位于编辑器上方的同一行；底部左侧为附件与权限，右侧为模型/推理强度合并入口与发送。连接配置不在输入区显示，Fast 不占常驻位置。设置采用左侧引擎列表、右侧检查和连接配置，保持现有两家外部引擎边界，不引入截图中的任意 Agent、原始 JSON 编辑或凭据回显。
+
+### 产品规则与状态所有者
+
+- 设置左栏只管理 Claude Code、Codex；每项显示本机可启动性，选择右侧详情不改变新任务默认。右侧先呈现已有配置，再独立更新所选引擎检查；一个引擎失败不阻塞另一个。
+- 检查分为 CLI、adapter、认证与实际路由。Host 的 ready 仅称“运行环境可用”，不代表认证或模型响应通过。诊断携带结构化检查项与修复动作；认证信息只用于其 `connectionProfileId`，不得套用到其他连接。快检不发模型请求；完整版本/认证只在管理页按需检查；测试模型响应保留显式触发与取消。
+- 列表显示连接名称、方式、网关和“上次使用”。选中连接仅切详情；“用于新任务”才调用既有 select。内置沿用 CLI 只读；官方登录、API Key 各显示适用动作。编辑/新增使用共享 Dialog，密钥不回显；保存说明只影响新会话。Host 唯一写者、新 ID 编辑/隐藏删除及旧绑定继续可用保持不变。
+- Composer 草稿上方用紧凑引擎分段选择；未选中只显示可访问 Logo，选中带名称。既有会话只显示固定引擎。项目、运行位置（本地或真实远程名称）、Git 分支在编辑器上方同一行，分支不得降到下方工具条；长名称省略，窄屏保持头部横向收缩，不复制 Git 状态。非 Git 工作区不伪造分支。
+- 底部左侧只保留附件与权限/模式，右侧为一个模型/推理强度入口及发送/停止；弹层参照 Codex 呈现当前深度、可切换模型与深度滑块。原生目录缺少 model 或 effort 时按实际能力退化，不能造选项；确认、拒绝、预览回退、键盘与焦点语义保持。`fast` / `fast_mode` / `speed` / `service_tier` 放入该弹层的“更多选项”，不再增加常驻更多按钮，不改变已有值或执行语义。
+- 输入区移除全部连接配置选择/标签（含“沿用 CLI 配置”、官方与自定义），连接仍由设置页管理并沿用既有草稿 owner 和不可变会话绑定。连接中/失败及安全诊断仍来自既有 runtime snapshot，按需显示错误与恢复，不把 ready 推断为进程常驻，不伪造休眠和阶段。重连仍为 prepare CAS，不能重发已提交 prompt；草稿 connecting 只禁用原生配置，输入与引擎选择仍可操作。
+- 模型/思考偏好按 engine + connectionProfileId 记录，旧 engine 偏好只在该连接没有记录时兼容读取；显式确认后只写当前连接偏好。原生目录仍负责可选值，模型确认后才能恢复 effort；权限与 Fast 不记忆。旧会话绑定与新默认隔离。
+- 性能先改已有 pool：warming 备用允许一个新会话原子独占预留，其他会话冷准备；取消、错误、cwd/profile 不同不得误领用，同会话 single-flight 保留。命中健康备用先避免无变化的重复启动解析；身份与凭据校验不能绕过。失败不影响前台可执行性，不自动安装、登录、请求模型。
+- 资源策略采用同窗口最多一个未绑定备用，实际进程归各 workspace CLI 的 pool；前台不受备用预算阻塞。活动工作区已存在 CLI 且引擎/连接确定时可低优先提前准备，不能为隐藏工作区启动 CLI；准备中的备用与已绑定会话分别记账。关闭、切换或失败释放许可，不取消已绑定连接；本轮不改 10/15 分钟 TTL。
+- Host 只拥有配置、诊断与备用资源调度，CLI runtime 拥有绑定与确认配置、port/pool 拥有连接；Renderer 只有选择草稿和展示状态。workspace identity、owner/lease、stale-run 与 SSH 外部引擎门禁保持不变。
+
+```mermaid
+sequenceDiagram
+  participant U as Renderer
+  participant H as Host 配置与窗口预算
+  participant R as CLI Runtime
+  participant P as CLI Port/Pool
+  participant A as ACP
+  U->>H: 读取配置与所选引擎诊断
+  H-->>U: 安全视图与检查项（按配置 ID）
+  U->>R: 可见草稿准备（identity/profile）
+  R->>P: single-flight prepare
+  P->>P: 独占领用 ready/warming spare
+  P->>A: 未命中才初始化新连接
+  A-->>R: session/config 确认
+  R-->>U: snapshot ready
+  U->>R: 用户输入 admission
+  R->>A: prompt 一次
+  P->>H: 请求未绑定备用许可
+  H-->>P: 许可/拒绝（不阻塞前台）
+```
+
+### 设置诊断接口与取消边界（Task 1）
+
+`ExternalEngineStatus.checks` 为可选安全投影，顺序为 `cli`、`adapter`、`authentication`、`route`；每项只有固定 `id/state/source/actions` 与可选 `connectionProfileId/gatewayHost/version`，不包含供应商原始输出、凭据和完整用户路径。认证与路由必须携带本次诊断的配置 ID；路由仅说明来源与 host，不宣称已通过实际请求。API Key 的本地存在或 CLI 报告的 API Key 身份（含沿用 CLI）均不代表远端认证通过，检查保持 unknown，实际认证需显式测试；沿用 CLI 的来源仍为 cli，不声称密钥存入 YCode 凭据存储。旧 Host 缺省 checks 时 UI 由已有状态提供兼容展示，缺少配置 ID 的身份结果不归给任何连接。
+
+Renderer 按引擎保存展示状态，请求完成只更新对应引擎；切换详情不会写配置。配置读取独立于诊断，默认只检查当前引擎，另一个引擎仅做不启动 CLI 的可启动快检。每个引擎的检查/安装有独立取消令牌；既有可选 `invalidateStatus(engine, cancel?: "check" | "install")` 的取消参数 只中止对应管理命令，不中止其他引擎、登录、测试或会话。取消之后的旧结果不能覆盖新检查；真实进程结束沿用现有进程树清理。官方登录与模型测试沿用既有取消入口。
+
+### 已接受验收
+
+Task 2 接口约定：Composer 通过可选 `engineSelector` 展示上方分段选择；`EngineControls.placement` 区分 selector 与 toolbar，展示拆分不拥有引擎状态。`externalEngineConnectionConfigPreferences` 为 engine → connectionProfileId → configId 的本机增量偏好；legacy `externalEngineConfigPreferences` 保留兼容读取，显式确认只写新字段。连接记录存在时整份优先，不从 legacy 混入其他模型的 effort。尚无当前 binding/snapshot 的连接身份时不恢复、不记录，旧快照缺省身份使用既有 resolver。确认回调携带发起时的 session/profile，切换后的旧确认丢弃。
+
+Task 2 审查修复：恢复已经开始后，同一 binding 的 ready 消失（options 缺省或 profile 为 null），由 memory owner 将这一轮终结并拒绝当前首发；同 session/profile 重新 ready 后再次等待直接收口，沿用已确认配置，不自动重启记忆覆盖。断连前在途 ACK 不能继续旧轮后续项，切换 binding 的旧 ACK 仍丢弃。远程禁用原因在分段选择旁就地可见，并作为组及禁用项的可访问描述，不能只依赖 disabled 按钮的 title。
+
+```mermaid
+sequenceDiagram
+  participant U as Composer 草稿
+  participant R as Runtime 确认配置
+  participant M as useEngineConfigMemory 偏好投影
+  participant H as 本机 SettingService 写队列
+  U->>R: 经配置屏障选择 model/effort
+  R-->>M: 当前 session/profile snapshot 确认值
+  M->>H: engine/profile/configId 增量
+  H-->>M: 已保存偏好
+  U->>R: 新草稿 prepare（现有屏障）
+  R-->>M: 同代绑定 ready 与原生目录
+  M->>R: model ACK 后按新目录恢复 effort
+  M-->>U: waitForRestore 收口
+  U->>R: 同屏障 sendText 一次
+```
+
+| ID   | 前置与动作                                       | 断言                                                           | 证据                     |
+| ---- | ------------------------------------------------ | -------------------------------------------------------------- | ------------------------ |
+| AX01 | 打开设置，切换两家引擎                           | 左列表/右详情；选择不写默认；诊断独立，失败可恢复              | UI UT + 桌面 E2E         |
+| AX02 | API Key/官方/沿用 CLI，切详情、编辑保存与测试    | 来源明确；认证不串配置；密钥不回显；旧绑定不变；测试仅显式请求 | service UT + UI UT + E2E |
+| AX03 | 新草稿切引擎，设置页选连接，已有会话打开配置             | 合并模型/深度；Fast 只在弹层更多；无连接入口；已有身份不可变    | UI UT + E2E              |
+| AX04 | 同引擎两个网关，分别确认不同 model/effort 后新建 | 偏好隔离，目录不支持时不强行下发，旧设置兼容读取               | hook UT                  |
+| AX05 | 备用正在准备时同时请求两个新会话，取消其一       | 备用只领用一次；无重复原生 ID、无孤儿，取消不影响其他会话      | CLI stdio UT             |
+| AX06 | 多 workspace 争备用、切活动项目、关闭窗口        | 至多一个未绑定备用；前台不停；许可最终释放；隐藏项目不新起 CLI | Host/CLI 集成            |
+| AX07 | 窄屏、深浅主题、键盘操作、SSH 工作区             | 布局可用，语义不变，远端门禁保留                               | 桌面 E2E + 定向 UT       |
+
+验收场景 accepted，桌面候选保持 manual-review/pending；真实供应商性能单独实测，不将夹具耗时当生产基准。短路径缓存和配置恢复合并仅在测量证明必要时实施，不为完成清单增加第二份状态。
+
 ## 外部引擎进程与异步准备（2026-11-07，1.1）
 
 决策来源：[YCode 1.1 更新方案](./ycode-1.1-plan.md)「性能」中的“外部引擎进程”“CLI 传输”，以及附录 B 的“外部引擎闲置连接”。仍是每个会话一个 adapter 进程；本节只改变握手何时完成、何时有空闲进程可用、何时关闭闲置进程。连接恢复、重试与 single-flight 规则见下文「原会话连接恢复与诊断」，不变。
@@ -11,7 +90,34 @@
 - 不变的部分：不隐式安装（入口缺失为 `not_ready`）；准备阶段不提交 prompt、不创建 turn；同一会话的准备是 single-flight（Runtime `externalEnginePreparation` + port `preparations` 两层合并），后台准备期间收到的 `prepareExternalEngineSession`、`setEngineConfigOption` 和 turn 都并入同一次握手；`deleteSession` 或关闭 Runtime 时先置 `shuttingDown`，再经 `closeSession` 中止后台握手和退避，之后到达的会话 ID、配置与错误一律丢弃，不再发布状态。
 - 带 `firstInput` 的 `createSession` 同样不等待握手：首条输入照常 admission，turn 在提交 prompt 之前并入同一次准备；准备失败时按已有 turn 失败路径结束。
 
-### 草稿预热 owner
+### 备用许可与连接准备（2026-11-10 实施合同）
+
+- 窗口 Local Host 唯一拥有一个未绑定备用许可；CLI pool 唯一拥有实际进程。许可不含会话状态、路径、凭据或环境摘要。仅当前本地 active client 可以申请；远程与 stale client 拒绝。拒绝不影响前台冷启动。
+- `externalEngine/acquireSpare` 使用稳定 requestId，结果可带 leaseId；`releaseSpare` 用 requestId 幂等释放，覆盖申请取消或响应丢失。`revokeSpare` 以 requestId 撤销，CLI 关闭尚未绑定资源并 ACK 后才能重授。已绑定资源不受撤销影响。连接关闭必须经现有进程树回收确认，不能仅因失联重新授权。
+- 未绑定备用使用 ACP 专用严格关闭：发出 EOF/终止信号前保留进程树身份快照，随后以系统进程表确认同一组/同一身份后代已结束。POSIX 组长退出不代表同组后代结束；Windows taskkill 的 error/nonzero 不等于关闭成功。观察失败或 deadline 到达而仍存活时抛错、保留 pool owned 与 Host 许可，不发送成功 revoke ACK。deadline 仅表示失败边界，不作为退出证据。普通会话/通用 exec 的既有关闭语义不在本次修改范围。
+- pool 的可领用索引与未交付资源集合分开；warming 在第一个 await 前独占预留，第二个新会话冷启动。取消即时摘索引并关闭已产生连接，迟到 spawn 也关闭。pool.close 等待全部未交付资源收口；已交付连接归 port。
+- 命中前重新读取真实 profile 与凭据并固定身份；内部 generation 覆盖 profile、凭据及启动环境，已知安装入口用局部 stat 校验。命中不遍历 PATH；miss 的完整解析结果用于同配置补位，不再重复解析。
+- 提前准备通过只读 selector 注入默认引擎与 lastUsed，仅在业务已取得当前本地 CLI 后后台调度，不启动隐藏项目、不创建 Runtime 会话、不增加 session activity。取消、关闭与准备失败都释放许可。prepare/revoke 是 immediate lane、Host 以 observation 投递；申请未答复或拒绝不阻塞前台，release ACK 丢失时 Host 保守持有许可，后续 revoke ACK 可完成回收。
+
+```mermaid
+sequenceDiagram
+  participant H as 窗口 Host（许可）
+  participant C as CLI pool（未交付进程）
+  participant P as 会话 port（已交付进程）
+  C->>H: acquireSpare(requestId)
+  H-->>C: leaseId 或拒绝
+  C->>C: spawn → initialize → session/new
+  P->>C: 同步独占 reservation
+  C->>H: releaseSpare(requestId)，归入前台
+  C-->>P: 就绪后交付；取消则关闭
+  H->>C: revokeSpare(requestId)
+  C->>C: 等待迟到 spawn，快照树身份并发终止
+  C->>C: OS 确认同身份进程树结束
+  C-->>H: 确认后 ACK；失败保留 owned/许可
+  Note over H: ACK 或进程树结束后才允许下一许可
+```
+
+### 草稿预热 owner（会话 binding）
 
 - `useDraftSessionPrewarm` 仍是草稿预热会话的唯一 owner，ACK 只用来建立 binding。草稿是否就绪由该 binding 会话 snapshot 中的 `config.engineConfigState` 决定，Renderer 不另存就绪缓存。纯函数 `resolveDraftEngineReadiness` 按以下规则派生：
 
@@ -37,12 +143,12 @@
 ### 预建会话（spare）
 
 - 所有者：每个 CLI 进程一个 `ExternalEngineProcessPool`（adapter 层），由协议 server 创建，并注入该进程内每个会话 app 的 ExternalEnginePort；测试连接使用的独立 port 不接入。
-- 2026-11-08 起备用进程升级为**预建会话**：每个（引擎，连接配置 ID，cwd）至多保留一个。它已完成 spawn、`initialize`（Codex API Key 配置下含 `providers/set`）、在该 cwd 的 `session/new`，以及新会话的默认配置（Claude 新会话 Auto 默认），但从未提交 prompt。启动路径与冷启动相同：同一入口、同一环境构造、同一连接配置解析。
+- 2026-11-08 起备用进程升级为**预建会话**：窗口 Host 最多授权一个未绑定备用；CLI 按引擎、连接配置 ID、cwd 与内部 generation 匹配领用。它已完成 spawn、`initialize`（Codex API Key 配置下含 `providers/set`）、在该 cwd 的 `session/new`，以及新会话的默认配置（Claude 新会话 Auto 默认），但从未提交 prompt。启动路径与冷启动相同：同一入口、同一环境构造、同一连接配置解析。
 - 依据：Claude adapter 的 `session/new` 需拉起官方 CLI 并等待其初始化，本机实测约 1.5s，旧备用进程只省掉 spawn 与 initialize，命中时仍需 1.76s，达不到草稿 1s 内就绪的目标。
-- 领用：新会话（不含 resume/load/fork）解析出连接配置后，若预建会话的引擎、配置 ID、cwd 都一致且进程健康，就同步领用：会话直接取得预建会话的原生会话 ID（经 `onSession` 持久化）与配置选项，跳过 spawn、initialize 与 `session/new`；会话自带的已保存配置（`configValues`、显式模式）在领用后按原恢复规则下发。领用前已到达的通知按原初始通知缓冲规则交给领用会话。领用后连接归会话所有，与冷启动的会话连接没有区别。进程已退出、cwd 不同或预建会话仍在准备时按未命中处理并走冷启动；仍在准备的那个保留。不跨连接配置复用。
+- 领用：新会话（不含 resume/load/fork）解析出连接配置后，若预建会话的引擎、配置 ID、cwd 都一致且进程健康，就同步独占预留并等待就绪：会话直接取得预建会话的原生会话 ID（经 `onSession` 持久化）与配置选项，跳过 spawn、initialize 与 `session/new`；会话自带的已保存配置（`configValues`、显式模式）在领用后按原恢复规则下发。领用前已到达的通知按原初始通知缓冲规则交给领用会话。领用后连接归会话所有，与冷启动的会话连接没有区别。warming 可被一个新会话预留，其他请求 miss/cold；预算仍在申请中不等待，前台直接冷启。进程退出、cwd 或 generation 不同则关闭失效备用；入口局部 stat 失败也不交付。不跨连接配置复用。
 - 预建会话从未提交 prompt：到期关闭不留下原生会话历史，两家都预建到 `session/new`，adapter 层无需清理（2026-11-08 本机 Windows 实测：真实 adapter 在新建临时 cwd 中执行 initialize → `session/new`（Claude 另选 Auto），不发 prompt，分别以 `taskkill /T /F` 与关闭 stdin 两种方式结束。Claude adapter 0.95.0 + claude.exe 2.1.319：`~/.claude/projects/<cwd 编码目录>/` 未创建、无 `<sessionId>.jsonl`，只留下官方 CLI 的运行登记 `~/.claude/sessions/<pid>.json`（不是会话历史，实测下一次启动官方 CLI 后已被清除）。Codex adapter 2.2.2：`~/.codex/sessions/` 无新 rollout，`state_5.sqlite` 的 `threads` 与 `thread_history_1.sqlite` 均无该 ID 的记录；强制结束时留下空的 `thread-writer-locks/<id>.lock` 与 `tmp/arg0` 临时目录（不是会话历史；关闭 stdin 正常退出时不留下）。两种残留都来自进程被结束，冷启动会话经同一 `closeAcpProcess` 关闭，并非预建引入。同次实测 `session/new` 耗时：Claude 约 1.4s，Codex 0.8–1.1s。）
-- 补位：同一（引擎，配置，cwd）的新会话就绪后（无论是否命中），后台准备一个替代预建会话；已有健康预建会话或正在准备时不重复创建。补位排在会话握手之后，不和会话握手争抢启动资源。每个用过外部引擎的本地工作区 CLI 因此至多常驻一个预建会话（私有提交约 480MB，工作集约 110MB），10 分钟未领用即关闭。
-- 存在条件：只在 Host 注入了 `ZCODE_EXTERNAL_ENGINES_DIR` 的 CLI 中存在，即桌面本地工作区。远程工作区不运行外部引擎会话，所以没有备用进程。备用进程只在该引擎刚成功新建会话后补位；草稿预热按当前默认引擎（或用户刚改选的引擎）发起，因此备用进程只会属于当前默认或刚用过的引擎，自然满足“当前默认或近 24 小时用过”。启动、恢复历史会话和测试连接都不会创建备用进程。
+- 补位：同一（引擎，配置，cwd）的新会话就绪后（无论是否命中），后台准备一个替代预建会话；已有健康预建会话或正在准备时不重复创建。补位排在会话握手之后，不和会话握手争抢启动资源。补位须申请窗口唯一许可，拒绝不阻塞前台。窗口至多一个未绑定预建会话，10 分钟未领用即关闭；预留归入前台但交付前仍由 pool 关闭收口。
+- 存在条件：只在 Host 注入了 `ZCODE_EXTERNAL_ENGINES_DIR` 的 CLI 中存在，即桌面本地工作区。远程工作区不运行外部引擎会话，所以没有备用进程。备用可以在该引擎刚成功新建会话后补位，也可在业务成功取得当前本地 CLI 后，由 Host 注入 selector 读取默认外部引擎与 lastUsed 后后台提前准备；这条路径不启动 CLI、不创建 Runtime 草稿、不增加 session activity。无明确选择、远程或已经失效的 client 跳过；测试连接不接入池。
 - 回收：备用进程 10 分钟未被领用就关闭。备用进程的失败（启动失败、initialize 失败、中途退出）不向用户展示，只写日志，并回落到冷启动路径。
 - 关闭：协议 server 的 `shutdown()` 在关闭各会话 app 的同时关闭 pool。pool 停止补位，关闭全部备用进程和仍在初始化的备用进程。关闭沿用 `closeAcpProcess`：Windows 用 `taskkill /T /F` 结束进程树，POSIX 结束 detached 进程组，与会话 adapter 相同。CLI 进程被强杀时，备用进程与会话 adapter 一样可能残留，这是已有边界。
 
@@ -53,10 +159,10 @@
 - 所有者仍是 port 与 pool：port 持有会话连接、该会话的在途计数（prepare、prompt、fork、setConfigOption）、最近使用时间与“原生会话是否已提交过 prompt”；pool 按 60 秒节拍扫描已登记的会话连接，并持有“可见会话”的 CLI 侧副本（事实由 Renderer 拥有，见下文可见性输入）。
 - 关闭条件（全部满足）：会话连接存在；没有在途操作或准备（外部引擎的待处理权限与交互只出现在运行中的 prompt 内，因此也一并覆盖）；会话当前不可见；最近一次使用已超过该类连接的闲置窗口。不再有“最近 N 个”名额；会话仍被订阅（Tab 打开但不可见）也会关闭。
 
-| 连接类别 | 判定（port） | 闲置窗口 | 关闭后的再准备 |
-| --- | --- | --- | --- |
-| 已提交过 prompt，或经 resume/load/fork 建立 | 可恢复 | 15 分钟 | 按原会话 resume/load，恢复已确认配置 |
-| 草稿：经 `session/new`（含领用预建会话）建立、从未提交 prompt | 草稿 | 10 分钟 | 新的 `session/new`（可领用预建会话），不 resume |
+| 连接类别                                                      | 判定（port） | 闲置窗口 | 关闭后的再准备                                  |
+| ------------------------------------------------------------- | ------------ | -------- | ----------------------------------------------- |
+| 已提交过 prompt，或经 resume/load/fork 建立                   | 可恢复       | 15 分钟  | 按原会话 resume/load，恢复已确认配置            |
+| 草稿：经 `session/new`（含领用预建会话）建立、从未提交 prompt | 草稿         | 10 分钟  | 新的 `session/new`（可领用预建会话），不 resume |
 
 - 已提交过 prompt 的会话：关闭只结束 adapter 进程。订阅、已确认配置、`externalSessionId` 和 `engineConfigState=ready` 都保留。下一次发送时，turn 发现没有健康连接，就投影 connecting，按原会话 resume/load 恢复已确认配置，再投影 ready 并提交 prompt；下一次修改配置时，`setConfigOption` 得到 `not_ready`，经已有空闲恢复路径重连，然后只重试这次幂等配置。prompt 绝不自动重发。
 - 草稿：从未提交 prompt 的原生会话可能无法 resume（2026-11-08 本机实测：两家未提交 prompt 的会话关闭后都不写原生会话历史，见上文「预建会话」），因此草稿关闭后**再次准备必须走新的 `session/new`**。port 是“原生会话从未提交过 prompt”这一事实的唯一所有者：它经 `session/new` 或领用预建会话建立连接时记下该事实，提交第一个 prompt 时清除；连接不在（闲置关闭或进程退出）且该事实仍成立时，下一次准备忽略 Runtime 传入的 `externalSessionId`，按新会话处理（领用同键预建会话或冷启动 `session/new`），经 `onSession` 把新原生 ID 交给 Runtime 覆盖旧 ID（草稿尚未入库，首发提升时与新 ID 一起持久化），草稿已确认的配置（`configValues`，含显式模式）在新会话上按原恢复规则下发。Runtime 的 `engineConfigState` 在关闭期间保持 `ready`；下一次发送或改配置沿与上一条相同的路径（connecting → ready，prompt 只发一次），只是原生方法为 `session/new`。旧原生 ID 从未提交 prompt，不留下原生历史，无需清理。
@@ -114,21 +220,22 @@ sequenceDiagram
 | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `external_engine.handshake.completed`                          | `engine`、`sessionId`、`method`（new/resume/load/fork）、`spare`（hit/miss/none）、`launchMs`、`initializeMs`、`providersSetMs`（有时）、`sessionMs`、`configRestoreMs`、`totalMs` |
 | `external_engine.handshake.failed`                             | `engine`、`sessionId`、`code`、`method`、`totalMs`                                                                                                                                 |
-| `external_engine.spare.claimed` / `.miss`                      | `engine`、`connectionProfileId`、`reason`（miss：none/warming/unhealthy/cwd）、`ageMs`（hit）                                                                                      |
+| `external_engine.spare.claimed` / `.miss`                      | `engine`、`connectionProfileId`、`reason`（miss：none/budget/unhealthy/cwd/generation）、`ageMs`（hit）                                                                            |
 | `external_engine.spare.ready` / `.expired` / `.failed`（warn） | `engine`、`connectionProfileId`、`durationMs` / `idleMs` / `code`                                                                                                                  |
 | `external_engine.idle_close`                                   | `engine`、`sessionId`、`idleMs`、`kind`（prompted / draft，2026-11-08 起）                                                                                                         |
 | `external_engine.idle_resume.completed` / `.failed`            | `engine`、`sessionId`、`durationMs`（从发起恢复到 ready）、`code`（失败时）                                                                                                        |
 
 ### 状态所有者与事件顺序
 
-| 状态                                        | 所有者                                                      | 读取方                                  |
-| ------------------------------------------- | ----------------------------------------------------------- | --------------------------------------- |
-| 草稿记录、连接配置绑定、`engineConfigState` | CLI Runtime（`prepareExternalEngineSession` single-flight） | V4 snapshot → Renderer                  |
-| 会话 adapter 连接、在途计数、最近使用时间   | CLI ExternalEnginePort（每会话 app 一个）                   | pool 扫描                               |
-| 预建会话、闲置扫描与可见会话副本            | CLI ExternalEngineProcessPool（每 CLI 进程一个）            | port 领用 / 补位；闲置扫描读可见副本    |
-| 会话是否可见（事实）                        | Renderer（工作台布局）                                      | 经 `v4/conversation/visibility` → pool  |
-| 原生会话是否从未提交过 prompt（草稿）       | CLI ExternalEnginePort                                      | pool 扫描选闲置窗口；再准备选 new/resume |
-| 草稿预热 binding                            | Renderer `useDraftSessionPrewarm`                           | SessionPane（就绪阶段由 snapshot 派生） |
+| 状态                                                 | 所有者                                                      | 读取方                                                       |
+| ---------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------ |
+| 草稿记录、连接配置绑定、`engineConfigState`          | CLI Runtime（`prepareExternalEngineSession` single-flight） | V4 snapshot → Renderer                                       |
+| 会话 adapter 连接、在途计数、最近使用时间            | CLI ExternalEnginePort（每会话 app 一个）                   | pool 扫描                                                    |
+| 未绑定备用许可                                       | 窗口 Local Host                                             | acquire/release/revoke；ACK 或精确旧 client 进程树结束后重授 |
+| 预建会话、未交付 reservation、闲置扫描与可见会话副本 | CLI ExternalEngineProcessPool（每 CLI 进程一个）            | port 领用 / 补位；闲置扫描读可见副本                         |
+| 会话是否可见（事实）                                 | Renderer（工作台布局）                                      | 经 `v4/conversation/visibility` → pool                       |
+| 原生会话是否从未提交过 prompt（草稿）                | CLI ExternalEnginePort                                      | pool 扫描选闲置窗口；再准备选 new/resume                     |
+| 草稿预热 binding                                     | Renderer `useDraftSessionPrewarm`                           | SessionPane（就绪阶段由 snapshot 派生）                      |
 
 ```mermaid
 sequenceDiagram
@@ -145,7 +252,7 @@ sequenceDiagram
   UI->>V4: subscribe → snapshot connecting
   R->>P: prepareSession（后台，single-flight）
   P->>P: 解析连接配置
-  P->>S: claimSpare(engine, profile, cwd)
+  P->>S: claimSpare(engine, profile, cwd, generation)（同步独占）
   alt 命中预建会话
     S-->>P: 已 session/new 的连接 + 原生会话 ID + 配置选项
     P->>A: 仅下发会话自带的已保存配置（若有）
@@ -155,7 +262,7 @@ sequenceDiagram
   end
   A-->>R: onSession / onConfigOptions
   R-->>UI: snapshot ready（失败则 error + 诊断）
-  P->>S: refillSpare（后台补位：spawn → initialize → session/new）
+  P->>S: refillSpare（先申请窗口许可，再 spawn → initialize → session/new）
   Note over UI: 用户随时可点发送：waitForSession → 屏障内 prepare（并入握手）→ 记忆恢复 → sendText
   Note over S,A: 备用进程 10 分钟未领用即关闭
   Note over P,A: 不可见且空闲 15 分钟（草稿 10 分钟，再准备走 session/new）→ 关闭 adapter，保留 ready 与 externalSessionId
@@ -167,22 +274,22 @@ sequenceDiagram
 
 ### 回归与验收
 
-| ID  | 场景                                  | 断言                                                                                                                       | 层                         |
-| --- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| P01 | 外部引擎草稿 createSession            | ACK 早于握手完成；ACK 时 Runtime 已为 connecting；随后 ready；不创建 turn、不发 prompt                                     | bootstrap/core             |
-| P02 | 后台握手失败                          | ACK 已 accepted；记录保留；`engineConfigState=error` 带诊断；重试可恢复                                                    | bootstrap/core             |
-| P03 | 握手中删除草稿                        | 后台握手中止，之后不再发布 ready/error，不启动迟到进程                                                                     | core/adapters              |
-| P04 | 备用进程领用 / 补位 / 过期 / 配置隔离 | 同配置第二个新会话不再 initialize；补位后仍至多一个；10 分钟后关闭；其他配置 ID 不领用                                     | adapters                   |
-| P05 | 闲置关闭后发送与改配置                | adapter 进程退出；`externalSessionId` 与配置保留；下次发送 resume 恢复配置后只发一次 prompt                                | adapters                   |
+| ID  | 场景                                  | 断言                                                                                                                                                          | 层                         |
+| --- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| P01 | 外部引擎草稿 createSession            | ACK 早于握手完成；ACK 时 Runtime 已为 connecting；随后 ready；不创建 turn、不发 prompt                                                                        | bootstrap/core             |
+| P02 | 后台握手失败                          | ACK 已 accepted；记录保留；`engineConfigState=error` 带诊断；重试可恢复                                                                                       | bootstrap/core             |
+| P03 | 握手中删除草稿                        | 后台握手中止，之后不再发布 ready/error，不启动迟到进程                                                                                                        | core/adapters              |
+| P04 | 备用进程领用 / 补位 / 过期 / 配置隔离 | 同配置 ready/warming 第二个新会话独占；第三个冷启；窗口许可 0/1；10 分钟后关闭；身份/凭据/环境/入口变化不误领                                                 | adapters                   |
+| P05 | 闲置关闭后发送与改配置                | adapter 进程退出；`externalSessionId` 与配置保留；下次发送 resume 恢复配置后只发一次 prompt                                                                   | adapters                   |
 | P06 | 可见豁免与草稿闲置                    | 不可见的已发 prompt 会话 15 分钟关闭、可见的不关（不再有最近 3 个名额）；草稿 10 分钟关闭；有在途操作不关；未收到可见性上报按不可见；连接 closed 后其上报失效 | adapters / bootstrap       |
-| P07 | CLI 关闭时存在备用进程                | pool 关闭全部备用进程与仍在初始化的备用进程，此后不再补位                                                                  | adapters                   |
-| P08 | 草稿就绪阶段与丢弃后恢复              | 除 disabled 外各阶段都可发送；creating/connecting 发送等待就绪与记忆恢复后才 `sendText`；丢弃后发送由 owner 重建并等待就绪 | UI                         |
-| P09 | 领用预建会话                          | 领用时不再发 initialize / `session/new`；会话取得预建的原生 ID 与配置；已保存配置在领用后下发；补位后至多一个              | adapters                   |
-| P10 | 草稿只在可见时预热                    | 隐藏挂载的草稿 pane 不发 createSession；首次可见后发一次，再隐藏不回收                                                     | UI                         |
-| P11 | 连接中立即发送（真实桌面）            | 新草稿出现后立即输入并发送，不出现“正在连接引擎…”；消息只发一次且使用记忆的模型/深度                                       | E2E（待真实 Windows 验收） |
-| P12 | 草稿就绪耗时（真实 Windows）          | 有预建会话时新草稿 createSession → ready ≤ 1s；窗口重载只有可见草稿出现握手日志                                            | 本机日志（待验收）         |
-| P13 | 草稿闲置关闭后再准备                  | 下一次准备不发 `session/resume`/`session/load`，走 `session/new`（同键预建会话可领用）；Runtime 得到新原生 ID；已确认配置下发；prompt 只发一次 | adapters                   |
-| P14 | 可见性协议输入                        | schema strict（拒绝未知字段、空 ID、超过 64 个）；整体替换、跨连接取并集、连接 closed 删除；收到即处理不排队                 | shared / bootstrap         |
+| P07 | CLI 关闭时存在备用进程                | pool 关闭全部备用进程与仍在初始化的备用进程，此后不再补位                                                                                                     | adapters                   |
+| P08 | 草稿就绪阶段与丢弃后恢复              | 除 disabled 外各阶段都可发送；creating/connecting 发送等待就绪与记忆恢复后才 `sendText`；丢弃后发送由 owner 重建并等待就绪                                    | UI                         |
+| P09 | 领用预建会话                          | 领用时不再发 initialize / `session/new`；会话取得预建的原生 ID 与配置；已保存配置在领用后下发；补位后至多一个                                                 | adapters                   |
+| P10 | 草稿只在可见时预热                    | 隐藏挂载的草稿 pane 不发 createSession；首次可见后发一次，再隐藏不回收                                                                                        | UI                         |
+| P11 | 连接中立即发送（真实桌面）            | 新草稿出现后立即输入并发送，不出现“正在连接引擎…”；消息只发一次且使用记忆的模型/深度                                                                          | E2E（待真实 Windows 验收） |
+| P12 | 草稿就绪耗时（真实 Windows）          | 有预建会话时新草稿 createSession → ready ≤ 1s；窗口重载只有可见草稿出现握手日志                                                                               | 本机日志（待验收）         |
+| P13 | 草稿闲置关闭后再准备                  | 下一次准备不发 `session/resume`/`session/load`，走 `session/new`（同键预建会话可领用）；Runtime 得到新原生 ID；已确认配置下发；prompt 只发一次                | adapters                   |
+| P14 | 可见性协议输入                        | schema strict（拒绝未知字段、空 ID、超过 64 个）；整体替换、跨连接取并集、连接 closed 删除；收到即处理不排队                                                  | shared / bootstrap         |
 
 单测使用受控 ACP 夹具进程。Windows 整机上 `codex.exe` / `claude.exe` 的真实 spawn 耗时、进程树回收与内存下降需要在本机单独验收，未验收前不写成通过。
 
@@ -200,11 +307,11 @@ Host 的 ready 仅表示 adapter 与官方 CLI 可启动；真实执行就绪归
 
 Claude Code 与 Codex 对称提供沿用 CLI（`inherit`）、官方登录（`official`）、API Key + Base URL（`apiKey`）。子进程环境规则只由共享纯函数 `buildEngineConnectionEnv` 定义，Host 的状态诊断、登录命令与 CLI 的 adapter 启动共用，不各自维护剔除列表。所有方式都剔除继承的 `APP_SERVER_LOGS`，避免原生 JSON-RPC 日志泄露 Authorization。
 
-| 方式     | Codex                                                                                                                                                                                  | Claude Code                                                                                                                                                                                                                                                                                                     |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 沿用 CLI | 原环境与 `CODEX_HOME`（缺省 `~/.codex`）不变                                                                                                                                           | 原环境不变，保留继承的 `ANTHROPIC_*`；`~/.claude/settings.json` 的 env 由 Claude 自行读取                                                                                                                                                                                                                       |
-| 官方登录 | 每个配置使用独立 `CODEX_HOME`；去除 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`CODEX_API_KEY`、`CODEX_CONFIG`、`MODEL_PROVIDER`、`DEFAULT_AUTH_REQUEST`；登录按钮运行 `codex login`，可取消 | 使用用户自己的 Claude 登录，不另建配置目录；去除继承的 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`（即 1.0.7 行为）；登录按钮运行 `claude auth login --claudeai`，可取消                                                                                                                  |
-| API Key  | 独立 `CODEX_HOME` 并按官方登录去除网关覆盖；初始化后经私有 `providers/set` 发送 Bearer；缺省地址 `https://api.openai.com/v1`；模型经 `CODEX_CONFIG`                                    | 去除全部继承的 `ANTHROPIC_*` 以及 `CLAUDE_CODE_USE_BEDROCK`、`CLAUDE_CODE_USE_VERTEX`、`CLAUDE_CODE_USE_FOUNDRY`、`CLAUDE_CODE_OAUTH_TOKEN`；官方地址（缺省 `https://api.anthropic.com`）用 `ANTHROPIC_API_KEY`，自定义网关用 `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`（Bearer）；模型经 `ANTHROPIC_MODEL` |
+| 方式     | Codex                                                                                                                                                                                                                                                                                                          | Claude Code                                                                                                                                                                                                                                                                                                     |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 沿用 CLI | 原环境与 `CODEX_HOME`（缺省 `~/.codex`）不变                                                                                                                                                                                                                                                                   | 原环境不变，保留继承的 `ANTHROPIC_*`；`~/.claude/settings.json` 的 env 由 Claude 自行读取                                                                                                                                                                                                                       |
+| 官方登录 | 每个已完成登录的配置使用独立 `CODEX_HOME`；去除 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`CODEX_API_KEY`、`CODEX_CONFIG`、`MODEL_PROVIDER`、`DEFAULT_AUTH_REQUEST`；登录按钮运行 `codex login`，可取消。配置尚未在专用目录产生 `auth.json` 时，默认草稿临时沿用本地 CLI 身份，避免已有 `~/.codex` 登录被空目录遮挡 | 使用用户自己的 Claude 登录，不另建配置目录；去除继承的 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`（即 1.0.7 行为）；登录按钮运行 `claude auth login --claudeai`，可取消                                                                                                                  |
+| API Key  | 独立 `CODEX_HOME` 并按官方登录去除网关覆盖；初始化后经私有 `providers/set` 发送 Bearer；缺省地址 `https://api.openai.com/v1`；模型经 `CODEX_CONFIG`                                                                                                                                                            | 去除全部继承的 `ANTHROPIC_*` 以及 `CLAUDE_CODE_USE_BEDROCK`、`CLAUDE_CODE_USE_VERTEX`、`CLAUDE_CODE_USE_FOUNDRY`、`CLAUDE_CODE_OAUTH_TOKEN`；官方地址（缺省 `https://api.anthropic.com`）用 `ANTHROPIC_API_KEY`，自定义网关用 `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`（Bearer）；模型经 `ANTHROPIC_MODEL` |
 
 - 两家官方登录与 API Key 的模型字段可选；Claude 官方登录填写模型时同样设置 `ANTHROPIC_MODEL`。
 - 密钥只进 CredentialService，键为 `external-engine:<engine>:<配置 ID>`。连接文件、返回 UI 的配置视图、状态、测试结果、V4 快照、argv 与日志只含 `hasApiKey`。Codex 的密钥只经私有 ACP `providers/set` 传递；Claude 官方 CLI 没有其他私有通道，密钥只出现在 adapter 子进程环境中。
@@ -217,12 +324,13 @@ Claude Code 与 Codex 对称提供沿用 CLI（`inherit`）、官方登录（`of
 - 内置配置不落盘、不可编辑或删除：两家都有「沿用 CLI」（ID `inherit`），Claude 另有「官方登录」（ID `official`）。无上次使用值时 Codex 缺省 `inherit`、Claude 缺省 `official`，保持 1.0.7 行为。
 - 兼容：1.0.7 文件中的配置缺省属于 Codex，旧 `activeProfileId` 作为 Codex 上次使用值的迁移来源；写入时继续把 `activeProfileId` 写成 Codex 的上次使用值并保留 `inherit` 条目，便于回退旧版本读取。
 - 用户配置包含可选名称（缺省按方式与网关域名生成）、方式、Base URL、模型与密钥。列表显示名称、方式和网关域名。
+- Composer 的外部引擎控件按 Codex 的信息层级排列：左侧保留权限／模式，模型与思考深度放在发送区右侧；思考深度仍只通过 `setEngineConfigOption` 写入并等待引擎确认。
 - 写入是 `updateConnectionProfiles(command)` 命令：`create` 生成新 ID 并设为该引擎上次使用；`edit` 生成新 ID、隐藏旧配置，未填新密钥时复制旧密钥，上次使用指向旧 ID 时改指新 ID；`delete` 只把配置标记为隐藏，不清理目录与凭据，已绑定会话继续工作；`select` 记录上次使用，拒绝隐藏或不存在的配置。上次使用指向隐藏或不存在的配置时回落内置缺省。成功后 Host 广播 `onConnectionProfilesChanged` 并使该引擎的状态缓存失效。
 
 ### 会话绑定
 
-- 新草稿的选择器默认上次使用配置。用户选择后 Host 先记录上次使用，再由现有草稿 owner 回收并重建预热；`createSession.config.engineConnectionProfileId` 携带所选 ID，Runtime 在首次连接准备前接收，之后不可变。
-- Runtime 解析配置后经既有 `external_engine_config` entry 持久化 `connectionProfileId`，并在 `ExternalEngineConfigUpdated` 与 snapshot `config.engineConnectionProfileId` 投影。UI 只读该投影显示绑定：草稿可改选，已创建会话只读显示。
+- 新草稿沿用该引擎上次使用配置；设置页选择后 Host 记录上次使用。既有草稿 owner 的重建与显式配置选择接口继续保留，输入区不提供连接选择器；`createSession.config.engineConnectionProfileId` 携带所选 ID，Runtime 在首次连接准备前接收，之后不可变。
+- Runtime 解析配置后经既有 `external_engine_config` entry 持久化 `connectionProfileId`，并在 `ExternalEngineConfigUpdated` 与 snapshot `config.engineConnectionProfileId` 投影。UI 只读该投影取得绑定事实；输入区不显示连接入口或标签，已有会话绑定保持不可变。
 - 未显式传入时：新会话使用上次使用配置，没有则用内置缺省；旧原生会话（有 externalSessionId、无绑定）Codex 为 `inherit`、Claude 为 `official`；fork 继承源绑定，缺省同旧会话。绑定的配置不存在时明确失败，不静默换身份。
 
 ### 测试连接
@@ -267,10 +375,10 @@ adapter 由当前运行时（桌面为 YCode.exe）以 `ELECTRON_RUN_AS_NODE=1` 
 
 | 状态               | 所有者                                             | 读取方                                        |
 | ------------------ | -------------------------------------------------- | --------------------------------------------- |
-| 连接配置、上次使用 | Host `external-engine-service`（connections.json） | 设置页、输入框选择器（视图）、CLI（只读解析） |
+| 连接配置、上次使用 | Host `external-engine-service`（connections.json） | 设置页、草稿 owner（只读）、CLI（只读解析） |
 | 密钥               | CredentialService                                  | CLI 启动 adapter 时按配置读取                 |
 | 会话绑定的配置 ID  | CLI Runtime（external_engine_config entry）        | snapshot `config.engineConnectionProfileId`   |
-| 草稿当前选择       | 预热会话的 snapshot；尚未预热时为上次使用值        | 输入框选择器                                  |
+| 草稿当前选择       | 预热会话的 snapshot；尚未预热时为上次使用值        | 草稿 owner（不展示连接选择器）                 |
 | 测试连接进度       | Host 单个在途测试；CLI 按 operationId 持有取消     | 设置页                                        |
 
 ```mermaid
@@ -303,7 +411,7 @@ sequenceDiagram
 | C03 | Claude API Key：官方地址 / 自定义网关                                   | 分别只设 `ANTHROPIC_API_KEY` 或 `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`；其他 `ANTHROPIC_*` 被去除 |
 | C04 | 密钥位置                                                                | 不出现在 argv、连接文件、视图、状态、测试结果、snapshot 与日志                                           |
 | C05 | 多个命名配置：新建、编辑、删除                                          | 编辑生成新 ID，旧会话保持旧绑定；删除只隐藏；上次使用随之更新或回落                                      |
-| C06 | 输入框选择配置                                                          | 记录上次使用并重建预热；已创建会话只读显示绑定                                                           |
+| C06 | 设置页选择配置                                                          | 记录上次使用供后续草稿采用；已有会话绑定不变，输入区不显示连接入口                                                           |
 | C07 | 测试连接成功、失败、取消                                                | 显示耗时或 HTTP 状态 / 消息 / request id；取消后无残留进程与临时目录；同 workspace 会话不被阻塞          |
 | C08 | Codex 沿用 CLI，`config.toml` 配置自定义 provider                       | 显示「使用网关 <host>」而非「未登录」                                                                    |
 | C09 | 用户 shell 设置 `HTTPS_PROXY` / `NODE_EXTRA_CA_CERTS`，YCode 未配置代理 | adapter 环境保留原值；YCode 配置代理后改用 YCode 值                                                      |
@@ -497,15 +605,15 @@ sequenceDiagram
 
 ## Composer 配置外观
 
-- 已创建会话的引擎不可切换，输入框只展示 16px 灰色 Logo，容器固定 28px，无文字、下拉箭头、按钮语义或点击动作；复用 `TaskClientLogo` 的本地图标、可访问名称与悬停标题。仅输入框对图标去色并降低强调，任务列表仍使用原品牌外观。新建草稿的引擎选择器保持可切换。
+- 已创建会话的引擎不可切换，输入区上方只展示 16px 灰色 Logo，容器固定 28px，无文字、下拉箭头、按钮语义或点击动作；复用 `TaskClientLogo` 的本地图标、可访问名称与悬停标题。仅输入框对图标去色并降低强调，任务列表仍使用原品牌外观。新建草稿的引擎选择器保持可切换。
 - 引擎选择和原生配置触发器静止时背景透明、无可见边框；保留当前文字、下拉箭头、悬停和键盘聚焦反馈。
-- 模型、模式、fast 等枚举配置点击一次直接展开完整目录，当前值右侧打勾，不使用子菜单或分页。菜单沿用共享下拉层提供的视口可用高度和滚动能力，保持引擎提供的选项顺序；窄视口可滚动访问全部选项，菜单自身不得越出视口。
-- `effort`、`reasoning_effort`（含连字符形式）、`thought_level` 配置使用独立深度弹层：上方显示当前档位与当前模型名，下方为带档位圆点的原生离散滑动条。档位及顺序完全来自引擎，不猜测额外档位或默认值；单一档位只展示，不允许调节。
+- 模式点击直接展开完整目录；模型由模型/深度弹层内入口展开完整目录，Fast 由该弹层“更多选项”内进入。当前值右侧打勾，不分页。菜单沿用共享下拉层提供的视口可用高度和滚动能力，保持引擎提供的选项顺序；窄视口可滚动访问全部选项，菜单自身不得越出视口。
+- `effort`、`reasoning_effort`（含连字符形式）、`thought_level` 配置复用模型/深度合并弹层：上方显示当前档位与可切换的模型入口，下方为带档位圆点的原生离散滑动条。档位及顺序完全来自引擎，不猜测额外档位或默认值；单一档位只展示，不允许调节。
 - 拖动期间只在控件内预览，释放指针或方向键后沿现有 `onConfigChange` 提交一次原始 value；Escape 放弃尚未提交的预览。配置事实仍归 snapshot 所有，打开弹层不写配置。禁用时不允许修改。
 - 释放后等待确认期间，滑块保持所选位置，不得先退回旧确认值再跳到新值；提交回调返回异步接受结果（`false` 表示失败）。确认配置回流后由 snapshot 接管，失败或关闭弹层时丢弃局部显示；较早请求的失败不得清掉后续手势。目录或确认值变化仍以新 snapshot 为准，不新增配置缓存或写入路径。
 - 配置弹层在同一工具栏内互斥；旧弹层退出动画结束时，若用户已打开另一弹层，不得回焦旧触发器或关闭新弹层。保留键盘打开、方向键调节、Home/End 和 Escape 关闭能力。
 - 窄工具栏复用 `useComposerToolbarFit` 的布局裁决：配置入口收为有可访问名称的图标，只读引擎 Logo 保持固定小尺寸，避免外层 `shrink-0` 裁切选项。不新建第二套宽度检测或业务状态。
-- 验收：两家引擎的模式和模型一次展开完整目录；菜单不溢出视口，窄视口允许滚动，每项均能滚动到达、点击并保存选择。深度拖动及键盘调节正确回传原始值；单档、未知当前值、禁用、切换模型后的档位变化均不产生隐式配置写入。覆盖深浅主题、窄视口及减少动态效果。
+- 验收：两家引擎的模式与弹层内模型入口展开完整目录；菜单不溢出视口，窄视口允许滚动，每项均能滚动到达、点击并保存选择。深度拖动及键盘调节正确回传原始值；单档、未知当前值、禁用、切换模型后的档位变化均不产生隐式配置写入。覆盖深浅主题、窄视口及减少动态效果。
 
 ```mermaid
 flowchart TD
@@ -817,10 +925,10 @@ sequenceDiagram
 - 这类工作区的草稿一律使用 YCode：默认偏好为外部引擎的全新草稿固定为 YCode；1.0.7 已按默认值写入外部引擎的远程旧草稿同样按 YCode 投影。不调用偏好写入，`defaultSessionEngine` 保持原值，回到本机工作区的新草稿仍使用该默认引擎。
 - 桌面远程工作区的草稿仍显示引擎选择器，Claude Code、Codex 灰显并就地标注“远程工作区暂不支持”，只能选择 YCode；已创建会话与 Web 维持原样（Web 无本机引擎服务，不显示选择器）。
 
-### 按引擎记忆模型与思考深度
+### 按引擎与连接记忆模型与思考深度
 
-- 本机 `AppSettings.externalEngineConfigPreferences` 按外部引擎分别保存最近一次显式确认的原生值，键为 ACP configId、值为引擎原始 option value。只记 `model` 与思考深度（`effort`、`reasoning_effort`、`reasoning-effort`、`thought_level`，去掉 `-`/`_` 并忽略大小写匹配）；权限模式与 fast 等其它配置不记忆，Claude 新会话的 Auto 默认规则不变。
-- 写入：用户在草稿或已有会话中显式修改上述配置，命令被接受且 snapshot 显示的当前值等于所选值后写入该引擎的该项。引擎拒绝、引擎改用其它值、恢复过程自动下发的值都不写入。设置服务在写队列内按引擎与 configId 合并增量，连续确认模型与深度不会互相覆盖。
+- 本机 `AppSettings.externalEngineConnectionConfigPreferences` 按外部引擎与 connectionProfileId 分别保存最近一次显式确认的原生值；旧 `externalEngineConfigPreferences` 只在该连接没有记录时兼容读取，不混入已有连接记录，键为 ACP configId、值为引擎原始 option value。只记 `model` 与思考深度（`effort`、`reasoning_effort`、`reasoning-effort`、`thought_level`，去掉 `-`/`_` 并忽略大小写匹配）；权限模式与 fast 等其它配置不记忆，Claude 新会话的 Auto 默认规则不变。
+- 写入：用户在草稿或已有会话中显式修改上述配置，命令被接受且 snapshot 显示的当前值等于所选值后写入当前 snapshot 绑定引擎与连接的该项。引擎拒绝、引擎改用其它值、恢复过程自动下发的值都不写入。设置服务在写队列内按引擎、连接与 configId 合并增量，连续确认模型与深度不会互相覆盖。
 - 恢复：只用于本生命周期内新固定引擎的草稿（全新草稿取得默认引擎，或用户在草稿中显式改选引擎）。该草稿的预热会话原生配置 ready 后先恢复模型；模型确认后，再按新模型的目录恢复深度。值不在当前目录、已是当前值或连接未 ready 时跳过该项。恢复复用既有 `configCommandBarrier → setEngineConfigOption` 链路，首发仍排在同一屏障之后。
 - 2026-11-08 起恢复推进以命令 ACK 为准：`setEngineConfigOption` 的 accepted ACK 带回 runtime 确认后的完整配置（结果 `{ type: "setEngineConfigOption", engineConfigOptions }`），所选值成为当前值即视为确认，并用该列表（含模型切换后的新深度目录）计算下一项；引擎改用其它值或原样保留旧值时本次恢复停止，不再按未确认的目录恢复后续项；ACK 被拒或失败时跳过该项（不重试）；noop 或旧 CLI 不带结果时视为已是当前值，按最新 snapshot 目录继续。依据：引擎保留旧值时 runtime 只再发布一次相同配置、之后没有新帧，按 snapshot 等“值变化”无法区分“确认尚未回流”与“引擎保留旧值”，会让等待恢复的草稿首发一直“正在发送”。snapshot 仍是界面显示与记忆写入的事实来源。
 - 首发等待恢复（见「草稿预热 owner」）：恢复完成、无可恢复项、用户显式接管或恢复停止时首发继续；恢复开始后连接不再就绪（adapter 退出或断联）时首发报错，输入框保留输入，草稿显示原错误与“重新连接”；binding 被丢弃、改选引擎换代或草稿关闭时同样报错保留输入。

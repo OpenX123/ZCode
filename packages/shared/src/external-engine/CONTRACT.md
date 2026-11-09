@@ -1,5 +1,7 @@
 # External engine protocol
 
+本机 `ExternalEngineConnectionConfigPreferences` 为 engine → connectionProfileId → configId，沿用仅 model/effort 校验。AppSettings 保留 legacy engine 偏好兼容读取，新确认只写连接偏好；SettingService 在同一写队列内逐 engine/profile/configId 合并增量，不覆盖其他连接。
+
 会话引擎（`zcode` / `claude-code` / `codex`）的值域、引擎配置项 schema、外部引擎运行时描述与就绪状态契约。domain 层只含 schema、常量与纯函数；Node-only 的 `node/cli.ts` 供 Host 与 adapter 共用 PATH/PATHEXT 解析，不从浏览器入口导出。
 
 - 会话引擎在创建时选定、之后不可变；缺省（含旧快照）经 `resolveSessionEngine` 视为 `zcode`。
@@ -13,3 +15,7 @@
 EngineConnectionFailure 是连接错误的安全投影：固定错误分类、ACP 方法、数值 rpcCode；不包含供应商原文。connecting/ready 事件清除旧错误，旧快照字段可缺省。
 
 2026-11-07：`connection.ts` 是连接配置的唯一契约：配置 / 文件 / 视图 schema、写入命令、测试结果，以及纯函数（内置配置、绑定解析、网关域名、`buildEngineConnectionEnv` 环境规则）。Host 诊断/登录与 CLI 启动 adapter 共用这些函数，不另写剔除列表；函数不读写文件或凭据，密钥只作为参数进入 Claude API Key 环境。
+
+2026-11-09 ACP 管理页：结构化检查为可选安全投影，认证/路由按 connectionProfileId 隔离，ready 仅为运行环境可用。配置先读、所选引擎独立诊断；查看不写上次使用，编辑 Dialog 沿用新 ID 保存与旧绑定。管理检查/安装支持按引擎取消，登录/测试沿用既有取消；详见 external-agent-engines-spec.md「设置诊断接口与取消边界」。
+
+备用许可的跨进程契约位于 shared `zcode-protocol/index.ts`：strict acquire/release/revoke 仅 requestId（acquire 结果可含 leaseId），prepare 仅 engine/profile。窗口 Host 以真实 client 绑定许可，generation 与凭据只在 adapter 内部，环境 capability 不代表授权。

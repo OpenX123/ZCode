@@ -50,6 +50,26 @@ export * from "../process-diagnostic.js";
 export { attachmentSourceKindSchema, type AttachmentSourceKind } from "../attachment-source.js";
 import { PROTOCOL_V4_LIMITS } from "../zcode-protocol-v4/core.js";
 
+/** 只宣告动态 Host 预算能力；不是永久授权。 */
+export const EXTERNAL_ENGINE_SPARE_BUDGET_ENV = "ZCODE_EXTERNAL_ENGINE_SPARE_BUDGET";
+const spareRequestIdSchema = z.string().trim().min(1).max(128);
+export const zcodeExternalEngineSpareRequestParamsSchema = z
+  .object({ requestId: spareRequestIdSchema })
+  .strict();
+export const zcodeExternalEngineAcquireSpareResultSchema = z
+  .object({ leaseId: spareRequestIdSchema.optional() })
+  .strict();
+export const zcodeExternalEngineSpareResultSchema = z.object({}).strict();
+export const zcodeExternalEnginePrepareSpareParamsSchema = z
+  .object({
+    engine: z.enum(["codex", "claude-code"]),
+    connectionProfileId: z.string().trim().min(1).max(80),
+  })
+  .strict();
+export type ZCodeExternalEnginePrepareSpareParams = z.infer<
+  typeof zcodeExternalEnginePrepareSpareParamsSchema
+>;
+
 export const zcodeTopicResourceReadParamsSchema = z
   .object({
     requestId: z.string().min(1).max(256),
@@ -4048,6 +4068,10 @@ export const zcodeProtocolMethods = {
   workspaceCancelGenerateText: "workspace/cancelGenerateText",
   providerTestModelConnectivity: "provider/testModelConnectivity",
   // 外部引擎连接测试与取消都不进入串行队列，测试期间同 workspace 的会话请求不受阻塞。
+  externalEngineAcquireSpare: "externalEngine/acquireSpare",
+  externalEngineReleaseSpare: "externalEngine/releaseSpare",
+  externalEngineRevokeSpare: "externalEngine/revokeSpare",
+  externalEnginePrepareSpare: "externalEngine/prepareSpare",
   externalEngineTestConnection: "externalEngine/testConnection",
   externalEngineCancelConnectionTest: "externalEngine/cancelConnectionTest",
   mcpList: "mcp/list",

@@ -80,7 +80,9 @@ export function useEngineConnectionControl(params: {
     name: profile.builtIn
       ? intl.formatMessage({ id: `engine.profile.builtin.${profile.id}` })
       : engineConnectionProfileName(intl, profile),
-    description: engineConnectionModeLabel(intl, profile.mode),
+    description: [engineConnectionModeLabel(intl, profile.mode), profile.gatewayHost]
+      .filter(Boolean)
+      .join(" · "),
   }));
   const pending = selection?.engine === external ? selection.profileId : undefined;
   const currentId =

@@ -13,7 +13,7 @@ import {
   type EngineConnectionFailure,
   type ExternalSessionEngine,
 } from "@zcode/shared";
-import { closeAcpProcess } from "../exec/acp-process.js";
+import { closeAcpProcess, closeAcpProcessAndWait } from "../exec/acp-process.js";
 import {
   AIR_SESSION_FAILURE_CAPABILITY_META,
   readPromptResultFailure,
@@ -200,6 +200,7 @@ export class AcpConnection {
   constructor(
     child: ChildProcessWithoutNullStreams,
     private readonly setup?: (connection: AcpConnection) => Promise<void>,
+    private strictProcessExit = false,
   ) {
     this.child = child;
     child.stdout.setEncoding("utf8");
@@ -465,6 +466,8 @@ export class AcpConnection {
     parentExternalSessionId?: string,
   ): Promise<ExternalEngineTurnResult | undefined> {
     if (this.active) throw new Error("Concurrent ACP turn");
+    // 开始会话操作即已由 port 接管；严格退出只用于尚未交付的备用资源。
+    this.strictProcessExit = false;
     this.active = input;
     this.forking = Boolean(parentExternalSessionId);
     let cancellationTimer: ReturnType<typeof setTimeout> | undefined;
@@ -742,8 +745,13 @@ export class AcpConnection {
     });
     return configOptions(result.configOptions);
   }
-  async close(): Promise<void> {
+  close(waitForProcessExit = this.strictProcessExit): Promise<void> {
     this.fail(new Error("ACP adapter closed"));
-    await closeAcpProcess(this.child);
+    const closing = waitForProcessExit
+      ? closeAcpProcessAndWait(this.child)
+      : closeAcpProcess(this.child);
+    // 内部协议失败也会 fire-and-forget close；保留 rejection 给 pool，避免未处理拒绝。
+    void closing.catch(() => {});
+    return closing;
   }
 }

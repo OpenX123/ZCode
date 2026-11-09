@@ -55,6 +55,7 @@ function catalog(
 }
 
 interface HookProps {
+  connectionProfileId?: string | null;
   engine?: SessionEngine;
   sessionId?: string | null;
   options?: EngineConfigOption[];
@@ -91,6 +92,7 @@ function renderMemory(initial: HookProps, applyOption = fakeEngine()) {
     (props: HookProps) =>
       useEngineConfigMemory({
         engine: props.engine ?? "codex",
+        connectionProfileId: props.connectionProfileId,
         sessionId: props.sessionId === undefined ? "session-1" : props.sessionId,
         options: props.options,
         restoreEnabled: props.restoreEnabled ?? false,
@@ -108,6 +110,73 @@ async function flush() {
 }
 
 describe("按引擎记忆模型与思考深度", () => {
+  it("同引擎两连接分别恢复模型与深度，已有连接记录不混入 legacy", async () => {
+    preferences.settings = {
+      externalEngineConfigPreferences: { codex: { model: "gpt-b", reasoning_effort: "high" } },
+      externalEngineConnectionConfigPreferences: {
+        codex: { alpha: { model: "gpt-b", reasoning_effort: "medium" }, beta: { model: "gpt-a" } },
+      },
+    } as AppSettings;
+    const { rerender, applyOption } = renderMemory({
+      connectionProfileId: "alpha",
+      options: catalog("gpt-a", "low"),
+      restoreEnabled: true,
+    });
+    await flush();
+    expect(applyOption.mock.calls).toEqual([
+      ["session-1", "model", "gpt-b"],
+      ["session-1", "reasoning_effort", "medium"],
+    ]);
+    applyOption.mockClear();
+    rerender({
+      sessionId: "session-2",
+      connectionProfileId: "beta",
+      options: catalog("gpt-b", "low"),
+      restoreEnabled: true,
+    });
+    await flush();
+    expect(applyOption.mock.calls).toEqual([["session-2", "model", "gpt-a"]]);
+  });
+
+  it("缺少连接记录可读 legacy，确认只写当前连接增量", async () => {
+    preferences.settings = {
+      externalEngineConfigPreferences: { codex: { model: "gpt-b" } },
+    } as AppSettings;
+    const { result } = renderMemory({
+      connectionProfileId: "new-profile",
+      options: catalog("gpt-a", "low"),
+      restoreEnabled: true,
+    });
+    await flush();
+    act(() => result.current.recordExplicitChange("reasoning_effort", "low"));
+    expect(preferences.update).toHaveBeenCalledExactlyOnceWith({
+      externalEngineConnectionConfigPreferences: {
+        codex: { "new-profile": { reasoning_effort: "low" } },
+      },
+    });
+  });
+
+  it("身份未就绪与跨连接迟到确认不写上一连接或新连接", async () => {
+    const { result, rerender } = renderMemory({
+      connectionProfileId: "alpha",
+      options: catalog("gpt-a", "low"),
+    });
+    act(() => result.current.recordExplicitChange("model", "gpt-b"));
+    rerender({ connectionProfileId: null, options: catalog("gpt-b", "low") });
+    act(() => result.current.recordExplicitChange("model", "gpt-b"));
+    rerender({
+      sessionId: "session-2",
+      connectionProfileId: "beta",
+      options: catalog("gpt-b", "low"),
+    });
+    act(() =>
+      result.current.recordExplicitChange("model", "gpt-b", {
+        sessionId: "session-1",
+        connectionProfileId: "alpha",
+      }),
+    );
+    expect(preferences.update).not.toHaveBeenCalled();
+  });
   it("恢复顺序为模型优先；目录缺失、已是当前值与权限模式都跳过", () => {
     const remembered = { model: "gpt-b", reasoning_effort: "high", mode: "auto" };
     expect(nextEngineConfigRestoreStep(catalog("gpt-a", "low"), remembered)).toEqual({
@@ -143,7 +212,7 @@ describe("按引擎记忆模型与思考深度", () => {
     expect(preferences.update).not.toHaveBeenCalled();
     rerender({ options: catalog("gpt-b", "low") });
     expect(preferences.update).toHaveBeenCalledExactlyOnceWith({
-      externalEngineConfigPreferences: { codex: { model: "gpt-b" } },
+      externalEngineConnectionConfigPreferences: { codex: { inherit: { model: "gpt-b" } } },
     });
     // 引擎改用其它档位：snapshot 不出现所选值，不写入。
     act(() => result.current.recordExplicitChange("reasoning_effort", "high"));
@@ -159,10 +228,12 @@ describe("按引擎记忆模型与思考深度", () => {
     // snapshot 先于 ACK 确认时立即写入；已记住的值不重复写。
     act(() => result.current.recordExplicitChange("reasoning_effort", "medium"));
     expect(preferences.update).toHaveBeenLastCalledWith({
-      externalEngineConfigPreferences: { codex: { reasoning_effort: "medium" } },
+      externalEngineConnectionConfigPreferences: {
+        codex: { inherit: { reasoning_effort: "medium" } },
+      },
     });
     preferences.settings = {
-      externalEngineConfigPreferences: { codex: { model: "gpt-b" } },
+      externalEngineConnectionConfigPreferences: { codex: { inherit: { model: "gpt-b" } } },
     } as AppSettings;
     rerender({ options: catalog("gpt-b", "medium") });
     act(() => result.current.recordExplicitChange("model", "gpt-b"));
@@ -381,6 +452,93 @@ describe("按引擎记忆模型与思考深度", () => {
     const wait = result.current.waitForRestore("draft-w6");
     rerender({ sessionId: "draft-w6", restoreEnabled: true, options: undefined });
     await expect(wait).rejects.toThrow();
+  });
+
+  it("恢复中断连且在途 ACK 失败后，同绑定重连的第二次首发仍能收口", async () => {
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: {
+        codex: { alpha: { model: "gpt-b", reasoning_effort: "high" } },
+      },
+    } as AppSettings;
+    const pendingAck = deferredAck();
+    const { rerender, result, applyOption } = renderMemory(
+      {
+        sessionId: "draft-reconnect",
+        connectionProfileId: "alpha",
+        restoreEnabled: true,
+        options: catalog("gpt-a", "low"),
+      },
+      vi.fn<ApplyOption>(() => pendingAck.promise),
+    );
+    const firstWait = result.current.waitForRestore("draft-reconnect");
+    rerender({
+      sessionId: "draft-reconnect",
+      connectionProfileId: null,
+      restoreEnabled: true,
+      options: undefined,
+    });
+    await expect(firstWait).rejects.toThrow("引擎连接已中断");
+    await act(async () => pendingAck.resolve(null));
+    await flush();
+    rerender({
+      sessionId: "draft-reconnect",
+      connectionProfileId: "alpha",
+      restoreEnabled: true,
+      options: catalog("gpt-a", "low"),
+    });
+    let secondWait = "pending";
+    void result.current.waitForRestore("draft-reconnect").then(
+      () => {
+        secondWait = "resolved";
+      },
+      () => {
+        secondWait = "rejected";
+      },
+    );
+    await flush();
+    expect(secondWait).toBe("resolved");
+    expect(applyOption).toHaveBeenCalledExactlyOnceWith("draft-reconnect", "model", "gpt-b");
+  });
+
+  it("切换绑定后旧恢复 ACK 不推进旧 effort，也不影响新绑定恢复收口", async () => {
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: {
+        codex: {
+          alpha: { model: "gpt-b", reasoning_effort: "high" },
+          beta: { model: "gpt-b", reasoning_effort: "medium" },
+        },
+      },
+    } as AppSettings;
+    const oldAck = deferredAck();
+    const newEngine = fakeEngine();
+    const applyOption = vi.fn<ApplyOption>((sessionId, configId, value) =>
+      sessionId === "draft-old" ? oldAck.promise : newEngine(sessionId, configId, value),
+    );
+    const { rerender, result } = renderMemory(
+      {
+        sessionId: "draft-old",
+        connectionProfileId: "alpha",
+        restoreEnabled: true,
+        options: catalog("gpt-a", "low"),
+      },
+      applyOption,
+    );
+    rerender({
+      sessionId: "draft-new",
+      connectionProfileId: "beta",
+      restoreEnabled: true,
+      options: catalog("gpt-a", "low"),
+    });
+    await flush();
+    await expect(result.current.waitForRestore("draft-new")).resolves.toBeUndefined();
+    await act(async () => oldAck.resolve({ confirmedOptions: catalog("gpt-b", "low") }));
+    await flush();
+    expect(applyOption.mock.calls).toEqual([
+      ["draft-old", "model", "gpt-b"],
+      ["draft-new", "model", "gpt-b"],
+      ["draft-new", "reasoning_effort", "medium"],
+    ]);
+    expect(preferences.update).not.toHaveBeenCalled();
   });
 
   it("设置首次读取完成前等待，YCode 草稿不访问记忆", async () => {

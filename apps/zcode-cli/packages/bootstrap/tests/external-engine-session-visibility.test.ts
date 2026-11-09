@@ -47,6 +47,62 @@ afterEach(async () => {
 });
 
 describe("V4 会话可见性上报接入外部引擎闲置豁免", () => {
+  it("Host 许可拒绝不 spawn；丢失申请回复可按 requestId 撤销并释放", async () => {
+    const server = new ZCodeProtocolAgentServer({
+      cwd: process.cwd(),
+      env: { ZCODE_EXTERNAL_ENGINE_SPARE_BUDGET: "host" },
+      createZCodeApp: async () => {
+        throw new Error("no app expected");
+      },
+    });
+    const pool = created.pools.at(-1)!;
+    const requests: Array<{ id: string | number; method: string; params: { requestId: string } }> =
+      [];
+    let deny = true;
+    server.setNotificationSink((message) => {
+      if (!("id" in message) || !("method" in message)) return;
+      const request = message as unknown as (typeof requests)[number];
+      requests.push(request);
+      if (request.method === "externalEngine/acquireSpare" && deny)
+        void server.handleMessage({ id: request.id, result: {} });
+      if (request.method === "externalEngine/releaseSpare")
+        void server.handleMessage({ id: request.id, result: {} });
+    });
+    let spawned = 0;
+    const launch = async () => {
+      spawned++;
+      throw new Error("spawn must be denied");
+    };
+    const key = {
+      engine: "codex" as const,
+      connectionProfileId: "codex:inherit",
+      cwd: process.cwd(),
+    };
+    pool.refillSpare(key, launch);
+    await vi.waitFor(() =>
+      expect(requests.some((r) => r.method === "externalEngine/releaseSpare")).toBe(true),
+    );
+    expect(spawned).toBe(0);
+    deny = false;
+    pool.refillSpare(key, launch);
+    await vi.waitFor(() =>
+      expect(requests.filter((r) => r.method === "externalEngine/acquireSpare")).toHaveLength(2),
+    );
+    const requestId = requests.filter((r) => r.method === "externalEngine/acquireSpare").at(-1)!
+      .params.requestId;
+    expect(
+      await server.handleMessage({
+        id: "revoke",
+        method: "externalEngine/revokeSpare",
+        params: { requestId },
+      }),
+    ).toEqual({ id: "revoke", result: {} });
+    expect(
+      requests.filter((r) => r.method === "externalEngine/releaseSpare").at(-1)?.params.requestId,
+    ).toBe(requestId);
+    expect(spawned).toBe(0);
+    await server.shutdown();
+  });
   it("可见会话不关闭；连接 closed 后该连接的上报失效，下一次扫描关闭", async () => {
     const { server, pool, release } = createServer();
     const response = await server.handleMessage({

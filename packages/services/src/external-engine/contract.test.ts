@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExternalEngineStatus } from "@zcode/shared/external-engine";
-import { installIfUserConfirmed } from "./contract.example.js";
+import { cancelEngineManagement, installIfUserConfirmed } from "./contract.example.js";
 import type { IExternalEngineService } from "./contract.js";
 
 const notInstalled: ExternalEngineStatus = {
@@ -25,6 +25,16 @@ function createService(): IExternalEngineService {
 }
 
 describe("IExternalEngineService 契约", () => {
+  it("取消管理操作只调用当前引擎和当前操作的可选接口", async () => {
+    const service = { ...createService(), invalidateStatus: vi.fn(async () => {}) };
+    await cancelEngineManagement(service, "codex", "check");
+    expect(service.invalidateStatus).toHaveBeenCalledExactlyOnceWith("codex", "check");
+    await cancelEngineManagement(service, "claude-code", "install");
+    expect(service.invalidateStatus).toHaveBeenLastCalledWith("claude-code", "install");
+    await expect(
+      cancelEngineManagement(createService(), "codex", "check"),
+    ).resolves.toBeUndefined();
+  });
   it("未经用户确认不安装 adapter", async () => {
     const service = createService();
     await expect(installIfUserConfirmed(service, "claude-code", false)).resolves.toBe(notInstalled);

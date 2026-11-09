@@ -1207,7 +1207,9 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
   const draftComposerHeader = useMemo(
     () => (
       <ProjectComposerMenu
-        showEditProject
+        showLocation
+        containerClassName="shrink min-w-0"
+        triggerClassName="max-w-full shrink text-ui-sm"
         workspacePath={workspaceAbsPath}
         workspaceIdentity={workspaceIdentity}
         compactForRemoteControl={false}
@@ -1233,7 +1235,8 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
             dirtyFileCount={gitDirtyFileCount}
             onRefreshGit={handleRefreshGit}
             compactForRemoteControl={false}
-            className="px-0 pt-0"
+            className="min-w-0 shrink px-0 pt-0"
+            triggerClassName="min-w-0 max-w-44 shrink"
             popoverClassName="w-72"
             branchListClassName="max-h-48"
             // Bugfix（旧注释保真）：输入框区域在底部，Radix 碰撞避让会把分支菜单翻到下方。

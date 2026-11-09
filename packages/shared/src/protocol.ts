@@ -7,7 +7,11 @@ import type { WorkspacePurpose } from "./workspacePurpose.js";
 import type { DynamicWorkflowMode } from "./dynamic-workflow-feature.js";
 import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-metadata.js";
 import type { AppToolSearchMode } from "./app-runtime-preferences.js";
-import type { ExternalEngineConfigPreferences, SessionEngine } from "./external-engine/index.js";
+import type {
+  ExternalEngineConfigPreferences,
+  ExternalEngineConnectionConfigPreferences,
+  SessionEngine,
+} from "./external-engine/index.js";
 
 // ── Domain types ──
 
@@ -261,6 +265,8 @@ export interface AppSettings {
    * 只给之后新固定引擎的草稿恢复，补丁按引擎与 configId 合并。
    */
   externalEngineConfigPreferences?: ExternalEngineConfigPreferences;
+  /** 按 engine / connectionProfileId / configId 增量合并的本机模型与思考深度偏好。 */
+  externalEngineConnectionConfigPreferences?: ExternalEngineConnectionConfigPreferences;
   /** 仅隐藏对应版本的侧栏更新提示；null 表示用户手动恢复展示。 */
   dismissedDesktopUpdateVersion?: string | null;
   /** 当前 App/Host 不再显示提交前体验套餐推荐；不改变任何入口的模型选择。 */

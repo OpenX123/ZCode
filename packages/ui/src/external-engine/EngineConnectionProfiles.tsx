@@ -16,6 +16,8 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { Label } from "@/components/ui/label.js";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog.js";
+import { EngineChecks } from "./EngineChecks.js";
 import { ErrorDiagnostics } from "@/components/ai-elements/error-diagnostics.js";
 import { ENGINE_LABELS } from "./contract.js";
 import {
@@ -38,7 +40,11 @@ interface FormState {
 }
 type TestState =
   | { profileId: string; running: true }
-  | { profileId: string; running: false; result: ExternalEngineConnectionTestResult };
+  | {
+      profileId: string;
+      running: false;
+      result: ExternalEngineConnectionTestResult;
+    };
 
 const officialBaseUrl = (engine: ExternalSessionEngine) =>
   engine === "codex" ? CODEX_OFFICIAL_BASE_URL : ANTHROPIC_OFFICIAL_BASE_URL;
@@ -67,6 +73,9 @@ export interface EngineConnectionProfilesProps {
   update: (command: ExternalEngineConnectionCommand) => Promise<ExternalEngineConnectionUpdate>;
   /** 承载连接测试的本地 workspace；缺省时测试不可用。 */
   connectivityWorkspacePath?: string;
+  onInstall?: () => void;
+  onRefresh?: () => void;
+  operationBusy?: boolean;
 }
 
 export function EngineConnectionProfiles({
@@ -78,22 +87,36 @@ export function EngineConnectionProfiles({
   failed,
   update,
   connectivityWorkspacePath,
+  onInstall,
+  onRefresh,
+  operationBusy,
 }: EngineConnectionProfilesProps) {
   const { intl } = useZCodeIntl();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+  const [message, setMessage] = useState<{
+    text: string;
+    error: boolean;
+  } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState<string | null>(null);
   const [test, setTest] = useState<TestState | null>(null);
   const profiles = visibleEngineConnectionProfiles(connections, engine);
   const defaultId = connections?.defaults[engine];
+  const selectedProfile =
+    profiles.find((profile) => profile.id === selectedId) ??
+    profiles.find((profile) => profile.id === defaultId) ??
+    profiles[0];
   const engineLabel = ENGINE_LABELS[engine];
   const workspacePath = connectivityWorkspacePath?.trim();
   const failure = (reason: unknown) => {
     const code = reason instanceof Error ? reason.message : String(reason);
     const id = FAILURE_IDS.find(([key]) => code.includes(key))?.[1] ?? "engine.connection.failed";
-    setMessage({ text: intl.formatMessage({ id }, { engine: engineLabel }), error: true });
+    setMessage({
+      text: intl.formatMessage({ id }, { engine: engineLabel }),
+      error: true,
+    });
   };
   const run = async (action: () => Promise<string | undefined>) => {
     setBusy(true);
@@ -119,14 +142,18 @@ export function EngineConnectionProfiles({
         model: form.model,
         apiKey: form.apiKey || undefined,
       };
-      await update(
+      const saved = await update(
         form.profileId
           ? { type: "edit", profileId: form.profileId, ...fields }
           : { type: "create", ...fields },
       );
+      if (saved.profileId) setSelectedId(saved.profileId);
+      onRefresh?.();
       setForm(null);
       return intl.formatMessage(
-        { id: form.profileId ? "engine.profile.updated" : "engine.profile.saved" },
+        {
+          id: form.profileId ? "engine.profile.updated" : "engine.profile.saved",
+        },
         { engine: engineLabel },
       );
     });
@@ -148,6 +175,7 @@ export function EngineConnectionProfiles({
     void run(async () => {
       try {
         await service.login?.(profile.id);
+        onRefresh?.();
       } finally {
         setLoggingIn(null);
       }
@@ -155,7 +183,7 @@ export function EngineConnectionProfiles({
     });
   };
   const runTest = (profile: ExternalEngineConnectionView) => {
-    if (!workspacePath || !service.testConnection) return;
+    if (!workspacePath || !service.testConnection || test?.running) return;
     setMessage(null);
     setTest({ profileId: profile.id, running: true });
     void service.testConnection({ engine, profileId: profile.id, workspacePath }).then(
@@ -216,16 +244,24 @@ export function EngineConnectionProfiles({
           return (
             <li
               key={profile.id}
-              className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+              className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 ${selectedProfile?.id === profile.id ? "bg-selected" : ""}`}
               data-testid={`${idPrefix}-${profile.id}`}
             >
               <div className="min-w-0 space-y-0.5">
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-ui-base">
+                  <button
+                    type="button"
+                    className="min-w-0 truncate rounded-md text-left text-ui-base hover:underline"
+                    aria-pressed={selectedProfile?.id === profile.id}
+                    onClick={() => setSelectedId(profile.id)}
+                    data-testid={`${idPrefix}-view-${profile.id}`}
+                  >
                     {profile.builtIn
-                      ? intl.formatMessage({ id: `engine.profile.builtin.${profile.id}` })
+                      ? intl.formatMessage({
+                          id: `engine.profile.builtin.${profile.id}`,
+                        })
                       : engineConnectionProfileName(intl, profile)}
-                  </span>
+                  </button>
                   {isDefault ? (
                     <span className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-ui-xs text-foreground-subtle">
                       {intl.formatMessage({ id: "engine.profile.default" })}
@@ -238,105 +274,172 @@ export function EngineConnectionProfiles({
                   {profile.model ? ` · ${profile.model}` : ""}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-1">
-                {!isDefault ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={disabled}
-                    onClick={() =>
-                      void run(async () => {
-                        await update({ type: "select", engine, profileId: profile.id });
-                        return intl.formatMessage(
-                          { id: "engine.profile.selected" },
-                          { engine: engineLabel },
-                        );
-                      })
-                    }
-                  >
-                    {intl.formatMessage({ id: "engine.profile.setDefault" })}
-                  </Button>
-                ) : null}
-                {rowTest?.running ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => void service.cancelConnectionTest?.()}
-                  >
-                    {intl.formatMessage({ id: "engine.profile.cancelTest" })}
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={disabled || Boolean(test?.running) || !workspacePath}
-                    title={
-                      workspacePath
-                        ? undefined
-                        : intl.formatMessage({ id: "engine.profile.testNeedsWorkspace" })
-                    }
-                    onClick={() => runTest(profile)}
-                    data-testid={`${idPrefix}-test-${profile.id}`}
-                  >
-                    {intl.formatMessage({ id: "engine.profile.test" })}
-                  </Button>
-                )}
-                {profile.mode === "official" && service.login ? (
-                  loggingIn === profile.id ? (
-                    <Button size="sm" variant="ghost" onClick={() => void service.cancelLogin?.()}>
-                      {intl.formatMessage({ id: "common.cancel" })}
+              {selectedProfile?.id === profile.id ||
+              rowTest?.running ||
+              loggingIn === profile.id ? (
+                <div className="flex flex-wrap items-center gap-1">
+                  {!isDefault ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={disabled}
+                      onClick={() =>
+                        void run(async () => {
+                          await update({
+                            type: "select",
+                            engine,
+                            profileId: profile.id,
+                          });
+                          onRefresh?.();
+                          return intl.formatMessage(
+                            { id: "engine.profile.selected" },
+                            { engine: engineLabel },
+                          );
+                        })
+                      }
+                    >
+                      {intl.formatMessage({ id: "engine.profile.setDefault" })}
+                    </Button>
+                  ) : null}
+                  {rowTest?.running ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void service.cancelConnectionTest?.().catch(failure)}
+                    >
+                      {intl.formatMessage({ id: "engine.profile.cancelTest" })}
                     </Button>
                   ) : (
                     <Button
                       size="sm"
                       variant="ghost"
-                      disabled={disabled || Boolean(loggingIn)}
-                      onClick={() => login(profile)}
+                      disabled={
+                        disabled ||
+                        Boolean(test?.running) ||
+                        !workspacePath ||
+                        !service.testConnection
+                      }
+                      title={
+                        workspacePath
+                          ? undefined
+                          : intl.formatMessage({
+                              id: "engine.profile.testNeedsWorkspace",
+                            })
+                      }
+                      onClick={() => runTest(profile)}
+                      data-testid={`${idPrefix}-test-${profile.id}`}
                     >
-                      {intl.formatMessage({ id: "engine.connection.login" })}
+                      {intl.formatMessage({ id: "engine.profile.test" })}
                     </Button>
-                  )
-                ) : null}
-                {!profile.builtIn ? (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={disabled || Boolean(form)}
-                      onClick={() => openForm(profile)}
-                    >
-                      {intl.formatMessage({ id: "engine.profile.edit" })}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={disabled}
-                      onClick={() => remove(profile)}
-                    >
-                      {intl.formatMessage({
-                        id:
-                          pendingDelete === profile.id
-                            ? "engine.profile.confirmDelete"
-                            : "engine.profile.delete",
-                      })}
-                    </Button>
-                  </>
-                ) : null}
-              </div>
+                  )}
+                  {profile.mode === "official" && service.login ? (
+                    loggingIn === profile.id ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void service.cancelLogin?.().catch(failure)}
+                      >
+                        {intl.formatMessage({ id: "common.cancel" })}
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={disabled || Boolean(loggingIn)}
+                        onClick={() => login(profile)}
+                      >
+                        {intl.formatMessage({ id: "engine.connection.login" })}
+                      </Button>
+                    )
+                  ) : null}
+                  {!profile.builtIn ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={disabled || Boolean(form)}
+                        onClick={() => openForm(profile)}
+                      >
+                        {intl.formatMessage({ id: "engine.profile.edit" })}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={disabled}
+                        onClick={() => remove(profile)}
+                      >
+                        {intl.formatMessage({
+                          id:
+                            pendingDelete === profile.id
+                              ? "engine.profile.confirmDelete"
+                              : "engine.profile.delete",
+                        })}
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
               {rowTest ? <ConnectionTestResult test={rowTest} /> : null}
             </li>
           );
         })}
       </ul>
+      {selectedProfile ? (
+        <div className="space-y-3" data-testid={`${idPrefix}-detail`}>
+          <h4 className="text-ui-base font-medium">
+            {engineConnectionProfileName(intl, selectedProfile)}
+          </h4>
+          <p className="text-ui-sm text-foreground-subtle">
+            {intl.formatMessage({
+              id: `engine.profile.source.${selectedProfile.mode}`,
+            })}
+          </p>
+          <EngineChecks
+            testAvailable={Boolean(workspacePath && service.testConnection)}
+            status={status}
+            profile={selectedProfile}
+            busy={busy || operationBusy || Boolean(test?.running)}
+            onAction={(action) => {
+              if (action === "install") onInstall?.();
+              else if (action === "refresh") onRefresh?.();
+              else if (action === "login") login(selectedProfile);
+              else if (action === "edit") openForm(selectedProfile);
+              else if (action === "test") runTest(selectedProfile);
+            }}
+          />
+        </div>
+      ) : null}
       {form ? (
-        <EngineConnectionForm
-          engine={engine}
-          form={form}
-          busy={busy}
-          onChange={setForm}
-          onSubmit={submit}
-          onCancel={() => setForm(null)}
-        />
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !busy) setForm(null);
+          }}
+        >
+          <DialogContent className="max-h-full overflow-y-auto sm:max-w-lg" showCloseButton={!busy}>
+            <DialogTitle>
+              {intl.formatMessage({
+                id: form.profileId ? "engine.profile.edit" : "engine.profile.add",
+              })}
+            </DialogTitle>
+            <DialogDescription>
+              {intl.formatMessage({ id: "engine.profile.newSessionsOnly" })}
+            </DialogDescription>
+            <EngineConnectionForm
+              engine={engine}
+              form={form}
+              busy={busy}
+              onChange={setForm}
+              onSubmit={submit}
+              onCancel={() => setForm(null)}
+            />
+            {message?.error ? (
+              <p role="alert" className="text-ui-sm text-destructive">
+                {message.text}
+              </p>
+            ) : null}
+          </DialogContent>
+        </Dialog>
       ) : null}
       {!workspacePath ? (
         <p className="text-ui-sm text-foreground-subtle">
@@ -348,7 +451,7 @@ export function EngineConnectionProfiles({
           {intl.formatMessage({ id: "engine.connection.unreadable" })}
         </p>
       ) : null}
-      {message ? (
+      {message && !(form && message.error) ? (
         <p
           role={message.error ? "alert" : "status"}
           className={
@@ -471,7 +574,7 @@ function EngineConnectionForm({
         </Label>
         <select
           id={id("mode")}
-          className="h-9 w-full rounded-lg border border-input-border bg-input px-3 text-ui-base"
+          className="h-9 w-full rounded-md border border-input-border bg-input px-3 text-ui-base"
           value={form.mode}
           // 连接方式不可原地改写；编辑只能修改同一方式的地址、模型、名称或密钥。
           disabled={busy || Boolean(form.profileId)}

@@ -114,7 +114,10 @@ export const EXTERNAL_ENGINE_RUNTIMES: Readonly<
     adapterNodeEngine: ">=20.3.0",
     officialCliCommand: "codex",
     officialExecutableEnvVar: "CODEX_PATH",
-    bundledOfficialCli: { kind: "javascript", entry: "node_modules/@openai/codex/bin/codex.js" },
+    bundledOfficialCli: {
+      kind: "javascript",
+      entry: "node_modules/@openai/codex/bin/codex.js",
+    },
     authStatusArgs: ["login", "status"],
     loginCommand: ["codex", "login"],
     // Codex 完全沿用用户 ~/.codex/config.toml 的 provider 设置，不改写其环境。
@@ -130,6 +133,31 @@ export function isExternalSessionEngine(
 
 export const externalEngineAuthStateSchema = z.enum(["loggedIn", "loggedOut", "unknown"]);
 export type ExternalEngineAuthState = z.infer<typeof externalEngineAuthStateSchema>;
+
+/** 管理页检查的安全投影；认证/路由仅属于本次 connectionProfileId，不构成发送门禁。 */
+export const externalEngineCheckSchema = z
+  .object({
+    id: z.enum(["cli", "adapter", "authentication", "route"]),
+    state: z.enum(["passed", "failed", "unknown"]),
+    source: z.enum(["path", "managed", "cli", "profile", "credentialStore"]),
+    actions: z.array(z.enum(["install", "login", "edit", "test", "refresh"])),
+    connectionProfileId: z.string().optional(),
+    gatewayHost: z.string().max(255).optional(),
+    version: z.string().optional(),
+  })
+  .superRefine((check, context) => {
+    if (
+      (check.id === "authentication" || check.id === "route") &&
+      !check.connectionProfileId?.trim()
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["connectionProfileId"],
+        message: "Profile-specific checks require a connection profile ID",
+      });
+    }
+  });
+export type ExternalEngineCheck = z.infer<typeof externalEngineCheckSchema>;
 
 export const externalEngineStatusSchema = z.object({
   engine: z.enum(["claude-code", "codex"]),
@@ -158,6 +186,7 @@ export const externalEngineStatusSchema = z.object({
   /** 本地 adapter 与官方 CLI 可启动；真实认证与连接就绪由 Runtime 握手确认。 */
   ready: z.boolean(),
   error: z.string().optional(),
+  checks: z.array(externalEngineCheckSchema).optional(),
 });
 export type ExternalEngineStatus = z.infer<typeof externalEngineStatusSchema>;
 

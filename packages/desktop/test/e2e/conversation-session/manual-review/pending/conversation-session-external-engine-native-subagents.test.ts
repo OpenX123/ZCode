@@ -13,6 +13,7 @@ import {
 } from "@zcode/shared/external-engine";
 import { resolveE2EStorageRoot } from "../../../helpers/e2e-runtime-paths.js";
 import {
+  approveV4Permission,
   getV4FocusedPaneId,
   getV4PaneSnapshot,
   prepareV4ConversationE2E,
@@ -77,9 +78,10 @@ describe("外部引擎原生子智能体（Codex AIR / Claude RFD）", () => {
     const paneId = await getV4FocusedPaneId();
     if (!paneId) throw new Error("缺少当前 pane");
     const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
-    await (await displayed(`${paneSelector} [data-testid="session-engine-select"]`)).click();
-    await $('[role="option"]=Codex').click();
+    await (await displayed(`${paneSelector} [data-testid="session-engine-option-codex"]`)).click();
     await sendV4PromptInPane(paneId, "检查鉴权性能");
+    // 共用 ACP 帧会等待子会话权限应答；桌面须经父会话真实交互批准，不能直接等最终正文。
+    expect(await approveV4Permission()).toBe(true);
     await waitForV4AssistantMessageContaining("子智能体已完成。");
     const parentId = (await getV4PaneSnapshot()).sessionId;
     if (!parentId) throw new Error("缺少父会话 ID");

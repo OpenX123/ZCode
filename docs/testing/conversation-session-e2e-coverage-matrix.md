@@ -4371,3 +4371,23 @@ E01–E11 产品规则已获用户确认，详见 [规格](../desktop/external-a
 ### SFA01–03 会话菜单链接与分叉（2026-11-06）
 
 候选 `conversation-session/manual-review/pending/conversation-session-session-actions.test.ts` 对应 [会话链接与分叉规格](../desktop/session-links-and-forks-spec.md)。SFA01 复制稳定深链；SFA02 当前目录分叉的 child、继承历史、空输入和零排队；SFA03 真实 Git 工作树分叉的新目录/分支、HEAD 祖先、未提交文件以及源 index 不变。使用隔离文件与 case-local provider 回放，实际执行证据单独记录，保持 pending。
+
+### AX01–AX07 ACP 体验改造（2026-11-09）
+
+| Case | 语义 | 证据计划 | 当前状态 |
+| --- | --- | --- | --- |
+| AX01/AX02 | 左侧引擎列表、右详情、配置来源与认证隔离、编辑生效范围 | connections pending 真实 Electron 通过：主从、查看不改默认、显式用于新任务、Dialog 取消/保存、编辑新 ID、密钥不回显；认证隔离/旧绑定由 service/UI/CLI UT 证明 | accepted；pending，已验证上述范围 |
+| AX03 | 引擎分段、紧凑配置，Fast 仅在更多，绑定不可变 | prewarm pending AX03/07 与两家首发/续聊/Fast 拒绝回归通过，picker UT 通过；既有会话仅固定 Logo 与只读连接，无改选 | accepted；pending，已验证 |
+| AX04 | engine/profile 模型与深度偏好隔离 | memory、setting merge、schema 及迟到确认定向 UT 通过；P11 真实 Electron 首发屏障通过 | accepted；UT 与定向桌面通过 |
+| AX05 | warming spare 独占，取消/失败/关闭释放 | adapters 最终分次 80 passed / 3 平台条件跳过，含真实 stdio 与 Windows 严格进程树关闭 | accepted；定向验证通过，POSIX 实测未执行 |
+| AX06 | 窗口一个未绑定备用；仅已有活动CLI提前准备 | bootstrap 34、Host 11、shared 4 定向通过；P1 关闭确认修复复审通过 | accepted；定向验证通过 |
+| AX07 | 窄屏、主题、键盘及SSH能力门禁 | run6 真实 Electron 1280/640 × 深浅主题 8 图及固定绑定 1 图；更多 Esc/Enter/焦点通过；SSH 原因可见/可访问由定向 UT 证明 | accepted；pending，桌面布局/键盘通过，未跑真实 SSH |
+
+候选保持 pending，不自动转正；夹具结果不等同真实供应商、外部SSH或发布性能。
+
+本轮四份候选聚焦 9 场景：run5 为 7 passed / 2 failed，两个测试适配问题修正后 run6 定向补跑 3 passed / 0 failed，9 个不同场景均有最终通过证据；没有将分次结果改写为一次全绿。命令、失败依据、清理环境后的截图绝对路径和未运行范围见 [ACP 验证记录](2026-11-09-acp-experience-verification.md)。
+
+
+### Task5 最新 Composer 合同（2026-11-09）
+
+AX03/AX07 的最终输入区合同以 external-agent-engines-spec.md 顶部为准：无连接入口或标签；模型/深度合并，Fast 位于该弹层更多；项目/真实位置/Git 分支在编辑器上方同一行。继续使用 prewarm pending 候选和隔离 ACP 供应商夹具，不自动转正。Task5 独立运行记录与新截图见 `2026-11-09-acp-experience-verification.md` 的 Task5 追加段；Task4 run6 截图为旧展示合同历史。

@@ -78,6 +78,24 @@ function request(id: string, method: string, params?: unknown): ZCodeProtocolMes
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 describe("ZCode Protocol 传输分道", () => {
+  it("备用准备和撤销不排在被阻塞的普通 workspace 请求后", async () => {
+    const harness = createHarness();
+    harness.block("blocked");
+    harness.send(
+      request("blocked", "unknown/workspace"),
+      request("prepare", "externalEngine/prepareSpare", {
+        engine: "codex",
+        connectionProfileId: "inherit",
+      }),
+      request("revoke", "externalEngine/revokeSpare", { requestId: "r" }),
+    );
+    await vi.waitFor(() => expect(harness.responded).toContain("revoke"));
+    expect(harness.responded).toContain("prepare");
+    expect(harness.responded).not.toContain("blocked");
+    harness.release("blocked");
+    harness.input.end();
+    await harness.connection.waitForClose();
+  });
   it("不同会话并发执行，同一会话按到达顺序开始", async () => {
     const harness = createHarness();
     harness.block("a1");
@@ -387,9 +405,17 @@ describe("会话只读不排在会话分道之后", () => {
 describe("planProtocolDispatch", () => {
   it.each([
     [request("1", zcodeProtocolMethods.sessionStop, { sessionId: "s" }), "control", ["session:s"]],
-    [request("2", zcodeProtocolMethods.workspaceCancelGenerateText, {}), "control", ["workspace-model"]],
+    [
+      request("2", zcodeProtocolMethods.workspaceCancelGenerateText, {}),
+      "control",
+      ["workspace-model"],
+    ],
     [request("3", zcodeProtocolMethods.pluginsCancelOperation, {}), "control", ["global"]],
-    [request("4", zcodeProtocolMethods.mcpUiCallTool, { sessionId: "s" }), "control", ["session:s"]],
+    [
+      request("4", zcodeProtocolMethods.mcpUiCallTool, { sessionId: "s" }),
+      "control",
+      ["session:s"],
+    ],
     [request("5", zcodeProtocolMethods.workspaceGenerateText, {}), "lane", ["workspace-model"]],
     [request("6", zcodeProtocolMethods.mcpList, {}), "lane", ["global"]],
     [
@@ -406,13 +432,21 @@ describe("planProtocolDispatch", () => {
       "session-read",
       ["session:s"],
     ],
-    [request("13", V4_METHODS.conversationPlans, { sessionId: "s" }), "session-read", ["session:s"]],
+    [
+      request("13", V4_METHODS.conversationPlans, { sessionId: "s" }),
+      "session-read",
+      ["session:s"],
+    ],
     [
       request("14", V4_METHODS.conversationWorkflowRunEvents, { sessionId: "s", runId: "r" }),
       "session-read",
       ["session:s"],
     ],
-    [request("15", V4_METHODS.conversationUsage, { sessionId: "s" }), "session-read", ["session:s"]],
+    [
+      request("15", V4_METHODS.conversationUsage, { sessionId: "s" }),
+      "session-read",
+      ["session:s"],
+    ],
     [request("16", V4_METHODS.conversationPlans, {}), "lane", ["global"]],
   ] as const)("把 %j 分到 %s", (message, kind, laneKeys) => {
     const plan = planProtocolDispatch(message);

@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Emitter } from "@zcode/rpc";
+import { buildServerRemoteWorkspaceIdentity } from "@zcode/shared";
 import type {
   IZCodeAgentService,
   ZCodeAgentRuntimeLifecycleEvent,
@@ -175,6 +176,219 @@ function createReadyService(options: Parameters<typeof createZCodeAgentService>[
     ...options,
   });
 }
+
+describe("窗口外部引擎备用许可", () => {
+  it.each(["unsupported", "remote-identity", "remote-session"] as const)(
+    "%s 不提前准备且拒绝备用申请",
+    async (scope) => {
+      const sandbox = createRecordingSandbox();
+      setDataBaseDir(sandbox.dir);
+      writeFileSync(
+        sandbox.command.args[0]!,
+        String.raw`
+const fs=require('node:fs'),log=process.argv[2];const send=f=>process.stdout.write(JSON.stringify(f)+'\n');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const f=JSON.parse(line);fs.appendFileSync(log,JSON.stringify(f)+'\n');
+ if(f.method==='session/list')send({id:'denied',method:'externalEngine/acquireSpare',params:{requestId:'r'}});
+ if(f.method)send({id:f.id,result:f.method==='session/list'?{sessions:[]}: {}});
+});`,
+      );
+      const select = vi.fn(async () => ({
+        engine: "codex" as const,
+        connectionProfileId: "inherit",
+      }));
+      const service = createReadyService({
+        commandResolver: () => sandbox.command,
+        externalEnginesSupported: scope !== "unsupported",
+        selectExternalEngineSpare: select,
+      });
+      try {
+        await service.listSessions({
+          workspacePath: sandbox.dir,
+          ...(scope === "remote-identity"
+            ? {
+                workspaceIdentity: buildServerRemoteWorkspaceIdentity({
+                  serverId: "fixture",
+                  workspacePath: sandbox.dir,
+                }),
+              }
+            : {}),
+          ...(scope === "remote-session" ? { remoteSessionId: "fixture-remote" } : {}),
+        });
+        await vi.waitFor(() =>
+          expect(readFileSync(sandbox.logPath, "utf8")).toContain('"id":"denied","result":{}'),
+        );
+        expect(select).not.toHaveBeenCalled();
+        expect(readFileSync(sandbox.logPath, "utf8")).not.toContain("externalEngine/prepareSpare");
+      } finally {
+        await service.disposeAllAndWait();
+      }
+    },
+  );
+  it("旧 client 迟到释放不能清掉当前许可；同申请重放幂等，非法载荷拒绝", async () => {
+    const sandbox = createRecordingSandbox();
+    setDataBaseDir(sandbox.dir);
+    writeFileSync(
+      sandbox.command.args[0]!,
+      String.raw`
+const fs=require('node:fs'),path=require('node:path'),log=process.argv[2],dir=path.dirname(log);
+const send=f=>process.stdout.write(JSON.stringify(f)+'\n');
+let seen='';
+fs.watch(dir,()=>{const file=path.join(dir,process.pid+'.json');if(!fs.existsSync(file))return;const raw=fs.readFileSync(file,'utf8');if(raw===seen)return;seen=raw;send(JSON.parse(raw));}).unref();
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const f=JSON.parse(line);fs.appendFileSync(log,JSON.stringify({pid:process.pid,...f})+'\n');
+ if(f.method==='externalEngine/prepareSpare') {
+  send({id:'acquire',method:'externalEngine/acquireSpare',params:{requestId:'same-request'}});
+  send({id:f.id,result:{}});
+ } else if(f.method) send({id:f.id,result:f.method==='session/list'?{sessions:[]}: {}});
+});`,
+    );
+    const service = createReadyService({
+      commandResolver: () => sandbox.command,
+      externalEnginesSupported: true,
+      selectExternalEngineSpare: async () => ({ engine: "codex", connectionProfileId: "inherit" }),
+    });
+    const rows = () =>
+      readFileSync(sandbox.logPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+    const command = (pid: number, id: string, method: string, params: unknown) =>
+      writeFileSync(join(sandbox.dir, `${pid}.json`), JSON.stringify({ id, method, params }));
+    try {
+      await service.listSessions({ workspacePath: sandbox.dir });
+      await vi.waitFor(() => expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(1));
+      const first = rows().find((row) => row.result?.leaseId)!;
+      const secondDir = join(sandbox.dir, "second");
+      mkdirSync(secondDir);
+      await service.listSessions({ workspacePath: secondDir });
+      await vi.waitFor(() => expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(2));
+      const second = rows().filter((row) => row.result?.leaseId)[1]!;
+      command(first.pid, "old-release", "externalEngine/releaseSpare", {
+        requestId: "same-request",
+      });
+      await vi.waitFor(() => expect(rows().find((row) => row.id === "old-release")).toBeDefined());
+      command(second.pid, "replay", "externalEngine/acquireSpare", { requestId: "same-request" });
+      await vi.waitFor(() =>
+        expect(rows().find((row) => row.id === "replay")?.result).toEqual(second.result),
+      );
+      command(first.pid, "old-acquire", "externalEngine/acquireSpare", { requestId: "different" });
+      await vi.waitFor(() =>
+        expect(rows().find((row) => row.id === "old-acquire")?.result).toEqual({}),
+      );
+      command(second.pid, "bad", "externalEngine/acquireSpare", {
+        requestId: "x",
+        workspacePath: "forged",
+      });
+      await vi.waitFor(() =>
+        expect(rows().find((row) => row.id === "bad")?.error.code).toBe(-32602),
+      );
+      await service.disposeWorkspace({ workspacePath: secondDir });
+      // 进程树确实结束之后才能让新一代 CLI 取得名额。
+      await service.listSessions({ workspacePath: secondDir });
+      await vi.waitFor(() =>
+        expect(rows().filter((row) => row.id === "acquire" && row.result?.leaseId)).toHaveLength(3),
+      );
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+  it("selector 在途关闭 workspace 时不投递迟到准备", async () => {
+    const sandbox = createRecordingSandbox();
+    setDataBaseDir(sandbox.dir);
+    const choice = Promise.withResolvers<
+      { engine: "codex"; connectionProfileId: string } | undefined
+    >();
+    const selected = Promise.withResolvers<void>();
+    const service = createReadyService({
+      commandResolver: () => sandbox.command,
+      externalEnginesSupported: true,
+      selectExternalEngineSpare: async () => {
+        selected.resolve();
+        return choice.promise;
+      },
+    });
+    try {
+      await service.listSessions({ workspacePath: sandbox.dir });
+      await selected.promise;
+      await service.disposeWorkspace({ workspacePath: sandbox.dir });
+      choice.resolve({ engine: "codex", connectionProfileId: "inherit" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(readFileSync(sandbox.logPath, "utf8")).not.toContain("externalEngine/prepareSpare");
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+  it("只对已启动 CLI 提前准备；第二 workspace 先撤销旧许可", async () => {
+    const sandbox = createRecordingSandbox();
+    setDataBaseDir(sandbox.dir);
+    const script = String.raw`
+const fs=require('node:fs'), path=require('node:path'), log=process.argv[2];
+let n=0, current;
+const send=f=>process.stdout.write(JSON.stringify(f)+'\n');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const f=JSON.parse(line);
+ fs.appendFileSync(log,JSON.stringify({pid:process.pid,...f})+'\n');
+ if(f.method==='externalEngine/prepareSpare'){
+  current='request-'+process.pid+'-'+(++n);
+  send({id:'acquire-'+n,method:'externalEngine/acquireSpare',params:{requestId:current}});
+  send({id:f.id,result:{}});
+ } else if(f.method==='externalEngine/revokeSpare') {
+  const gate=path.join(path.dirname(log),'revoke-ack');
+  if(fs.existsSync(gate)) send({id:f.id,result:{}});
+  else { const watch=fs.watch(path.dirname(log),()=>{if(fs.existsSync(gate)){watch.close();send({id:f.id,result:{}});}}); }
+ } else if(f.method) send({id:f.id,result:f.method==='session/list'?{sessions:[]}: {}});
+});`;
+    writeFileSync(sandbox.command.args[0]!, script);
+    const commandResolver = vi.fn(() => sandbox.command);
+    const service = createReadyService({
+      commandResolver,
+      externalEnginesSupported: true,
+      selectExternalEngineSpare: async () => ({
+        engine: "codex",
+        connectionProfileId: "codex:inherit",
+      }),
+    });
+    const rows = () =>
+      readFileSync(sandbox.logPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+    try {
+      expect(commandResolver).not.toHaveBeenCalled();
+      await service.listSessions({ workspacePath: sandbox.dir });
+      await vi.waitFor(() => expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(1));
+      const secondDir = join(sandbox.dir, "second");
+      mkdirSync(secondDir);
+      await service.listSessions({ workspacePath: secondDir });
+      await vi.waitFor(() =>
+        expect(rows().some((row) => row.method === "externalEngine/revokeSpare")).toBe(true),
+      );
+      expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(1);
+      expect(rows().filter((row) => row.method === "externalEngine/prepareSpare")).toHaveLength(1);
+      writeFileSync(join(sandbox.dir, "revoke-ack"), "ready");
+      await vi.waitFor(() => expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(2));
+      const log = rows();
+      const revoke = log.findIndex((row) => row.method === "externalEngine/revokeSpare");
+      const grants = log
+        .map((row, index) => (row.result?.leaseId ? index : -1))
+        .filter((index) => index >= 0);
+      expect(revoke).toBeGreaterThan(grants[0]!);
+      expect(revoke).toBeLessThan(grants[1]!);
+      expect(commandResolver).toHaveBeenCalledTimes(2);
+      expect(
+        mayRequestHostSessions("externalEngine/prepareSpare", {
+          engine: "codex",
+          connectionProfileId: "codex:inherit",
+        }),
+      ).toBe(false);
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+});
 
 describe("base service 转发可见性上报", () => {
   it("VR06：CLI 不在时不拉起；CLI 在时发 v4/conversation/visibility，且不阻止闲置回收", async () => {

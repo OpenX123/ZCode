@@ -142,10 +142,7 @@ import {
   resolveConversationStatusPanelVariant,
   shouldUseConversationStatusPanelInlineLayout,
 } from "@/v4/conversationLayout.js";
-import {
-  buildConversationStatusPanelModel,
-  resolveSoleRunningWorkflowRunTarget,
-} from "@/v4/conversationStatusPanelModel.js";
+import { buildConversationStatusPanelModel } from "@/v4/conversationStatusPanelModel.js";
 import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversationStatusPanelModel.js";
 import { buildSubagentAvatarIndex } from "@/subagent-display/index.js";
 import {
@@ -3307,12 +3304,17 @@ export function SessionPane({
   );
   const engineConfigSnapshotOptions =
     externalEngine &&
+    snapshot?.sessionId === (sessionId ?? prewarmSessionId) &&
     snapshot?.config.engine === sessionEngine &&
     snapshot.config.engineConfigState === "ready"
       ? snapshot.config.engineConfigOptions
       : undefined;
   const engineConfigMemory = useEngineConfigMemory({
     engine: sessionEngine,
+    // 只把本代 snapshot 绑定交给偏好 owner；切连接后旧 snapshot 不可标为新选择的 profile。
+    connectionProfileId: engineConfigSnapshotOptions
+      ? snapshot?.config.engineConnectionProfileId
+      : null,
     sessionId: snapshot?.sessionId ?? null,
     options: engineConfigSnapshotOptions,
     restoreEnabled:
@@ -3813,10 +3815,6 @@ export function SessionPane({
       workspacePath,
     ],
   );
-  const runningBackgroundWorkCount =
-    statusPanelModel.runningBashWorks.length +
-    statusPanelModel.runningSubagentWorks.length +
-    statusPanelModel.runningWorkflowRuns.length;
   const runningTerminalCount = statusPanelModel.runningBashWorks.length;
   const runningAgentCount = statusPanelModel.runningSubagentWorks.length;
   const runningWorkflowCount = statusPanelModel.runningWorkflowRuns.length;
@@ -3843,35 +3841,6 @@ export function SessionPane({
       setAgentSectionOpen(false);
     }
   }, [runningAgentCount]);
-  // composer 徽标直达：唯一在跑的是一条可开
-  // 详情页的 workflow run 时，徽标点击直接开它的 side tab，胶囊不动。判定吃胶囊的同一份模型；
-  // 宿主没给 onOpenWorkflowRun（面板行同样不可点）时不直达。
-  const soleRunningWorkflowRunTarget = useMemo(
-    () => (onOpenWorkflowRun ? resolveSoleRunningWorkflowRunTarget(statusPanelModel) : null),
-    [onOpenWorkflowRun, statusPanelModel],
-  );
-  const handleOpenRunningBackgroundWorks = useCallback(() => {
-    if (runningBackgroundWorkCount === 0) return;
-    if (soleRunningWorkflowRunTarget) {
-      // 与面板行同一个 handler：不存在第二条打开路径。
-      handleOpenWorkflowRunFromPanel(soleRunningWorkflowRunTarget);
-      return;
-    }
-    // 产品规则：Composer 是全部实时活动的入口；分区拆开后一次点击仍要展开所有非空类型，
-    // 但三个区块后续保持独立折叠状态，不能再共享一个 open 布尔值。
-    setTerminalSectionOpen(runningTerminalCount > 0);
-    setAgentSectionOpen(runningAgentCount > 0);
-    setWorkflowSectionOpen(runningWorkflowCount > 0);
-    handleSummaryPanelVariantChange("panel");
-  }, [
-    handleOpenWorkflowRunFromPanel,
-    handleSummaryPanelVariantChange,
-    runningAgentCount,
-    runningBackgroundWorkCount,
-    runningTerminalCount,
-    runningWorkflowCount,
-    soleRunningWorkflowRunTarget,
-  ]);
   const statusPanelVariant = resolveConversationStatusPanelVariant({
     variantOverride: effectiveSummaryPanelVariantOverride,
   });
@@ -4010,7 +3979,10 @@ export function SessionPane({
         : undefined,
     [externalEngine, snapshot?.config.engineCommands],
   );
-  const composerNode = readOnly ? null : (
+  const renderComposer = ({
+    leadingActions,
+    modelControls,
+  }: { leadingActions?: ReactNode; modelControls?: ReactNode } = {}) => (
     <SlashCommandsProvider commands={engineSlashCommands}>
       <ConversationComposer
         key="conversation-composer"
@@ -4023,83 +3995,24 @@ export function SessionPane({
         draftMode={isDraft}
         draftConfig={draftConfig}
         externalEngine={externalEngine}
-        engineControls={
-          // 桌面远程工作区的草稿仍显示选择器（外部引擎灰显说明原因）；Web 无本机引擎服务。
+        engineSelector={
           externalEngineService ||
           (sessionId === null && baseWorkspaceServices.externalEngineService) ? (
             <EngineControls
               engine={sessionEngine}
+              placement="selector"
               onSelectEngine={sessionId === null ? handleSelectEngine : undefined}
+              disabled={connecting}
               externalEngineUnavailableReason={
                 externalEngineService
                   ? undefined
                   : intl.formatMessage({ id: "engine.unavailable.remote" })
               }
-              connectionChoices={engineConnection.choices}
-              connectionProfileId={engineConnection.currentId}
-              onSelectConnection={sessionId === null ? engineConnection.select : undefined}
-              connectionLabel={engineConnection.label}
-              options={
-                externalEngine && snapshot?.config.engine === sessionEngine
-                  ? snapshot.config.engineConfigOptions
-                  : undefined
-              }
-              // 已有会话（空闲重连、停止后恢复）仍显示“正在连接引擎…”。
-              loading={
-                externalEngine &&
-                sessionId !== null &&
-                (connecting || snapshot?.config.engineConfigState === "connecting")
-              }
-              // 2026-11-08 草稿无感：creating / connecting 不显示连接中文案、可直接发送，只把原生配置
-              // 选择器显示为禁用；阶段仍由 owner 在途状态与预热 snapshot 派生。
-              configPending={
-                externalEngine &&
-                sessionId === null &&
-                (draftEngineReadiness === "creating" || draftEngineReadiness === "connecting")
-              }
-              error={
-                externalEngine
-                  ? sessionId === null
-                    ? prewarmError?.message
-                    : snapshot?.config.engineConfigState === "error"
-                      ? intl.formatMessage({ id: "engine.restoreFailed" })
-                      : undefined
-                  : undefined
-              }
-              connectionFailure={
-                snapshot?.config.engineConfigState === "error"
-                  ? snapshot.config.engineConfigError
-                  : undefined
-              }
-              onRetry={
-                externalEngine && (sessionId !== null || draftEngineReadiness === "failed")
-                  ? () => {
-                      void configCommandBarrier.enqueue(async () => {
-                        // 草稿未建立 binding 时 dispatchConfigCas 无目标并跳过；发送入口仍会由 owner 重建。
-                        await dispatchConfigCas("prepareExternalEngineSession", {});
-                      });
-                    }
-                  : undefined
-              }
-              // 运行中配置由引擎确认，不应与发送/停止的 busy 状态共用禁用条件。
-              disabled={connecting}
-              onConfigChange={(configId, value) => {
-                // 配置与发送复用同一屏障，禁止刚选中的引擎模式尚未应用就开始下一轮。
-                return configCommandBarrier.enqueue(async () => {
-                  const ack = await dispatchConfigCas("setEngineConfigOption", { configId, value });
-                  const accepted = ack?.status === "accepted" || ack?.status === "noop";
-                  if (!accepted) {
-                    toast(intl.formatMessage({ id: "engine.configChangeFailed" }));
-                  } else {
-                    // 只有 snapshot 确认为所选值后才写入按引擎记忆；权限模式等不记忆。
-                    engineConfigMemory.recordExplicitChange(configId, value);
-                  }
-                  return accepted;
-                });
-              }}
             />
           ) : undefined
         }
+        engineControls={leadingActions}
+        engineModelControls={modelControls}
         engineNotReadyContent={
           engineNotReady ? (
             <div
@@ -4174,14 +4087,6 @@ export function SessionPane({
         onSelectModel={handleSelectModel}
         onSelectThought={handleSelectThought}
         onSwitchMode={handleSwitchMode}
-        onOpenRunningBackgroundWorks={
-          sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
-        }
-        backgroundWorkOpenTarget={soleRunningWorkflowRunTarget ? "workflow-run" : "panel"}
-        // 父轮结束后 subagents.running 的目录投影可能短暂落后于仍为 running 的
-        // backgroundWorks；Composer 若直接读目录会提前隐藏 Agent 入口。这里复用状态面板按
-        // childSessionId 精确回退后的计数，让两个入口共享同一份运行态真值。
-        runningSubagentCount={runningAgentCount}
         onRecoverCustomModelSelection={handleRecoverCustomModelSelection}
         onSendCompressionCommand={handleSendCompressionCommand}
         error={composerError}
@@ -4195,6 +4100,88 @@ export function SessionPane({
         onDropTargetControllerChange={handleDropTargetControllerChange}
       />
     </SlashCommandsProvider>
+  );
+  const composerNode = readOnly ? null : externalEngineService ||
+    (sessionId === null && baseWorkspaceServices.externalEngineService) ? (
+    <EngineControls
+      engine={sessionEngine}
+      placement="toolbar"
+      renderLayout={renderComposer}
+      onSelectEngine={sessionId === null ? handleSelectEngine : undefined}
+      externalEngineUnavailableReason={
+        externalEngineService ? undefined : intl.formatMessage({ id: "engine.unavailable.remote" })
+      }
+      connectionChoices={engineConnection.choices}
+      connectionProfileId={engineConnection.currentId}
+      onSelectConnection={sessionId === null ? engineConnection.select : undefined}
+      connectionLabel={engineConnection.label}
+      options={
+        externalEngine && snapshot?.config.engine === sessionEngine
+          ? snapshot.config.engineConfigOptions
+          : undefined
+      }
+      // 已有会话（空闲重连、停止后恢复）仍显示“正在连接引擎…”。
+      loading={
+        externalEngine &&
+        sessionId !== null &&
+        (connecting || snapshot?.config.engineConfigState === "connecting")
+      }
+      // 2026-11-08 草稿无感：creating / connecting 不显示连接中文案、可直接发送，只把原生配置
+      // 选择器显示为禁用；阶段仍由 owner 在途状态与预热 snapshot 派生。
+      configPending={
+        externalEngine &&
+        sessionId === null &&
+        (draftEngineReadiness === "creating" || draftEngineReadiness === "connecting")
+      }
+      error={
+        externalEngine
+          ? sessionId === null
+            ? prewarmError?.message
+            : snapshot?.config.engineConfigState === "error"
+              ? intl.formatMessage({ id: "engine.restoreFailed" })
+              : undefined
+          : undefined
+      }
+      connectionFailure={
+        snapshot?.config.engineConfigState === "error"
+          ? snapshot.config.engineConfigError
+          : undefined
+      }
+      onRetry={
+        externalEngine && (sessionId !== null || draftEngineReadiness === "failed")
+          ? () => {
+              void configCommandBarrier.enqueue(async () => {
+                // 草稿未建立 binding 时 dispatchConfigCas 无目标并跳过；发送入口仍会由 owner 重建。
+                await dispatchConfigCas("prepareExternalEngineSession", {});
+              });
+            }
+          : undefined
+      }
+      // 运行中配置由引擎确认，不应与发送/停止的 busy 状态共用禁用条件。
+      disabled={connecting}
+      onConfigChange={(configId, value) => {
+        const confirmationScope = snapshot
+          ? {
+              sessionId: snapshot.sessionId,
+              connectionProfileId: snapshot.config.engineConnectionProfileId,
+            }
+          : undefined;
+        // 配置与发送复用同一屏障，禁止刚选中的引擎模式尚未应用就开始下一轮。
+        return configCommandBarrier.enqueue(async () => {
+          const ack = await dispatchConfigCas("setEngineConfigOption", { configId, value });
+          const accepted = ack?.status === "accepted" || ack?.status === "noop";
+          if (!accepted) {
+            toast(intl.formatMessage({ id: "engine.configChangeFailed" }));
+          } else {
+            // 只有 snapshot 确认为所选值后才写入按引擎记忆；权限模式等不记忆。
+            engineConfigMemory.recordExplicitChange(configId, value, confirmationScope);
+          }
+          return accepted;
+        });
+      }}
+    />
+  ) : (
+    renderComposer()
   );
   const pendingGuideProjection = snapshot ? projectPendingGuideQueue(snapshot.queue) : null;
   const conversationBottomDockContent = readOnly ? null : (

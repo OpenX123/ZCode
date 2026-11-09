@@ -13,7 +13,6 @@ import {
   buildEngineConnectionEnv,
   engineConnectionGatewayHost,
   findEngineConnectionProfile,
-  lastUsedEngineConnectionProfileId,
   managedAdapterEntrySegments,
   managedAdapterInstallDirName,
   type ExternalEngineConnectionProfile,
@@ -174,7 +173,11 @@ function authStatus(
       return { state: "unknown" };
     }
     if (typeof data !== "object" || data === null) return { state: "unknown" };
-    const status = data as { loggedIn?: unknown; authMethod?: unknown; apiProvider?: unknown };
+    const status = data as {
+      loggedIn?: unknown;
+      authMethod?: unknown;
+      apiProvider?: unknown;
+    };
     if (status.loggedIn === false) return { state: "loggedOut" };
     if (status.loggedIn !== true || result.code !== 0) return { state: "unknown" };
     // 仅映射已知身份类别，不回传 CLI 任意字符串（可能含邮箱、账号或密钥）。
@@ -197,7 +200,10 @@ function authStatus(
 
 export function createExternalEngineService(
   options: ExternalEngineServiceOptions,
-): IExternalEngineService & { disposeAll(): void; disposeAllAndWait(): Promise<void> } {
+): IExternalEngineService & {
+  disposeAll(): void;
+  disposeAllAndWait(): Promise<void>;
+} {
   const run = options.runCommand ?? runCommand;
   const emitter = new Emitter<ExternalEngineStatus>();
   const profilesEmitter = new Emitter<ExternalEngineConnectionsView>();
@@ -212,6 +218,8 @@ export function createExternalEngineService(
     { value: ExternalEngineStatus; expires: number }
   >();
   const detections = new Map<ExternalSessionEngine, Promise<ExternalEngineStatus>>();
+  const diagnosticAborts = new Map<ExternalSessionEngine, AbortController>();
+  const installAborts = new Map<ExternalSessionEngine, AbortController>();
   const launchChecks = new Map<ExternalSessionEngine, Promise<boolean>>();
   const generations = new Map<ExternalSessionEngine, number>();
   let loginAbort: AbortController | undefined;
@@ -247,11 +255,8 @@ export function createExternalEngineService(
     engine: ExternalSessionEngine,
   ): Promise<ExternalEngineConnectionProfile> => {
     const current = await connections.read();
-    const profile = findEngineConnectionProfile(
-      current,
-      engine,
-      lastUsedEngineConnectionProfileId(current, engine),
-    );
+    const profileId = await connections.defaultProfileId(engine);
+    const profile = findEngineConnectionProfile(current, engine, profileId);
     if (!profile) throw new Error("external_engine_connection_invalid");
     return profile;
   };
@@ -292,6 +297,7 @@ export function createExternalEngineService(
     engine: ExternalSessionEngine,
     diagnostics = true,
     generation = generations.get(engine) ?? 0,
+    signal = abort.signal,
   ): Promise<ExternalEngineStatus> => {
     if (disposed) throw new Error("external_engine_service_disposed");
     const runtime = EXTERNAL_ENGINE_RUNTIMES[engine];
@@ -342,11 +348,11 @@ export function createExternalEngineService(
         const command = nodeEntry ? process.execPath : cli;
         const prefix = nodeEntry ? [cli] : [];
         if (nodeEntry) cliEnv.ELECTRON_RUN_AS_NODE = "1";
-        const version = execute(command, [...prefix, "--version"], 10_000, cliEnv);
+        const version = execute(command, [...prefix, "--version"], 10_000, cliEnv, signal);
         const auth =
           profile.mode === "apiKey"
             ? undefined
-            : execute(command, [...prefix, ...runtime.authStatusArgs], 10_000, cliEnv);
+            : execute(command, [...prefix, ...runtime.authStatusArgs], 10_000, cliEnv, signal);
         const [versionResult, authResult] = await Promise.all([
           version,
           auth ?? Promise.resolve(undefined),
@@ -373,6 +379,56 @@ export function createExternalEngineService(
         status.error = "external_engine_status_failed";
       }
     }
+    if (signal.aborted) throw new Error("external_engine_process_interrupted");
+    if (profile) {
+      const profileFields = { connectionProfileId: profile.id };
+      // 管理密钥的存在与沿用 CLI 报告的 API Key 身份都只是本地事实，不能当作远端认证成功。
+      status.checks = [
+        {
+          id: "cli",
+          state: status.officialCli.found ? "passed" : "failed",
+          source: cli?.startsWith(directory) ? "managed" : "path",
+          actions: status.officialCli.found ? [] : ["refresh"],
+          ...(status.officialCli.version ? { version: status.officialCli.version } : {}),
+        },
+        {
+          id: "adapter",
+          state: installed ? "passed" : "failed",
+          source: "managed",
+          actions: installed ? [] : ["install"],
+          ...(installed ? { version: runtime.adapterVersion } : {}),
+        },
+        {
+          id: "authentication",
+          ...profileFields,
+          state:
+            profile.mode === "apiKey" || status.auth.label === "apiKey"
+              ? status.auth.state === "loggedOut"
+                ? "failed"
+                : "unknown"
+              : status.auth.state === "loggedIn"
+                ? "passed"
+                : status.auth.state === "loggedOut"
+                  ? "failed"
+                  : "unknown",
+          source: profile.mode === "apiKey" ? "credentialStore" : "cli",
+          actions:
+            profile.mode === "official" && status.auth.state !== "loggedIn"
+              ? ["login"]
+              : profile.mode === "apiKey" && status.auth.state === "loggedOut"
+                ? ["edit"]
+                : ["test"],
+        },
+        {
+          id: "route",
+          ...profileFields,
+          state: "unknown",
+          source: profile.mode === "inherit" ? "cli" : "profile",
+          actions: ["test"],
+          ...(status.auth.gatewayHost ? { gatewayHost: status.auth.gatewayHost } : {}),
+        },
+      ];
+    }
     // 第三方 provider 可无需 OpenAI 账号；可启动性不能由登录文案决定。
     status.ready = installed && status.officialCli.found;
     const serialized = JSON.stringify(status);
@@ -395,14 +451,25 @@ export function createExternalEngineService(
     if (cached && cached.expires > (options.now ?? Date.now)())
       return Promise.resolve(structuredClone(cached.value));
     const generation = generations.get(engine) ?? 0;
-    const pending = detect(engine, true, generation)
+    const controller = new AbortController();
+    diagnosticAborts.set(engine, controller);
+    const pending = detect(
+      engine,
+      true,
+      generation,
+      AbortSignal.any([abort.signal, controller.signal]),
+    )
       .then((value) => {
         if (!disposed && generation === (generations.get(engine) ?? 0))
-          statusCache.set(engine, { value, expires: (options.now ?? Date.now)() + 60_000 });
+          statusCache.set(engine, {
+            value,
+            expires: (options.now ?? Date.now)() + 60_000,
+          });
         return value;
       })
       .finally(() => {
         if (detections.get(engine) === pending) detections.delete(engine);
+        if (diagnosticAborts.get(engine) === controller) diagnosticAborts.delete(engine);
       });
     detections.set(engine, pending);
     return pending;
@@ -424,7 +491,9 @@ export function createExternalEngineService(
       });
       return pending;
     },
-    async invalidateStatus(engine) {
+    async invalidateStatus(engine, cancel) {
+      if (cancel === "check" || cancel === "install") diagnosticAborts.get(engine)?.abort();
+      if (cancel === "install") installAborts.get(engine)?.abort();
       invalidateStatus(engine);
     },
     refreshStatus(engine) {
@@ -477,6 +546,7 @@ export function createExternalEngineService(
             AbortSignal.any([abort.signal, controller.signal]),
           );
           if (result.code !== 0) throw new Error("external_engine_login_failed");
+          if (profile.engine === "codex") connections.markManagedCodexAuth(profile.id);
         } finally {
           loginAbort = undefined;
           if (engine) invalidateStatus(engine);
@@ -534,7 +604,10 @@ export function createExternalEngineService(
           status: result.status,
           elapsedMs: Date.now() - startedAt,
           ...(result.status === "failed"
-            ? { failureCode: result.failure.code, httpStatus: result.failure.httpStatus }
+            ? {
+                failureCode: result.failure.code,
+                httpStatus: result.failure.httpStatus,
+              }
             : {}),
         });
         return result;
@@ -554,6 +627,9 @@ export function createExternalEngineService(
       const active = installs.get(engine);
       if (active) return active;
       invalidateStatus(engine);
+      const controller = new AbortController();
+      installAborts.set(engine, controller);
+      const signal = AbortSignal.any([abort.signal, controller.signal]);
       const pending = (async () => {
         const runtime = EXTERNAL_ENGINE_RUNTIMES[engine];
         const npm = await resolveExternalEngineCli("npm", env);
@@ -574,12 +650,15 @@ export function createExternalEngineService(
               `${runtime.adapterPackage}@${runtime.adapterVersion}`,
             ],
             180_000,
+            env,
+            signal,
           );
         } catch {
           throw new Error("external_engine_install_failed");
         }
         if (result.code !== 0) throw new Error("external_engine_install_failed");
         invalidateStatus(engine);
+        if (signal.aborted) throw new Error("external_engine_process_interrupted");
         const status = await getStatus(engine);
         if (!status.adapter.installed) throw new Error("external_engine_install_incomplete");
         return status;
@@ -588,6 +667,7 @@ export function createExternalEngineService(
       void pending
         .finally(() => {
           if (installs.get(engine) === pending) installs.delete(engine);
+          if (installAborts.get(engine) === controller) installAborts.delete(engine);
         })
         .catch(() => {});
       return pending;

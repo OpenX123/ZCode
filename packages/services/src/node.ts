@@ -1,3 +1,4 @@
+import { EXTERNAL_ENGINE_SPARE_BUDGET_ENV } from "@zcode/shared";
 import {
   EXTERNAL_ENGINES_DIR_ENV,
   EXTERNAL_ENGINE_USER_HOME_ENV,
@@ -1773,6 +1774,14 @@ export function createLocalServices(options: {
   const zcodeAgentService = createZCodeAgentService({
     externalEngineService,
     externalEnginesSupported: Boolean(externalEngineService),
+    selectExternalEngineSpare: async () => {
+      if (!externalEngineService) return undefined;
+      const engine = (await settingService.get()).defaultSessionEngine;
+      if (engine !== "codex" && engine !== "claude-code") return undefined;
+      const view = await externalEngineService.getConnectionProfiles?.();
+      const connectionProfileId = view?.defaults[engine];
+      return connectionProfileId ? { engine, connectionProfileId } : undefined;
+    },
     prepareProjectExecution,
     prepareSessionCreation: async (target) =>
       (await taskIndexRepo.getProjectRepository()).reserveCreatedTask({
@@ -1914,6 +1923,7 @@ export function createLocalServices(options: {
       return {
         ...(externalEngineService
           ? {
+              [EXTERNAL_ENGINE_SPARE_BUDGET_ENV]: "host",
               [EXTERNAL_ENGINES_DIR_ENV]: externalEnginesDir,
               [EXTERNAL_ENGINE_USER_HOME_ENV]: externalEngineUserHome,
             }

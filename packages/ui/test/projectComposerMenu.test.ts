@@ -823,3 +823,23 @@ it("同名远程项目的在线/离线设备名均可见，按设备名搜索且
   expect(entries()).toHaveLength(1);
   expect(entries()[0]!.textContent).toContain("beta");
 });
+
+it("Composer可选位置展示取本地事实，其他调用不增加标签", () => {
+  const view = render(createElement(ProjectComposerMenu, props()));
+  expect(screen.queryByTestId("composer-project-location")).toBeNull();
+  view.rerender(createElement(ProjectComposerMenu, { ...props(), showLocation: true }));
+  expect(screen.getByTestId("composer-project-location").textContent).toBe("project.thisComputer");
+});
+
+it("Composer位置复用真实远程设备名，不硬编码本地", () => {
+  fixture.projects = [project("1", "remote:server:host")];
+  fixture.deviceNames = new Map([["host", "Alpha Workspace"]]);
+  render(
+    createElement(ProjectComposerMenu, {
+      ...props(),
+      workspaceIdentity: "remote:server:host:/same",
+      showLocation: true,
+    }),
+  );
+  expect(screen.getByTestId("composer-project-location").textContent).toBe("Alpha Workspace");
+});

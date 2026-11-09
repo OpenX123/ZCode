@@ -22,6 +22,202 @@ import {
   createExternalEngineProcessPool,
   type ExternalEngineProcessPoolOptions,
 } from "../src/external-engine/index.js";
+import type { AcpConnection } from "../src/external-engine/connection.js";
+import * as sharedNode from "@zcode/shared/node";
+import { createSharedZCodeCredentialStore } from "../src/auth/index.js";
+
+// 严格关闭在 Windows 读取真实 CIM 进程树；测试预算需覆盖产品的 10 秒失败边界。
+vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 });
+
+function controlledConnection() {
+  const warming = Promise.withResolvers<void>();
+  const started = Promise.withResolvers<void>();
+  let closed = false;
+  const connection = {
+    get healthy() {
+      return !closed;
+    },
+    async prebuild() {
+      started.resolve();
+      await warming.promise;
+    },
+    async close() {
+      closed = true;
+      warming.resolve();
+    },
+  } as unknown as AcpConnection;
+  return { connection, warming, started, isClosed: () => closed };
+}
+
+describe("warming 独占与所有权", () => {
+  const key = { engine: "codex" as const, connectionProfileId: "codex:inherit", cwd: tmpdir() };
+  test("迟到 launch 关闭失败不能释放许可或成功 ACK，随后允许重试", async () => {
+    const launch = Promise.withResolvers<AcpConnection>();
+    const started = Promise.withResolvers<void>();
+    let requestId = "",
+      released = false,
+      failClose = true;
+    const pool = createExternalEngineProcessPool({
+      budget: {
+        acquire: async (id) => {
+          requestId = id;
+          return true;
+        },
+        release: async () => {
+          released = true;
+        },
+      },
+    });
+    pool.refillSpare(key, () => {
+      started.resolve();
+      return launch.promise;
+    });
+    await started.promise;
+    const revoked = pool.revokeSpare(requestId);
+    launch.resolve({
+      healthy: true,
+      prebuild: async () => {},
+      close: async () => {
+        if (failClose) throw new Error("fixture tree still alive");
+      },
+    } as unknown as AcpConnection);
+    try {
+      await expect(revoked).rejects.toThrow("fixture tree still alive");
+      expect(released).toBe(false);
+      failClose = false;
+      await pool.revokeSpare(requestId);
+      expect(released).toBe(true);
+    } finally {
+      failClose = false;
+      await pool.close();
+    }
+  });
+  test("许可尚未答复时前台 miss，不等待 Host 预算", async () => {
+    const grant = Promise.withResolvers<boolean>();
+    const pool = createExternalEngineProcessPool({
+      budget: { acquire: () => grant.promise, release: async () => {} },
+    });
+    const target = controlledConnection();
+    pool.refillSpare(key, async () => target.connection);
+    let completed = false;
+    const claimed = pool.claimSpare(key).then((value) => {
+      completed = true;
+      return value;
+    });
+    await Promise.resolve();
+    const didComplete = completed;
+    grant.resolve(false);
+    await claimed;
+    await pool.close();
+    expect(didComplete).toBe(true);
+  });
+  test("release 回复丢失不阻塞已就绪前台交付", async () => {
+    const release = Promise.withResolvers<void>();
+    const pool = createExternalEngineProcessPool({
+      budget: { acquire: async () => true, release: () => release.promise },
+    });
+    const target = controlledConnection();
+    target.warming.resolve();
+    pool.refillSpare(key, async () => target.connection);
+    await target.started.promise;
+    let completed = false;
+    const claimed = pool.claimSpare(key).then((value) => {
+      completed = true;
+      return value;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const didComplete = completed;
+    release.resolve();
+    await claimed;
+    await pool.close();
+    await target.connection.close();
+    expect(didComplete).toBe(true);
+  });
+  test("撤销 warming 必须等进程 close gate 才释放许可与 ACK", async () => {
+    const close = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    const warm = Promise.withResolvers<void>();
+    let requestId = "",
+      released = false,
+      acked = false;
+    const pool = createExternalEngineProcessPool({
+      budget: {
+        acquire: async (id) => {
+          requestId = id;
+          return true;
+        },
+        release: async () => {
+          released = true;
+        },
+      },
+    });
+    pool.refillSpare(
+      key,
+      async () =>
+        ({
+          healthy: true,
+          prebuild: async () => {
+            started.resolve();
+            await warm.promise;
+          },
+          close: async () => {
+            warm.resolve();
+            await close.promise;
+          },
+        }) as unknown as AcpConnection,
+    );
+    await started.promise;
+    const revoke = pool.revokeSpare(requestId).then(() => {
+      acked = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const earlyRelease = released,
+      earlyAck = acked;
+    close.resolve();
+    await revoke;
+    await pool.close();
+    expect(earlyRelease).toBe(false);
+    expect(earlyAck).toBe(false);
+    expect(released).toBe(true);
+  });
+  test("warming 第一请求独占等待，第二请求 miss，交付后不随 pool.close 关闭", async () => {
+    const pool = createExternalEngineProcessPool();
+    const target = controlledConnection();
+    pool.refillSpare(key, async () => target.connection);
+    await target.started.promise;
+    const first = pool.claimSpare(key);
+    expect(await pool.claimSpare(key)).toBeUndefined();
+    target.warming.resolve();
+    expect((await first)?.connection).toBe(target.connection);
+    await pool.close();
+    expect(target.isClosed()).toBe(false);
+    await target.connection.close();
+  });
+  test("取消已预留的 warming 会关闭连接，不交付也不遗留", async () => {
+    const pool = createExternalEngineProcessPool();
+    const target = controlledConnection();
+    pool.refillSpare(key, async () => target.connection);
+    await target.started.promise;
+    const controller = new AbortController();
+    const claimed = pool.claimSpare(key, controller.signal);
+    controller.abort();
+    expect(await claimed).toBeUndefined();
+    expect(target.isClosed()).toBe(true);
+    await pool.close();
+  });
+  test("close 等待已摘索引 reservation 的迟到 spawn，并关闭它", async () => {
+    const pool = createExternalEngineProcessPool();
+    const launch = Promise.withResolvers<AcpConnection>();
+    const target = controlledConnection();
+    pool.refillSpare(key, () => launch.promise);
+    const claimed = pool.claimSpare(key);
+    const closing = pool.close();
+    launch.resolve(target.connection);
+    await closing;
+    expect(await claimed).toBeUndefined();
+    expect(target.isClosed()).toBe(true);
+  });
+});
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -30,6 +226,7 @@ afterEach(async () => {
 
 type Engine = "claude-code" | "codex";
 interface FixtureSettings {
+  gateSpare?: boolean;
   slowInitAfterFirstMs?: number;
   /** session/new 响应延迟；用来区分冷启动与领用预建会话的 sessionMs。 */
   slowSessionNewMs?: number;
@@ -43,7 +240,7 @@ const fs=require('node:fs'), path=require('node:path'), readline=require('node:r
 const settings=${JSON.stringify(settings)}, log=path.join(process.env.HOME,'calls.jsonl');
 const send=f=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...f})+'\n');
 const update=(sessionId,u)=>send({method:'session/update',params:{sessionId,update:u}});
-let counter=0, prompt;
+let counter=0, prompt, spare=false;
 const options=[
  {id:'mode',name:'Mode',currentValue:settings.initialMode||'safe',options:[{value:'safe',name:'Safe'},{value:'fast',name:'Fast'},{value:'default',name:'Default'},{value:'auto',name:'Auto'}]},
  {id:'model',name:'Model',currentValue:'a',options:[{value:'a',name:'A'},{value:'b',name:'B'}]}];
@@ -53,17 +250,21 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  const before=fs.existsSync(log)?fs.readFileSync(log,'utf8').trim().split('\n').filter(Boolean).map(x=>JSON.parse(x)):[];
  fs.appendFileSync(log,JSON.stringify({pid:process.pid,method:f.method,sessionId:f.params?.sessionId,configId:f.params?.configId,value:f.params?.value})+'\n');
  if(f.method==='initialize'){
+  spare=before.filter(x=>x.method==='initialize').length===1;
   const delay=settings.slowInitAfterFirstMs&&before.some(x=>x.method==='initialize')?settings.slowInitAfterFirstMs:0;
   setTimeout(()=>send({id:f.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true,sessionCapabilities:{resume:{}}}}}),delay);
  } else if(f.method==='session/new'){
   const id='ext-'+process.pid+'-'+(++counter);
-  setTimeout(()=>{
+  const respond=()=>{
    if(settings.notify){
     update(id,{sessionUpdate:'available_commands_update',availableCommands:[{name:'early',description:'early'}]});
     setTimeout(()=>update(id,{sessionUpdate:'session_info_update',title:'late-'+id}),30);
    }
    send({id:f.id,result:{sessionId:id,configOptions:options}});
-  },settings.slowSessionNewMs||0);
+  };
+  if(settings.gateSpare&&spare&&!fs.existsSync(path.join(process.env.HOME,'allow-spare'))){
+   const watcher=fs.watch(process.env.HOME,()=>{if(fs.existsSync(path.join(process.env.HOME,'allow-spare'))){watcher.close();respond();}});
+  } else setTimeout(respond,settings.slowSessionNewMs||0);
  }
  else if(f.method==='session/resume') send({id:f.id,result:{sessionId:f.params.sessionId,configOptions:options}});
  else if(f.method==='session/set_config_option'){options.find(o=>o.id===f.params.configId).currentValue=f.params.value; send({id:f.id,result:{configOptions:options}});}
@@ -120,6 +321,7 @@ async function setup(
     ...process.env,
     [EXTERNAL_ENGINES_DIR_ENV]: root,
     [EXTERNAL_ENGINE_USER_HOME_ENV]: root,
+    ZCODE_DATA_BASE_DIR: root,
   };
   // 每个会话 app 各自一个 port，同 CLI 进程共享同一个池。
   const openPort = (sessionId: string) => {
@@ -143,7 +345,7 @@ async function setup(
       return [];
     }
   };
-  return { root, pool, log, openPort, calls };
+  return { root, env, pool, log, openPort, calls };
 }
 
 function input(
@@ -178,6 +380,169 @@ function alive(pid: number): boolean {
 }
 
 describe("预建会话（spare）", () => {
+  test("pool 交付后 port 接收前取消仍关闭已领用进程", async () => {
+    const { env, pool, log, openPort, calls } = await setup(["codex"]);
+    await openPort("seed").prepareSession(input("seed", "codex"));
+    await vi.waitFor(() => expect(log.named("external_engine.spare.ready")).toHaveLength(1));
+    const pid = (await calls()).filter((c) => c.method === "initialize")[1]!.pid;
+    const controller = new AbortController();
+    const port = createExternalEnginePort({
+      env,
+      executable: process.execPath,
+      processPool: {
+        ...pool,
+        claimSpare(key, signal) {
+          const result = pool.claimSpare(key, signal);
+          void result.then(() => controller.abort());
+          return result;
+        },
+      },
+    });
+    cleanups.push(() => port.closeSession("cancel-transfer"));
+    await expect(
+      port.prepareSession(input("cancel-transfer", "codex", { signal: controller.signal })),
+    ).rejects.toThrow();
+    const survived = alive(pid);
+    // 旧实现会漏掉已经移交、但尚未登记进 sessions 的连接；清理测试泄漏后再断言。
+    if (survived) process.kill(pid);
+    expect(survived).toBe(false);
+  });
+  test("ready hit 前重新检查凭据，删除密钥不能领用现存备用", async () => {
+    const { root, env, log, openPort } = await setup(["claude-code"]);
+    const store = createSharedZCodeCredentialStore({ env });
+    await store.save("fixture-key", "fixture-secret");
+    await writeFile(
+      join(root, "connections.json"),
+      JSON.stringify({
+        activeProfileId: "inherit",
+        lastUsed: { "claude-code": "profile-a" },
+        profiles: [
+          {
+            id: "profile-a",
+            engine: "claude-code",
+            mode: "apiKey",
+            credentialKey: "fixture-key",
+            hasApiKey: true,
+          },
+        ],
+      }),
+    );
+    await openPort("seed").prepareSession(input("seed", "claude-code"));
+    await vi.waitFor(() => expect(log.named("external_engine.spare.ready")).toHaveLength(1));
+    await store.delete("fixture-key");
+    await expect(
+      openPort("next").prepareSession(input("next", "claude-code")),
+    ).rejects.toMatchObject({ failure: { code: "authentication" } });
+    expect(log.named("external_engine.spare.claimed")).toHaveLength(0);
+  });
+  test("同 ID profile 内容变更拒绝旧备用", async () => {
+    const { root, log, openPort, calls } = await setup(["claude-code"]);
+    const writeProfile = (model: string) =>
+      writeFile(
+        join(root, "connections.json"),
+        JSON.stringify({
+          activeProfileId: "inherit",
+          lastUsed: { "claude-code": "profile-a" },
+          profiles: [{ id: "profile-a", engine: "claude-code", mode: "official", model }],
+        }),
+      );
+    await writeProfile("before");
+    await openPort("seed").prepareSession(input("seed", "claude-code"));
+    await vi.waitFor(() => expect(log.named("external_engine.spare.ready")).toHaveLength(1));
+    const oldPid = (await calls()).filter((c) => c.method === "initialize")[1]!.pid;
+    await writeProfile("after");
+    let native = "";
+    await openPort("next").prepareSession(
+      input("next", "claude-code", {
+        async onSession(id) {
+          native = id;
+        },
+      }),
+    );
+    expect(native).not.toBe(`ext-${oldPid}-1`);
+    expect(log.named("external_engine.spare.miss").at(-1)?.context.reason).toBe("generation");
+  });
+  test("warming gate：第一新会话等待备用，第二新会话冷启且原生 ID 不同", async () => {
+    const { root, log, openPort, calls } = await setup(["codex"], {}, { gateSpare: true });
+    await openPort("seed").prepareSession(input("seed", "codex"));
+    await vi.waitFor(async () =>
+      expect((await calls()).filter((c) => c.method === "session/new")).toHaveLength(2),
+    );
+    const sparePid = (await calls()).filter((c) => c.method === "session/new")[1]!.pid;
+    let firstId = "";
+    const first = openPort("first").prepareSession(
+      input("first", "codex", {
+        async onSession(id) {
+          firstId = id;
+        },
+      }),
+    );
+    // 身份读取完成后，claimed 日志前仍处于 reservation wait；用第二请求的完成与 PID 证明互斥。
+    await vi.waitFor(() => expect(log.named("external_engine.spare.reserved")).toHaveLength(1));
+    let secondId = "";
+    await openPort("second").prepareSession(
+      input("second", "codex", {
+        async onSession(id) {
+          secondId = id;
+        },
+      }),
+    );
+    expect(firstId).toBe("");
+    expect(secondId).not.toBe(`ext-${sparePid}-1`);
+    await writeFile(join(root, "allow-spare"), "ready");
+    await first;
+    expect(firstId).toBe(`ext-${sparePid}-1`);
+    expect(firstId).not.toBe(secondId);
+  });
+  test("安装入口替换后旧 ready 备用不得交付", async () => {
+    const { root, log, openPort, calls } = await setup(["codex"]);
+    await openPort("seed").prepareSession(input("seed", "codex"));
+    await vi.waitFor(() => expect(log.named("external_engine.spare.ready")).toHaveLength(1));
+    const sparePid = (await calls()).filter((c) => c.method === "initialize")[1]!.pid;
+    const runtime = EXTERNAL_ENGINE_RUNTIMES.codex;
+    await writeFile(
+      join(root, managedAdapterInstallDirName(runtime), ...managedAdapterEntrySegments(runtime)),
+      fixture({}) + "\n// replacement",
+    );
+    let native = "";
+    await openPort("next").prepareSession(
+      input("next", "codex", {
+        async onSession(id) {
+          native = id;
+        },
+      }),
+    );
+    expect(native).not.toBe(`ext-${sparePid}-1`);
+    expect(alive(sparePid)).toBe(false);
+  });
+  test("ready hit 十次均不遍历 PATH，补位复用一次解析结果且原生 ID 独立", async () => {
+    const resolver = vi.spyOn(sharedNode, "resolveExternalEngineLaunch");
+    try {
+      const { log, openPort, calls } = await setup(["codex"]);
+      const ids = new Set<string>();
+      await openPort("cold").prepareSession(input("cold", "codex"));
+      await vi.waitFor(() => expect(log.named("external_engine.spare.ready")).toHaveLength(1));
+      const resolved = resolver.mock.calls.length;
+      for (let index = 0; index < 10; index++) {
+        const id = `hit-${index}`;
+        await openPort(id).prepareSession(
+          input(id, "codex", {
+            async onSession(native) {
+              ids.add(native);
+            },
+          }),
+        );
+        await vi.waitFor(() =>
+          expect(log.named("external_engine.spare.ready")).toHaveLength(index + 2),
+        );
+      }
+      expect(resolver.mock.calls.length - resolved).toBe(0);
+      expect(ids.size).toBe(10);
+      expect((await calls()).filter((call) => call.method === "initialize")).toHaveLength(12);
+    } finally {
+      resolver.mockRestore();
+    }
+  });
   test.each(["claude-code", "codex"] as const)(
     "%s 同配置第二个新会话领用预建会话并在后台补位，至多一个（P04）",
     async (engine) => {
@@ -398,7 +763,7 @@ describe("预建会话（spare）", () => {
     await vi.waitFor(() => expect(log.named("external_engine.spare.ready")).toHaveLength(1));
     const sparePid = (await calls()).filter((call) => call.method === "initialize")[1]!.pid;
     await vi.waitFor(() => expect(log.named("external_engine.spare.expired")).toHaveLength(1));
-    await vi.waitFor(() => expect(alive(sparePid)).toBe(false));
+    await vi.waitFor(() => expect(alive(sparePid)).toBe(false), { timeout: 10_000 });
     await openPort("s2").prepareSession(input("s2", "codex"));
     expect(log.named("external_engine.spare.miss").at(-1)?.context.reason).toBe("none");
   });

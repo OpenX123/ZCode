@@ -1,4 +1,27 @@
 import { describe, expect, it } from "vitest";
+import * as protocol from "../src/zcode-protocol/index.js";
+
+it("备用许可严格拒绝自报 workspace、环境摘要及空 requestId", () => {
+  const schema = protocol.zcodeExternalEngineSpareRequestParamsSchema;
+  expect(schema).toBeDefined();
+  expect(schema.safeParse({ requestId: "request-1" }).success).toBe(true);
+  for (const params of [
+    { requestId: "" },
+    { requestId: " " },
+    { requestId: "r", workspacePath: "/other" },
+    { requestId: "r", generation: "secret" },
+  ])
+    expect(schema.safeParse(params).success).toBe(false);
+  expect(
+    protocol.zcodeExternalEngineAcquireSpareResultSchema.safeParse({ leaseId: "" }).success,
+  ).toBe(false);
+  expect(
+    protocol.zcodeExternalEnginePrepareSpareParamsSchema.safeParse({
+      engine: "zcode",
+      connectionProfileId: "inherit",
+    }).success,
+  ).toBe(false);
+});
 import {
   MAX_VISIBLE_SESSIONS_PER_REPORT,
   V4_METHODS,
@@ -30,9 +53,9 @@ describe("ZCode Protocol V4 会话可见性上报", () => {
   });
 
   it("UI-facing 形状不能自选 connectionId（由 Host 按下游客户端注入）", () => {
-    expect(
-      conversationVisibilityParamsSchema.parse({ visibleSessionIds: ["session_a"] }),
-    ).toEqual({ visibleSessionIds: ["session_a"] });
+    expect(conversationVisibilityParamsSchema.parse({ visibleSessionIds: ["session_a"] })).toEqual({
+      visibleSessionIds: ["session_a"],
+    });
     expect(
       conversationVisibilityParamsSchema.safeParse({
         connectionId: "forged",

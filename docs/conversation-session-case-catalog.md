@@ -4368,7 +4368,7 @@ R3A-UI-04 / RDUX-11-04 回归（2026-10-12 macOS 真实 SSH 1/1 PASS，仍 pendi
 
 | ID    | 前置状态                                                                             | 动作                   | 断言                                                                                                                         | 决策     |
 | ----- | ------------------------------------------------------------------------------------ | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------- |
-| CMP01 | 中文桌面空草稿，Plan 与 Computer Use 入口启用，已选有名称 provider 和多档 think 模型 | 真实窗口逐步缩窄再放宽 | 逐一观测 0–5 档：Computer / mode / Plan 收起，合并入口档位文字变绿条，模型名变图标且保留绿条；放宽恢复；单行、不截断、不重叠 | accepted |
+| CMP01 | 中文桌面空草稿，Computer Use 与后台工作入口均具备可用状态，已选有名称 provider 和多档 think 模型 | 真实窗口逐步缩窄再放宽 | Composer 左侧不显示 Computer Use 与后台工作入口；仅保留 mode / Plan 等配置控件，合并入口按既有档位收缩，模型名变图标且保留绿条；放宽恢复；单行、不截断、不重叠 | accepted |
 | CMP02 | 隔离 Personal Config 的 bigmodel-api 不含 providerName                               | 从菜单选中 GLM-5.3     | 选中投影正确，菜单显示 bigmodel-api，合并按钮只显示 GLM-5.3；不恢复已移除的 Provider 前缀                                    | accepted |
 
 本组不发送模型请求；手机远控、原生 Windows、深浅主题和 reduced-motion 的组合不由这两条桌面 E2E 冒充覆盖。
@@ -4851,3 +4851,16 @@ E18：同一候选内使用原生 `plan` / `plan_update` / `plan-review` 权限�
 ### SFA01–03 会话菜单链接与分叉（2026-11-06，accepted，候选保持 pending）
 
 候选 `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-session-actions.test.ts`：SFA01 从标题菜单复制稳定会话链接；SFA02 当前目录 Fork 打开不同 child，继承完整历史且没有自动输入或发送；SFA03 新工作树 Fork 保留源 HEAD 祖先和未提交字节、新建分支及目录，源文件/index 不变，child 导航到新工作区且无自动发送。供应商使用 case-local 合成回放，文件使用隔离 HOME 内真实 Git 仓库；不宣称真实供应商或 Windows 整机覆盖。
+
+## AX01–AX07 ACP 连接与参考图布局（2026-11-09，accepted）
+
+用户已确认优化方案，并指定 Composer 参考紧凑引擎分段与内联配置、Fast 移到更多选项，引擎管理参考左侧引擎列表/右侧详情。实施合同见 `docs/desktop/external-agent-engines-spec.md` 顶部 ACP体验改造。AX01 左列表选择与逐引擎诊断；AX02 配置来源/认证隔离、Dialog保存、旧绑定不变和显式测试；AX03 草稿切换、已有身份固定及Fast非驻留；AX04 按连接模型/深度偏好；AX05 warming备用独占/取消；AX06 窗口备用预算和活动项目准备；AX07 深浅主题、窄屏、键盘和SSH门禁。
+
+AX01–03、AX07 扩展现有 `conversation-session-external-engine-connections.test.ts` / `external-engine-prewarm.test.ts`，使用隔离ACP夹具，保持manual-review/pending。AX04–06以hook、Host与CLI真实stdio定向测试证明状态和进程归属。尚未执行的桌面/性能验证不得由UT替代宣称通过。
+
+2026-11-09 已执行真实 Electron/Host/CLI/stdio 的四份候选聚焦 9 场景：run5 7 passed / 2 failed；修正隐藏 pane 布局查询与旧原生子智能体候选缺少权限批准后，run6 3 passed / 0 failed（含 settings 重拍），9 个不同场景均有最终通过记录。设置涵盖主从切换、查看不改默认、Dialog 取消/保存、编辑新 ID 与密钥不回显；Composer 涵盖分段、更多键盘/焦点、Fast 拒绝原值与既有只读绑定。1280/640 内容宽、深浅主题及固定绑定共 9 张干净截图；旧首发屏障、计划/502、停止/冷恢复与 not-ready 回归均保留并实际通过。认证隔离与编辑后旧绑定继续可用由 service/CLI UT 单独证明，未声称在同一个桌面会话中完成编辑绑定回归。候选未转正、未准入 CI；真实供应商性能与真实 SSH 未执行。完整范围见 [验证记录](testing/2026-11-09-acp-experience-verification.md)。
+
+
+### Task5 最新 Composer 验收（2026-11-09，accepted/manual-review/pending）
+
+AX03/AX07 按最新 Codex 反馈：输入区不显示草稿或已有会话的任何连接入口；三引擎分段保留；项目、真实位置和真实 Git 分支在编辑器上方同一行。底部附件/权限在左，模型/深度合并触发器在发送左侧，Fast 在合并弹层更多中。复用 prewarm 候选，验证 Escape/Enter/焦点、18 项模型可达、配置拒绝、P11 首发屏障；1280/640 × 深浅主题使用本轮隔离 Git 夹具重新截图。Task4 截图只作为历史，不能证明 Task5 布局。

@@ -11,3 +11,12 @@ export async function installIfUserConfirmed(
   if (status.adapter.installed || !userConfirmed) return status;
   return service.installAdapter(engine);
 }
+
+/** 管理页取消只作用于当前引擎；旧 Host 未提供取消时保持兼容。 */
+export async function cancelEngineManagement(
+  service: IExternalEngineService,
+  engine: ExternalSessionEngine,
+  operation: "check" | "install",
+) {
+  await service.invalidateStatus?.(engine, operation);
+}

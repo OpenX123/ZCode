@@ -4,6 +4,7 @@ import { engineConfigOptionKind } from "./config-options.js";
 import {
   EXTERNAL_ENGINE_RUNTIMES,
   externalEngineStatusSchema,
+  externalEngineCheckSchema,
   isExternalSessionEngine,
   managedAdapterEntrySegments,
   managedAdapterInstallDirName,
@@ -22,6 +23,31 @@ describe("原生配置类别", () => {
 });
 
 describe("外部引擎运行时描述", () => {
+  it("检查兼容旧状态，但认证和路由检查必须标明配置身份", () => {
+    const check = {
+      id: "authentication",
+      state: "unknown",
+      source: "credentialStore",
+      actions: ["test"],
+    };
+    expect(externalEngineCheckSchema.safeParse(check).success).toBe(false);
+    expect(externalEngineCheckSchema.safeParse({ ...check, id: "route" }).success).toBe(false);
+    expect(
+      externalEngineCheckSchema.parse({
+        ...check,
+        connectionProfileId: "gateway-a",
+        apiKey: "not-in-contract",
+      }),
+    ).toEqual({ ...check, connectionProfileId: "gateway-a" });
+    const oldStatus = {
+      engine: "codex",
+      adapter: { installed: true },
+      officialCli: { found: true },
+      auth: { state: "unknown" },
+      ready: true,
+    };
+    expect(externalEngineStatusSchema.parse(oldStatus)).toEqual(oldStatus);
+  });
   it("只为外部引擎提供描述，版本锁定为精确版本", () => {
     expect(Object.keys(EXTERNAL_ENGINE_RUNTIMES).sort()).toEqual(["claude-code", "codex"]);
     for (const runtime of Object.values(EXTERNAL_ENGINE_RUNTIMES)) {

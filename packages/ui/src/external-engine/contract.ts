@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type {
   EngineConfigOption,
   EngineConnectionFailure,
@@ -23,6 +24,10 @@ export interface EngineConnectionChoice {
 
 export interface EngineControlsProps {
   engine: SessionEngine;
+  /** 仅拆分展示位置，草稿选择和确认配置仍由现有 owner 管理；缺省同时展示。 */
+  placement?: "selector" | "toolbar";
+  /** 只拆分同一个 owner 的展示节点，不复制配置或 picker 状态。 */
+  renderLayout?: (slots: { leadingActions: ReactNode; modelControls: ReactNode }) => ReactNode;
   onSelectEngine?: (engine: SessionEngine) => void;
   options?: EngineConfigOption[];
   /** 返回 false 表示提交失败，控件撤销该次局部显示；确认配置仍只读 snapshot。 */
@@ -30,20 +35,20 @@ export interface EngineControlsProps {
   disabled?: boolean;
   /** 已有会话连接中：显示连接中文案，原生配置不可写。 */
   loading?: boolean;
-  /** 草稿原生配置就绪前：只禁用原生配置选择器，不显示连接中文案；引擎与连接配置仍可改选。 */
+  /** 草稿原生配置就绪前：只禁用原生配置选择器，不显示连接中文案；引擎仍可改选，连接在设置页管理。 */
   configPending?: boolean;
   error?: string;
   connectionFailure?: EngineConnectionFailure;
   onRetry?: () => void;
   /** 工作区不能运行外部引擎时的原因；设置后外部引擎在选择器中灰显并就地说明。 */
   externalEngineUnavailableReason?: string;
-  /** 草稿可选的连接配置（未隐藏）；只有多于一项时显示选择器。 */
+  /** 连接 owner 的兼容输入；Composer 不展示连接入口。 */
   connectionChoices?: EngineConnectionChoice[];
   /** 当前草稿或会话绑定的配置 ID。 */
   connectionProfileId?: string;
   /** 仅草稿提供：选择后由草稿 owner 重建预热。 */
   onSelectConnection?: (profileId: string) => void;
-  /** 已创建会话的只读绑定说明；缺省（内置缺省配置）不显示。 */
+  /** 绑定说明兼容输入；Composer 不显示。 */
   connectionLabel?: string;
 }
 

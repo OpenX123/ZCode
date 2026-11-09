@@ -1,6 +1,10 @@
 /* oxlint-disable eslint(max-lines) -- AppSettings schema 聚合历史迁移、默认值和 patch 校验，拆分会削弱设置迁移的单一入口。 */
 import { z } from "zod";
-import { engineConfigOptionKind, sessionEngineSchema } from "./external-engine/index.js";
+import {
+  engineConfigOptionKind,
+  externalEngineConnectionProfileSchema,
+  sessionEngineSchema,
+} from "./external-engine/index.js";
 import { appToolSearchModeSchema } from "./app-runtime-preferences.js";
 import type { AppSettings } from "./protocol.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
@@ -39,6 +43,32 @@ const externalEngineConfigPreferencesPatchSchema = z.object({
 const externalEngineConfigPreferencesSettingsSchema = z.object({
   "claude-code": externalEngineConfigPreferenceSchema.optional().catch(undefined),
   codex: externalEngineConfigPreferenceSchema.optional().catch(undefined),
+});
+const engineConnectionProfilePreferenceId = externalEngineConnectionProfileSchema.shape.id;
+const externalEngineConnectionPreferencesPatchSchema = z.object({
+  "claude-code": z
+    .record(engineConnectionProfilePreferenceId, externalEngineConfigPreferenceSchema)
+    .optional(),
+  codex: z
+    .record(engineConnectionProfilePreferenceId, externalEngineConfigPreferenceSchema)
+    .optional(),
+});
+// 单个损坏连接不能使同引擎其他连接的记忆丢失；补丁仍严格拒绝非法配置。
+const engineConnectionPreferencesSettingsSchema = z
+  .record(
+    engineConnectionProfilePreferenceId,
+    externalEngineConfigPreferenceSchema.optional().catch(undefined),
+  )
+  .transform((profiles) =>
+    Object.fromEntries(
+      Object.entries(profiles).filter(
+        (entry): entry is [string, Record<string, string>] => entry[1] !== undefined,
+      ),
+    ),
+  );
+const externalEngineConnectionPreferencesSettingsSchema = z.object({
+  "claude-code": engineConnectionPreferencesSettingsSchema.optional().catch(undefined),
+  codex: engineConnectionPreferencesSettingsSchema.optional().catch(undefined),
 });
 
 /** 引导职业枚举；单独导出供 onboarding 记录回填 settings 时做窄化校验。 */
@@ -528,6 +558,9 @@ const appSettingsObjectSchema = z.object({
   externalEngineConfigPreferences: externalEngineConfigPreferencesSettingsSchema
     .optional()
     .catch(undefined),
+  externalEngineConnectionConfigPreferences: externalEngineConnectionPreferencesSettingsSchema
+    .optional()
+    .catch(undefined),
   dismissedDesktopUpdateVersion: nonEmptyStringSchema.nullable().optional().catch(undefined),
   recentProjects: z.array(z.string()).default([]),
   locale: localeSchema.default("zh-CN"),
@@ -634,6 +667,8 @@ export const appSettingsSchema = z.preprocess(
 export const appSettingsPatchSchema = z.object({
   defaultSessionEngine: sessionEngineSchema.optional(),
   externalEngineConfigPreferences: externalEngineConfigPreferencesPatchSchema.optional(),
+  externalEngineConnectionConfigPreferences:
+    externalEngineConnectionPreferencesPatchSchema.optional(),
   dismissedDesktopUpdateVersion: nonEmptyStringSchema.nullable().optional(),
   recentProjects: z.array(z.string()).optional(),
   locale: localeSchema.optional(),

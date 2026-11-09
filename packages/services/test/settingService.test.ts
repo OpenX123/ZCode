@@ -1278,6 +1278,35 @@ describe("settingService", () => {
     ).rejects.toThrow();
   });
 
+  it("按连接偏好并发增量不会覆盖其他引擎、连接或同连接的深度", async () => {
+    const service = await createSettingServiceInHome(makeTempHome());
+    await Promise.all([
+      service.update({
+        externalEngineConnectionConfigPreferences: { codex: { alpha: { model: "gpt-a" } } },
+      }),
+      service.update({
+        externalEngineConnectionConfigPreferences: {
+          codex: { alpha: { reasoning_effort: "high" } },
+        },
+      }),
+      service.update({
+        externalEngineConnectionConfigPreferences: { codex: { beta: { model: "gpt-b" } } },
+      }),
+      service.update({
+        externalEngineConnectionConfigPreferences: { "claude-code": { alpha: { model: "opus" } } },
+      }),
+    ]);
+    await service.update({
+      externalEngineConnectionConfigPreferences: { codex: { alpha: { model: "gpt-new" } } },
+    });
+    await expect(service.get()).resolves.toMatchObject({
+      externalEngineConnectionConfigPreferences: {
+        codex: { alpha: { model: "gpt-new", reasoning_effort: "high" }, beta: { model: "gpt-b" } },
+        "claude-code": { alpha: { model: "opus" } },
+      },
+    });
+  });
+
   it("会持久化 ZCode 交互行为配置", async () => {
     const home = makeTempHome();
     const service = await createSettingServiceInHome(home);

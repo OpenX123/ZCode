@@ -4,16 +4,11 @@ import {
   isExternalSessionEngine,
   type SessionEngine,
 } from "@zcode/shared/external-engine";
-import { useState } from "react";
-import { BotIcon, ChevronDownIcon, PlugIcon } from "lucide-react";
+import { useId, useState } from "react";
+import { ChevronDownIcon } from "lucide-react";
+import { Button } from "@/components/ui/button.js";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select.js";
 import { ENGINE_LABELS, type EngineControlsProps } from "./contract.js";
 import { TaskClientLogo } from "./TaskClientLogo.js";
 import { ErrorDiagnostics } from "@/components/ai-elements/error-diagnostics.js";
@@ -25,6 +20,7 @@ import {
 
 export function EngineControls({
   engine,
+  placement,
   onSelectEngine,
   options = [],
   onConfigChange,
@@ -35,10 +31,7 @@ export function EngineControls({
   connectionFailure,
   onRetry,
   externalEngineUnavailableReason,
-  connectionChoices = [],
-  connectionProfileId,
-  onSelectConnection,
-  connectionLabel,
+  renderLayout,
 }: EngineControlsProps) {
   const { intl } = useZCodeIntl();
   const failureMessage = connectionFailure
@@ -55,110 +48,150 @@ export function EngineControls({
     ? ` (${connectionFailure.method}${connectionFailure.rpcCode !== undefined ? `, RPC ${connectionFailure.rpcCode}` : ""})`
     : "";
   const [activePicker, setActivePicker] = useState<string | null>(null);
+  const unavailableReasonId = useId();
   const model = options.find((option) => option.id === "model");
   const modelLabel = model?.options.find((entry) => entry.value === model.currentValue)?.name;
-  return (
+  const selector = onSelectEngine ? (
+    <div className="flex min-w-0 flex-col items-center gap-1">
+      <div
+        role="group"
+        aria-label={intl.formatMessage({ id: "engine.select" })}
+        aria-describedby={externalEngineUnavailableReason ? unavailableReasonId : undefined}
+        data-testid="session-engine-select"
+        className="inline-flex items-center gap-0.5 rounded-full border border-border bg-surface p-1"
+      >
+        {Object.entries(ENGINE_LABELS).map(([value, label]) => {
+          const unavailable =
+            Boolean(externalEngineUnavailableReason) &&
+            isExternalSessionEngine(value as SessionEngine);
+          return (
+            <Button
+              key={value}
+              type="button"
+              variant="ghost"
+              aria-label={label}
+              aria-pressed={engine === value}
+              aria-describedby={unavailable ? unavailableReasonId : undefined}
+              title={unavailable ? `${label}: ${externalEngineUnavailableReason}` : label}
+              disabled={disabled || unavailable}
+              data-testid={`session-engine-option-${value}`}
+              className={`h-7 gap-1.5 rounded-full px-2 text-ui-sm ${engine === value ? "bg-selected text-foreground" : "text-foreground-subtle"}`}
+              onClick={() => onSelectEngine(value as SessionEngine)}
+            >
+              <TaskClientLogo engine={value as SessionEngine} />
+              {engine === value ? <span>{label}</span> : null}
+            </Button>
+          );
+        })}
+      </div>
+      {externalEngineUnavailableReason ? (
+        <p id={unavailableReasonId} className="text-ui-sm text-foreground-subtle">
+          {externalEngineUnavailableReason}
+        </p>
+      ) : null}
+    </div>
+  ) : null;
+  const indicator = !onSelectEngine ? (
+    <span
+      className="inline-flex size-7 shrink-0 items-center justify-center grayscale opacity-60"
+      data-testid="session-engine-indicator"
+    >
+      <TaskClientLogo engine={engine} />
+    </span>
+  ) : null;
+  if (placement === "selector") return selector ?? indicator;
+  const fastIds = new Set(["fast", "fast_mode", "speed", "service_tier"]);
+  const primary = options.filter((option) => !fastIds.has(option.id.toLowerCase()));
+  const more = options.filter((option) => fastIds.has(option.id.toLowerCase()));
+  const renderOption = (option: (typeof options)[number]) => {
+    const picker = `config:${option.id}`;
+    const props = {
+      option,
+      disabled: disabled || loading || configPending || Boolean(failureMessage) || !onConfigChange,
+      open: activePicker === picker,
+      restoreFocus:
+        (engineConfigOptionKind(option.id) === "other" || (!effort && more.length === 0)) &&
+        (activePicker === null || activePicker === picker),
+      onOpenChange: (open: boolean) =>
+        setActivePicker((current) => (open ? picker : current === picker ? null : current)),
+      onValueChange: (value: string) => onConfigChange?.(option.id, value),
+    };
+    return engineConfigOptionKind(option.id) === "effort" ? (
+      <EngineEffortPicker key={option.id} {...props} modelLabel={modelLabel} />
+    ) : (
+      <EngineConfigMenu key={option.id} {...props} />
+    );
+  };
+  const effort = primary.find((option) => engineConfigOptionKind(option.id) === "effort");
+  const moreControls = more.length ? (
+    <details data-testid="engine-more-options" className="w-full border-t border-border pt-2">
+      <summary className="cursor-pointer text-ui-sm text-foreground-subtle">
+        {intl.formatMessage({ id: "engine.moreOptions" })}
+      </summary>
+      <div className="pt-1">
+        {more.map((option) => (
+          <div key={option.id} className="flex min-w-0 items-center justify-between gap-2">
+            <span className="min-w-0 truncate text-ui-sm">{option.name}</span>
+            {renderOption(option)}
+          </div>
+        ))}
+      </div>
+    </details>
+  ) : null;
+  const effortPicker = effort ? `config:${effort.id}` : "model-effort";
+  const combinedOpen =
+    activePicker === effortPicker ||
+    more.some((option) => activePicker === `config:${option.id}`) ||
+    Boolean(model && activePicker === "config:model");
+  const modelControls = effort ? (
+    <EngineEffortPicker
+      option={effort}
+      disabled={disabled || loading || configPending || Boolean(failureMessage) || !onConfigChange}
+      open={combinedOpen}
+      // 旧弹层退出动画完成时不能抢回新权限菜单的焦点；只在本簇关闭时回焦。
+      restoreFocus={activePicker === null || combinedOpen}
+      onOpenChange={(open) => setActivePicker(open ? effortPicker : null)}
+      onValueChange={(value) => onConfigChange?.(effort.id, value)}
+      modelLabel={modelLabel ?? model?.currentValue}
+      modelControl={model ? renderOption(model) : undefined}
+      triggerLabel={
+        model
+          ? `${modelLabel ?? model.currentValue} · ${effort.options.find((entry) => entry.value === effort.currentValue)?.name ?? effort.currentValue}`
+          : undefined
+      }
+      moreControls={moreControls}
+    />
+  ) : model && !more.length ? (
+    renderOption(model)
+  ) : more.length ? (
+    <Popover
+      open={combinedOpen}
+      onOpenChange={(open) => setActivePicker(open ? effortPicker : null)}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          className={engineTriggerClassName}
+          data-testid="engine-config-model-effort"
+          disabled={disabled || loading || configPending || Boolean(failureMessage)}
+        >
+          {modelLabel ?? intl.formatMessage({ id: "engine.moreOptions" })}
+          <ChevronDownIcon className="size-3.5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="top" align="end" className="w-64 max-w-[calc(100vw-1.5rem)]">
+        {model ? renderOption(model) : null}
+        {moreControls}
+      </PopoverContent>
+    </Popover>
+  ) : null;
+  const leadingActions = (
     <div
       className="flex min-w-0 flex-wrap items-center gap-1"
       data-testid="external-engine-controls"
     >
-      {onSelectEngine ? (
-        <Select
-          value={engine}
-          onValueChange={onSelectEngine}
-          disabled={disabled}
-          open={activePicker === "engine"}
-          onOpenChange={(open) =>
-            setActivePicker((current) => (open ? "engine" : current === "engine" ? null : current))
-          }
-        >
-          <SelectTrigger
-            variant="ghost"
-            className={engineTriggerClassName}
-            aria-label={intl.formatMessage({ id: "engine.select" })}
-            data-testid="session-engine-select"
-            data-composer-collapse-priority="3"
-            indicator={
-              <ChevronDownIcon className="size-3.5 text-foreground-subtle group-data-[composer-compact=true]/engine-option:hidden" />
-            }
-          >
-            <BotIcon className="hidden size-4 group-data-[composer-compact=true]/engine-option:block" />
-            <span className="group-data-[composer-compact=true]/engine-option:hidden">
-              <SelectValue />
-            </span>
-          </SelectTrigger>
-          <SelectContent
-            position="popper"
-            side="top"
-            sideOffset={8}
-            onCloseAutoFocus={(event) => {
-              if (activePicker !== null && activePicker !== "engine") event.preventDefault();
-            }}
-          >
-            {Object.entries(ENGINE_LABELS).map(([value, label]) => {
-              // 远程工作区不能运行外部引擎：保留行布局，灰显并就地说明原因。
-              const unavailable =
-                Boolean(externalEngineUnavailableReason) &&
-                isExternalSessionEngine(value as SessionEngine);
-              return (
-                <SelectItem key={value} value={value} disabled={unavailable}>
-                  <span>{label}</span>
-                  {unavailable ? (
-                    <span className="text-ui-sm text-foreground-subtlest">
-                      {externalEngineUnavailableReason}
-                    </span>
-                  ) : null}
-                </SelectItem>
-              );
-            })}
-          </SelectContent>
-        </Select>
-      ) : (
-        <span
-          className="inline-flex size-7 shrink-0 items-center justify-center grayscale opacity-60"
-          data-testid="session-engine-indicator"
-        >
-          <TaskClientLogo engine={engine} />
-        </span>
-      )}
-      {onSelectEngine && onSelectConnection && connectionChoices.length > 1 ? (
-        // 连接配置只在草稿可改；选择由草稿 owner 记录上次使用并重建预热，不在此保存第二份状态。
-        <EngineConfigMenu
-          option={{
-            id: "connection",
-            name: intl.formatMessage({ id: "engine.profile.composer" }),
-            currentValue: connectionProfileId ?? "",
-            options: connectionChoices.map((choice) => ({
-              value: choice.id,
-              name: choice.name,
-              ...(choice.description ? { description: choice.description } : {}),
-            })),
-          }}
-          icon={PlugIcon}
-          // 与引擎选择一致：连接中或连接失败时仍可改选连接，由草稿 owner 回收旧预热。
-          disabled={disabled}
-          open={activePicker === "connection"}
-          restoreFocus={activePicker === null || activePicker === "connection"}
-          onOpenChange={(open) =>
-            setActivePicker((current) =>
-              open ? "connection" : current === "connection" ? null : current,
-            )
-          }
-          onValueChange={(value) => {
-            if (value !== connectionProfileId) onSelectConnection(value);
-          }}
-        />
-      ) : null}
-      {!onSelectEngine && connectionLabel ? (
-        <span
-          className="max-w-32 truncate px-1 text-ui-sm text-foreground-subtle data-[composer-compact=true]:hidden"
-          title={intl.formatMessage({ id: "engine.profile.boundTitle" }, { name: connectionLabel })}
-          data-composer-collapse-priority="3"
-          data-testid="session-engine-connection"
-        >
-          {connectionLabel}
-        </span>
-      ) : null}
+      {primary.filter((option) => engineConfigOptionKind(option.id) === "other").map(renderOption)}
       {loading ? (
         <span role="status" className="px-2 text-ui-sm text-foreground-subtle">
           {intl.formatMessage({ id: "engine.connecting" })}
@@ -189,32 +222,39 @@ export function EngineControls({
             </button>
           ) : null}
           {diagnostic ? (
-            <ErrorDiagnostics
-              text={diagnostic}
-              label={intl.formatMessage({ id: "engine.errorDetails" })}
-              copyLabel={intl.formatMessage({ id: "engine.copyErrorDetails" })}
-            />
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button type="button" variant="ghost" className="h-7 px-2 text-ui-sm">
+                  {intl.formatMessage({ id: "engine.errorDetails" })}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                side="top"
+                align="start"
+                className="w-80 max-w-[calc(100vw-1.5rem)]"
+                data-testid="engine-error-details"
+              >
+                <ErrorDiagnostics
+                  text={diagnostic}
+                  label={intl.formatMessage({ id: "engine.errorDetails" })}
+                  copyLabel={intl.formatMessage({ id: "engine.copyErrorDetails" })}
+                />
+              </PopoverContent>
+            </Popover>
           ) : null}
         </div>
       ) : null}
-      {options.map((option) => {
-        const picker = `config:${option.id}`;
-        const props = {
-          option,
-          disabled:
-            disabled || loading || configPending || Boolean(failureMessage) || !onConfigChange,
-          open: activePicker === picker,
-          restoreFocus: activePicker === null || activePicker === picker,
-          onOpenChange: (open: boolean) =>
-            setActivePicker((current) => (open ? picker : current === picker ? null : current)),
-          onValueChange: (value: string) => onConfigChange?.(option.id, value),
-        };
-        return engineConfigOptionKind(option.id) === "effort" ? (
-          <EngineEffortPicker key={option.id} {...props} modelLabel={modelLabel} />
-        ) : (
-          <EngineConfigMenu key={option.id} {...props} />
-        );
-      })}
     </div>
+  );
+  return renderLayout ? (
+    renderLayout({ leadingActions, modelControls })
+  ) : (
+    <>
+      {placement !== "toolbar" ? (selector ?? indicator) : null}
+      <div className="flex min-w-0 items-center gap-1" data-testid="external-engine-toolbar">
+        {leadingActions}
+        {modelControls}
+      </div>
+    </>
   );
 }

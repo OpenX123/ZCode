@@ -178,8 +178,6 @@ import { PptxElementReferenceChip } from "@/v4/composer/PptxElementReferenceChip
 import { useOpenPptxElementReference } from "@/v4/composer/useOpenPptxElementReference.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import { useConversationSelectionReferences } from "@/v4/composer/useConversationSelectionReferences.js";
-import { ConversationBackgroundWorkTrigger } from "@/v4/composer/ConversationBackgroundWorkTrigger.js";
-import { V4ComposerCuaEntry } from "@/v4/composer/V4ComposerCuaEntry.js";
 import {
   V4ComposerModeSwitch,
   V4ComposerModelControls,
@@ -393,6 +391,10 @@ export interface ConversationComposerProps {
   snapshot: ConversationSnapshot | null;
   externalEngine?: boolean;
   engineControls?: ReactNode;
+  /** 同一外部配置 owner 的模型/深度展示，位于发送入口左侧。 */
+  engineModelControls?: ReactNode;
+  /** 草稿引擎分段选择，位于输入区上方；不包含原生配置。 */
+  engineSelector?: ReactNode;
   engineNotReadyContent?: ReactNode;
   /** 草稿 scope（sessionId；draft 态 null → "__draft__" scope）。 */
   sessionId?: string | null;
@@ -480,14 +482,6 @@ export interface ConversationComposerProps {
   /** 选中思考深度；同时带上用户操作时看到的模型，避免异步回流后把 thought 归到另一模型。 */
   onSelectThought: (thought: string, modelContext: { provider: string; model: string }) => void;
   onSwitchMode: (mode: string) => void;
-  /** 打开当前 session 的 Status panel，并直达 Running 明细。 */
-  onOpenRunningBackgroundWorks?: () => void;
-  /**
-   * 后台任务入口点击的落点：`"workflow-run"` = 唯一在跑的工作流直达详情页（宿主判定），
-   * 缺省 `"panel"` = 展开状态胶囊。入口据此换 tooltip；行为本身在 onOpenRunningBackgroundWorks 里。
-   */
-  backgroundWorkOpenTarget?: "panel" | "workflow-run";
-  runningSubagentCount?: number;
   /** prepare/configOptions 失败时，custom provider 选择走 workspace recovery 链。 */
   onRecoverCustomModelSelection?: (
     value: string,
@@ -536,6 +530,8 @@ function ConversationComposerImpl({
   snapshot,
   externalEngine = false,
   engineControls,
+  engineModelControls,
+  engineSelector,
   engineNotReadyContent,
   sessionId = null,
   skillCatalogSessionId = sessionId,
@@ -577,9 +573,6 @@ function ConversationComposerImpl({
   onSelectModel,
   onSelectThought,
   onSwitchMode,
-  onOpenRunningBackgroundWorks,
-  backgroundWorkOpenTarget = "panel",
-  runningSubagentCount = 0,
   onRecoverCustomModelSelection,
   onSendCompressionCommand,
   error,
@@ -2253,12 +2246,15 @@ function ConversationComposerImpl({
         {remoteAvailable ? (
           <span className="flex min-w-0 shrink items-center gap-1 overflow-hidden empty:hidden">
             {externalEngine ? (
-              <ChatContextUsage
-                taskUsage={externalContextUsage}
-                selectedProvider={provider ?? ZCODE_AGENT_PROVIDER}
-                intl={intl}
-                locale={locale}
-              />
+              <>
+                {engineModelControls}
+                <ChatContextUsage
+                  taskUsage={externalContextUsage}
+                  selectedProvider={provider ?? ZCODE_AGENT_PROVIDER}
+                  intl={intl}
+                  locale={locale}
+                />
+              </>
             ) : (
               <V4ComposerModelControls
                 workspacePath={workspacePath}
@@ -2326,6 +2322,7 @@ function ConversationComposerImpl({
     ),
     [
       externalEngine,
+      engineModelControls,
       canSend,
       activeConfigPicker,
       composerPhase,
@@ -2367,13 +2364,13 @@ function ConversationComposerImpl({
     ],
   );
 
-  // 左下：模式选择 + CUA 入口 + 当前 session 后台任务入口。followupMode 由 app 设置页同步到 CLI，
-  // 不在 composer 暴露局部开关；后台入口只消费同一 snapshot，不维护第二份任务状态。
+  // 左下只保留模式选择。Computer Use 与后台工作入口仍由各自页面承载，
+  // 不在 composer 工具条重复占用输入宽度。
   const leadingActionsNode = useMemo(
     () => (
       <>
         {engineControls ? (
-          <fieldset disabled={pending} className="min-w-0">
+          <fieldset disabled={!externalEngine && pending} className="min-w-0 shrink">
             {engineControls}
           </fieldset>
         ) : null}
@@ -2389,23 +2386,6 @@ function ConversationComposerImpl({
             onSwitchMode={onSwitchMode}
           />
         ) : null}
-        {/* Bug 原因：附件画廊 rebase 曾整段覆盖 leadingActions，误删 staging 的 CUA 常驻入口。
-            入口自身继续负责平台、远程与设置可见性，不在 composer 重复判定。 */}
-        {!externalEngine ? (
-          <V4ComposerCuaEntry
-            workspacePath={workspacePath}
-            workspaceIdentity={workspaceIdentity}
-            remoteSessionId={remoteSessionId}
-            isWebRemoteControl={isWebRemoteControl}
-            currentSessionBusy={canStop}
-          />
-        ) : null}
-        <ConversationBackgroundWorkTrigger
-          backgroundWorks={snapshot?.backgroundWorks ?? []}
-          runningSubagentCount={runningSubagentCount}
-          onOpen={onOpenRunningBackgroundWorks}
-          openTarget={backgroundWorkOpenTarget}
-        />
       </>
     ),
     [
@@ -2413,19 +2393,12 @@ function ConversationComposerImpl({
       pending,
       externalEngine,
       activeConfigPicker,
-      canStop,
       disabled,
       runtimeBlocked,
       draftConfig,
       handleConfigPickerOpenChange,
-      isWebRemoteControl,
-      backgroundWorkOpenTarget,
-      onOpenRunningBackgroundWorks,
       onSwitchMode,
       provider,
-      remoteSessionId,
-      runningSubagentCount,
-      snapshot?.backgroundWorks,
       workspaceIdentity,
       workspacePath,
     ],
@@ -2479,6 +2452,11 @@ function ConversationComposerImpl({
         </div>
       ) : null}
       {engineNotReadyContent}
+      {engineSelector ? (
+        <div className="mb-3 flex min-w-0 justify-center" data-testid="composer-engine-selector">
+          {engineSelector}
+        </div>
+      ) : null}
       {visibleError ? (
         // 仅展示附件错误会漏掉会话级 lastError，任务失败后也应在输入框上方显示原因。
         // 这里复用旧 ChatErrorBanner 壳，只接收 SessionPane 已归一化后的当前错误。
@@ -2539,7 +2517,10 @@ function ConversationComposerImpl({
       >
         {contextHeader ? (
           // 旧 ChatViewComposer contextHeaderContent 同款包装（workspace 菜单 + Git 分支）。
-          <div className="relative z-10 p-1.5 flex min-w-0 flex-wrap items-center gap-0">
+          <div
+            className="relative z-10 flex min-w-0 flex-nowrap items-center gap-0 overflow-hidden p-1.5"
+            data-testid="composer-context-header"
+          >
             <ComposerSubmissionPendingContext.Provider value={updateTargetSelectionPending}>
               {contextHeader}
             </ComposerSubmissionPendingContext.Provider>

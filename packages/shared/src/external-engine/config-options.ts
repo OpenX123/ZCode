@@ -19,3 +19,8 @@ export function engineConfigOptionKind(configId: string): EngineConfigOptionKind
 export type ExternalEngineConfigPreferences = Partial<
   Record<ExternalSessionEngine, Record<string, string>>
 >;
+
+/** 本机按引擎与连接配置隔离的确认偏好；不存在连接记录时才兼容读取旧引擎偏好。 */
+export type ExternalEngineConnectionConfigPreferences = Partial<
+  Record<ExternalSessionEngine, Record<string, Record<string, string>>>
+>;

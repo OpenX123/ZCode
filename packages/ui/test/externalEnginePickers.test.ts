@@ -276,7 +276,8 @@ it("网关502显示服务错误、HTTP状态和可复制request id", () => {
   expect(alert.textContent).toContain("模型请求失败");
   expect(alert.textContent).toContain("HTTP 502");
   expect(alert.textContent).toContain("Bad Gateway");
-  expect(alert.textContent).toContain("fixture-request");
+  fireEvent.click(screen.getByRole("button", { name: "错误详情" }));
+  expect(screen.getByTestId("engine-error-details").textContent).toContain("fixture-request");
   expect(screen.getByRole("button", { name: "复制错误详情", hidden: true })).toBeDefined();
 });
 
@@ -286,61 +287,116 @@ const choices = [
   { id: "gateway-a", name: "公司网关", description: "API Key" },
 ];
 
-it("草稿按引擎展示连接配置，一次展开完整列表并回传所选 ID", () => {
+it.each([true, false])("草稿和已有会话均不暴露连接入口，设置绑定事实不触发写入：%s", (draft) => {
   const onSelectConnection = vi.fn();
   render(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN",
       children: createElement(EngineControls, {
-        engine: "claude-code",
-        onSelectEngine: vi.fn(),
+        engine: "codex",
+        placement: "toolbar",
+        onSelectEngine: draft ? vi.fn() : undefined,
         connectionChoices: choices,
-        connectionProfileId: "official",
+        connectionProfileId: "gateway-a",
+        connectionLabel: "公司网关",
         onSelectConnection,
       }),
     }),
   );
-  const trigger = screen.getByTestId("engine-config-connection");
-  expect(trigger.textContent).toContain("官方登录");
-  fireEvent.keyDown(trigger, { key: "ArrowDown" });
-  expect(screen.getAllByRole("menuitemradio")).toHaveLength(3);
-  fireEvent.click(screen.getByRole("menuitemradio", { name: "官方登录" }));
+  expect(screen.queryByTestId("engine-config-connection")).toBeNull();
+  expect(screen.queryByTestId("session-engine-connection")).toBeNull();
+  expect(screen.queryByText("公司网关")).toBeNull();
   expect(onSelectConnection).not.toHaveBeenCalled();
-  fireEvent.keyDown(screen.getByTestId("engine-config-connection"), { key: "ArrowDown" });
-  fireEvent.click(screen.getByRole("menuitemradio", { name: "公司网关" }));
-  expect(onSelectConnection).toHaveBeenCalledExactlyOnceWith("gateway-a");
 });
 
-it("只有一个可选配置时不显示选择器；已创建会话只读显示绑定且不可改选", () => {
+it("草稿分段引擎选择支持直接切换，仅选中项显示名称；已有会话固定引擎", () => {
+  const onSelectEngine = vi.fn();
   const view = render(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN",
       children: createElement(EngineControls, {
         engine: "codex",
-        onSelectEngine: vi.fn(),
-        connectionChoices: [choices[1]!],
-        connectionProfileId: "inherit",
-        onSelectConnection: vi.fn(),
+        placement: "selector",
+        onSelectEngine,
       }),
     }),
   );
-  expect(screen.queryByTestId("engine-config-connection")).toBeNull();
+  const selector = screen.getByRole("group", { name: "会话引擎" });
+  expect(selector.querySelectorAll("button")).toHaveLength(3);
+  expect(screen.getByTestId("session-engine-option-codex").textContent).toContain("Codex");
+  expect(screen.getByTestId("session-engine-option-claude-code").textContent).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "Claude Code", exact: true }));
+  expect(onSelectEngine).toHaveBeenCalledExactlyOnceWith("claude-code");
   view.rerender(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN",
+      children: createElement(EngineControls, { engine: "codex" }),
+    }),
+  );
+  expect(screen.queryByTestId("session-engine-select")).toBeNull();
+  expect(screen.getByTestId("session-engine-indicator")).toBeDefined();
+});
+
+it("权限独立，模型深度共用一个入口，Fast仅在弹层更多且显式选择才写入", () => {
+  const onChange = vi.fn();
+  const mode = {
+    id: "mode",
+    name: "Permission",
+    currentValue: "fast",
+    options: [{ value: "fast", name: "Fast permission" }],
+  };
+  const model = {
+    id: "model",
+    name: "Model",
+    currentValue: "m",
+    options: [{ value: "m", name: "Model M" }],
+  };
+  const fast = {
+    id: "fast_mode",
+    name: "Fast",
+    currentValue: "off",
+    options: [
+      { value: "off", name: "Off" },
+      { value: "on", name: "On" },
+    ],
+  };
+  render(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN",
       children: createElement(EngineControls, {
         engine: "codex",
-        connectionChoices: choices,
-        connectionProfileId: "gateway-a",
-        connectionLabel: "公司网关",
+        placement: "toolbar",
+        onSelectEngine: vi.fn(),
+        connectionChoices: [choices[1]!],
+        connectionProfileId: "inherit",
+        onSelectConnection: vi.fn(),
+        options: [fast, effort, model, mode],
+        onConfigChange: onChange,
       }),
     }),
   );
-  expect(screen.queryByTestId("engine-config-connection")).toBeNull();
-  const label = screen.getByTestId("session-engine-connection");
-  expect(label.textContent).toBe("公司网关");
-  expect(label.getAttribute("title")).toContain("公司网关");
-  expect(label.closest("button")).toBeNull();
+  expect(screen.queryByTestId("engine-config-fast_mode")).toBeNull();
+  const controls = screen.getByTestId("external-engine-toolbar");
+  expect(
+    Array.from(controls.querySelectorAll("button[data-testid]")).map((node) =>
+      node.getAttribute("data-testid"),
+    ),
+  ).toEqual(["engine-config-mode", "engine-config-model-effort"]);
+  const combined = screen.getByTestId("engine-config-model-effort");
+  expect(combined.textContent).toContain("Model M");
+  expect(combined.textContent).toContain("Medium");
+  expect(screen.queryByTestId("engine-config-more")).toBeNull();
+  fireEvent.click(combined);
+  expect(screen.getByRole("slider", { name: "Reasoning effort" })).toBeDefined();
+  fireEvent.keyDown(screen.getByTestId("engine-config-model"), { key: "ArrowDown" });
+  expect(screen.getByRole("menuitemradio", { name: "Model M" })).toBeDefined();
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  fireEvent.click(combined);
+  fireEvent.click(screen.getByTestId("engine-more-options").querySelector("summary")!);
+  expect(onChange).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByTestId("engine-config-fast_mode"), { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "On" }));
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("fast_mode", "on");
 });
 
 it("草稿改选连接：Host 记录上次使用并重建预热，回流前显示所选值；已创建会话只读显示非缺省绑定", async () => {
@@ -385,6 +441,9 @@ it("草稿改选连接：Host 记录上次使用并重建预热，回流前显�
     "团队网关",
   ]);
   expect(draft.result.current.currentId).toBe("official");
+  expect(draft.result.current.choices.find((choice) => choice.id === "gw")?.description).toContain(
+    "gw.example",
+  );
   expect(draft.result.current.draftConnectionProfileId()).toBeUndefined();
   act(() => draft.result.current.select("gw"));
   expect(onDraftSelected).toHaveBeenCalledOnce();
@@ -417,6 +476,45 @@ it("草稿改选连接：Host 记录上次使用并重建预热，回流前显�
   expect(service.updateConnectionProfiles).toHaveBeenCalledOnce();
 });
 
+it("更多内速度选择被拒后保留服务值，Escape 关闭菜单并将焦点还给更多入口", async () => {
+  const onChange = vi.fn(async () => false);
+  render(
+    tree(
+      [
+        {
+          id: "service_tier",
+          name: "Fast",
+          currentValue: "off",
+          options: [
+            { value: "off", name: "Off" },
+            { value: "on", name: "On" },
+          ],
+        },
+      ],
+      onChange,
+    ),
+  );
+  fireEvent.click(screen.getByTestId("engine-config-model-effort"));
+  fireEvent.click(screen.getByTestId("engine-more-options").querySelector("summary")!);
+  fireEvent.keyDown(screen.getByTestId("engine-config-service_tier"), { key: "ArrowDown" });
+  fireEvent.keyDown(screen.getByRole("menuitemradio", { name: "On" }), { key: "Enter" });
+  await waitFor(() => expect(screen.queryByTestId("engine-more-options")).toBeNull());
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByTestId("engine-config-model-effort")),
+  );
+  fireEvent.click(screen.getByTestId("engine-config-model-effort"));
+  fireEvent.click(screen.getByTestId("engine-more-options").querySelector("summary")!);
+  fireEvent.keyDown(screen.getByTestId("engine-config-service_tier"), { key: "ArrowDown" });
+  expect(screen.getByRole("menuitemradio", { name: "Off" }).getAttribute("aria-checked")).toBe(
+    "true",
+  );
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByTestId("engine-more-options")).toBeNull());
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByTestId("engine-config-model-effort")),
+  );
+});
+
 it("远程工作区草稿的选择器灰显外部引擎并就地说明原因，只能选择 YCode", async () => {
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     configurable: true,
@@ -433,16 +531,105 @@ it("远程工作区草稿的选择器灰显外部引擎并就地说明原因，�
       }),
     }),
   );
-  fireEvent.keyDown(screen.getByRole("combobox", { name: "会话引擎" }), { key: "ArrowDown" });
-  const codex = await screen.findByRole("option", { name: /Codex/ });
-  const claude = screen.getByRole("option", { name: /Claude Code/ });
+  const codex = screen.getByRole("button", { name: "Codex", exact: true });
+  const claude = screen.getByRole("button", { name: "Claude Code", exact: true });
+  const reason = screen.getByText("远程工作区暂不支持", { exact: true });
+  expect(reason.closest("[hidden], [aria-hidden=true], .hidden, .sr-only")).toBeNull();
+  expect(getComputedStyle(reason).display).not.toBe("none");
+  expect(getComputedStyle(reason).visibility).not.toBe("hidden");
+  expect(screen.getByRole("group", { name: "会话引擎" }).getAttribute("aria-describedby")).toBe(
+    reason.id,
+  );
   for (const option of [codex, claude]) {
-    expect(option.getAttribute("aria-disabled")).toBe("true");
-    expect(option.textContent).toContain("远程工作区暂不支持");
+    expect(option.hasAttribute("disabled")).toBe(true);
+    expect(option.getAttribute("aria-describedby")).toBe(reason.id);
+    expect(option.getAttribute("title")).toContain("远程工作区暂不支持");
   }
-  const builtin = screen.getByRole("option", { name: "ZCode" });
-  expect(builtin.getAttribute("aria-disabled")).toBeNull();
+  const builtin = screen.getByRole("button", { name: "ZCode", exact: true });
+  expect(builtin.hasAttribute("disabled")).toBe(false);
   expect(builtin.textContent).not.toContain("远程工作区暂不支持");
   fireEvent.click(codex);
   expect(onSelectEngine).not.toHaveBeenCalled();
+});
+
+it("展示插槽共享一个picker owner，权限与模型弹层互斥，模型目录可用时不伪造深度", async () => {
+  const model = {
+    id: "model",
+    name: "Model",
+    currentValue: "m",
+    options: [{ value: "m", name: "Native model" }],
+  };
+  const mode = {
+    id: "mode",
+    name: "Permission",
+    currentValue: "safe",
+    options: [{ value: "safe", name: "Safe" }],
+  };
+  render(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN",
+      children: createElement(EngineControls, {
+        engine: "codex",
+        placement: "toolbar",
+        options: [model, effort, mode],
+        onConfigChange: vi.fn(),
+        renderLayout: ({ leadingActions, modelControls }) =>
+          createElement(
+            "div",
+            {},
+            createElement("div", { "data-testid": "leading-slot" }, leadingActions),
+            createElement("div", { "data-testid": "model-slot" }, modelControls),
+          ),
+      }),
+    }),
+  );
+  expect(screen.getByTestId("leading-slot").querySelectorAll("button")).toHaveLength(1);
+  expect(screen.getByTestId("model-slot").querySelectorAll("button")).toHaveLength(1);
+  fireEvent.click(screen.getByTestId("engine-config-model-effort"));
+  expect(screen.getByRole("slider")).toBeDefined();
+  fireEvent.keyDown(screen.getByTestId("engine-config-mode"), { key: "ArrowDown" });
+  await waitFor(() => expect(screen.queryByRole("slider")).toBeNull());
+  expect(screen.getByRole("menuitemradio", { name: "Safe" })).toBeDefined();
+});
+
+it.each(["model", "fast"])("空深度目录不禁用有效%s，打开不写配置，选择回传原始值", (capability) => {
+  const onChange = vi.fn();
+  const option =
+    capability === "model"
+      ? {
+          id: "model",
+          name: "Model",
+          currentValue: "native-a",
+          options: [
+            { value: "native-a", name: "Native A" },
+            { value: "native-b", name: "Native B" },
+          ],
+        }
+      : {
+          id: "fast",
+          name: "Fast mode",
+          currentValue: "native-off",
+          options: [
+            { value: "native-off", name: "Off" },
+            { value: "native-on", name: "On" },
+          ],
+        };
+  render(tree([{ ...effort, currentValue: "", options: [] }, option], onChange));
+  const trigger = screen.getByTestId(
+    capability === "model" ? "engine-config-model-effort" : "engine-config-reasoning_effort",
+  );
+  expect(trigger.hasAttribute("disabled")).toBe(false);
+  fireEvent.click(trigger);
+  expect(screen.getByRole("slider").hasAttribute("disabled")).toBe(true);
+  expect(onChange).not.toHaveBeenCalled();
+  if (capability === "model") {
+    fireEvent.keyDown(screen.getByTestId("engine-config-model"), { key: "ArrowDown" });
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Native B" }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("model", "native-b");
+  } else {
+    fireEvent.click(screen.getByTestId("engine-more-options").querySelector("summary")!);
+    fireEvent.keyDown(screen.getByTestId("engine-config-fast"), { key: "ArrowDown" });
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "On" }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("fast", "native-on");
+  }
 });
