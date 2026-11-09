@@ -2,8 +2,7 @@ import {
   TID_CHAT_SUMMARY_RUNNING_AGENTS,
   TID_V4_SUBAGENT_OPEN_SIDE_PANE,
   TID_V4_SUBAGENT_SESSION_HEADER,
-  TID_V4_SUBAGENT_SPAWN_GROUP,
-  TID_V4_SUBAGENT_SPAWN_TOGGLE,
+  TID_V4_SUBAGENT_WORK_CARD,
 } from "@zcode/shared/test-ids";
 import { clearAppData } from "../../../helpers/desktop-app.js";
 import {
@@ -13,7 +12,7 @@ import {
 } from "../../../helpers/v4-conversation.js";
 
 // MA01-MA04（docs/desktop/multi-agent-display-spec.md「验收场景」）：同一轮并行 7 个 child，
-// 时间线合并为一行，胶囊显示 3 个头像与运行数，点击名称打开带头部的右侧只读详情。
+// 时间线合并为一张 Subagent 工作卡（1.3 W8），胶囊显示 3 个头像与运行数，点击成员行打开带头部的右侧只读详情。
 const TIMEOUT_MS = 180000;
 const CHILD_COUNT = 7;
 const PARENT_MARKER = "E2E_MULTI_AGENT_DISPLAY_PARENT";
@@ -32,15 +31,18 @@ interface SpawnRowState {
 async function readSpawnRowState(): Promise<SpawnRowState> {
   return browser.execute(
     (groupPrefix, openPrefix, capsuleTestId) => {
+      // 工作卡根带 data-member-count；同前缀的停止 / 折叠按钮不计入。
       const groups = Array.from(
-        document.querySelectorAll<HTMLElement>(`[data-testid^="${groupPrefix}-"]`),
+        document.querySelectorAll<HTMLElement>(
+          `[data-testid^="${groupPrefix}-"][data-member-count]`,
+        ),
       );
       const group = groups[0];
       const capsule = document.querySelector<HTMLElement>(`[data-testid="${capsuleTestId}"]`);
       return {
         groups: groups.length,
-        spawnCount: Number(group?.dataset.spawnCount ?? "0"),
-        runningCount: Number(group?.dataset.runningCount ?? "0"),
+        spawnCount: Number(group?.dataset.memberCount ?? "0"),
+        runningCount: group?.dataset.state === "running" ? Number(group.dataset.memberCount) : 0,
         openActions: document.querySelectorAll(`[data-testid^="${openPrefix}-"]`).length,
         variants: Array.from(group?.querySelectorAll("svg[data-face-variant]") ?? []).map(
           (face) => face.getAttribute("data-face-variant") ?? "",
@@ -49,7 +51,7 @@ async function readSpawnRowState(): Promise<SpawnRowState> {
         capsuleText: capsule?.textContent ?? "",
       };
     },
-    TID_V4_SUBAGENT_SPAWN_GROUP,
+    TID_V4_SUBAGENT_WORK_CARD,
     TID_V4_SUBAGENT_OPEN_SIDE_PANE,
     TID_CHAT_SUMMARY_RUNNING_AGENTS,
   );
@@ -102,9 +104,7 @@ describe("多智能体展示 manual review", () => {
     expect(live.capsuleFaces).toBe(3);
     expect(live.capsuleText).toContain(String(CHILD_COUNT));
 
-    // 展开逐个卡后，直开入口仍然每个 child 只有一个。
-    const toggle = await $(`[data-testid^="${TID_V4_SUBAGENT_SPAWN_TOGGLE}-"]`);
-    await toggle.click();
+    // 每个 child 只有一个直开入口（工作卡成员行）。
     expect((await readSpawnRowState()).openActions).toBe(CHILD_COUNT);
 
     const firstName = await $(`[data-testid^="${TID_V4_SUBAGENT_OPEN_SIDE_PANE}-"]`);
@@ -126,7 +126,7 @@ describe("多智能体展示 manual review", () => {
     );
     await browser.waitUntil(async () => (await readSpawnRowState()).runningCount === 0, {
       timeout: 30000,
-      timeoutMsg: "MA07 派发行没有收口为全部完成",
+      timeoutMsg: "MA07 工作卡没有收口为全部完成",
     });
     expect(await header.getAttribute("data-status")).toBe("done");
   });

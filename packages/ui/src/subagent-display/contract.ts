@@ -54,16 +54,36 @@ export interface SubagentSessionHeaderModel {
   endedAt?: number;
   /** 父会话可停的 backgroundWork；缺席即不显示停止。 */
   stopWorkId?: string;
+  /** W8：子智能体模型（展示用 ID）与思考档位；只有投影带值时出现。 */
+  model?: string;
+  effort?: string;
 }
+
+/**
+ * 工作卡按子会话读取的父会话运行态（docs/desktop/multi-agent-display-spec.md「停止」）：
+ * `liveStatus` 来自 `snapshot.subagents.running`（waiting / blocked 的唯一来源），
+ * `cancellableWorkId` 来自精确匹配、`cancellable !== false` 的 running backgroundWork。
+ * 内容不变时由 `useSubagentWorkLiveIndex` 保持引用稳定，避免整条时间线重渲染。
+ */
+export interface SubagentWorkLiveEntry {
+  liveStatus?: "running" | "waiting" | "blocked";
+  cancellableWorkId?: string;
+}
+export type SubagentWorkLiveIndex = ReadonlyMap<string, SubagentWorkLiveEntry>;
 
 /** 可进入派发行的成员：已配对的 Agent 卡，或尚未配对的 Agent/Task 工具行。 */
 export type AgentSpawnMemberItem =
   | Extract<ConversationAssistantWorkRenderItem, { kind: "agentToolCall" }>
   | Extract<ConversationAssistantWorkRenderItem, { kind: "row" }>;
 
-/** 同一轮相邻 ≥2 个派发合并后的一行；身份锚定首个成员。 */
+/**
+ * 同一轮相邻派发合并后的一项；身份锚定首个成员。
+ * `workCard`：任一成员已有子会话，1 个或多个成员渲染为 Subagent 工作卡；
+ * `sentence`：都没有子会话且 ≥2 个，渲染为旧的"A、B 和 C 开始工作"行。
+ */
 export interface AgentSpawnGroupRenderItem {
   kind: "agentSpawnGroup";
+  presentation: "workCard" | "sentence";
   key: string;
   rowId: number;
   turnId: string;

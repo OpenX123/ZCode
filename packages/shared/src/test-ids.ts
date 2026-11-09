@@ -701,8 +701,6 @@ export const TID_V4_TURN_NAVIGATOR_ITEM = "v4-turn-navigator-item";
 export const TID_V4_TURN_NAVIGATOR_TOOLTIP = "v4-turn-navigator-tooltip";
 /** v4 subagent 行下钻开关（动态后缀为 rowId；有 childSessionId 才可点） */
 export const TID_V4_SUBAGENT_TOGGLE = "v4-subagent-toggle";
-/** v4 subagent 下钻迷你时间线容器（动态后缀为 childSessionId） */
-export const TID_V4_SUBAGENT_DRILLDOWN = "v4-subagent-drilldown";
 /** v4 subagent 下钻「在分屏打开」入口（动态后缀为 childSessionId） */
 /** @deprecated subagent 详情已迁移到右侧 tabs；保留常量避免外部旧测试编译失败。 */
 export const TID_V4_SUBAGENT_OPEN_SPLIT = "v4-subagent-open-split";
@@ -717,6 +715,20 @@ export const TID_V4_SUBAGENT_SPAWN_TOGGLE = "v4-subagent-spawn-toggle";
 export const TID_V4_SUBAGENT_SESSION_HEADER = "v4-subagent-session-header";
 /** 右侧子智能体详情头部的停止按钮（父会话 cancelBackgroundWork） */
 export const TID_V4_SUBAGENT_SESSION_STOP = "v4-subagent-session-stop";
+/** 右侧子智能体详情头部的模型标签 */
+export const TID_V4_SUBAGENT_SESSION_MODEL = "v4-subagent-session-model";
+/** 右侧子智能体详情底部的只读提示（替代输入区） */
+export const TID_V4_SUBAGENT_SESSION_READ_ONLY_HINT = "v4-subagent-session-read-only-hint";
+/** 对话行内 Subagent 工作卡（动态后缀为首个成员 rowId） */
+export const TID_V4_SUBAGENT_WORK_CARD = "v4-subagent-work-card";
+/** 工作卡"停止全部"（动态后缀为首个成员 rowId） */
+export const TID_V4_SUBAGENT_WORK_CARD_STOP_ALL = "v4-subagent-work-card-stop-all";
+/** 工作卡成员的单个"停止"（动态后缀为 childSessionId） */
+export const TID_V4_SUBAGENT_WORK_CARD_STOP = "v4-subagent-work-card-stop";
+/** 工作卡全部结束后的折叠/展开（动态后缀为首个成员 rowId） */
+export const TID_V4_SUBAGENT_WORK_CARD_TOGGLE = "v4-subagent-work-card-toggle";
+/** 工作卡中尚未登记子会话的成员行（动态后缀为 toolCallId）；有子会话时用 TID_V4_SUBAGENT_OPEN_SIDE_PANE */
+export const TID_V4_SUBAGENT_WORK_CARD_MEMBER = "v4-subagent-work-card-member";
 /** 状态胶囊的运行中智能体项（头像串 + 计数） */
 export const TID_CHAT_SUMMARY_RUNNING_AGENTS = "chat-summary-running-agents";
 /** v4 userInput 行附件列表（动态后缀为 rowId） */

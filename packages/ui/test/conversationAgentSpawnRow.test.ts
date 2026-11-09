@@ -2,7 +2,7 @@
 import { act, cleanup, render } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SubagentRow, ToolCallRow } from "@zcode/shared/zcode-protocol-v4";
+import type { ToolCallRow } from "@zcode/shared/zcode-protocol-v4";
 import zhCN from "@/i18n/locales/zh-CN.js";
 import { buildAssistantWorkRenderItems } from "@/v4/conversationAssistantWorkItems.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
@@ -82,32 +82,16 @@ function agentCall(rowId: number, overrides: Partial<ToolCallRow> = {}): ToolCal
   } as ToolCallRow;
 }
 
-function subagent(rowId: number, parent: ToolCallRow, childSessionId: string): SubagentRow {
-  return {
-    rowId,
-    turnId: parent.turnId,
-    createdAt: rowId,
-    createdAtSeq: rowId,
-    kind: "subagent",
-    parentToolCallId: parent.toolCallId,
-    subagentType: "Explore",
-    status: "running",
-    summaryText: "",
-    childSessionId,
-  } as SubagentRow;
-}
-
-async function renderGroup(
-  rows: Array<ToolCallRow | SubagentRow>,
-  context: Partial<ConversationRowRenderContext>,
-) {
+async function renderGroup(rows: ToolCallRow[], context: Partial<ConversationRowRenderContext>) {
   const { groupConsecutiveAgentSpawns, buildSubagentAvatarIndex, ConversationAgentSpawnRow } =
     await import("@/subagent-display/index.js");
   const items = groupConsecutiveAgentSpawns(
     buildAssistantWorkRenderItems(rows, { messageStreamShowReasoning: true }),
   );
   const group = items[0]!;
-  if (group.kind !== "agentSpawnGroup") throw new Error("expected a spawn group");
+  if (group.kind !== "agentSpawnGroup" || group.presentation !== "sentence") {
+    throw new Error("expected a sentence spawn group");
+  }
   const fullContext = {
     workspacePath: "/repo",
     theme: "light",
@@ -121,21 +105,16 @@ async function renderGroup(
 }
 
 describe("ConversationAgentSpawnRow", () => {
-  it("一行展示所有名称与头像，有子会话时点击名称在右侧打开对应子会话", async () => {
-    const onOpenSubagentSession = vi.fn();
-    const first = agentCall(1, { turnId: "t1" });
-    const second = agentCall(2, {
-      turnId: "t1",
-      input: { description: "检查", subagent_type: "code-reviewer" },
-    });
+  it("都没有子会话时一行展示所有名称与头像（旧派发行兜底）", async () => {
     const view = await renderGroup(
       [
-        first,
-        second,
-        subagent(3, first, "child-a"),
-        { ...subagent(4, second, "child-b"), subagentType: "code-reviewer" },
+        agentCall(1, { turnId: "t1" }),
+        agentCall(2, {
+          turnId: "t1",
+          input: { description: "检查", subagent_type: "code-reviewer" },
+        }),
       ],
-      { onOpenSubagentSession },
+      { onOpenSubagentSession: vi.fn() },
     );
 
     const row = view.getByTestId("v4-subagent-spawn-group-1");
@@ -147,21 +126,8 @@ describe("ConversationAgentSpawnRow", () => {
       "antenna",
       "glasses",
     ]);
-    expect(
-      faces.map((face) => (face as SVGElement).style.getPropertyValue("--wf-face-body")),
-    ).toEqual(["#54B9A6", "#F19D38"]);
-
-    act(() => view.getByTestId("v4-subagent-open-side-pane-child-b").click());
-    expect(onOpenSubagentSession).toHaveBeenCalledWith({
-      rootSessionId: "root",
-      parentSessionId: "parent",
-      childSessionId: "child-b",
-      subagentType: "code-reviewer",
-      title: "检查",
-    });
     expect(row.dataset.open).toBe("false");
     expect(captured.cards).toEqual([]);
-    expect(captured.presets).toEqual([]);
   });
 
   it("没有子会话时点击名称展开本行，并让该 Agent 卡展开行内详情", async () => {
@@ -187,20 +153,5 @@ describe("ConversationAgentSpawnRow", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     act(() => toggle.click());
     expect(row.dataset.open).toBe("false");
-  });
-
-  it("展开后的已配对 Agent 卡以成员身份挂载，避免重复的直开 test id", async () => {
-    const first = agentCall(21, { turnId: "t3" });
-    const second = agentCall(22, { turnId: "t3" });
-    const view = await renderGroup(
-      [first, second, subagent(23, first, "child-a"), subagent(24, second, "child-b")],
-      { onOpenSubagentSession: vi.fn() },
-    );
-    act(() => view.getByTestId("v4-subagent-spawn-toggle-21").click());
-    expect(captured.cards.slice(0, 2)).toEqual([
-      { toolCallId: "call-21", inSpawnGroup: true },
-      { toolCallId: "call-22", inSpawnGroup: true },
-    ]);
-    expect(captured.cards.every((card) => card.inSpawnGroup)).toBe(true);
   });
 });

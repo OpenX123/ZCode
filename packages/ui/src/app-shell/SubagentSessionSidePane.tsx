@@ -1,4 +1,6 @@
 import { memo, useMemo } from "react";
+import { TID_V4_SUBAGENT_SESSION_READ_ONLY_HINT } from "@zcode/shared/test-ids";
+import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { MessageFileLinkTarget } from "@/components/ai-elements/message.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type {
@@ -30,6 +32,7 @@ export const SubagentSessionSidePane = memo(function SubagentSessionSidePane({
   onOpenBackgroundBash?: (request: OpenBackgroundBashSideTabRequest) => void;
   onOpenSubagentSession: (request: OpenScopedSubagentSideTabRequest) => void;
 }) {
+  const { intl } = useZCodeIntl();
   const scope = useMemo<PaneWorkspaceScope>(
     () => ({
       workspacePath: tab.workspacePath,
@@ -64,6 +67,13 @@ export const SubagentSessionSidePane = memo(function SubagentSessionSidePane({
             onOpenBackgroundBash={onOpenBackgroundBash}
           />
         </div>
+        {/* 子会话只读：输入区位置换成一行说明（docs/desktop/multi-agent-display-spec.md「右侧详情」）。 */}
+        <p
+          data-testid={TID_V4_SUBAGENT_SESSION_READ_ONLY_HINT}
+          className="shrink-0 border-t border-border px-4 py-2.5 text-center text-ui-sm text-foreground-subtle"
+        >
+          {intl.formatMessage({ id: "subagentDisplay.sidePane.readOnlyHint" })}
+        </p>
       </div>
     </V4PaneConversationProvider>
   );

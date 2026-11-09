@@ -160,5 +160,54 @@ describe("SubagentSessionHeader", () => {
       "subagentDisplay.header.took(1chat.summaryPanel.duration.minutes 30chat.summaryPanel.duration.seconds)",
     );
     expect(view.queryByTestId("v4-subagent-session-stop")).toBeNull();
+    // 没有 model 时不显示模型标签（外部引擎、继承父模型）。
+    expect(view.queryByTestId("v4-subagent-session-model")).toBeNull();
+  });
+
+  it("W8：运行中从父会话 running[] 显示模型与档位，结束后读父时间线的 subagent 行", async () => {
+    harness.snapshots.set("parent", {
+      subagents: {
+        revision: 4,
+        childSessionIds: ["child-b"],
+        running: [
+          {
+            childSessionId: "child-b",
+            subagentType: "Explore",
+            title: "Explore structure",
+            status: "running",
+            startedAt: Date.now() - 5_000,
+            model: "gpt-6.1-sol",
+            effort: "high",
+          },
+        ],
+        endedTotal: 0,
+      },
+      backgroundWorks: [],
+    });
+    const running = await renderHeader();
+    expect(running.getByTestId("v4-subagent-session-model").textContent).toBe("gpt-6.1-sol high");
+    running.unmount();
+
+    harness.snapshots.set("parent", {
+      subagents: { revision: 5, childSessionIds: ["child-b"], running: [], endedTotal: 1 },
+      backgroundWorks: [],
+      rows: {
+        window: [
+          {
+            kind: "subagent",
+            rowId: 9,
+            subagentType: "Explore",
+            status: "success",
+            summaryText: "done",
+            childSessionId: "child-b",
+            model: "glm-5.3",
+          },
+        ],
+        totalCount: 1,
+        firstRowId: 9,
+      },
+    });
+    const ended = await renderHeader();
+    expect(ended.getByTestId("v4-subagent-session-model").textContent).toBe("glm-5.3");
   });
 });

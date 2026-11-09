@@ -691,6 +691,8 @@ describe("ConversationTurnGroup tool handler wiring", () => {
     const onOpenCodeViewer = vi.fn();
     const onOpenFileLink = vi.fn();
     toolCallBlockCapture.props = [];
+    // W8：带子会话的派发改由 Subagent 工作卡展示；旧 Agent 卡只保留给没有子会话的派发。
+    const { childSessionId: _registeredChild, ...legacySubagentRow } = subagentRow(3);
 
     renderTurnWithContext(
       unitWithWorkRows([
@@ -700,7 +702,7 @@ describe("ConversationTurnGroup tool handler wiring", () => {
           inputText: '{"prompt":"inspect"}',
           input: { prompt: "inspect" },
         }),
-        subagentRow(3),
+        legacySubagentRow,
         toolCallRow(4, {
           inputText: '{"command":"ls -la"}',
           input: { command: "ls -la" },
