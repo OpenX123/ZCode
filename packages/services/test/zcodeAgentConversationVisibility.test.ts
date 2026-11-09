@@ -340,14 +340,16 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  if(f.method)send({id:f.id,result:f.method==='session/list'?{sessions:[]}: {}});
 });`,
       );
-      const select = vi.fn(async () => ({
-        engine: "codex" as const,
-        connectionProfileId: "inherit",
-      }));
+      const select = vi.fn(async () => [
+        {
+          engine: "codex" as const,
+          connectionProfileId: "inherit",
+        },
+      ]);
       const service = createReadyService({
         commandResolver: () => sandbox.command,
         externalEnginesSupported: scope !== "unsupported",
-        selectExternalEngineSpare: select,
+        selectExternalEngineSpares: select,
       });
       try {
         await foregroundList(service, {
@@ -393,7 +395,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const service = createReadyService({
       commandResolver: () => sandbox.command,
       externalEnginesSupported: true,
-      selectExternalEngineSpare: async () => ({ engine: "codex", connectionProfileId: "inherit" }),
+      selectExternalEngineSpares: async () => [{ engine: "codex", connectionProfileId: "inherit" }],
     });
     const rows = () =>
       readFileSync(sandbox.logPath, "utf8")
@@ -444,14 +446,12 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   it("selector 在途关闭 workspace 时不投递迟到准备", async () => {
     const sandbox = createRecordingSandbox();
     setDataBaseDir(sandbox.dir);
-    const choice = Promise.withResolvers<
-      { engine: "codex"; connectionProfileId: string } | undefined
-    >();
+    const choice = Promise.withResolvers<Array<{ engine: "codex"; connectionProfileId: string }>>();
     const selected = Promise.withResolvers<void>();
     const service = createReadyService({
       commandResolver: () => sandbox.command,
       externalEnginesSupported: true,
-      selectExternalEngineSpare: async () => {
+      selectExternalEngineSpares: async () => {
         selected.resolve();
         return choice.promise;
       },
@@ -460,7 +460,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       await foregroundList(service, { workspacePath: sandbox.dir });
       await selected.promise;
       await service.disposeWorkspace({ workspacePath: sandbox.dir });
-      choice.resolve({ engine: "codex", connectionProfileId: "inherit" });
+      choice.resolve([{ engine: "codex", connectionProfileId: "inherit" }]);
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(readFileSync(sandbox.logPath, "utf8")).not.toContain("externalEngine/prepareSpare");
     } finally {
@@ -492,10 +492,12 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const service = createReadyService({
       commandResolver,
       externalEnginesSupported: true,
-      selectExternalEngineSpare: async () => ({
-        engine: "codex",
-        connectionProfileId: "codex:inherit",
-      }),
+      selectExternalEngineSpares: async () => [
+        {
+          engine: "codex",
+          connectionProfileId: "codex:inherit",
+        },
+      ],
     });
     const rows = () =>
       readFileSync(sandbox.logPath, "utf8")
@@ -534,6 +536,124 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     } finally {
       await service.disposeAllAndWait();
     }
+  });
+});
+
+// W4（P15/P16）：Host 按外部引擎各授 1 个许可（窗口 ≤2）；预热集合变化时对当前 client 重新调度。
+describe("按引擎备用许可与预热集合（W4）", () => {
+  // CLI 夹具：每次 prepareSpare 以 engine 为 requestId 申请许可；另可经 <pid>.json 注入任意请求。
+  const PER_ENGINE_AGENT = String.raw`
+const fs=require('node:fs'),path=require('node:path'),log=process.argv[2],dir=path.dirname(log);
+const send=f=>process.stdout.write(JSON.stringify(f)+'\n');
+let seen='';
+fs.watch(dir,()=>{const file=path.join(dir,process.pid+'.json');if(!fs.existsSync(file))return;const raw=fs.readFileSync(file,'utf8');if(raw===seen)return;seen=raw;send(JSON.parse(raw));}).unref();
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const f=JSON.parse(line);fs.appendFileSync(log,JSON.stringify({pid:process.pid,...f})+'\n');
+ if(f.method==='externalEngine/prepareSpare'){
+  send({id:'acquire-'+f.params.engine,method:'externalEngine/acquireSpare',params:{requestId:'req-'+f.params.engine,engine:f.params.engine}});
+  send({id:f.id,result:{}});
+ } else if(f.method) send({id:f.id,result:f.method==='session/list'?{sessions:[]}: {}});
+});`;
+  const rowsOf = (logPath: string) =>
+    readFileSync(logPath, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+
+  it("Codex 与 Claude 各得 1 个许可互不挤占；同引擎第二个申请被拒；缺 engine 按旧单键", async () => {
+    const sandbox = createRecordingSandbox();
+    setDataBaseDir(sandbox.dir);
+    writeFileSync(sandbox.command.args[0]!, PER_ENGINE_AGENT);
+    const service = createReadyService({
+      commandResolver: () => sandbox.command,
+      externalEnginesSupported: true,
+      selectExternalEngineSpares: async () => [
+        { engine: "codex", connectionProfileId: "inherit" },
+        { engine: "claude-code", connectionProfileId: "inherit" },
+      ],
+    });
+    const rows = () => rowsOf(sandbox.logPath);
+    const command = (pid: number, id: string, method: string, params: unknown) =>
+      writeFileSync(join(sandbox.dir, `${pid}.json`), JSON.stringify({ id, method, params }));
+    try {
+      await service.listSessions({ workspacePath: sandbox.dir });
+      await vi.waitFor(() =>
+        expect(
+          rows()
+            .filter((row) => row.result?.leaseId)
+            .map((row) => row.id)
+            .sort(),
+        ).toEqual(["acquire-claude-code", "acquire-codex"]),
+      );
+      const pid = rows().find((row) => row.id === "acquire-codex")!.pid as number;
+      command(pid, "second-codex", "externalEngine/acquireSpare", {
+        requestId: "other-codex",
+        engine: "codex",
+      });
+      await vi.waitFor(() =>
+        expect(rows().find((row) => row.id === "second-codex")?.result).toEqual({}),
+      );
+      // 窗口已有 2 个许可：缺 engine 的旧申请也不能突破上限。
+      command(pid, "legacy", "externalEngine/acquireSpare", { requestId: "legacy-request" });
+      await vi.waitFor(() => expect(rows().find((row) => row.id === "legacy")?.result).toEqual({}));
+      // Claude 备用被领用（release）后，Claude 补位重新获得 Claude 许可，Codex 许可不受影响。
+      command(pid, "release-claude", "externalEngine/releaseSpare", {
+        requestId: "req-claude-code",
+      });
+      await vi.waitFor(() =>
+        expect(rows().find((row) => row.id === "release-claude")).toBeDefined(),
+      );
+      command(pid, "refill-claude", "externalEngine/acquireSpare", {
+        requestId: "refill-claude",
+        engine: "claude-code",
+      });
+      await vi.waitFor(() =>
+        expect(rows().find((row) => row.id === "refill-claude")?.result?.leaseId).toBeTruthy(),
+      );
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("预热集合变化后对当前 client 追加准备新引擎，已准备的引擎不重复", async () => {
+    const sandbox = createRecordingSandbox();
+    setDataBaseDir(sandbox.dir);
+    writeFileSync(sandbox.command.args[0]!, PER_ENGINE_AGENT);
+    let choices: Array<{ engine: "codex" | "claude-code"; connectionProfileId: string }> = [
+      { engine: "codex", connectionProfileId: "inherit" },
+    ];
+    let notify: (() => void) | undefined;
+    const unsubscribe = vi.fn();
+    const service = createReadyService({
+      commandResolver: () => sandbox.command,
+      externalEnginesSupported: true,
+      selectExternalEngineSpares: async () => choices,
+      watchExternalEngineSpareSelection: (listener) => {
+        notify = listener;
+        return unsubscribe;
+      },
+    });
+    const prepared = () =>
+      rowsOf(sandbox.logPath)
+        .filter((row) => row.method === "externalEngine/prepareSpare")
+        .map((row) => row.params.engine);
+    try {
+      await service.listSessions({ workspacePath: sandbox.dir });
+      await vi.waitFor(() => expect(prepared()).toEqual(["codex"]));
+      choices = [...choices, { engine: "claude-code", connectionProfileId: "inherit" }];
+      notify?.();
+      await vi.waitFor(() => expect(prepared()).toEqual(["codex", "claude-code"]));
+      notify?.();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(prepared()).toEqual(["codex", "claude-code"]);
+      await vi.waitFor(() =>
+        expect(rowsOf(sandbox.logPath).filter((row) => row.result?.leaseId)).toHaveLength(2),
+      );
+    } finally {
+      await service.disposeAllAndWait();
+    }
+    expect(unsubscribe).toHaveBeenCalled();
   });
 });
 

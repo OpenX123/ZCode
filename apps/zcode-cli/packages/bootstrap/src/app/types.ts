@@ -1,5 +1,8 @@
 import type { AiSdkModelAdapter } from "@zcode/adapters/model";
-import type { ExternalEngineProcessPool } from "@zcode/adapters/exec";
+import type {
+  ExternalEngineConfigCatalog,
+  ExternalEngineProcessPool,
+} from "@zcode/adapters/exec";
 import type {
   AutomationPort,
   BackgroundTaskCancelResult,
@@ -181,6 +184,8 @@ export interface ZCodeAppOptions {
   nodeReplBrowserBroker?: NodeReplBrowserBroker;
   /** 协议宿主注入的进程级外部引擎进程池（备用进程与闲置关闭）；缺省时会话 port 不使用。 */
   externalEngineProcessPool?: ExternalEngineProcessPool;
+  /** 协议宿主注入的进程级外部引擎选项清单缓存（W4）；缺省时 connecting 期间不发布缓存清单。 */
+  externalEngineConfigCatalog?: ExternalEngineConfigCatalog;
   fileSystemPort?: FileSystemPort;
   httpClientPort?: HttpClientPort;
   imageProcessorPort?: ImageProcessorPort;

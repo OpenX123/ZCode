@@ -22,7 +22,13 @@ import { resolveEngineConnectionIdentity } from "./connection-profile.js";
 import { adapterLaunchArgs, ensureNodeRuntimeOnPath, withNetworkEgressEnv } from "./adapter-env.js";
 import type { ExternalEngineAdapterOptions } from "./contract.js";
 import type { ExternalEngineSpareKey } from "./process-pool.js";
+import type { ExternalEngineConfigCatalogKey } from "./config-catalog.js";
 export { runExternalEngineConnectionTest } from "./connection-test.js";
+export {
+  createExternalEngineConfigCatalog,
+  type ExternalEngineConfigCatalog,
+  type ExternalEngineConfigCatalogKey,
+} from "./config-catalog.js";
 export {
   createExternalEngineProcessPool,
   type ExternalEngineProcessPool,
@@ -80,6 +86,9 @@ export function createExternalEnginePort(
   const preparations = new Map<string, { controller: AbortController; promise: Promise<void> }>();
   const activities = new Map<string, SessionActivity>();
   const providersSetMs = new WeakMap<AcpConnection, number>();
+  const configCatalog = options.configCatalog;
+  /** 本 port 会话最近一次解析出的缓存键；确认清单到达时按它记录（W4）。 */
+  const catalogKeys = new Map<string, ExternalEngineConfigCatalogKey>();
 
   const activityFor = (sessionId: string, engine: ExternalSessionEngine): SessionActivity => {
     let activity = activities.get(sessionId);
@@ -251,6 +260,17 @@ export function createExternalEnginePort(
         // 只有新会话领用预建会话（已完成 session/new）：resume/load/fork 走原连接恢复语义。
         // 领用后 AcpConnection 跳过 initialize 与 session/new，以预建的原生 ID 走 onSession 与配置恢复。
         const fresh = mode === "session" && !input.externalSessionId;
+        const catalogKey: ExternalEngineConfigCatalogKey = {
+          engine: input.engine,
+          connectionProfileId: identity.profile.id,
+          workspaceKey: input.workspaceKey?.trim() || input.cwd,
+          generation: identity.generation,
+        };
+        catalogKeys.set(input.sessionId, catalogKey);
+        // W4：新会话先交出同键上次确认的清单（展示副本），再领用备用或冷启；resume/fork 有自己的确认值。
+        const cached = fresh ? configCatalog?.lookup(catalogKey) : undefined;
+        if (cached && input.onCachedConfigOptions) await input.onCachedConfigOptions(cached);
+        input.signal.throwIfAborted();
         const claimed = fresh ? await pool?.claimSpare(key, input.signal) : undefined;
         // pool 的 Promise 完成后到 port 恢复执行前也可能取消；已交付连接必须由接收方收口。
         if (input.signal.aborted) await claimed?.connection.close();
@@ -378,6 +398,12 @@ export function createExternalEnginePort(
             async onConnectionProfile(id: string) {
               connectionProfileId = id;
               await input.onConnectionProfile?.(id);
+            },
+            // 确认清单写入进程内缓存（W4），供同键下一个新草稿 connecting 时先显示。
+            async onConfigOptions(list: Parameters<typeof input.onConfigOptions>[0]) {
+              const catalogKey = catalogKeys.get(input.sessionId);
+              if (catalogKey) configCatalog?.remember(catalogKey, list);
+              await input.onConfigOptions(list);
             },
           };
           await execute(attemptInput, (connection) => connection.prepare(attemptInput));
@@ -521,6 +547,7 @@ export function createExternalEnginePort(
       const connection = sessions.get(sessionId);
       sessions.delete(sessionId);
       activities.delete(sessionId);
+      catalogKeys.delete(sessionId);
       pool?.untrackSession(sessionId);
       await connection?.close();
       await preparing?.promise.catch(() => {});

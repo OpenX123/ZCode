@@ -14,7 +14,7 @@
 - 输入区移除全部连接配置选择/标签（含“沿用 CLI 配置”、官方与自定义），连接仍由设置页管理并沿用既有草稿 owner 和不可变会话绑定。连接中/失败及安全诊断仍来自既有 runtime snapshot，按需显示错误与恢复，不把 ready 推断为进程常驻，不伪造休眠和阶段。重连仍为 prepare CAS，不能重发已提交 prompt；草稿 connecting 只禁用原生配置，输入与引擎选择仍可操作。
 - 模型/思考偏好按 engine + connectionProfileId 记录，旧 engine 偏好只在该连接没有记录时兼容读取；显式确认后只写当前连接偏好。原生目录仍负责可选值，模型确认后才能恢复 effort；2026-11-09 起权限模式（configId `mode`）也按同一 key 记忆并在 effort 之后恢复，计划类取值（Claude `plan`）不记忆，Fast 仍不记忆。该连接没有任何记忆时（首次使用），思考深度默认 `high`（目录提供时）。旧会话绑定与新默认隔离。
 - 性能先改已有 pool：warming 备用允许一个新会话原子独占预留，其他会话冷准备；取消、错误、cwd/profile 不同不得误领用，同会话 single-flight 保留。命中健康备用先避免无变化的重复启动解析；身份与凭据校验不能绕过。失败不影响前台可执行性，不自动安装、登录、请求模型。
-- 资源策略采用同窗口最多一个未绑定备用，实际进程归各 workspace CLI 的 pool；前台不受备用预算阻塞。活动工作区已存在 CLI 且引擎/连接确定时可低优先提前准备，不能为隐藏工作区启动 CLI；准备中的备用与已绑定会话分别记账。关闭、切换或失败释放许可，不取消已绑定连接；本轮不改 10/15 分钟 TTL。
+- 资源策略采用同窗口最多一个未绑定备用，实际进程归各 workspace CLI 的 pool；前台不受备用预算阻塞。活动工作区已存在 CLI 且引擎/连接确定时可低优先提前准备，不能为隐藏工作区启动 CLI；准备中的备用与已绑定会话分别记账。关闭、切换或失败释放许可，不取消已绑定连接；本轮不改 10/15 分钟 TTL。（2026-11-09 W4 起许可改为每个外部引擎各 1 个、窗口至多 2 个，见「按引擎预热名额与缓存选项清单」。）
 - Host 只拥有配置、诊断与备用资源调度，CLI runtime 拥有绑定与确认配置、port/pool 拥有连接；Renderer 只有选择草稿和展示状态。workspace identity、owner/lease、stale-run 与 SSH 外部引擎门禁保持不变。
 
 ```mermaid
@@ -115,7 +115,7 @@ sequenceDiagram
 - 原生 Composer 仅 `mode` 权限常驻左侧。模型/深度以外的全部原生配置（包括 Codex 2.2.2 `collaboration_mode`、`fast-mode`）均收入同一合并弹层的更多；比较可归一化，提交必须保留原始 configId/value，打开零写入，拒绝继续显示 snapshot 确认值。空深度目录不阻断其他有效配置。
 - Host 官方登录成功后，重新读取并广播安全完整 connections view，使已挂载订阅者同步有效默认（例如 inherit → official），不建立 UI 默认事实源；失败/取消不广播成功视图。
 
-- 窗口 Local Host 唯一拥有一个未绑定备用许可；CLI pool 唯一拥有实际进程。许可不含会话状态、路径、凭据或环境摘要。仅当前本地 active client 可以申请；远程与 stale client 拒绝。拒绝不影响前台冷启动。
+- 窗口 Local Host 唯一拥有未绑定备用许可（2026-11-09 W4 起每个外部引擎各 1 个、窗口至多 2 个，申请带 `engine`）；CLI pool 唯一拥有实际进程。许可不含会话状态、路径、凭据或环境摘要。仅当前本地 active client 可以申请；远程与 stale client 拒绝。拒绝不影响前台冷启动。
 - `externalEngine/acquireSpare` 使用稳定 requestId，结果可带 leaseId；`releaseSpare` 用 requestId 幂等释放，覆盖申请取消或响应丢失。`revokeSpare` 以 requestId 撤销，CLI 关闭尚未绑定资源并 ACK 后才能重授。已绑定资源不受撤销影响。连接关闭必须经现有进程树回收确认，不能仅因失联重新授权。
 - 未绑定备用使用 ACP 专用严格关闭：发出 EOF/终止信号前保留进程树身份快照，随后以系统进程表确认同一组/同一身份后代已结束。POSIX 组长退出不代表同组后代结束；Windows taskkill 的 error/nonzero 不等于关闭成功。观察失败或 deadline 到达而仍存活时抛错、保留 pool owned 与 Host 许可，不发送成功 revoke ACK。deadline 仅表示失败边界，不作为退出证据。普通会话/通用 exec 的既有关闭语义不在本次修改范围。
 - pool 的可领用索引与未交付资源集合分开；warming 在第一个 await 前独占预留，第二个新会话冷启动。取消即时摘索引并关闭已产生连接，迟到 spawn 也关闭。pool.close 等待全部未交付资源收口；已交付连接归 port。
@@ -170,7 +170,7 @@ sequenceDiagram
 - 依据：Claude adapter 的 `session/new` 需拉起官方 CLI 并等待其初始化，本机实测约 1.5s，旧备用进程只省掉 spawn 与 initialize，命中时仍需 1.76s，达不到草稿 1s 内就绪的目标。
 - 领用：新会话（不含 resume/load/fork）解析出连接配置后，若预建会话的引擎、配置 ID、cwd 都一致且进程健康，就同步独占预留并等待就绪：会话直接取得预建会话的原生会话 ID（经 `onSession` 持久化）与配置选项，跳过 spawn、initialize 与 `session/new`；会话自带的已保存配置（`configValues`、显式模式）在领用后按原恢复规则下发。领用前已到达的通知按原初始通知缓冲规则交给领用会话。领用后连接归会话所有，与冷启动的会话连接没有区别。warming 可被一个新会话预留，其他请求 miss/cold；预算仍在申请中不等待，前台直接冷启。进程退出、cwd 或 generation 不同则关闭失效备用；入口局部 stat 失败也不交付。不跨连接配置复用。
 - 预建会话从未提交 prompt：到期关闭不留下原生会话历史，两家都预建到 `session/new`，adapter 层无需清理（2026-11-08 本机 Windows 实测：真实 adapter 在新建临时 cwd 中执行 initialize → `session/new`（Claude 另选 Auto），不发 prompt，分别以 `taskkill /T /F` 与关闭 stdin 两种方式结束。Claude adapter 0.95.0 + claude.exe 2.1.319：`~/.claude/projects/<cwd 编码目录>/` 未创建、无 `<sessionId>.jsonl`，只留下官方 CLI 的运行登记 `~/.claude/sessions/<pid>.json`（不是会话历史，实测下一次启动官方 CLI 后已被清除）。Codex adapter 2.2.2：`~/.codex/sessions/` 无新 rollout，`state_5.sqlite` 的 `threads` 与 `thread_history_1.sqlite` 均无该 ID 的记录；强制结束时留下空的 `thread-writer-locks/<id>.lock` 与 `tmp/arg0` 临时目录（不是会话历史；关闭 stdin 正常退出时不留下）。两种残留都来自进程被结束，冷启动会话经同一 `closeAcpProcess` 关闭，并非预建引入。同次实测 `session/new` 耗时：Claude 约 1.4s，Codex 0.8–1.1s。）
-- 补位：同一（引擎，配置，cwd）的新会话就绪后（无论是否命中），后台准备一个替代预建会话；已有健康预建会话或正在准备时不重复创建。补位排在会话握手之后，不和会话握手争抢启动资源。补位须申请窗口唯一许可，拒绝不阻塞前台。窗口至多一个未绑定预建会话，10 分钟未领用即关闭；预留归入前台但交付前仍由 pool 关闭收口。
+- 补位：同一（引擎，配置，cwd）的新会话就绪后（无论是否命中），后台准备一个替代预建会话；已有健康预建会话或正在准备时不重复创建。补位排在会话握手之后，不和会话握手争抢启动资源。补位须申请该引擎的窗口许可（W4 起每个外部引擎各 1 个），拒绝不阻塞前台并记 info 日志 `external_engine.spare.refill_denied`。窗口每个外部引擎至多一个未绑定预建会话，10 分钟未领用即关闭；预留归入前台但交付前仍由 pool 关闭收口。
 - 存在条件：只在 Host 注入了 `ZCODE_EXTERNAL_ENGINES_DIR` 的 CLI 中存在，即桌面本地工作区。远程工作区不运行外部引擎会话，所以没有备用进程。备用可以在该引擎刚成功新建会话后补位，也可在业务成功取得当前本地 CLI 后，由 Host 注入 selector 读取默认外部引擎与 lastUsed 后后台提前准备；这条路径不启动 CLI、不创建 Runtime 草稿、不增加 session activity。无明确选择、远程或已经失效的 client 跳过；测试连接不接入池。
 - 回收：备用进程 10 分钟未被领用就关闭。备用进程的失败（启动失败、initialize 失败、中途退出）不向用户展示，只写日志，并回落到冷启动路径。
 - 关闭：协议 server 的 `shutdown()` 在关闭各会话 app 的同时关闭 pool。pool 停止补位，关闭全部备用进程和仍在初始化的备用进程。关闭沿用 `closeAcpProcess`：Windows 用 `taskkill /T /F` 结束进程树，POSIX 结束 detached 进程组，与会话 adapter 相同。CLI 进程被强杀时，备用进程与会话 adapter 一样可能残留，这是已有边界。
@@ -235,6 +235,68 @@ sequenceDiagram
   S->>P: setVisibleSessions(connectionId, [])（删除该连接的上报）
 ```
 
+### 按引擎预热名额与缓存选项清单（W4，2026-11-09）
+
+用户反馈 4：Claude Code ↔ Codex 切换约 2s 才显示控件，要求 1 秒内无感切换。基线证据见 `docs/testing/2026-11-09-engine-composer-subagent-verification.md`「W4 基线」：带窗口单许可的构建里，默认引擎 Codex 的备用一直持有唯一许可，Claude 11 次新草稿全部 `spare.miss reason=none`，补位被静默拒绝（没有一次 Claude `spare.ready`），握手 p50 1.74s；cwd/generation 不匹配为 0 次。
+
+**达标口径（Q9）**：点击切换后 ≤100ms 显示该引擎控件（缓存值，禁用）；预热命中时 ≤1s 变为真实值且可操作（P95）；全程不出现空白或“加载中”。冷启动（本机首次、备用刚过期或回收）单独记录，不计入达标。
+
+**规则：**
+
+1. 许可：窗口 Local Host 为每个外部引擎各持有 1 个未绑定备用许可，窗口至多 2 个（`EXTERNAL_ENGINE_SPARE_PERMITS_PER_WINDOW`）。`externalEngine/acquireSpare` 增加可选 `engine`（严格枚举，additive）；缺省时按旧行为归入单独的 legacy 键，仍计入窗口上限。同一引擎第二个申请被拒；不同引擎互不挤占。release/revoke 语义、requestId 幂等与严格关闭不变。
+2. 预热集合：Host 的预热对象 =「Host 启动时的默认引擎」∪「本窗口选择过的外部引擎」，再过滤为 launch 检查通过（`isLaunchReady`）且有默认连接配置的引擎。“选择过”的事实来源是既有写入链：草稿切换引擎经 `useDraftConfigControl` 写 `defaultSessionEngine`，Host 从本进程 `settingService.onDidUpdate` 观察并记入窗口内集合（Host 进程即窗口作用域，不跨窗口共享）。Renderer 不新增上报接口，不直接调用 `window.zcode`。
+3. 调度：取得当前本地 CLI 后调度一次；集合变化时对当前候选 client 重新调度。对每个集合内引擎，若该 client 尚未以同一连接配置准备过才发送 `prepareSpare`；连接配置变化先撤销该引擎旧许可再准备；集合外引擎的许可撤销。切换候选 client 时撤销旧 client 的全部许可。串行链与“不启动隐藏项目 CLI、不创建 Runtime 会话”保持不变。
+4. 补位被 Host 拒绝时 CLI pool 记 info `external_engine.spare.refill_denied`（引擎、连接配置 ID），不再静默丢弃。
+5. cwd：基线中 cwd/generation miss 为 0，Host 准备的备用继续使用该 workspace CLI 的 cwd（即 workspace 路径），本轮不改。
+6. 缓存选项清单：CLI 进程内存目录 `ExternalEngineConfigCatalog`（adapter 层，每 CLI 一个，由协议 server 创建并注入每个会话 port），键为（引擎，解析后的连接配置 ID，工作区身份 key `workspaceIdentity?.trim() || workspacePath`，内部 generation），值为该键最近一次握手确认的 `engineConfigOptions`；条目上限 16（最旧淘汰），不落盘、不出 adapter。只有新会话（无 externalSessionId、非 fork）在解析身份后、领用备用前查询；命中时经会话输入的 `onCachedConfigOptions` 交给 Runtime。
+7. Runtime 是选项清单的唯一所有者：仅当会话仍 `connecting` 且自身尚无已确认清单时，把缓存清单作为展示副本发布到 `ExternalEngineConfigUpdated`（`engineConfigOptionsSource:"cached"`），不写入 `engineConfigOptions` 真值、不用于恢复或 `setEngineConfigOption` 校验；收到连接确认清单后发布 `live` 并丢弃副本；进入 `error` 时副本清空。V4 `config.engineConfigOptionsSource` 为可选字段（additive），旧快照缺省视为未知。
+8. UI：沿用既有 `configPending`，connecting 时用快照里的清单渲染禁用控件；按引擎记忆的恢复仍只读 `ready` 清单。Renderer 不缓存选项清单。埋点：`logger.lifecycle.info("[engine-switch] controls ready", {engine, source, ms})`，从草稿切换引擎开始计时，同一次切换 `cached` 与 `live` 各记一次。
+9. 代价：多一个空闲的外部引擎预建会话进程。2026-11-08 本机实测 Claude 预建约 480MB 私有提交（adapter 约 80MB + claude.exe 约 400MB，工作集 80–135MB）；空闲备用沿用 10 分钟过期与窗口回收，只预热选择过且已就绪的引擎。
+
+**状态所有者：**
+
+| 状态                            | 所有者                                        | 读取/写入方                                            |
+| ------------------------------- | --------------------------------------------- | ------------------------------------------------------ |
+| 每引擎备用许可（≤2）            | 窗口 Local Host（`zcodeAgentService`）        | CLI pool acquire/release；Host revoke                  |
+| 预热集合（默认 ∪ 本窗口选择过） | 窗口 Local Host（`spareSelection.ts`）        | 来源：`defaultSessionEngine` 写入（Renderer 既有链路） |
+| 预建会话进程                    | CLI `ExternalEngineProcessPool`               | port 领用/补位                                         |
+| 选项清单缓存                    | CLI `ExternalEngineConfigCatalog`（进程内存） | port 查询/记录                                         |
+| 会话选项清单与来源标记          | CLI Runtime                                   | V4 snapshot → Renderer（只展示）                       |
+
+```mermaid
+sequenceDiagram
+  participant U as 用户
+  participant R as Renderer(SessionPane)
+  participant ST as Host settingService
+  participant H as Host(zcodeAgentService 许可)
+  participant RT as CLI Runtime
+  participant PT as CLI Port + Catalog
+  participant PL as CLI Pool
+  participant A as Claude ACP
+  Note over H,PL: 启动：默认引擎 Codex → prepareSpare(codex)，Codex 许可 1/1
+  U->>R: 草稿切到 Claude Code（t0）
+  R->>ST: update{defaultSessionEngine: claude-code}（既有链路）
+  ST-->>H: onDidUpdate → 预热集合 {codex, claude-code}
+  H->>PL: prepareSpare(claude-code)
+  PL->>H: acquireSpare{requestId, engine: claude-code}
+  H-->>PL: leaseId（Claude 许可独立，不挤占 Codex）
+  PL->>A: spawn + initialize + session/new（后台）
+  R->>RT: createSession{engine: claude-code}
+  RT-->>R: ACK + connecting
+  RT->>PT: prepareSession
+  PT->>PT: 解析身份 → 查 Catalog(engine, profile, workspaceKey, generation)
+  PT-->>RT: onCachedConfigOptions(缓存清单)
+  RT-->>R: snapshot(connecting, 缓存清单, source=cached)
+  Note over R: ≤100ms 显示禁用控件，记 [engine-switch] source=cached
+  PT->>PL: claimSpare(claude-code, profile, cwd, generation)
+  PL-->>PT: 命中预建会话
+  PT->>PT: Catalog 记录确认清单
+  PT-->>RT: onConfigOptions(确认清单)
+  RT-->>R: snapshot(ready, 确认清单, source=live)
+  Note over R: ≤1s 可操作，记 [engine-switch] source=live；随后按记忆恢复模型→思考
+  PL->>H: acquireSpare(engine: claude-code)（补位；被拒时记 refill_denied）
+```
+
 ### 本地性能事件
 
 均为 info 级，只写本机日志，不含正文、路径、密钥或命令行：
@@ -245,6 +307,7 @@ sequenceDiagram
 | `external_engine.handshake.failed`                             | `engine`、`sessionId`、`code`、`method`、`totalMs`                                                                                                                                 |
 | `external_engine.spare.claimed` / `.miss`                      | `engine`、`connectionProfileId`、`reason`（miss：none/budget/unhealthy/cwd/generation）、`ageMs`（hit）                                                                            |
 | `external_engine.spare.ready` / `.expired` / `.failed`（warn） | `engine`、`connectionProfileId`、`durationMs` / `idleMs` / `code`                                                                                                                  |
+| `external_engine.spare.refill_denied`（W4）                    | `engine`、`connectionProfileId`（Host 拒绝该引擎许可，补位放弃；前台不受影响）                                                                                                     |
 | `external_engine.idle_close`                                   | `engine`、`sessionId`、`idleMs`、`kind`（prompted / draft，2026-11-08 起）                                                                                                         |
 | `external_engine.idle_resume.completed` / `.failed`            | `engine`、`sessionId`、`durationMs`（从发起恢复到 ready）、`code`（失败时）                                                                                                        |
 
@@ -297,22 +360,25 @@ sequenceDiagram
 
 ### 回归与验收
 
-| ID  | 场景                                  | 断言                                                                                                                                                          | 层                         |
-| --- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| P01 | 外部引擎草稿 createSession            | ACK 早于握手完成；ACK 时 Runtime 已为 connecting；随后 ready；不创建 turn、不发 prompt                                                                        | bootstrap/core             |
-| P02 | 后台握手失败                          | ACK 已 accepted；记录保留；`engineConfigState=error` 带诊断；重试可恢复                                                                                       | bootstrap/core             |
-| P03 | 握手中删除草稿                        | 后台握手中止，之后不再发布 ready/error，不启动迟到进程                                                                                                        | core/adapters              |
-| P04 | 备用进程领用 / 补位 / 过期 / 配置隔离 | 同配置 ready/warming 第二个新会话独占；第三个冷启；窗口许可 0/1；10 分钟后关闭；身份/凭据/环境/入口变化不误领                                                 | adapters                   |
-| P05 | 闲置关闭后发送与改配置                | adapter 进程退出；`externalSessionId` 与配置保留；下次发送 resume 恢复配置后只发一次 prompt                                                                   | adapters                   |
-| P06 | 可见豁免与草稿闲置                    | 不可见的已发 prompt 会话 15 分钟关闭、可见的不关（不再有最近 3 个名额）；草稿 10 分钟关闭；有在途操作不关；未收到可见性上报按不可见；连接 closed 后其上报失效 | adapters / bootstrap       |
-| P07 | CLI 关闭时存在备用进程                | pool 关闭全部备用进程与仍在初始化的备用进程，此后不再补位                                                                                                     | adapters                   |
-| P08 | 草稿就绪阶段与丢弃后恢复              | 除 disabled 外各阶段都可发送；creating/connecting 发送等待就绪与记忆恢复后才 `sendText`；丢弃后发送由 owner 重建并等待就绪                                    | UI                         |
-| P09 | 领用预建会话                          | 领用时不再发 initialize / `session/new`；会话取得预建的原生 ID 与配置；已保存配置在领用后下发；补位后至多一个                                                 | adapters                   |
-| P10 | 草稿只在可见时预热                    | 隐藏挂载的草稿 pane 不发 createSession；首次可见后发一次，再隐藏不回收                                                                                        | UI                         |
+| ID  | 场景                                  | 断言                                                                                                                                                             | 层                         |
+| --- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| P01 | 外部引擎草稿 createSession            | ACK 早于握手完成；ACK 时 Runtime 已为 connecting；随后 ready；不创建 turn、不发 prompt                                                                           | bootstrap/core             |
+| P02 | 后台握手失败                          | ACK 已 accepted；记录保留；`engineConfigState=error` 带诊断；重试可恢复                                                                                          | bootstrap/core             |
+| P03 | 握手中删除草稿                        | 后台握手中止，之后不再发布 ready/error，不启动迟到进程                                                                                                           | core/adapters              |
+| P04 | 备用进程领用 / 补位 / 过期 / 配置隔离 | 同配置 ready/warming 第二个新会话独占；第三个冷启；每引擎许可 0/1（窗口 ≤2，W4）；10 分钟后关闭；身份/凭据/环境/入口变化不误领                                   | adapters                   |
+| P05 | 闲置关闭后发送与改配置                | adapter 进程退出；`externalSessionId` 与配置保留；下次发送 resume 恢复配置后只发一次 prompt                                                                      | adapters                   |
+| P06 | 可见豁免与草稿闲置                    | 不可见的已发 prompt 会话 15 分钟关闭、可见的不关（不再有最近 3 个名额）；草稿 10 分钟关闭；有在途操作不关；未收到可见性上报按不可见；连接 closed 后其上报失效    | adapters / bootstrap       |
+| P07 | CLI 关闭时存在备用进程                | pool 关闭全部备用进程与仍在初始化的备用进程，此后不再补位                                                                                                        | adapters                   |
+| P08 | 草稿就绪阶段与丢弃后恢复              | 除 disabled 外各阶段都可发送；creating/connecting 发送等待就绪与记忆恢复后才 `sendText`；丢弃后发送由 owner 重建并等待就绪                                       | UI                         |
+| P09 | 领用预建会话                          | 领用时不再发 initialize / `session/new`；会话取得预建的原生 ID 与配置；已保存配置在领用后下发；补位后至多一个                                                    | adapters                   |
+| P10 | 草稿只在可见时预热                    | 隐藏挂载的草稿 pane 不发 createSession；首次可见后发一次，再隐藏不回收                                                                                           | UI                         |
 | P11 | 连接中立即发送（真实桌面）            | 新草稿出现后立即输入并发送，不出现“正在连接引擎…”；点击后立即出现用户气泡与「工作中」，无“正在发送…”卡片与“正在等待模型…”；消息只发一次且使用记忆的模型/深度；握手失败时气泡下显示错误与“重新发送”并回填输入框（P11b） | E2E（待真实 Windows 验收） |
-| P12 | 草稿就绪耗时（真实 Windows）          | 有预建会话时新草稿 createSession → ready ≤ 1s；窗口重载只有可见草稿出现握手日志                                                                               | 本机日志（待验收）         |
-| P13 | 草稿闲置关闭后再准备                  | 下一次准备不发 `session/resume`/`session/load`，走 `session/new`（同键预建会话可领用）；Runtime 得到新原生 ID；已确认配置下发；prompt 只发一次                | adapters                   |
-| P14 | 可见性协议输入                        | schema strict（拒绝未知字段、空 ID、超过 64 个）；整体替换、跨连接取并集、连接 closed 删除；收到即处理不排队                                                  | shared / bootstrap         |
+| P12 | 草稿就绪耗时（真实 Windows）          | 有预建会话时新草稿 createSession → ready ≤ 1s（W4：切换引擎后控件 ≤100ms 显示缓存值，预热命中时 ≤1s 真实可操作，P95）；窗口重载只有可见草稿出现握手日志          | 本机日志（待验收）         |
+| P13 | 草稿闲置关闭后再准备                  | 下一次准备不发 `session/resume`/`session/load`，走 `session/new`（同键预建会话可领用）；Runtime 得到新原生 ID；已确认配置下发；prompt 只发一次                   | adapters                   |
+| P14 | 可见性协议输入                        | schema strict（拒绝未知字段、空 ID、超过 64 个）；整体替换、跨连接取并集、连接 closed 删除；收到即处理不排队                                                     | shared / bootstrap         |
+| P15 | 按引擎预热名额（W4）                  | Codex 备用持有许可时 Claude 补位仍获许可；同引擎第二个许可被拒并记 `refill_denied`；窗口至多 2 个；申请缺 `engine` 时按旧单键处理                                | adapters / services        |
+| P16 | 预热集合变化重调度（W4）              | 草稿选择新外部引擎（写 `defaultSessionEngine`）后 Host 为当前 client 追加该引擎 prepareSpare；已准备的引擎不重复；未就绪引擎不预热                               | services                   |
+| P17 | 缓存选项清单（W4）                    | 新草稿 connecting 时 snapshot 带缓存清单与 `engineConfigOptionsSource:"cached"`；ready 后替换为 `live`；失败清空；引擎/连接配置/工作区/generation 任一不同不命中 | adapters / core / UI       |
 
 单测使用受控 ACP 夹具进程。Windows 整机上 `codex.exe` / `claude.exe` 的真实 spawn 耗时、进程树回收与内存下降需要在本机单独验收，未验收前不写成通过。
 

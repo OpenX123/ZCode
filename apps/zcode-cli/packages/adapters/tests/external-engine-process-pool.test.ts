@@ -19,7 +19,9 @@ import {
 } from "@zcode/shared";
 import {
   createExternalEnginePort,
+  createExternalEngineConfigCatalog,
   createExternalEngineProcessPool,
+  type ExternalEngineConfigCatalog,
   type ExternalEngineProcessPoolOptions,
 } from "../src/external-engine/index.js";
 import type { AcpConnection } from "../src/external-engine/connection.js";
@@ -301,6 +303,7 @@ async function setup(
   engines: Engine[],
   poolOptions: ExternalEngineProcessPoolOptions = {},
   settings: FixtureSettings = {},
+  portOptions: { configCatalog?: ExternalEngineConfigCatalog } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "zcode-acp-pool-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
@@ -330,6 +333,7 @@ async function setup(
       executable: process.execPath,
       processPool: pool,
       logger: log.logger,
+      ...portOptions,
     });
     cleanups.push(() => port.closeSession(sessionId));
     return port;
@@ -1024,5 +1028,152 @@ describe("闲置连接关闭", () => {
     await running;
     await pool.sweepIdle();
     expect(busy.isSessionConnected?.("busy")).toBe(false);
+  });
+});
+
+// W4：每个外部引擎各 1 个窗口许可（Host 拥有许可，pool 申请时带 engine）；拒绝必须留日志。
+describe("按引擎备用许可（W4，P15）", () => {
+  const base = { connectionProfileId: "inherit", cwd: tmpdir() };
+  /** 模拟 Host 合同：每个引擎各 1 个许可，窗口至多 2 个。 */
+  function perEngineBudget() {
+    const held = new Map<string, string>();
+    const calls: Array<{ requestId: string; engine: string | undefined }> = [];
+    return {
+      calls,
+      held,
+      budget: {
+        acquire: async (requestId: string, _signal: AbortSignal, engine?: string) => {
+          calls.push({ requestId, engine });
+          const permitKey = engine ?? "legacy";
+          if (held.has(permitKey) || held.size >= 2) return false;
+          held.set(permitKey, requestId);
+          return true;
+        },
+        release: async (requestId: string) => {
+          for (const [permitKey, id] of held) if (id === requestId) held.delete(permitKey);
+        },
+      },
+    };
+  }
+
+  test("申请带 engine；Codex 备用持有许可时 Claude 补位仍获许可，两者都可领用", async () => {
+    const host = perEngineBudget();
+    const log = recordingLogger();
+    const pool = createExternalEngineProcessPool({ budget: host.budget, logger: log.logger });
+    const codex = controlledConnection();
+    const claude = controlledConnection();
+    codex.warming.resolve();
+    claude.warming.resolve();
+    pool.refillSpare({ ...base, engine: "codex" }, async () => codex.connection);
+    await codex.started.promise;
+    pool.refillSpare({ ...base, engine: "claude-code" }, async () => claude.connection);
+    await claude.started.promise;
+    expect(host.calls.map((call) => call.engine)).toEqual(["codex", "claude-code"]);
+    expect(log.named("external_engine.spare.refill_denied")).toHaveLength(0);
+    expect((await pool.claimSpare({ ...base, engine: "claude-code" }))?.connection).toBe(
+      claude.connection,
+    );
+    expect((await pool.claimSpare({ ...base, engine: "codex" }))?.connection).toBe(
+      codex.connection,
+    );
+    await pool.close();
+    await codex.connection.close();
+    await claude.connection.close();
+  });
+
+  test("同引擎第二个许可被拒：记 info refill_denied，不 spawn，前台 miss", async () => {
+    const host = perEngineBudget();
+    const log = recordingLogger();
+    const pool = createExternalEngineProcessPool({ budget: host.budget, logger: log.logger });
+    const first = controlledConnection();
+    first.warming.resolve();
+    pool.refillSpare({ ...base, engine: "codex" }, async () => first.connection);
+    await first.started.promise;
+    let launched = false;
+    pool.refillSpare({ ...base, engine: "codex", connectionProfileId: "other" }, async () => {
+      launched = true;
+      return controlledConnection().connection;
+    });
+    await vi.waitFor(() => expect(log.named("external_engine.spare.refill_denied")).toHaveLength(1));
+    expect(log.named("external_engine.spare.refill_denied")[0]).toEqual({
+      level: "info",
+      context: expect.objectContaining({ engine: "codex", connectionProfileId: "other" }),
+    });
+    expect(launched).toBe(false);
+    expect(
+      await pool.claimSpare({ ...base, engine: "codex", connectionProfileId: "other" }),
+    ).toBeUndefined();
+    await pool.close();
+  });
+});
+
+// W4：CLI 进程内存的选项清单缓存，键 =（引擎，连接配置，工作区身份 key，generation）。
+describe("选项清单缓存（W4，P17）", () => {
+  const options = [
+    { id: "model", name: "Model", currentValue: "a", options: [{ value: "a", name: "A" }] },
+  ];
+  test("catalog 按四元键隔离，返回副本，超过上限淘汰最旧条目", () => {
+    const catalog = createExternalEngineConfigCatalog({ maxEntries: 2 });
+    const key = {
+      engine: "claude-code" as const,
+      connectionProfileId: "inherit",
+      workspaceKey: "/w",
+      generation: "g1",
+    };
+    catalog.remember(key, options);
+    const hit = catalog.lookup(key);
+    expect(hit).toEqual(options);
+    hit![0]!.currentValue = "mutated";
+    expect(catalog.lookup(key)).toEqual(options);
+    expect(catalog.lookup({ ...key, generation: "g2" })).toBeUndefined();
+    expect(catalog.lookup({ ...key, workspaceKey: "/other" })).toBeUndefined();
+    expect(catalog.lookup({ ...key, connectionProfileId: "official" })).toBeUndefined();
+    expect(catalog.lookup({ ...key, engine: "codex" })).toBeUndefined();
+    catalog.remember({ ...key, generation: "g2" }, options);
+    catalog.remember({ ...key, generation: "g3" }, options);
+    expect(catalog.lookup(key)).toBeUndefined();
+    expect(catalog.lookup({ ...key, generation: "g3" })).toEqual(options);
+  });
+
+  test("新会话在握手前收到上次确认的清单；不同工作区与 resume 不收到", async () => {
+    const configCatalog = createExternalEngineConfigCatalog();
+    const { openPort } = await setup(["codex"], {}, {}, { configCatalog });
+    const order: string[] = [];
+    const track = (label: string) => ({
+      async onCachedConfigOptions(list: unknown[]) {
+        order.push(`${label}:cached:${list.length}`);
+      },
+      async onConfigOptions(list: unknown[]) {
+        order.push(`${label}:live:${list.length}`);
+      },
+    });
+    await openPort("first").prepareSession(
+      input("first", "codex", { workspaceKey: "/w", ...track("first") }),
+    );
+    await openPort("second").prepareSession(
+      input("second", "codex", { workspaceKey: "/w", ...track("second") }),
+    );
+    await openPort("third").prepareSession(
+      input("third", "codex", { workspaceKey: "/other", ...track("third") }),
+    );
+    let resumedId = "";
+    await openPort("resumed").prepareSession(
+      input("resumed", "codex", {
+        workspaceKey: "/w",
+        externalSessionId: "ext-existing",
+        async onSession(id) {
+          resumedId = id;
+        },
+        ...track("resumed"),
+      }),
+    );
+    expect(resumedId).toBe("ext-existing");
+    expect(order).toEqual([
+      "first:live:2",
+      "second:cached:2",
+      "second:live:2",
+      "third:live:2",
+      "resumed:live:2",
+    ]);
   });
 });

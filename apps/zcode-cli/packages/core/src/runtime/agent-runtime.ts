@@ -6,6 +6,7 @@ import {
 } from "@zcode/shared";
 import { ExternalEngineConnectionError, type ExternalEnginePort } from "@zcode/contracts";
 import {
+  externalEngineConfigOptionsView,
   publishExternalEngineConfig,
   publishExternalEngineConfigError,
   prepareExternalEngineSession,
@@ -164,6 +165,8 @@ export class AgentRuntime {
   private engineConnectionProfileId?: string;
   private externalEnginePort?: ExternalEnginePort;
   private engineConfigOptions: EngineConfigOption[] = [];
+  private engineConfigOptionsSource?: "live";
+  private cachedEngineConfigOptions?: EngineConfigOption[];
   private engineConfigState?: import("@zcode/shared").EngineConfigState;
   private engineConfigError?: import("@zcode/shared").EngineConnectionFailure;
   private externalEnginePreparation?: Promise<void>;
@@ -442,6 +445,11 @@ export class AgentRuntime {
 
   getEngineConfigOptions(): EngineConfigOption[] {
     return structuredClone(this.engineConfigOptions);
+  }
+
+  /** 投影用视图（W4）：connecting 且无确认清单时为缓存副本（cached），否则为真值。 */
+  getEngineConfigOptionsView(): ReturnType<typeof externalEngineConfigOptionsView> {
+    return externalEngineConfigOptionsView(this as unknown as AgentRuntimeInternal);
   }
 
   async setEngineConfigOption(configId: string, value: string): Promise<EngineConfigOption[]> {

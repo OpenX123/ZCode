@@ -7,6 +7,7 @@ import { EngineControls, EngineSwitchRow, isEngineNotReadyError } from "@/extern
 import {
   useEngineConfigMemory,
   useEngineConnectionControl,
+  useEngineSwitchReadyMarker,
   useExternalEngineService,
 } from "@/hooks/external-engine/index.js";
 import type { ComposerTimingSeed } from "@/v4/telemetry/localTtftObserver.js";
@@ -1031,9 +1032,17 @@ export function SessionPane({
     },
     [engineReadinessScope],
   );
+  // W4 埋点：切换引擎 → 控件可见（cached）/可操作（live），只读快照派生。
+  const { markEngineSwitch } = useEngineSwitchReadyMarker({
+    engine: snapshot?.config.engine,
+    optionCount: snapshot?.config.engineConfigOptions?.length ?? 0,
+    source: snapshot?.config.engineConfigOptionsSource,
+    state: snapshot?.config.engineConfigState,
+  });
   const handleSelectEngine = useCallback(
     (engine: SessionEngine) => {
       if (sessionId || !externalEngineService) return;
+      markEngineSwitch(engine);
       void handleDraftSelectEngine(engine).catch(() => {
         toast(intl.formatMessage({ id: "engine.preferenceSaveFailed" }), { variant: "warning" });
       });
@@ -1048,6 +1057,7 @@ export function SessionPane({
       handleDraftSelectEngine,
       intl,
       invalidateOwnedDraftRuntime,
+      markEngineSwitch,
     ],
   );
   const engineConnection = useEngineConnectionControl({

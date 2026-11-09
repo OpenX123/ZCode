@@ -735,6 +735,8 @@ export interface ExternalEngineCommandsUpdatedPayload {
 export interface ExternalEngineConfigUpdatedPayload {
   engine: import("@zcode/shared").SessionEngine;
   engineConfigOptions: import("@zcode/shared").EngineConfigOption[];
+  /** W4：cached = connecting 期间的缓存展示副本；live = 当前连接确认；缺省为恢复的已保存值。 */
+  engineConfigOptionsSource?: "cached" | "live";
   engineConfigState?: import("@zcode/shared").EngineConfigState;
   engineConfigError?: import("@zcode/shared").EngineConnectionFailure;
   /** 会话绑定的连接配置 ID（只读投影，不含密钥）。 */

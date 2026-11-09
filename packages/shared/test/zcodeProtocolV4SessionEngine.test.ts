@@ -117,3 +117,15 @@ it("连接错误快照仅携带安全分类与方法，旧快照兼容且非法�
   ).toBe(false);
   expect(sessionConfigStateSchema.parse(baseConfig).engineConfigError).toBeUndefined();
 });
+
+it("W4：选项清单来源只接受 cached / live，旧快照缺省兼容", () => {
+  expect(
+    sessionConfigStateSchema.parse({ ...baseConfig, engineConfigOptionsSource: "cached" })
+      .engineConfigOptionsSource,
+  ).toBe("cached");
+  expect(
+    sessionConfigStateSchema.safeParse({ ...baseConfig, engineConfigOptionsSource: "memory" })
+      .success,
+  ).toBe(false);
+  expect(sessionConfigStateSchema.parse(baseConfig).engineConfigOptionsSource).toBeUndefined();
+});

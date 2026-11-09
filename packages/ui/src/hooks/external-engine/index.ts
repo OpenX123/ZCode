@@ -13,3 +13,10 @@ export {
 } from "./useExternalEngineService.js";
 export { useEngineConnectionProfiles } from "./useEngineConnectionProfiles.js";
 export { useEngineConnectionControl } from "./useEngineConnectionControl.js";
+export {
+  nextEngineSwitchReadyMark,
+  useEngineSwitchReadyMarker,
+  type EngineSwitchObservation,
+  type EngineSwitchPending,
+  type EngineSwitchReadyMark,
+} from "./useEngineSwitchReadyMarker.js";

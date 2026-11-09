@@ -796,6 +796,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         ...(options.externalEngineProcessPool
           ? { processPool: options.externalEngineProcessPool }
           : {}),
+        ...(options.externalEngineConfigCatalog
+          ? { configCatalog: options.externalEngineConfigCatalog }
+          : {}),
       }),
       ...(options.readSubagentRuntimeConfig
         ? {

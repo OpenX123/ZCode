@@ -13,6 +13,7 @@ import {
   type EngineConfigOption,
 } from "@zcode/shared/external-engine";
 import {
+  engineConfigOptionsSourceSchema,
   nativePermissionOptionSchema,
   PERMISSION_FULL_ACCESS_OPTION_ID,
   planStateSchema,
@@ -267,6 +268,7 @@ function hookExecutionDisplayName(
 export interface SessionConfigSeed {
   engine?: SessionEngine;
   engineConfigOptions?: EngineConfigOption[];
+  engineConfigOptionsSource?: "cached" | "live";
   engineConfigState?: import("@zcode/shared").EngineConfigState;
   engineConfigError?: import("@zcode/shared").EngineConnectionFailure;
   permissionGrant?: { interactionId: string };
@@ -695,6 +697,16 @@ export class ProductProjection {
       JSON.stringify(config.engineConfigOptions) !== JSON.stringify(seed.engineConfigOptions)
     ) {
       config.engineConfigOptions = structuredClone(seed.engineConfigOptions);
+      changed = true;
+    }
+    // W4：来源标记与清单同源同步；种子带清单而无来源时（恢复值）删除旧标记。
+    if (
+      seed.engineConfigOptions !== undefined &&
+      config.engineConfigOptionsSource !== seed.engineConfigOptionsSource
+    ) {
+      if (seed.engineConfigOptionsSource)
+        config.engineConfigOptionsSource = seed.engineConfigOptionsSource;
+      else delete config.engineConfigOptionsSource;
       changed = true;
     }
     if (
@@ -1575,6 +1587,7 @@ export class ProductProjection {
         const payload = event.payload as {
           engine: unknown;
           engineConfigOptions: unknown;
+          engineConfigOptionsSource?: unknown;
           engineConfigState?: unknown;
           engineConfigError?: unknown;
           engineConnectionProfileId?: unknown;
@@ -1583,14 +1596,21 @@ export class ProductProjection {
         const engineConfigOptions = engineConfigOptionSchema
           .array()
           .parse(payload.engineConfigOptions);
+        const engineConfigOptionsSource = engineConfigOptionsSourceSchema
+          .optional()
+          .parse(payload.engineConfigOptionsSource);
+        // 来源标记随每次清单整体替换；缺省时去掉旧标记，避免 cached 残留到确认后的快照（W4）。
+        const { engineConfigOptionsSource: _previousSource, ...previousConfig } =
+          this.snapshot.config;
         return [
           {
             op: "state.updated",
             patch: {
               config: {
-                ...this.snapshot.config,
+                ...previousConfig,
                 engine,
                 engineConfigOptions,
+                ...(engineConfigOptionsSource ? { engineConfigOptionsSource } : {}),
                 // 绑定只在 Runtime 解析后出现；尚未解析的 connecting 事件保留已投影的值。
                 ...(typeof payload.engineConnectionProfileId === "string"
                   ? { engineConnectionProfileId: payload.engineConnectionProfileId }

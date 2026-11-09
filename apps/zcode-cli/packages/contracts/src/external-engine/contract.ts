@@ -81,10 +81,17 @@ export interface ExternalEngineSessionInput {
   /** 仅在新连接初始化时恢复已确认的原生值，不作为可选目录。 */
   configValues?: Array<{ id: string; value: string }>;
   cwd: string;
+  /** 工作区身份 key（`workspaceIdentity?.trim() || workspacePath`），仅用于选项清单缓存键；缺省回落 cwd。 */
+  workspaceKey?: string;
   signal: AbortSignal;
   traceContext: TraceContext;
   onSession: (id: string) => Promise<void>;
   onConfigOptions: (options: EngineConfigOption[]) => Promise<void>;
+  /**
+   * W4：新会话（无 externalSessionId、非 fork）解析身份后、握手前，若进程内缓存有同键上次确认的清单，
+   * 先交给 Runtime 作为 connecting 期间的展示副本；随后仍以 onConfigOptions 的确认清单为准。
+   */
+  onCachedConfigOptions?: (options: EngineConfigOption[]) => Promise<void>;
   onUpdate: (update: Record<string, unknown>) => Promise<void>;
   /** 结构化失败（typed sessionFailure 或 Codex 非 typed 错误）；缺省时 adapter 丢弃这类元数据。 */
   onFailure?: (notice: ExternalEngineFailureNotice) => Promise<void>;

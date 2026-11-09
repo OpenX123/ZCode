@@ -49,6 +49,12 @@ interface CommandOptions {
   signal: AbortSignal;
   timeoutMs: number;
 }
+export {
+  createExternalEngineSpareSelection,
+  type ExternalEngineSpareSelection,
+  type ExternalEngineSpareSelectionDeps,
+} from "./spareSelection.js";
+
 export interface ExternalEngineServiceOptions {
   enginesDir: string;
   env: NodeJS.ProcessEnv;
