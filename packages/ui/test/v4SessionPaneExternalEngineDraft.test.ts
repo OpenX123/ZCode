@@ -41,6 +41,7 @@ const CLOSED_PROJECTION = {
 
 const mocks = vi.hoisted(() => ({
   composerProps: [] as Array<Record<string, unknown>>,
+  timelineProps: [] as Array<Record<string, unknown>>,
   layer: { acquire: vi.fn() } as { acquire: ReturnType<typeof vi.fn> },
   sendCommand: vi.fn<(envelope: CommandEnvelope) => Promise<CommandAck>>(),
   engineService: undefined as
@@ -165,8 +166,10 @@ vi.mock("@/v4/ConversationHeader.js", async () => {
 vi.mock("@/v4/ConversationTimeline.js", async () => {
   const React = await import("react");
   return {
-    ConversationTimeline: (props: { bottomDock?: unknown }) =>
-      React.createElement(React.Fragment, null, props.bottomDock as never),
+    ConversationTimeline: (props: { bottomDock?: unknown } & Record<string, unknown>) => {
+      mocks.timelineProps.push(props);
+      return React.createElement(React.Fragment, null, props.bottomDock as never);
+    },
   };
 });
 vi.mock("@/v4/ConversationStatusPanel.js", async () => {
@@ -362,6 +365,7 @@ function stubLease(sessionId: string) {
 }
 
 interface CommandLogEntry {
+  commandId: string;
   type: string;
   sessionId: string | null;
   payload: Record<string, unknown>;
@@ -378,11 +382,14 @@ function installCommandRouter(options: {
   prepareGate?: Deferred<void>;
   effortGate?: Deferred<void>;
   keepModel?: boolean;
+  sendTextGate?: Deferred<void>;
+  rejectSendText?: boolean;
 }) {
   const log: CommandLogEntry[] = [];
   const engine = { model: "gpt-a", effort: "low" };
   mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) => {
     log.push({
+      commandId: envelope.commandId,
       type: envelope.type,
       sessionId: envelope.sessionId,
       payload: envelope.payload as Record<string, unknown>,
@@ -400,6 +407,12 @@ function installCommandRouter(options: {
       } as CommandAck;
     }
     if (envelope.type === "prepareExternalEngineSession") await options.prepareGate?.promise;
+    if (envelope.type === "sendText") {
+      await options.sendTextGate?.promise;
+      if (options.rejectSendText) {
+        return { ...accepted, status: "rejected", reasonCode: "fixture.rejected" } as CommandAck;
+      }
+    }
     if (envelope.type === "setEngineConfigOption") {
       const { configId, value } = envelope.payload as { configId: string; value: string };
       if (configId === "model") {
@@ -466,6 +479,7 @@ afterEach(async () => {
   for (const root of mountedRoots.splice(0)) await act(async () => root.unmount());
   await settle();
   mocks.composerProps.length = 0;
+  mocks.timelineProps.length = 0;
   mocks.sendCommand.mockReset();
   mocks.projections.clear();
   mocks.projectionListeners.clear();
@@ -678,5 +692,190 @@ describe("外部引擎草稿连接中即可发送（P08）", () => {
     });
     expect(latestComposer().submissionReady).toBe(false);
     expect(log.filter((entry) => entry.type === "createSession")).toHaveLength(0);
+  });
+});
+
+function latestTimeline() {
+  return mocks.timelineProps.at(-1)!;
+}
+
+function timelineRows() {
+  return latestTimeline().rows as Array<Record<string, unknown>>;
+}
+
+function realFirstTurnRows(sourceCommandId: string) {
+  return [
+    {
+      rowId: 1,
+      turnId: "turn-1",
+      createdAt: 2_000,
+      createdAtSeq: 1,
+      kind: "turnHeader",
+      origin: "userInput",
+      executionKind: "agent",
+      sourceCommandId,
+      state: "running",
+      startedAt: 2_000,
+    },
+    {
+      rowId: 2,
+      turnId: "turn-1",
+      createdAt: 2_000,
+      createdAtSeq: 2,
+      kind: "userInput",
+      origin: "realUser",
+      text: "你好 overlay",
+      sourceCommandId,
+    },
+  ];
+}
+
+type SendText = (text: string, options?: Record<string, unknown>) => Promise<unknown>;
+
+// docs/desktop/engine-performance-1.1-spec.md「草稿首发的即时会话布局」（W5）：点击发送即切会话布局，
+// overlay 以 sendText commandId 与真实行 sourceCommandId 去重；失败显示错误与重新发送，不显示横幅。
+describe("首屏首发即时会话布局（W5）", () => {
+  it("点击后 sendText 前已显示用户气泡与运行中轮次；promotion 后真实行同位接替且不重复", async () => {
+    setupExternalEngine();
+    const sendTextGate = deferred<void>();
+    const prewarmSessionId = "prewarm-overlay";
+    const log = installCommandRouter({ prewarmSessionId, sendTextGate });
+    publishProjection(
+      prewarmSessionId,
+      liveProjection(snapshotFor(prewarmSessionId, "ready", catalog("gpt-b", "high"))),
+    );
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    const onSessionCreated = vi.fn();
+    await act(async () => {
+      root.render(renderPane({ onSessionCreated }));
+      await settle();
+    });
+    expect(timelineRows()).toEqual([]);
+    expect(latestComposer().centered).toBe(true);
+
+    const onSendText = latestComposer().onSendText as SendText;
+    let sendResult: unknown = "pending";
+    await act(async () => {
+      void onSendText("你好 overlay", { telemetrySeed: { sendTime: 1_000 } }).then(
+        (result) => {
+          sendResult = result;
+        },
+        (error: unknown) => {
+          sendResult = error;
+        },
+      );
+      await settle();
+    });
+    // sendText ACK 仍在途：首屏已退出，overlay 轮次从点击时刻开始计时。
+    expect(sendResult).toBe("pending");
+    expect(timelineRows().map((row) => row.kind)).toEqual(["turnHeader", "userInput"]);
+    expect(timelineRows()[0]).toMatchObject({ state: "running", startedAt: 1_000 });
+    expect(timelineRows()[1]).toMatchObject({ text: "你好 overlay", origin: "realUser" });
+    expect(latestComposer().centered).toBe(false);
+    expect(latestTimeline().centerEmptyStateWithDock).toBe(false);
+
+    await act(async () => {
+      sendTextGate.resolve();
+      await settle();
+    });
+    expect(sendResult).toBe("sent");
+    expect(onSessionCreated).toHaveBeenCalledWith(prewarmSessionId);
+    const sendCommandId = log.find((entry) => entry.type === "sendText")!.commandId;
+
+    // 父层导航到新会话，真实行尚未到达：overlay 仍在同一位置。
+    await act(async () => {
+      root.render(renderPane({ onSessionCreated, sessionId: prewarmSessionId }));
+      await settle();
+    });
+    expect(timelineRows().map((row) => row.kind)).toEqual(["turnHeader", "userInput"]);
+    expect(timelineRows()[1]).toMatchObject({ text: "你好 overlay" });
+
+    // 真实行到达：只剩真实行，不重复。
+    const snapshot = snapshotFor(prewarmSessionId, "ready", catalog("gpt-b", "high"));
+    const rows = realFirstTurnRows(sendCommandId);
+    await act(async () => {
+      publishProjection(
+        prewarmSessionId,
+        liveProjection({
+          ...snapshot,
+          rows: { window: rows, totalCount: rows.length, firstRowId: 1 },
+        } as unknown as ConversationSnapshot),
+      );
+      await settle();
+    });
+    expect(timelineRows().map((row) => row.rowId)).toEqual([1, 2]);
+  });
+
+  it("sendText 被拒绝：overlay 转为失败轮次并提供重新发送，不再显示输入框横幅", async () => {
+    setupExternalEngine();
+    const prewarmSessionId = "prewarm-overlay-failed";
+    installCommandRouter({ prewarmSessionId, rejectSendText: true });
+    publishProjection(
+      prewarmSessionId,
+      liveProjection(snapshotFor(prewarmSessionId, "ready", catalog("gpt-b", "high"))),
+    );
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    await act(async () => {
+      root.render(renderPane({}));
+      await settle();
+    });
+    const onSendText = latestComposer().onSendText as SendText;
+    let sendError: unknown = null;
+    await act(async () => {
+      await onSendText("失败的首发", { telemetrySeed: { sendTime: 1_000 } }).catch(
+        (error: unknown) => {
+          sendError = error;
+        },
+      );
+      await settle();
+    });
+    // Composer 仍收到异常，按既有语义回填输入框。
+    expect(sendError).toBeInstanceOf(Error);
+    expect(timelineRows().map((row) => row.kind)).toEqual(["turnHeader", "userInput"]);
+    expect(timelineRows()[0]).toMatchObject({
+      state: "failed",
+      failure: { code: "SEND_FAILED" },
+    });
+    expect(latestComposer().error ?? null).toBeNull();
+    expect(latestComposer().centered).toBe(false);
+
+    const rowContext = latestTimeline().rowContext as {
+      onResendFailedTurn?: (text: string) => Promise<void>;
+    };
+    expect(rowContext.onResendFailedTurn).toBeTypeOf("function");
+    const before = (latestComposer().submitRequestId as number | undefined) ?? 0;
+    await act(async () => {
+      await rowContext.onResendFailedTurn!("失败的首发");
+      await settle();
+    });
+    expect(latestComposer().submitRequestId).toBe(before + 1);
+  });
+
+  it("launch 检查拦截（blocked）不是失败：移除 overlay，回到首屏布局", async () => {
+    setupExternalEngine();
+    const prewarmSessionId = "prewarm-overlay-blocked";
+    installCommandRouter({ prewarmSessionId });
+    publishProjection(
+      prewarmSessionId,
+      liveProjection(snapshotFor(prewarmSessionId, "ready", catalog("gpt-b", "high"))),
+    );
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    await act(async () => {
+      root.render(renderPane({}));
+      await settle();
+    });
+    mocks.engineService!.isLaunchReady = vi.fn(async () => false);
+    const onSendText = latestComposer().onSendText as SendText;
+    let sendResult: unknown = "pending";
+    await act(async () => {
+      sendResult = await onSendText("被拦截");
+      await settle();
+    });
+    expect(sendResult).toBe("blocked");
+    expect(timelineRows()).toEqual([]);
+    expect(latestComposer().centered).toBe(true);
   });
 });

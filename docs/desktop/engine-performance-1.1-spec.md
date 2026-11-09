@@ -249,9 +249,66 @@ sequenceDiagram
 
 ### 草稿首发的"正在发送"
 
-- 1.1 决策取代 [草稿首发：任务列表与详情同时提交](../task-first-submit-visibility.md) 中"等目录真实行再结束转圈"的规则：`sendText` ACK 为 `accepted` 后立即提升草稿并导航到新会话，Composer 的"正在发送…"随之结束。
+- 1.1 决策取代 [草稿首发：任务列表与详情同时提交](../task-first-submit-visibility.md) 中"等目录真实行再结束转圈"的规则：`sendText` ACK 为 `accepted` 后立即提升草稿并导航到新会话。
 - 侧栏真实行仍由 `ProjectDirectoryProvider` 的既有目录刷新带来，可以晚于详情出现；不构造乐观行。任务分组归属（organize）仍等真实行到达后提交。
 - 目录读取失败只记 warn：会话已创建，不重发输入、不回滚导航。
+- 2026-11-09（YCode 1.3 W5，用户反馈 5、6）起，"正在发送…"卡片（`composer-submission-preview`）删除，由下一节的即时会话布局取代。
+
+### 草稿首发的即时会话布局（pending optimistic overlay）
+
+**规则**
+
+1. 新建会话首屏（`sessionId === null`）点击发送后，`SessionPane` 立即从首屏布局切到会话布局：不再显示问候语与草稿项目栏，Composer 取消居中；时间线显示一个 pending overlay 轮次——用户气泡（与本次 `sendText` 的正文、附件相同）+ 「工作中 N 秒」，计时起点是点击发送的时刻（`telemetrySeed.sendTime`）。
+2. 已有会话的发送不建 overlay：删除预览卡后，发送键的转圈仍表示在途，accepted 后真实行由投影带来（行为与原先一致，只是不再有卡片）。
+3. 发送链不变：launch 检查 → 等待 draft binding → 握手 / 记忆恢复（外部引擎）→ `sendText` ACK → promotion commit（`handleDraftSessionCreated`）。overlay 不参与任何屏障判断，也不改变 owner/lease、CommandInbox admission 或 promotion 语义。
+4. 去重身份：`sendText` 信封的 `commandId`（`onCommandCreated` 回调取得），与真实 `userInput` / `turnHeader` 行的 `sourceCommandId` 一致。只要当前时间线真实行里出现该 `sourceCommandId`，overlay 立即移除，真实行在同一位置接替（首发前会话为空，overlay 与真实轮都是第一轮），不重复、不跳动。
+5. promotion 时 overlay 绑定新会话 id；之后 pane 切到其它会话、工作区或草稿 Tab 变化，或者发送 accepted 却没有取得 `commandId`（草稿 `/goal` 等不走 `sendText` 的命令）时，overlay 直接移除，回到原有"等真实行"的显示。overlay 只按事件收口，不用超时。
+6. 失败：发送被拒绝或抛错时，overlay 轮次转为失败态，复用既有行内错误行（`TurnFailureRow`，文案与输入框错误横幅同一本地化规则），提供「重新发送」；正文按既有语义回填输入框（Composer 的 `restoreSubmittedDraft`）。此时不再重复显示输入框错误横幅。「重新发送」通过 Composer 既有提交入口重发输入框里的内容，不另开发送路径；正文被用户改过时发送改后的内容。失败态保留到下一次发送、切换草稿 Tab 或工作区。
+7. `blocked` / `confirmationRequired`（引擎未就绪引导、产品 guard、队列确认）不是失败：overlay 直接移除，回到首屏布局，输入框内容回填。
+8. 首发期间编辑器立即清空（与"立即发送"同一套乐观清空 + 失败按冻结 editor state 恢复），避免气泡与输入框同时显示同一段正文。
+9. 桌面与手机 Web 共用同一组件和行渲染，深浅色沿用行组件主题 token，不新增样式。
+
+**状态所有者**
+
+- overlay 归 `SessionPane`（`useDraftSubmissionOverlay`，`packages/ui/src/v4/draftSubmissionOverlay.ts`）：只是 Renderer 的 pending optimistic overlay，不写入 projection store，不进入 snapshot。真实行永远来自 CLI 投影。
+- 草稿正文与恢复归 Composer（既有）。
+- 会话事实（user 行、turnHeader、工时）归 CLI 投影；promotion 后计时改用真实 `turnHeader.startedAt`（比点击时刻晚 ACK 往返时间，秒数可能回退约 1 秒，这是以投影为准的结果，不做 UI 修正）。
+
+```mermaid
+sequenceDiagram
+  participant U as 用户
+  participant C as Composer
+  participant P as SessionPane(overlay owner)
+  participant T as Timeline
+  participant R as CLI runtime
+  U->>C: 点击发送「你好」
+  C->>C: 冻结草稿，乐观清空编辑器
+  C->>P: onSendText(text, {telemetrySeed, onCommandCreated})
+  P->>P: overlay = pending{text, startedAt=sendTime}
+  P->>T: rows = 真实行(空) + overlay(用户气泡 + 工作中 0 秒)
+  P->>R: 既有屏障：launch / draft binding / 握手 / 记忆恢复
+  P->>R: sendText(commandId)
+  P->>P: overlay.commandId = commandId
+  R-->>P: ACK accepted
+  P->>P: promotion commit：overlay 绑定新 sessionId
+  R-->>T: 投影 user 行 + turnHeader(sourceCommandId = commandId)
+  P->>P: 真实行含该 sourceCommandId → 移除 overlay
+  T->>T: 真实轮在同一位置接替
+  alt 任一步抛错 / ACK 拒绝
+    P->>P: overlay = failed{错误摘要}
+    C->>C: restoreSubmittedDraft（回填输入框）
+    U->>P: 点击「重新发送」
+    P->>C: 提交请求 → 走同一提交入口
+  else blocked / confirmationRequired
+    P->>P: 移除 overlay（回到首屏）
+    C->>C: 回填输入框
+  end
+```
+
+**验收**
+
+- UT：`v4SessionPaneExternalEngineDraft.test.ts`（点击后 sendText 前已有气泡与运行中轮次、首屏退出；真实行到达后只剩真实行；失败态显示错误与重新发送并不显示横幅；blocked 移除）、`v4ConversationComposerErrorBanner.test.ts`（无预览卡、首发编辑器立即清空、失败回填、提交请求重发）、`v4DraftSubmissionOverlay.test.ts`（合并/去重纯函数）、`v4AssistantPreviewCards.test.ts`（无“正在等待模型…”行，中途重连仍显示“正在启动引擎…”）。
+- 桌面 E2E 候选：`conversation-session-external-engine-prewarm.test.ts` P11（冷握手 3s 内即出现气泡与"工作中"，无预览卡与"正在等待模型…"，真实行接替后不重复）与 P11b（握手失败：错误 + 重新发送 + 回填，恢复后重新发送只发一次）。
 
 ## 启动恢复
 

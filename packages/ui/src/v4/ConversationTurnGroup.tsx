@@ -207,7 +207,9 @@ function TurnChatLoadingSlot({
   const { intl } = useZCodeIntl();
   const retryProgress = useMemo(() => (apiRetry ? toRetryProgress(apiRetry) : null), [apiRetry]);
   // 第一次已知重试立即可见，避免网关故障时只有持续转圈。
-  if (!retryProgress && !eligible) return null;
+  // 2026-11-09 W5（用户反馈 5）：“正在等待模型…”与 YCode 无字转圈和轮次头「工作中 N 秒」重复，
+  // 所有引擎都不再显示；只保留轮次中途外部引擎真实重连（CLI 发布 connecting）这一不同状态。
+  if (!retryProgress && !(eligible && phase === "connecting")) return null;
   return (
     <div data-zcode-chat-loading-slot="true" className="min-h-5">
       {retryProgress && apiRetry ? (
@@ -227,16 +229,9 @@ function TurnChatLoadingSlot({
         // 更新反复重启可见性，并使 UI 晚于真实状态。
         <div className="flex items-center gap-2 text-ui-sm text-foreground-subtle">
           <ChatLoading loading data-testid={TID_CHAT_LOADING} size="sm" />
-          {phase ? (
-            <span data-testid="engine-wait-phase">
-              {intl.formatMessage({
-                id:
-                  phase === "connecting"
-                    ? "chat.submission.startingEngine"
-                    : "chat.submission.waitingModel",
-              })}
-            </span>
-          ) : null}
+          <span data-testid="engine-wait-phase">
+            {intl.formatMessage({ id: "chat.submission.startingEngine" })}
+          </span>
         </div>
       )}
     </div>

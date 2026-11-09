@@ -26,6 +26,8 @@ Runtime 为每次外部 turn 的原生权限请求维护在途集合。用户停
 
 runTurn 发现会话没有健康的 adapter 连接（`ExternalEnginePort.isSessionConnected` 为 false）时，先经既有 `engineConfigState` 发布 connecting，再准备连接，成功发布 ready，失败发布 error；界面因此显示“正在启动引擎…”，不再显示“正在等待模型…”。健康连接的续聊不发布额外状态。
 
+2026-11-09（YCode 1.3 W5）起，三个引擎在轮次运行中都不再显示“正在等待模型…”，也不再显示 YCode 原生引擎底部的无字转圈；进度只由「工作中 N 秒」表达。底部 slot 只在两种真实且不同的状态下渲染：重试中的 retry 行（`apiRetry`），以及轮次中途外部引擎重连（`engineConfigState = connecting`，尚无本轮输出）时的“正在启动引擎…”。i18n 键 `chat.submission.waitingModel` 删除。
+
 ## 结构化失败
 
 ### 能力声明（ACP adapter 边界）

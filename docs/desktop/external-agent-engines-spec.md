@@ -131,7 +131,7 @@ sequenceDiagram
 | 无 binding，预热已被丢弃（订阅失败）                     | `recreatable` | 无                       | 是：同上                                                   |
 | 预热被禁用（远程不可用、待恢复首发等）                   | `disabled`    | 无                       | 否                                                         |
 
-- 2026-11-08 起（用户决策：草稿必须无感，打开即可输入与发送）：`creating` / `connecting` 不再阻止发送，也不再显示“正在连接引擎…”。发送链不变且仍保证顺序：`waitForSession`（无 binding 时）→ 经配置屏障 `prepareExternalEngineSession`（并入在途后台握手，或失败后重试一次）→ 等待本草稿的记忆恢复（模型、深度）在同一屏障内完成 → `sendText`。这段等待期间输入框显示既有的“正在发送…”；任一步失败抛错，输入框保留输入，失败草稿仍提供“重新连接”入口。首发不能早于记忆恢复：消息直接交给 CLI 排在握手之后会让第一轮使用引擎缺省配置，因此排队留在 Renderer 发送链，不改 CLI admission。
+- 2026-11-08 起（用户决策：草稿必须无感，打开即可输入与发送）：`creating` / `connecting` 不再阻止发送，也不再显示“正在连接引擎…”。发送链不变且仍保证顺序：`waitForSession`（无 binding 时）→ 经配置屏障 `prepareExternalEngineSession`（并入在途后台握手，或失败后重试一次）→ 等待本草稿的记忆恢复（模型、深度）在同一屏障内完成 → `sendText`。这段等待期间（2026-11-09 起）界面已切到会话布局，显示 pending overlay（用户气泡 + 「工作中 N 秒」），不再显示“正在发送…”卡片，见 [引擎性能 spec](./engine-performance-1.1-spec.md)「草稿首发的即时会话布局」；任一步失败抛错，overlay 显示错误与“重新发送”，输入框保留输入，失败草稿仍提供“重新连接”入口。首发不能早于记忆恢复：消息直接交给 CLI 排在握手之后会让第一轮使用引擎缺省配置，因此排队留在 Renderer 发送链，不改 CLI admission。
 - 原生配置选择器（模型、深度、权限模式）在就绪前显示为禁用，不显示加载文案；就绪后显示原生值。
 - 1.0.8 遗留问题：预热会话因订阅失败被 `discard()` 之后，owner 会阻止同一版本自动重建；而外部引擎草稿的 `submissionReady` 只看“有 binding 或有错误”，两者都为空，发送入口被禁用，也就不会再调用 `waitForSession`，形成死锁。修复后，被丢弃的预热属于 `recreatable` 阶段，可以发送；发送时由 owner 单飞重建，等就绪后再发送。
 
@@ -286,7 +286,7 @@ sequenceDiagram
 | P08 | 草稿就绪阶段与丢弃后恢复              | 除 disabled 外各阶段都可发送；creating/connecting 发送等待就绪与记忆恢复后才 `sendText`；丢弃后发送由 owner 重建并等待就绪                                    | UI                         |
 | P09 | 领用预建会话                          | 领用时不再发 initialize / `session/new`；会话取得预建的原生 ID 与配置；已保存配置在领用后下发；补位后至多一个                                                 | adapters                   |
 | P10 | 草稿只在可见时预热                    | 隐藏挂载的草稿 pane 不发 createSession；首次可见后发一次，再隐藏不回收                                                                                        | UI                         |
-| P11 | 连接中立即发送（真实桌面）            | 新草稿出现后立即输入并发送，不出现“正在连接引擎…”；消息只发一次且使用记忆的模型/深度                                                                          | E2E（待真实 Windows 验收） |
+| P11 | 连接中立即发送（真实桌面）            | 新草稿出现后立即输入并发送，不出现“正在连接引擎…”；点击后立即出现用户气泡与「工作中」，无“正在发送…”卡片与“正在等待模型…”；消息只发一次且使用记忆的模型/深度；握手失败时气泡下显示错误与“重新发送”并回填输入框（P11b） | E2E（待真实 Windows 验收） |
 | P12 | 草稿就绪耗时（真实 Windows）          | 有预建会话时新草稿 createSession → ready ≤ 1s；窗口重载只有可见草稿出现握手日志                                                                               | 本机日志（待验收）         |
 | P13 | 草稿闲置关闭后再准备                  | 下一次准备不发 `session/resume`/`session/load`，走 `session/new`（同键预建会话可领用）；Runtime 得到新原生 ID；已确认配置下发；prompt 只发一次                | adapters                   |
 | P14 | 可见性协议输入                        | schema strict（拒绝未知字段、空 ID、超过 64 个）；整体替换、跨连接取并集、连接 closed 删除；收到即处理不排队                                                  | shared / bootstrap         |

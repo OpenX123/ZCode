@@ -513,6 +513,11 @@ export interface ConversationComposerProps {
    */
   composerRestoreRequest?: ComposerRestoreRequest | null;
   onComposerRestoreApplied?: (requestId: number) => void;
+  /**
+   * 首屏首发 overlay 的“重新发送”：值变化一次即经同一提交入口提交一次输入框内容；
+   * 挂载时的初始值不触发。
+   */
+  submitRequestId?: number;
   /** 副屏会话不提供 goal 能力；协议层仍会拒绝直接调用。 */
   suppressGoalCommands?: boolean;
   /** App 层本地斜杠命令（如 `/side`），由 SessionPane 按门禁组装后透传。 */
@@ -585,6 +590,7 @@ function ConversationComposerImpl({
   onExternalTextInsertApplied,
   composerRestoreRequest = null,
   onComposerRestoreApplied,
+  submitRequestId,
   suppressGoalCommands = false,
   appSlashCommands,
   onDropTargetControllerChange,
@@ -1556,10 +1562,12 @@ function ConversationComposerImpl({
           }
         }
         claimSubmittedDraft();
-        if (requestedDelivery === "startNow") {
+        if (requestedDelivery === "startNow" || sessionId === null) {
           // 原子抢占需要等旧 turn 退出并提交新 TurnStarted ACK；
           // 若编辑器也等整条链路才清空，用户会误以为快捷键未生效。
-          // 先清空可见正文；命令拒绝时用冻结 editor state 原样恢复。
+          // 草稿首发同理：SessionPane overlay 已立即显示用户气泡，编辑器若保留正文会与气泡重复
+          // （2026-11-09 W5 删除“正在发送…”卡片后）。
+          // 先清空可见正文；命令拒绝或失败时用冻结 editor state 原样恢复。
           inputApiRef.current?.clear();
           updateText("");
           cleanupRevision = contentRevisionRef.current;
@@ -1713,6 +1721,16 @@ function ConversationComposerImpl({
     },
     [submit],
   );
+
+  // 首屏首发失败后的“重新发送”请求：只消费挂载之后的新值，重挂载不重放旧请求。
+  const handledSubmitRequestIdRef = useRef(submitRequestId);
+  useEffect(() => {
+    if (submitRequestId === undefined || submitRequestId === handledSubmitRequestIdRef.current) {
+      return;
+    }
+    handledSubmitRequestIdRef.current = submitRequestId;
+    void submit();
+  }, [submit, submitRequestId]);
 
   const handleModifiedEditorSubmit = useCallback(
     (value: string) => {
@@ -2434,23 +2452,6 @@ function ConversationComposerImpl({
         className="hidden"
         onChange={attachmentsApi.handleAttachmentInputChange}
       />
-      {pendingSubmission ? (
-        <div
-          data-testid="composer-submission-preview"
-          role="status"
-          className="mb-3 flex items-start gap-2 rounded-lg border border-border/50 bg-surface px-3 py-2 text-ui-sm text-foreground-subtle"
-        >
-          <Spinner className="mt-0.5 size-3.5 shrink-0" />
-          <div className="min-w-0">
-            <div>{intl.formatMessage({ id: "chat.submission.sending" })}</div>
-            {pendingSubmission.text ? (
-              <div className="line-clamp-2 whitespace-pre-wrap break-words text-foreground">
-                {pendingSubmission.text}
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
       {engineNotReadyContent}
       {engineSelector ? (
         <div className="mb-3 flex min-w-0 justify-center" data-testid="composer-engine-selector">
