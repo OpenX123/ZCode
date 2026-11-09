@@ -635,9 +635,7 @@ const zhCN: Record<string, string> = {
 
   "bots.group.provider.feishu": "飞书",
   // 通用
-  "chat.submission.sending": "正在发送…",
   "chat.submission.startingEngine": "正在启动引擎…",
-  "chat.submission.waitingModel": "正在等待模型…",
   "common.loading": "加载中...",
   "common.listSeparator": "、",
   "common.generating": "生成中...",

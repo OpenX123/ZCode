@@ -642,7 +642,8 @@ describe("ConversationComposer prompt history", () => {
       resolveSend();
       await flushAsyncWork();
     });
-    expect(inputClear).not.toHaveBeenCalled();
+    // 2026-11-09 W5：草稿首发先乐观清空一次编辑器（气泡已由 overlay 显示）；迟到成功不能再清除新正文。
+    expect(inputClear).toHaveBeenCalledTimes(1);
     expect(readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT)?.text).toBe("下一条");
     await act(async () => root.unmount());
   });
@@ -729,7 +730,9 @@ describe("ConversationComposer prompt history", () => {
     });
 
     expect(onSendText).toHaveBeenCalledWith("/goal 保留这段输入", expectedLocalTimingSendOptions());
-    expect(inputClear).not.toHaveBeenCalled();
+    // 草稿首发乐观清空后，guard 拒绝按冻结正文原样恢复编辑器（W5）。
+    expect(inputClear).toHaveBeenCalledTimes(1);
+    expect(inputSetText).toHaveBeenLastCalledWith("/goal 保留这段输入");
     expect(attachmentState.adoptSentAttachments).not.toHaveBeenCalled();
     expect(readPromptHistoryEntries("/workspace")).toEqual([]);
     expect(readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT)?.text).toBe(
@@ -752,7 +755,9 @@ describe("ConversationComposer prompt history", () => {
     });
 
     expect(dialogOpenStates.at(-1)).toBe(true);
-    expect(inputClear).not.toHaveBeenCalled();
+    // 草稿首发乐观清空后，等待队列确认时按冻结正文原样恢复编辑器（W5）。
+    expect(inputClear).toHaveBeenCalledTimes(1);
+    expect(inputSetText).toHaveBeenLastCalledWith("等待确认的消息");
     expect(attachmentState.adoptSentAttachments).not.toHaveBeenCalled();
     expect(readPromptHistoryEntries("/workspace")).toEqual([]);
     expect(readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT)?.text).toBe(

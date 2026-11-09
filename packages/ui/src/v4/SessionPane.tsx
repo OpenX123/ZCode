@@ -125,6 +125,10 @@ import type { ConversationDropTargetController } from "@/v4/composer/conversatio
 import { shouldIgnoreEscapeForStopGeneration } from "@/v4/composer/escapeStop.js";
 import { useConversationPanePresentation } from "@/side-pane-full-view/index.js";
 import { ConversationDraftEmptyState } from "@/v4/ConversationDraftEmptyState.js";
+import {
+  mergeDraftSubmissionOverlayRows,
+  useDraftSubmissionOverlay,
+} from "@/v4/draftSubmissionOverlay.js";
 import { ConversationHeader, type PaneWorkspaceBadge } from "@/v4/ConversationHeader.js";
 import { ConversationQueuePanel } from "@/v4/ConversationQueuePanel.js";
 import { projectPendingGuideQueue } from "@/v4/pendingGuideProjection.js";
@@ -360,6 +364,8 @@ const EMPTY_SUBAGENT_PROJECTION: NonNullable<ConversationSnapshot["subagents"]> 
   running: [],
   endedTotal: 0,
 };
+
+const EMPTY_TIMELINE_ROWS: ConversationSnapshot["rows"]["window"] = [];
 
 const MAX_CONVERSATION_FILE_CHANGES_CACHE_ENTRIES = 20;
 
@@ -770,6 +776,28 @@ export function SessionPane({
   );
 
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
+  // 草稿首发的 pending optimistic overlay（engine-performance-1.1-spec「草稿首发的即时会话布局」）：
+  // 只在 Renderer 展示，真实行到达（sourceCommandId 相同）即移除，不改变发送屏障与 promotion。
+  const draftSubmissionOverlay = useDraftSubmissionOverlay({
+    sessionId,
+    resetKey: `${workspaceKey}\0${draftTabId ?? ""}`,
+  });
+  const {
+    overlay: draftOverlay,
+    begin: beginDraftOverlay,
+    attachCommand: attachDraftOverlayCommand,
+    bindSession: bindDraftOverlaySession,
+    settleAccepted: settleDraftOverlayAccepted,
+    fail: failDraftOverlay,
+    clear: clearDraftOverlay,
+    reconcile: reconcileDraftOverlay,
+  } = draftSubmissionOverlay;
+  const [draftRetrySubmitRequestId, setDraftRetrySubmitRequestId] = useState(0);
+  // overlay 失败行的“重新发送”：只请求 Composer 走同一提交入口重发输入框内容（已回填），
+  // 不另开发送路径，避免发送成功后输入框仍残留同一段正文。
+  const handleRetryDraftSubmission = useCallback(async () => {
+    setDraftRetrySubmitRequestId((id) => id + 1);
+  }, []);
   const workspaceConfigOptions = useZCodeSessionStore(
     (store) => store.getWorkspaceState(workspacePath, workspaceIdentity).configOptions,
   );
@@ -1096,6 +1124,8 @@ export function SessionPane({
         // 因而把数小时闲置时间误记为 total/react。创建边界先标记本 pane 的首次绑定；离开后
         // 再次显式打开同一 Session 时标记会清除，恢复正常的已有 Session 打开测量。
         newlyCreatedSessionIdRef.current = createdSessionId;
+        // overlay 必须在导航前同步绑定新会话，否则 sessionId 变化会被当成“离开草稿”而丢弃。
+        bindDraftOverlaySession(createdSessionId);
         promoteComposerDraft(createdSessionId);
         onSessionCreated?.(createdSessionId);
       };
@@ -1158,6 +1188,7 @@ export function SessionPane({
       }
     },
     [
+      bindDraftOverlaySession,
       commitCreatedTask,
       baseWorkspaceServices.taskGroupService,
       refreshTaskGroups,
@@ -2121,7 +2152,11 @@ export function SessionPane({
             })
           : undefined,
       onResendFailedTurn:
-        runtimeReady && sessionId && !readOnly ? handleResendFailedTurn : undefined,
+        runtimeReady && sessionId && !readOnly
+          ? handleResendFailedTurn
+          : sessionId === null && draftOverlay?.status === "failed"
+            ? handleRetryDraftSubmission
+            : undefined,
       workflowSaveCandidatesByRunId,
       ...(workflowSessionModel === undefined ? {} : { workflowSessionModel }),
       workflowRunByToolCallId,
@@ -2187,6 +2222,8 @@ export function SessionPane({
       handleAmendWorkflowRunSettings,
       handleSendWorkflowSaveRequest,
       handleResendFailedTurn,
+      draftOverlay?.status,
+      handleRetryDraftSubmission,
       workflowSaveCandidatesByRunId,
       workflowSessionModel,
       workflowRunByToolCallId,
@@ -2861,11 +2898,33 @@ export function SessionPane({
         inputRoutingMode: snapshotRef.current?.inputRouting.mode ?? null,
         heldQueueDisposition: options?.heldQueueDisposition,
       });
+      // 首屏首发：点击即切会话布局，用 pending overlay 显示用户气泡与「工作中」（替代已删除的
+      // “正在发送…”卡片）。overlay 只包装 onCommandCreated 取得去重身份，不改变发送链与屏障。
+      const overlayId =
+        sessionId === null && !readOnly
+          ? beginDraftOverlay({
+              text,
+              ...(options?.attachments?.length ? { attachments: options.attachments } : {}),
+              startedAt: options?.telemetrySeed?.sendTime ?? Date.now(),
+            })
+          : null;
+      const sendOptions: ConversationComposerSendOptions | undefined = overlayId
+        ? {
+            ...options,
+            onCommandCreated: (commandId: string) => {
+              attachDraftOverlayCommand(overlayId, commandId);
+              options?.onCommandCreated?.(commandId);
+            },
+          }
+        : options;
       try {
-        const sendResult = await dispatchSendText(text, options);
+        const sendResult = await dispatchSendText(text, sendOptions);
         if (sendResult === "blocked" || sendResult === "confirmationRequired") {
+          // 产品 guard / 引擎未就绪 / 队列确认不是失败：回到首屏，正文由 Composer 回填。
+          if (overlayId) clearDraftOverlay(overlayId);
           return sendResult;
         }
+        if (overlayId) settleDraftOverlayAccepted(overlayId);
         setSendSubmissionError(null);
         if (shouldFocusLatest) {
           focusTimelineToLatest();
@@ -2878,7 +2937,7 @@ export function SessionPane({
         // 仅写日志，不会生成 snapshot.control.lastError，用户看到的结果就是“点击没反应”。
         // 这里把 admission 前失败收口为 pane-local 错误横幅，不改变 desktop continuous 或
         // Web remote replayable 的发送/恢复语义，草稿仍由 Composer 原路径保留。
-        setSendSubmissionError({
+        const submissionError = {
           code:
             getRemoteConnectionFailureCode(error) ??
             (runtimeModelUnavailable ? "ZCODE_RUNTIME_MODEL_UNAVAILABLE" : "SEND_FAILED"),
@@ -2887,11 +2946,31 @@ export function SessionPane({
             : intl.formatMessage({ id: "chat.error.sendFailed" }),
           detail,
           ...(sessionId ? { taskId: sessionId } : {}),
-        });
+        };
+        if (overlayId) {
+          // 首屏首发失败由 overlay 气泡下的行内错误行承载（含“重新发送”），不再重复横幅。
+          failDraftOverlay(overlayId, {
+            code: submissionError.code,
+            summary: submissionError.message,
+          });
+        } else {
+          setSendSubmissionError(submissionError);
+        }
         throw error;
       }
     },
-    [dispatchSendText, focusTimelineToLatest, intl, sessionId],
+    [
+      attachDraftOverlayCommand,
+      beginDraftOverlay,
+      clearDraftOverlay,
+      dispatchSendText,
+      failDraftOverlay,
+      focusTimelineToLatest,
+      intl,
+      readOnly,
+      sessionId,
+      settleDraftOverlayAccepted,
+    ],
   );
   // 上面那个 ref 的唯一赋值点（见 handleSendWorkflowSaveRequest 的说明）。
   sendTextRef.current = handleSendText;
@@ -3659,6 +3738,17 @@ export function SessionPane({
     !isDraft && (lease === null || sessionLeaseReady) && snapshot?.sessionId === sessionId
       ? snapshot
       : null;
+  // 首屏首发 overlay 在场时，草稿已是会话布局：不居中、不显示问候语与草稿项目栏。
+  const draftOverlayActive = draftOverlay !== null;
+  const draftLandingLayout = isDraft && !draftOverlayActive;
+  const projectedTimelineRows = timelineSnapshot?.rows.window ?? EMPTY_TIMELINE_ROWS;
+  const timelineRows = useMemo(
+    () => mergeDraftSubmissionOverlayRows(projectedTimelineRows, draftOverlay),
+    [projectedTimelineRows, draftOverlay],
+  );
+  useEffect(() => {
+    reconcileDraftOverlay(projectedTimelineRows);
+  }, [projectedTimelineRows, reconcileDraftOverlay]);
   const shareHandoverContext =
     snapshot?.sharedContextImport && "contextId" in snapshot.sharedContextImport
       ? snapshot.sharedContextImport
@@ -4051,8 +4141,11 @@ export function SessionPane({
         createSubmissionFromComposer={externalEngine ? undefined : createSubmissionFromComposer}
         telemetryDraftConfig={telemetryDraftConfig}
         // 完整视图浮窗默认是一条输入框：草稿项目栏不进入浮窗，切到对话 tab 再选择项目。
-        contextHeader={isDraft && !isFloatingPresentation ? draftComposerHeader : undefined}
-        centered={isDraft}
+        contextHeader={
+          draftLandingLayout && !isFloatingPresentation ? draftComposerHeader : undefined
+        }
+        centered={draftLandingLayout}
+        submitRequestId={draftRetrySubmitRequestId}
         layout={isFloatingPresentation ? "inline" : "stacked"}
         workingDurationMs={
           floatingTurnRunning ? floatingLatestTurnSummary?.workDurationMs : undefined
@@ -4430,10 +4523,13 @@ export function SessionPane({
                   scrollToBottomActionRef={timelineScrollToBottomRef}
                   scrollToQueryActionRef={timelineScrollToQueryRef}
                   selectionPanelLayoutContainerRef={conversationLayoutContainerRef}
-                  rows={timelineSnapshot?.rows.window ?? []}
+                  rows={timelineRows}
                   pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
                   apiRetry={timelineSnapshot?.control.apiRetry ?? null}
-                  totalCount={timelineSnapshot?.rows.totalCount ?? 0}
+                  totalCount={
+                    (timelineSnapshot?.rows.totalCount ?? 0) +
+                    (timelineRows.length - projectedTimelineRows.length)
+                  }
                   sessionKey={sessionId ?? "draft"}
                   scrollMemoryKey={timelineScrollMemoryKey}
                   rowContext={rowContext}
@@ -4474,7 +4570,7 @@ export function SessionPane({
                       <div className="p-6 text-center text-ui-base text-foreground-subtle">
                         {intl.formatMessage({ id: "remote.conversation.placeholder" })}
                       </div>
-                    ) : isDraft ? (
+                    ) : draftLandingLayout ? (
                       <div data-testid={TID_CHAT_EMPTY} className="w-full">
                         <ConversationDraftEmptyState
                           compactForRemoteControl={compactForRemoteControl}
@@ -4483,7 +4579,7 @@ export function SessionPane({
                     ) : null
                   }
                   // 浮窗形态只露出底部输入区，空会话也必须贴底，不能居中。
-                  centerEmptyStateWithDock={isDraft && !isFloatingPresentation}
+                  centerEmptyStateWithDock={draftLandingLayout && !isFloatingPresentation}
                   floatingComposerDock={isFloatingPresentation}
                   onComposerDockHeightChange={
                     isFloatingPresentation && focused

@@ -502,13 +502,13 @@ describe("v4 assistant preview cards helper", () => {
 });
 
 describe("ConversationTurnGroup assistant preview cards", () => {
-  it.each([
-    ["connecting", "正在启动引擎"],
-    ["ready", "正在等待模型"],
-  ] as const)("外部引擎%s阶段只在首内容前显示", (phase, label) => {
-    const context = { ...rowContext, externalEngineWaitPhase: phase };
+  // 2026-11-09 W5：轮次中途真实重连仍显示“正在启动引擎…”，且只在首内容前显示。
+  it("外部引擎轮次中途重连（connecting）只在首内容前显示正在启动引擎", () => {
+    const label = "正在启动引擎";
+    const context = { ...rowContext, externalEngineWaitPhase: "connecting" as const };
     const emptyRunning = { ...baseUnit([]), isRunning: true };
     expect(renderTurnWithContext(emptyRunning, context)).toContain(label);
+    expect(renderTurnWithContext(emptyRunning, context)).toContain('data-testid="chat-loading"');
     expect(
       renderTurnWithContext({ ...baseUnit([assistantText(1, "")]), isRunning: true }, context),
     ).toContain(label);
@@ -516,6 +516,23 @@ describe("ConversationTurnGroup assistant preview cards", () => {
     expect(
       renderTurnWithContext({ ...baseUnit([streaming]), isRunning: true }, context),
     ).not.toContain(label);
+  });
+
+  // 2026-11-09 W5：所有引擎都不再显示“正在等待模型…”行或无字转圈，只保留「工作中 N 秒」。
+  it.each([
+    ["外部引擎 ready", "ready"],
+    ["YCode 原生引擎", undefined],
+  ] as const)("%s 运行中不显示等待模型行与底部转圈", (_label, phase) => {
+    const context = { ...rowContext, externalEngineWaitPhase: phase };
+    for (const unit of [
+      { ...baseUnit([]), isRunning: true },
+      { ...baseUnit([assistantText(1, "开始回答", "streaming")]), isRunning: true },
+    ]) {
+      const html = renderTurnWithContext(unit, context);
+      expect(html).not.toContain("正在等待模型");
+      expect(html).not.toContain('data-testid="chat-loading"');
+      expect(html).not.toContain("data-zcode-chat-loading-slot");
+    }
   });
   it("renders preview cards once below the latest assistant text row", () => {
     const early = assistantText(1, "Preview http://localhost:5173.");

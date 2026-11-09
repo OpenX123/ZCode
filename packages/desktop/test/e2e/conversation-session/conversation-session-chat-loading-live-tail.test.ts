@@ -94,8 +94,10 @@ describe("CHL05/CHL07/CHL08/P08 ChatLoading、终态与手动折叠滚动权", (
     const followingProbeResult = await stopChatLoadingLayoutProbe();
     const followingReport = analyzeChatLoadingLayout(followingProbeResult);
 
+    // 2026-11-09 W5：普通 running 不再渲染底部无字 ChatLoading（进度由「工作中 N 秒」表达），
+    // 采样期间 loading 必须始终不可见；吸底与滚动权断言不变。
     if (
-      followingReport.loadingVisibleSamples <= 0 ||
+      followingReport.loadingVisibleSamples > 0 ||
       followingReport.overflowGrowthCount < 8 ||
       followingReport.flickers.length > 0 ||
       followingTerminal.bottomGap > 48 ||

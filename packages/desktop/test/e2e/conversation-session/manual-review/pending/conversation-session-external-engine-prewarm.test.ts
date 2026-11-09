@@ -63,7 +63,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   const count=JSON.parse(fs.readFileSync(recoveryPath,'utf8'))+1;fs.writeFileSync(recoveryPath,JSON.stringify(count));
   if(count<=2){send({id:f.id,error:{code:-32603,message:'E2E_TEMPORARY_RESUME_FAILURE'}});return;}
  }
- if(f.method==='initialize'){typedFailures=(f.params.clientCapabilities?._meta?.jetbrains?.air?.capabilities??[]).includes('sessionFailure');const initControlPath=path.join(__dirname,'initialize-control.json');const initDelay=fs.existsSync(initControlPath)?JSON.parse(fs.readFileSync(initControlPath,'utf8')).delayMs??0:0;setTimeout(()=>result({protocolVersion:1}),initDelay);}
+ if(f.method==='initialize'){typedFailures=(f.params.clientCapabilities?._meta?.jetbrains?.air?.capabilities??[]).includes('sessionFailure');const initControlPath=path.join(__dirname,'initialize-control.json');const initControl=fs.existsSync(initControlPath)?JSON.parse(fs.readFileSync(initControlPath,'utf8')):{};const initDelay=initControl.delayMs??0;setTimeout(()=>initControl.error?send({id:f.id,error:{code:-32603,message:initControl.error}}):result({protocolVersion:1}),initDelay);}
  else if(f.method==='session/new'||f.method==='session/resume')result({sessionId:sid,configOptions:options()});
  else if(f.method==='session/cancel' && pendingPrompt){
   if(pendingPrompt.params.prompt[0].text==='E2E_EXTERNAL_STOP_EXIT')process.exit(7);
@@ -770,7 +770,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     const paneId = await getV4FocusedPaneId();
     if (!paneId) throw new Error("缺少焦点 pane");
     const shellTestId = testId(TID_V4_PANE_SHELL, paneId);
-    const connectingPattern = "正在连接引擎|Connecting to engine";
+    const connectingPattern = "正在连接引擎|Connecting to engine|正在等待模型|Waiting for model";
     // 观察整个草稿 pane：一旦出现连接中文案即记录，不依赖轮询时机。
     await browser.execute(
       (selector, pattern) => {
@@ -811,7 +811,33 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       TID_V4_COMPOSER_SEND,
     );
     expect(atSend).toEqual({ sendEnabled: true, modelPickerReady: false, status: null });
+    // W5（engine-performance-1.1-spec「草稿首发的即时会话布局」）：握手仍在 3s 延迟中，
+    // 界面必须已切到会话布局：用户气泡 + 「工作中」，没有“正在发送…”卡片、问候语或“正在等待模型…”。
+    await browser.waitUntil(
+      async () =>
+        browser.execute((selector) => {
+          const shell = document.querySelector<HTMLElement>(`[data-testid="${selector}"]`);
+          const timeline = shell?.querySelector<HTMLElement>('[data-testid="v4-timeline"]');
+          return Boolean(
+            timeline?.innerText.includes("E2E_CONNECTING_SEND") &&
+            /工作中|Working for/.test(timeline.innerText) &&
+            !shell?.querySelector('[data-testid="composer-submission-preview"]') &&
+            !shell?.querySelector('[data-testid="chat-empty"]'),
+          );
+        }, shellTestId),
+      { timeout: 1500, interval: 50, timeoutMsg: "点击发送后必须立即显示用户气泡与工作中" },
+    );
+    expect(await promptCount()).toBe(before);
     await waitForV4AssistantMessageContaining("E2E_ENGINE_REPLY_safe_fixture-3_high_1");
+    // promotion 后真实行接替 overlay：同一条用户消息只出现一次。
+    expect(
+      await browser.execute((selector) => {
+        const shell = document.querySelector<HTMLElement>(`[data-testid="${selector}"]`);
+        const text =
+          shell?.querySelector<HTMLElement>('[data-testid="v4-timeline"]')?.innerText ?? "";
+        return text.split("E2E_CONNECTING_SEND").length - 1;
+      }, shellTestId),
+    ).toBe(1);
     await waitForV4ConversationState((s) => s.state === "idle", "连接中首发完成");
     expect(await promptCount()).toBe(before + 1);
     expect(
@@ -822,6 +848,56 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       ),
     ).toBe(false);
     await writeFile(initializeControlPath, JSON.stringify({ delayMs: 0 }));
+  });
+
+  // P11b（W5）：首屏首发失败时 overlay 气泡下显示错误与“重新发送”，正文回填输入框；
+  // 引擎恢复后点击“重新发送”经同一提交入口只发一次，真实行接替 overlay。
+  it("P11b 首发握手失败：气泡下显示错误与重新发送并回填，恢复后重新发送只发一次", async () => {
+    await installExternalEngineFixtures();
+    await prepareV4ConversationE2E({ skipProvider: true });
+    const descriptor = EXTERNAL_ENGINE_RUNTIMES.codex;
+    const entry = join(
+      resolveE2EStorageRoot(),
+      "engines",
+      managedAdapterInstallDirName(descriptor),
+      ...managedAdapterEntrySegments(descriptor),
+    );
+    const initializeControlPath = join(dirname(entry), "initialize-control.json");
+    const promptPath = join(dirname(entry), "prompt-count.json");
+    const promptCount = async () =>
+      JSON.parse(await readFile(promptPath, "utf8").catch(() => "0")) as number;
+    await writeFile(
+      initializeControlPath,
+      JSON.stringify({ delayMs: 0, error: "E2E_INITIALIZE_FAILURE" }),
+    );
+    try {
+      await startNewV4Draft();
+      await (await displayed('[data-testid="session-engine-option-codex"]')).click();
+      const paneId = await getV4FocusedPaneId();
+      if (!paneId) throw new Error("缺少焦点 pane");
+      const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
+      const before = await promptCount();
+      await sendV4PromptInPane(paneId, "E2E_FIRST_SEND_FAILS");
+      const failureRow = await displayed(`${paneSelector} [data-testid="turn-failure-row"]`);
+      const timelineText = await (await $(`${paneSelector} [data-testid="v4-timeline"]`)).getText();
+      expect(timelineText).toContain("E2E_FIRST_SEND_FAILS");
+      expect(
+        await $(`${paneSelector} [data-testid="composer-submission-preview"]`).isExisting(),
+      ).toBe(false);
+      await waitForV4ComposerText("E2E_FIRST_SEND_FAILS", "首发失败后正文必须回填输入框");
+      expect(await promptCount()).toBe(before);
+
+      await writeFile(initializeControlPath, JSON.stringify({ delayMs: 0 }));
+      await (await failureRow.$('[data-testid="turn-failure-resend"]')).click();
+      await waitForV4AssistantMessageContaining("E2E_ENGINE_REPLY_");
+      await waitForV4ConversationState((s) => s.state === "idle", "重新发送的首发完成");
+      expect(await promptCount()).toBe(before + 1);
+      const finalText = await (await $(`${paneSelector} [data-testid="v4-timeline"]`)).getText();
+      expect(finalText.split("E2E_FIRST_SEND_FAILS").length - 1).toBe(1);
+      expect(await $(`${paneSelector} [data-testid="turn-failure-row"]`).isExisting()).toBe(false);
+    } finally {
+      await writeFile(initializeControlPath, JSON.stringify({ delayMs: 0 }));
+    }
   });
 
   it("两家引擎都先展示配置，首发使用所选模式且续聊复用进程", async () => {

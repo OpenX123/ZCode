@@ -708,9 +708,7 @@ const enUS: Record<string, string> = {
 
   "bots.group.provider.feishu": "Feishu",
   // Common
-  "chat.submission.sending": "Sending…",
   "chat.submission.startingEngine": "Starting engine…",
-  "chat.submission.waitingModel": "Waiting for model…",
   "common.loading": "Loading...",
   "common.listSeparator": ", ",
   "common.generating": "Generating...",

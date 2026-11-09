@@ -14,6 +14,8 @@ const captured = vi.hoisted(() => ({
   modelControlsProps: null as Record<string, unknown> | null,
   installFocusApi: false,
   focusRequests: 0,
+  editorClears: 0,
+  editorSetTexts: [] as string[],
 }));
 
 vi.mock("@/ChatErrorBanner.js", async () => {
@@ -61,8 +63,12 @@ vi.mock("@/prompt-editor/ChatPromptEditor.js", async () => {
             input.current?.focus();
           },
           getEditorState: () => null,
-          clear: () => {},
-          setText: () => {},
+          clear: () => {
+            captured.editorClears += 1;
+          },
+          setText: (text: string) => {
+            captured.editorSetTexts.push(text);
+          },
         };
         return () => {
           apiRef.current = null;
@@ -264,20 +270,24 @@ afterEach(() => {
   captured.modelControlsProps = null;
   captured.installFocusApi = false;
   captured.focusRequests = 0;
+  captured.editorClears = 0;
+  captured.editorSetTexts = [];
   vi.unstubAllGlobals();
 });
 
 describe("ConversationComposer error banner", () => {
-  it("发送等待ACK时立即显示冻结预览，失败后撤下预览并保留草稿", async () => {
-    const response = Promise.withResolvers<void>();
-    const onSendText = vi.fn(() => response.promise);
-    const updateComposerContent = vi.fn();
-    render(
+  function renderSendingComposer(
+    sessionId: string | null,
+    onSendText: (...args: unknown[]) => Promise<unknown>,
+    updateComposerContent: ReturnType<typeof vi.fn>,
+    extra: Record<string, unknown> = {},
+  ) {
+    const element = (props: Record<string, unknown>) =>
       createElement(ZCodeIntlProvider, {
         initialLocale: "zh-CN",
         children: createElement(AnyConversationComposer, {
           snapshot: makeSnapshot(),
-          sessionId: "session-preview",
+          sessionId,
           workspacePath: "/workspace",
           onSendText,
           onStop: vi.fn(),
@@ -287,24 +297,74 @@ describe("ConversationComposer error banner", () => {
           updateComposerContent,
           replaceComposerDraft: vi.fn(),
           composerDraft: { text: "", updatedAt: 0 },
+          ...props,
         }),
-      }),
-    );
+      });
+    const view = render(element(extra));
+    return { rerender: (props: Record<string, unknown>) => view.rerender(element(props)) };
+  }
+
+  async function typeAndSubmit(text: string) {
     if (!captured.chatPromptEditorProps) throw new Error("编辑器必须挂载");
     await act(async () =>
-      (captured.chatPromptEditorProps!.onChange as (text: string) => void)("冻结的输入"),
+      (captured.chatPromptEditorProps!.onChange as (text: string) => void)(text),
     );
     await act(async () => {
-      (captured.chatPromptEditorProps!.onSubmit as (text: string) => void)("冻结的输入");
+      (captured.chatPromptEditorProps!.onSubmit as (text: string) => void)(text);
     });
+  }
+
+  // 2026-11-09 W5：删除“正在发送…”预览卡；已有会话的在途只由发送键转圈表达，失败仍回填草稿。
+  it("发送等待ACK时不再显示预览卡，失败后保留草稿", async () => {
+    const response = Promise.withResolvers<void>();
+    const onSendText = vi.fn(() => response.promise);
+    const updateComposerContent = vi.fn();
+    renderSendingComposer("session-preview", onSendText, updateComposerContent);
+    await typeAndSubmit("冻结的输入");
     expect(onSendText).toHaveBeenCalledOnce();
-    expect(screen.getByTestId("composer-submission-preview").textContent).toContain("冻结的输入");
-    expect(screen.getByTestId("composer-submission-preview").textContent).toContain("正在发送");
+    expect(screen.queryByTestId("composer-submission-preview")).toBeNull();
+    expect(document.body.textContent).not.toContain("正在发送");
     await act(async () => response.reject(new Error("fixture request failure")));
     expect(screen.queryByTestId("composer-submission-preview")).toBeNull();
     expect(updateComposerContent).toHaveBeenLastCalledWith(
       expect.objectContaining({ text: "冻结的输入" }),
     );
+  });
+
+  // 首屏首发由 SessionPane overlay 显示用户气泡；编辑器必须立即清空，失败按冻结正文恢复。
+  it("草稿首发立即清空编辑器，失败后把正文恢复回编辑器", async () => {
+    captured.installFocusApi = true;
+    const response = Promise.withResolvers<void>();
+    const onSendText = vi.fn(() => response.promise);
+    const updateComposerContent = vi.fn();
+    renderSendingComposer(null, onSendText, updateComposerContent);
+    await typeAndSubmit("首屏输入");
+    expect(onSendText).toHaveBeenCalledOnce();
+    expect(captured.editorClears).toBe(1);
+    expect(screen.queryByTestId("composer-submission-preview")).toBeNull();
+    await act(async () => response.reject(new Error("fixture request failure")));
+    expect(captured.editorSetTexts.at(-1)).toBe("首屏输入");
+    expect(updateComposerContent).toHaveBeenLastCalledWith(
+      expect.objectContaining({ text: "首屏输入" }),
+    );
+  });
+
+  // overlay 的“重新发送”只发出提交请求，复用同一提交入口重发输入框内容。
+  it("submitRequestId 递增时经同一提交入口重发输入框内容，初始值不触发", async () => {
+    const onSendText = vi.fn(async () => {
+      throw new Error("fixture request failure");
+    });
+    const updateComposerContent = vi.fn();
+    const view = renderSendingComposer(null, onSendText, updateComposerContent, {
+      submitRequestId: 3,
+    });
+    await act(async () =>
+      (captured.chatPromptEditorProps!.onChange as (text: string) => void)("重发内容"),
+    );
+    expect(onSendText).not.toHaveBeenCalled();
+    await act(async () => view.rerender({ submitRequestId: 4 }));
+    expect(onSendText).toHaveBeenCalledOnce();
+    expect(onSendText.mock.calls[0]?.[0]).toBe("重发内容");
   });
   it("renders the session error banner above the prompt editor", () => {
     const html = renderComposerWithError("Provider rate limit exceeded.");
