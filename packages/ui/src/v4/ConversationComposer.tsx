@@ -1429,7 +1429,14 @@ function ConversationComposerImpl({
       const restoreSubmittedDraft = () => {
         if (!draftSubmissionClaimed) return;
         // 用户在等待期间已经产生更新时，当前完整正文是更新后的事实；旧失败回包不能覆盖。
-        if (contentRevisionRef.current === cleanupRevision) {
+        // Bug 根因（W5 草稿首发失败不回填）：乐观清空调用的 Lexical clear() 经 editor.update 在微任务里
+        // 回传 onChange("")，晚于上面记录的 cleanupRevision，revision 被这次程序性回声推进，
+        // 失败时被误判为“用户已编辑”而跳过回填。乐观清空后编辑器仍为空即说明用户没有新输入，
+        // 仍按原合同回填；有新正文时保持不覆盖。
+        const untouchedSinceCleanup =
+          contentRevisionRef.current === cleanupRevision ||
+          (editorClearedOptimistically && textRef.current === "");
+        if (untouchedSinceCleanup) {
           updateComposerContent(submittedDraft);
           if (submittedCommandId && !submittedCommandResolved) {
             // 传输层失败不等于 CLI 未 admission（ACK 丢失即如此）。正文虽已恢复回草稿，
@@ -1442,7 +1449,7 @@ function ConversationComposerImpl({
         }
         suppressDraftPersistRef.current = false;
         draftSubmissionClaimed = false;
-        if (editorClearedOptimistically && contentRevisionRef.current === cleanupRevision) {
+        if (editorClearedOptimistically && untouchedSinceCleanup) {
           if (submittedDraft.editorStateJson) {
             inputApiRef.current?.setEditorStateJson(submittedDraft.editorStateJson);
           } else {
