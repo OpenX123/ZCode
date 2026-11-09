@@ -1250,16 +1250,23 @@ export function createZCodeAgentService(
   async function revokeSpare(): Promise<void> {
     const lease = spareLease;
     if (!lease) return;
-    lease.revoking ??= (async () => {
-      const result = await lease.client.request(
-        zcodeProtocolMethods.externalEngineRevokeSpare,
-        { requestId: lease.requestId },
-        zcodeExternalEngineSpareResultSchema,
-        { lifecycle: "observation" },
-      );
-      zcodeExternalEngineSpareResultSchema.parse(result);
-      if (spareLease === lease) spareLease = undefined;
-    })();
+    if (!lease.revoking) {
+      const revoking = (async () => {
+        const result = await lease.client.request(
+          zcodeProtocolMethods.externalEngineRevokeSpare,
+          { requestId: lease.requestId },
+          zcodeExternalEngineSpareResultSchema,
+          { lifecycle: "observation" },
+        );
+        zcodeExternalEngineSpareResultSchema.parse(result);
+        if (spareLease === lease) spareLease = undefined;
+      })();
+      lease.revoking = revoking;
+      // 临时关闭/RPC失败不等于资源已回收；仅清本代在途标记，允许下次合法切换重试。
+      void revoking.catch(() => {
+        if (spareLease === lease && lease.revoking === revoking) delete lease.revoking;
+      });
+    }
     await lease.revoking;
   }
   function scheduleSpare(entry: ActiveWorkspaceClient): void {
@@ -1268,10 +1275,12 @@ export function createZCodeAgentService(
       !options.selectExternalEngineSpare ||
       entry.workspace.remoteSessionId ||
       isRemoteWorkspaceIdentity(entry.workspace.workspaceIdentity ?? "") ||
-      preparedSpareClients.has(entry.client)
+      entry.client.isDisposed ||
+      activeClientsByWorkspaceKey.get(resolveWorkspaceKey(entry.workspace)) !== entry ||
+      spareCandidateClient === entry.client
     )
       return;
-    preparedSpareClients.add(entry.client);
+    // 前台候选与一次性提前准备分开；缓存复用可恢复refill资格，后台读取不调用此入口。
     spareCandidateClient = entry.client;
     const current = () =>
       !spareServiceClosed &&
@@ -1282,11 +1291,13 @@ export function createZCodeAgentService(
       .catch(() => {})
       .then(async () => {
         if (!current()) return;
+        if (spareLease?.client !== entry.client) await revokeSpare();
+        if (!current()) return;
+        if (preparedSpareClients.has(entry.client)) return;
         const choice = await options.selectExternalEngineSpare!();
         if (!choice || !current()) return;
         const params = zcodeExternalEnginePrepareSpareParamsSchema.parse(choice);
-        await revokeSpare();
-        if (!current()) return;
+        preparedSpareClients.add(entry.client);
         await entry.client.request(
           zcodeProtocolMethods.externalEnginePrepareSpare,
           params,
@@ -1295,6 +1306,13 @@ export function createZCodeAgentService(
         );
       })
       .catch(() => {});
+  }
+  function noteForegroundClient(
+    params: ZCodeAgentWorkspaceTarget,
+    client: ZCodeProtocolClient,
+  ): void {
+    const entry = activeClientsByWorkspaceKey.get(resolveWorkspaceKey(params));
+    if (entry?.client === client) scheduleSpare(entry);
   }
 
   const interactionPreferenceSyncByWorkspaceKey = new Map<string, Promise<void>>();
@@ -2211,7 +2229,7 @@ export function createZCodeAgentService(
             !spareServiceClosed &&
             options?.externalEnginesSupported &&
             active?.client === client &&
-            (!spareCandidateClient || spareCandidateClient === client) &&
+            spareCandidateClient === client &&
             !client.isDisposed &&
             !active.workspace.remoteSessionId &&
             !isRemoteWorkspaceIdentity(active.workspace.workspaceIdentity ?? "");
@@ -2813,7 +2831,6 @@ export function createZCodeAgentService(
       workspaceKey,
       workspacePath: params.workspacePath,
     });
-    scheduleSpare(entry);
     return entry;
   }
 
@@ -3443,6 +3460,7 @@ export function createZCodeAgentService(
       }
       const startedAt = Date.now();
       const client = externalClient ?? (await getClient(params));
+      noteForegroundClient(params, client);
       if (!isExternalSessionEngine(engine))
         await refreshProviderRegistryForClient(client, "session_create");
       const sessionTraceId = params.sessionTraceId;
@@ -4843,6 +4861,7 @@ export function createZCodeAgentService(
       const startedAt = Date.now();
       const engine = await sessionEngineForExecution(params);
       const client = await clientForEngine(params, engine);
+      noteForegroundClient(params, client);
       if (!isExternalSessionEngine(engine))
         await refreshProviderRegistryForClient(client, "session_send");
       const sessionTraceId = params.sessionTraceId?.trim() || getSessionTraceId(params);
@@ -5458,6 +5477,8 @@ export function createZCodeAgentService(
         v4ConversationVisibilityResultSchema,
         { lifecycle: "observation" },
       );
+      // 非空可见是既有Renderer事实；不拉起隐藏CLI，空上报/后台订阅不抢候选。
+      if (visibleSessionIds.length) noteForegroundClient(params, client);
     },
 
     async subscribeConversationV4(params: ZCodeAgentConversationSubscribeParams) {
@@ -5622,6 +5643,8 @@ export function createZCodeAgentService(
         requiresProviderRegistryRefresh(params.envelope.type) ||
           params.envelope.type === "setEngineConfigOption",
       );
+      if (params.envelope.type === "createSession" || params.envelope.type === "sendText")
+        noteForegroundClient(params, client);
       const planPayload = params.envelope.payload as {
         planEnabled?: boolean;
         config?: { planEnabled?: boolean };

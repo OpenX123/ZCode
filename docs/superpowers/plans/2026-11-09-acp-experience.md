@@ -50,9 +50,9 @@
 **Files:** 扩展 `conversation-session/manual-review/pending/conversation-session-external-engine-connections.test.ts` 及 `external-engine-prewarm.test.ts`；case catalog/coverage matrix/验证记录。
 **Interfaces:** 复用现有隔离 ACP fixture，不用真实凭据；对应 AX01–07，不自动转正。
 
-- [ ] 更新并执行桌面候选，检查设置 master/detail、Fast 更多、固定绑定、切换和主题布局。
-- [ ] 执行 `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、受影响根 UT 与目标 CLI 测试；格式检查只针对改动。
-- [ ] 审查全部 diff、修复真实问题、记录验证边界与未达性能目标；保留可评审改动。
+- [x] 更新并执行桌面候选，检查设置 master/detail、Fast 更多、固定绑定、切换和主题布局。
+- [x] 执行 `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、受影响根 UT 与目标 CLI 测试；格式检查只针对改动。
+- [x] 审查全部 diff、修复真实问题、记录验证边界与未达性能目标；保留可评审改动。
 
 ### Task 5: 按最新 Codex 参考图精简输入区
 
@@ -60,7 +60,7 @@
 
 **Files:** 外部引擎 Controls/Picker 与合同；ConversationComposer/SessionPane 的展示接线；项目头部必要的既有 ProjectComposerMenu/WorkspaceShellLayout 展示；聚焦 UI 单测、一个桌面候选、验证文档。只改展示与测试，不扩展 backend，不恢复已移除的 CUA/后台入口。
 
-- [ ] 先写并运行失败断言：所有连接标签/选择器不在输入区；左附件/权限、右单个模型深度入口；Fast 只在弹层内；项目/运行位置/真实 Git 分支均在编辑器上方同一行。
-- [ ] 实现新布局，复用原生目录、确认回调与现有 Git/项目事实；不重复 picker 状态，不改变绑定或首发屏障；更新旧合同中的冲突展示说明。
-- [ ] 定向 UI UT、真实 Electron 聚焦布局/键盘/模型深度/Fast/首发回归；隔离环境重拍宽窄深浅截图，使用真实 Git 夹具验证头部。
-- [ ] 根 typecheck/lint、定向 e2e 类型/格式/架构与任务独立审查，再做全部改动最终审查。保留历史通过记录，区分被本次替换的展示合同。
+- [x] 先写并运行失败断言：所有连接标签/选择器不在输入区；左附件/权限、右单个模型深度入口；Fast 只在弹层内；项目/运行位置/真实 Git 分支均在编辑器上方同一行。
+- [x] 实现新布局，复用原生目录、确认回调与现有 Git/项目事实；不重复 picker 状态，不改变绑定或首发屏障；更新旧合同中的冲突展示说明。
+- [x] 定向 UI UT、真实 Electron 聚焦布局/键盘/模型深度/Fast/首发回归；隔离环境重拍宽窄深浅截图，使用真实 Git 夹具验证头部。
+- [x] 根 typecheck/lint、定向 e2e 类型/格式/架构与任务独立审查，再做全部改动最终审查。保留历史通过记录，区分被本次替换的展示合同。

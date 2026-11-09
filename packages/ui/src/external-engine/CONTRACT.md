@@ -1,5 +1,7 @@
 # 外部引擎 UI
 
+最终审查：左侧仅原生 `mode` 权限；其余非模型/深度项统一进入合并弹层更多（含 `fast-mode`、`collaboration_mode`），不得常驻或另建闪电入口。原始配置 ID/value 贯穿提交，打开零写入，拒绝仍读 snapshot 确认值。空深度仍允许访问其他有效项。
+
 2026-11-09 Composer：`placement="selector" | "toolbar"` 只拆展示；草稿上方显示引擎分段，已有会话上方显示固定 Logo。输入区不显示任何连接入口或标签，Host 连接配置、lastUsed 与不可变绑定不受展示影响。底部左侧权限、右侧单个模型/深度入口；Fast 仅在该弹层更多中。`renderLayout` 只把同一 EngineControls 的 leadingActions/modelControls 节点交给 Composer，不创建第二份 activePicker 或模型事实。模型/深度读 snapshot，选择沿原屏障提交，确认/拒绝/迟到 ACK 规则不变。偏好按 engine/profile 增量合并；legacy 仅初始化兼容。
 
 恢复开始后的断连由 memory owner 终结本轮并拒绝当前等待，旧 ACK 不再推进；同一绑定重连后下一次等待可收口，不创建新 owner 或超时放行。远程灰显引擎的限制文字需就地可见，并连接到可访问描述，不仅放在 disabled 按钮 title 中。

@@ -1,5 +1,7 @@
 # External engine service
 
+官方登录成功后由 Host 重读并广播安全完整 connections view，更新订阅者的有效默认配置（首次 Codex 登录可能从 inherit 恢复 official）；UI 只订阅该 owner，不额外维护默认事实。
+
 2026-11-06：ready 表示本地可启动，不等同于账号已登录。getStatus 按引擎合并并发并缓存 60 秒；refreshStatus 显式失效。Host 独占连接配置的写入，凭据复用 CredentialService。Codex 的管理连接使用独立 ID/CODEX_HOME，旧配置保留，官方 login 可取消，不改用户 CLI 配置。
 
 Codex 状态诊断使用当前连接的身份环境；API Key 模式只检查该 profile 的凭据是否存在，不执行原用户的 login status，也不验证供应商。官方 login 只做无子进程的可启动性预检。

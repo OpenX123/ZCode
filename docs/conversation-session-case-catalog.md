@@ -4864,3 +4864,5 @@ AX01–03、AX07 扩展现有 `conversation-session-external-engine-connections.
 ### Task5 最新 Composer 验收（2026-11-09，accepted/manual-review/pending）
 
 AX03/AX07 按最新 Codex 反馈：输入区不显示草稿或已有会话的任何连接入口；三引擎分段保留；项目、真实位置和真实 Git 分支在编辑器上方同一行。底部附件/权限在左，模型/深度合并触发器在发送左侧，Fast 在合并弹层更多中。复用 prewarm 候选，验证 Escape/Enter/焦点、18 项模型可达、配置拒绝、P11 首发屏障；1280/640 × 深浅主题使用本轮隔离 Git 夹具重新截图。Task4 截图只作为历史，不能证明 Task5 布局。
+
+Task5 最终 run6 AX03/07 为 exit0、1/1通过，6张新图与4份矩形JSON确认上述布局及真实 `composer-layout` 分支；P11/两家18项模型和深度pending/拒绝分别有Task5 run2/run4通过证据，不改写成单次全绿。空深度目录伴随有效模型/Fast的两项UT先红后绿，最终picker22/22；仅禁用深度滑块，打开零写入，选择回传原值。完整日志、历史失败和截图路径见验证记录Task5段，仍保持pending。

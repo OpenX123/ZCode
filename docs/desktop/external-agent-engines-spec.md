@@ -71,7 +71,7 @@ sequenceDiagram
 | ---- | ------------------------------------------------ | -------------------------------------------------------------- | ------------------------ |
 | AX01 | 打开设置，切换两家引擎                           | 左列表/右详情；选择不写默认；诊断独立，失败可恢复              | UI UT + 桌面 E2E         |
 | AX02 | API Key/官方/沿用 CLI，切详情、编辑保存与测试    | 来源明确；认证不串配置；密钥不回显；旧绑定不变；测试仅显式请求 | service UT + UI UT + E2E |
-| AX03 | 新草稿切引擎，设置页选连接，已有会话打开配置             | 合并模型/深度；Fast 只在弹层更多；无连接入口；已有身份不可变    | UI UT + E2E              |
+| AX03 | 新草稿切引擎，设置页选连接，已有会话打开配置     | 合并模型/深度；Fast 只在弹层更多；无连接入口；已有身份不可变   | UI UT + E2E              |
 | AX04 | 同引擎两个网关，分别确认不同 model/effort 后新建 | 偏好隔离，目录不支持时不强行下发，旧设置兼容读取               | hook UT                  |
 | AX05 | 备用正在准备时同时请求两个新会话，取消其一       | 备用只领用一次；无重复原生 ID、无孤儿，取消不影响其他会话      | CLI stdio UT             |
 | AX06 | 多 workspace 争备用、切活动项目、关闭窗口        | 至多一个未绑定备用；前台不停；许可最终释放；隐藏项目不新起 CLI | Host/CLI 集成            |
@@ -91,6 +91,29 @@ sequenceDiagram
 - 带 `firstInput` 的 `createSession` 同样不等待握手：首条输入照常 admission，turn 在提交 prompt 之前并入同一次准备；准备失败时按已有 turn 失败路径结束。
 
 ### 备用许可与连接准备（2026-11-10 实施合同）
+
+- 最终审查补充：Host 的候选与「该 CLI 已提前 prepare 一次」是两个事实。仅业务创建会话、用户输入命令（V4 createSession/sendText）和可信非空可见会话上报可更新候选；后台列表、订阅、快照读取与空可见上报不抢占。候选切换不启动 CLI，先验证当前本地 client，再串行撤销旧许可；已提前准备过的 CLI 不再次提前 prepare，但可在后续业务握手后申请补位。远程/失效 client 始终拒绝。
+- 撤销在途按同一 lease single-flight；失败保留许可，只清除同一 lease/同一 Promise 的在途标记，后续合法候选切换可实际重试 RPC。迟到旧失败不能改新 lease；ACK 或精确进程树结束仍是重授的必要条件。
+
+```mermaid
+sequenceDiagram
+  participant UI as 前台业务/可信可见事实
+  participant H as Host唯一候选与许可owner
+  participant A as 旧CLI
+  participant B as 新候选CLI
+  UI->>H: 已有client业务取得/非空可见
+  H->>H: 校验本地当前client并更新候选
+  H->>A: revokeSpare(稳定requestId)
+  A-->>H: 失败：保留lease，清同Promise在途标记
+  UI->>H: 后续合法候选转换
+  H->>A: 实际重试revokeSpare
+  A-->>H: 关闭完成ACK
+  H->>H: 释放旧lease；复查当前候选
+  H->>B: 仅首次提前prepare；后续业务refill可申请
+```
+
+- 原生 Composer 仅 `mode` 权限常驻左侧。模型/深度以外的全部原生配置（包括 Codex 2.2.2 `collaboration_mode`、`fast-mode`）均收入同一合并弹层的更多；比较可归一化，提交必须保留原始 configId/value，打开零写入，拒绝继续显示 snapshot 确认值。空深度目录不阻断其他有效配置。
+- Host 官方登录成功后，重新读取并广播安全完整 connections view，使已挂载订阅者同步有效默认（例如 inherit → official），不建立 UI 默认事实源；失败/取消不广播成功视图。
 
 - 窗口 Local Host 唯一拥有一个未绑定备用许可；CLI pool 唯一拥有实际进程。许可不含会话状态、路径、凭据或环境摘要。仅当前本地 active client 可以申请；远程与 stale client 拒绝。拒绝不影响前台冷启动。
 - `externalEngine/acquireSpare` 使用稳定 requestId，结果可带 leaseId；`releaseSpare` 用 requestId 幂等释放，覆盖申请取消或响应丢失。`revokeSpare` 以 requestId 撤销，CLI 关闭尚未绑定资源并 ACK 后才能重授。已绑定资源不受撤销影响。连接关闭必须经现有进程树回收确认，不能仅因失联重新授权。
@@ -373,13 +396,13 @@ adapter 由当前运行时（桌面为 YCode.exe）以 `ELECTRON_RUN_AS_NODE=1` 
 
 ### 状态所有者与事件顺序
 
-| 状态               | 所有者                                             | 读取方                                        |
-| ------------------ | -------------------------------------------------- | --------------------------------------------- |
+| 状态               | 所有者                                             | 读取方                                      |
+| ------------------ | -------------------------------------------------- | ------------------------------------------- |
 | 连接配置、上次使用 | Host `external-engine-service`（connections.json） | 设置页、草稿 owner（只读）、CLI（只读解析） |
-| 密钥               | CredentialService                                  | CLI 启动 adapter 时按配置读取                 |
-| 会话绑定的配置 ID  | CLI Runtime（external_engine_config entry）        | snapshot `config.engineConnectionProfileId`   |
-| 草稿当前选择       | 预热会话的 snapshot；尚未预热时为上次使用值        | 草稿 owner（不展示连接选择器）                 |
-| 测试连接进度       | Host 单个在途测试；CLI 按 operationId 持有取消     | 设置页                                        |
+| 密钥               | CredentialService                                  | CLI 启动 adapter 时按配置读取               |
+| 会话绑定的配置 ID  | CLI Runtime（external_engine_config entry）        | snapshot `config.engineConnectionProfileId` |
+| 草稿当前选择       | 预热会话的 snapshot；尚未预热时为上次使用值        | 草稿 owner（不展示连接选择器）              |
+| 测试连接进度       | Host 单个在途测试；CLI 按 operationId 持有取消     | 设置页                                      |
 
 ```mermaid
 sequenceDiagram
@@ -411,7 +434,7 @@ sequenceDiagram
 | C03 | Claude API Key：官方地址 / 自定义网关                                   | 分别只设 `ANTHROPIC_API_KEY` 或 `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`；其他 `ANTHROPIC_*` 被去除 |
 | C04 | 密钥位置                                                                | 不出现在 argv、连接文件、视图、状态、测试结果、snapshot 与日志                                           |
 | C05 | 多个命名配置：新建、编辑、删除                                          | 编辑生成新 ID，旧会话保持旧绑定；删除只隐藏；上次使用随之更新或回落                                      |
-| C06 | 设置页选择配置                                                          | 记录上次使用供后续草稿采用；已有会话绑定不变，输入区不显示连接入口                                                           |
+| C06 | 设置页选择配置                                                          | 记录上次使用供后续草稿采用；已有会话绑定不变，输入区不显示连接入口                                       |
 | C07 | 测试连接成功、失败、取消                                                | 显示耗时或 HTTP 状态 / 消息 / request id；取消后无残留进程与临时目录；同 workspace 会话不被阻塞          |
 | C08 | Codex 沿用 CLI，`config.toml` 配置自定义 provider                       | 显示「使用网关 <host>」而非「未登录」                                                                    |
 | C09 | 用户 shell 设置 `HTTPS_PROXY` / `NODE_EXTRA_CA_CERTS`，YCode 未配置代理 | adapter 环境保留原值；YCode 配置代理后改用 YCode 值                                                      |

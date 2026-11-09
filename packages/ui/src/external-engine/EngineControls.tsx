@@ -100,9 +100,14 @@ export function EngineControls({
     </span>
   ) : null;
   if (placement === "selector") return selector ?? indicator;
-  const fastIds = new Set(["fast", "fast_mode", "speed", "service_tier"]);
-  const primary = options.filter((option) => !fastIds.has(option.id.toLowerCase()));
-  const more = options.filter((option) => fastIds.has(option.id.toLowerCase()));
+  // 真实Codex还提供fast-mode/collaboration_mode；仅权限常驻，未知原生能力也收进更多。
+  // 分类只比较ID，提交仍沿renderOption传回原始ID/value。
+  const primary = options.filter(
+    (option) => option.id === "mode" || engineConfigOptionKind(option.id) !== "other",
+  );
+  const more = options.filter(
+    (option) => option.id !== "mode" && engineConfigOptionKind(option.id) === "other",
+  );
   const renderOption = (option: (typeof options)[number]) => {
     const picker = `config:${option.id}`;
     const props = {
@@ -191,7 +196,7 @@ export function EngineControls({
       className="flex min-w-0 flex-wrap items-center gap-1"
       data-testid="external-engine-controls"
     >
-      {primary.filter((option) => engineConfigOptionKind(option.id) === "other").map(renderOption)}
+      {primary.filter((option) => option.id === "mode").map(renderOption)}
       {loading ? (
         <span role="status" className="px-2 text-ui-sm text-foreground-subtle">
           {intl.formatMessage({ id: "engine.connecting" })}

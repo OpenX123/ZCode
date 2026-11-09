@@ -39,6 +39,7 @@ const readline=require('node:readline'), fs=require('node:fs'), path=require('no
 const recoveryPath=path.join(__dirname,'recovery-attempts.json');
 const promptPath=path.join(__dirname,'prompt-count.json');
 const configControlPath=path.join(__dirname,'config-control.json');
+const configRequestsPath=path.join(__dirname,'config-requests.jsonl');
 const planDecisionPath=path.join(__dirname,'plan-decisions.json');
 const retryReleasePath=path.join(__dirname,'retry-release.json');
 const send=f=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...f})+'\n');
@@ -46,7 +47,7 @@ let mode='ENGINE_ID'==='claude-code'?'default':'safe', model='fixture-0', effort
 // 帧形状取自 codex-acp 2.2.2 / claude-agent-acp 0.95.0：声明 AIR sessionFailure 时用 typed 失败，否则回退原生形态。
 const failureDetails='unexpected status 502 Bad Gateway: Bad gateway, url: https://fixture.invalid/responses?api_key=fixture-secret, request id: fixture-request';
 const airFailure=(id,revision,severity,title)=>({jetbrains:{air:{version:1,sessionFailure:{id,revision,category:'connection',severity,title,actions:severity==='error'?['retry','new_session']:[]}}}});
-const options=()=>[{id:'fast',name:'Fast mode',currentValue:'off',options:[{value:'off',name:'Off'},{value:'reject',name:'Rejected fast'}]},{id:'mode',name:'Mode',currentValue:mode,options:[{value:'default',name:'Manual'},{value:'auto',name:'Auto'},{value:'plan',name:'Plan'},{value:'safe',name:'Safe'},{value:'full',name:'Full'}]},{id:'model',name:'Model',currentValue:model,options:Array.from({length:18},(_,i)=>({value:'fixture-'+i,name:'Fixture model '+i}))},{id:'EFFORT_ID',name:'Effort',currentValue:effort,options:[{value:'low',name:'Low'},{value:'medium',name:'Medium'},{value:'high',name:'High'}]}];
+const options=()=>[{id:'FAST_ID',name:'Fast mode',currentValue:'off',options:[{value:'off',name:'Off'},{value:'on',name:'On'},{value:'reject',name:'Rejected fast'}]},...('ENGINE_ID'==='codex'?[{id:'collaboration_mode',name:'Collaboration mode',currentValue:'default',options:[{value:'default',name:'Default'},{value:'plan',name:'Plan'}]}]:[]),{id:'mode',name:'Mode',currentValue:mode,options:[{value:'default',name:'Manual'},{value:'auto',name:'Auto'},{value:'plan',name:'Plan'},{value:'safe',name:'Safe'},{value:'full',name:'Full'}]},{id:'model',name:'Model',currentValue:model,options:Array.from({length:18},(_,i)=>({value:'fixture-'+i,name:'Fixture model '+i}))},{id:'EFFORT_ID',name:'Effort',currentValue:effort,options:[{value:'low',name:'Low'},{value:'medium',name:'Medium'},{value:'high',name:'High'}]}];
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const f=JSON.parse(line), result=value=>send({id:f.id,result:value});
  if(!f.method && f.id===planRequestId && pendingPlan){
@@ -71,6 +72,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   pendingPrompt=undefined;
  }
  else if(f.method==='session/set_config_option'){
+  fs.appendFileSync(configRequestsPath,JSON.stringify(f.params)+'\n');
   const control=fs.existsSync(configControlPath)?JSON.parse(fs.readFileSync(configControlPath,'utf8')):{};
   const apply=()=>{
   if(f.params.value==='reject'||f.params.value===control.rejectValue){send({id:f.id,error:{code:-32602,message:'unsupported'}});return;}
@@ -206,6 +208,7 @@ async function installExternalEngineFixtures() {
       entry,
       adapter
         .replaceAll("ENGINE_ID", engine)
+        .replaceAll("FAST_ID", engine === "codex" ? "fast-mode" : "fast")
         .replaceAll("fixture-child-bash", `${engine}-fixture-child-bash`)
         .replaceAll("fixture-bash", `${engine}-fixture-bash`)
         .replaceAll("fixture-agent", `${engine}-fixture-agent`)
@@ -328,14 +331,51 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     }
     const combined = await displayed(`${paneSelector} [data-testid="engine-config-model-effort"]`);
     await combined.waitForEnabled({ timeout: 30000 });
-    await expect($(`${paneSelector} [data-testid="engine-config-fast"]`)).not.toExist();
+    await expect($(`${paneSelector} [data-testid="engine-config-fast-mode"]`)).not.toExist();
+    await expect(
+      $(`${paneSelector} [data-testid="engine-config-collaboration_mode"]`),
+    ).not.toExist();
     await expect($(`${paneSelector} [data-testid="engine-config-more"]`)).not.toExist();
     await expect($(`${paneSelector} [data-testid="engine-config-connection"]`)).not.toExist();
     await expect($(`${paneSelector} [data-testid="session-engine-connection"]`)).not.toExist();
+    const codexDescriptor = EXTERNAL_ENGINE_RUNTIMES.codex;
+    const fixtureDir = dirname(
+      join(
+        resolveE2EStorageRoot(),
+        "engines",
+        managedAdapterInstallDirName(codexDescriptor),
+        ...managedAdapterEntrySegments(codexDescriptor),
+      ),
+    );
+    const requestsPath = join(fixtureDir, "config-requests.jsonl");
+    const readRequests = async () =>
+      (await readFile(requestsPath, "utf8").catch(() => ""))
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+    const requestsBefore = await readRequests();
     await combined.click();
     await expect($('[data-testid="engine-effort-slider-reasoning_effort"]')).toBeDisplayed();
     await (await displayed('[data-testid="engine-more-options"] summary')).click();
-    expect(await (await displayed('[data-testid="engine-config-fast"]')).getText()).toContain(
+    expect(await (await displayed('[data-testid="engine-config-fast-mode"]')).getText()).toContain(
+      "Off",
+    );
+    await expect($('[data-testid="engine-config-collaboration_mode"]')).toBeDisplayed();
+    expect(await readRequests()).toEqual(requestsBefore);
+    // 真实原生ID/value经现有确认链拒绝，不能被UI翻译或乐观写成On。
+    await writeFile(join(fixtureDir, "config-control.json"), JSON.stringify({ rejectValue: "on" }));
+    await (await displayed('[data-testid="engine-config-fast-mode"]')).click();
+    await (await displayed('[role="menuitemradio"]=On')).click();
+    await browser.waitUntil(async () =>
+      browser.execute(() =>
+        /配置修改未生效|Configuration was not changed/.test(document.body.innerText),
+      ),
+    );
+    expect((await readRequests()).at(-1)).toMatchObject({ configId: "fast-mode", value: "on" });
+    await writeFile(join(fixtureDir, "config-control.json"), "{}");
+    await openMoreOptions();
+    expect(await (await displayed('[data-testid="engine-config-fast-mode"]')).getText()).toContain(
       "Off",
     );
     await browser.keys("Escape");
@@ -946,7 +986,8 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       await openModelMenu();
       await (await displayed(`[role="menuitemradio"]=${engine} fixture model 1`)).click();
       await openMoreOptions();
-      await (await displayed('[data-testid="engine-config-fast"]')).click();
+      const fastId = engine === "codex" ? "fast-mode" : "fast";
+      await (await displayed(`[data-testid="engine-config-${fastId}"]`)).click();
       await (await displayed('[role="menuitemradio"]=Rejected fast')).click();
       await browser.waitUntil(async () =>
         browser.execute(() =>
@@ -954,9 +995,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         ),
       );
       await openMoreOptions();
-      expect(await (await displayed('[data-testid="engine-config-fast"]')).getText()).toContain(
-        "Off",
-      );
+      expect(
+        await (await displayed(`[data-testid="engine-config-${fastId}"]`)).getText(),
+      ).toContain("Off");
       await browser.keys("Escape");
       await (await displayed(`[data-testid="engine-config-model-effort"]`)).click();
       await browser.keys("ArrowLeft");

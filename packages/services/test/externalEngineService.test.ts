@@ -414,6 +414,28 @@ describe("外部引擎 Host 服务", () => {
     expect(view.profiles.find((profile) => profile.id === profileId)?.mode).toBe("official");
     f.service.disposeAll();
   });
+  it("首次官方登录后向已有订阅者广播有效默认完整安全视图，无需再次刷新", async () => {
+    const f = await fixture();
+    await f.install("codex");
+    const { profileId } = await f.service.updateConnectionProfiles!({
+      type: "create",
+      engine: "codex",
+      mode: "official",
+    });
+    let displayed = await f.service.getConnectionProfiles!();
+    expect(displayed.defaults.codex).toBe("inherit");
+    const changed = vi.fn((view) => {
+      displayed = view;
+    });
+    f.service.onConnectionProfilesChanged!(changed);
+    f.run.mockResolvedValue({ code: 0, stdout: "", stderr: "" });
+    await f.service.login!(profileId!);
+    expect(displayed.defaults.codex).toBe(profileId);
+    expect(changed).toHaveBeenCalledOnce();
+    expect(displayed.profiles.some((profile) => profile.id === profileId)).toBe(true);
+    expect(JSON.stringify(displayed)).not.toMatch(/secret-token|credentialKey|auth.json/);
+    await f.service.disposeAllAndWait();
+  });
   it("官方身份诊断使用管理目录，登录预检不等待版本和身份诊断", async () => {
     const f = await fixture();
     await f.install("codex");

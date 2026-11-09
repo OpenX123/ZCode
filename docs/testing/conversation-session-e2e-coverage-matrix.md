@@ -4391,3 +4391,5 @@ E01–E11 产品规则已获用户确认，详见 [规格](../desktop/external-a
 ### Task5 最新 Composer 合同（2026-11-09）
 
 AX03/AX07 的最终输入区合同以 external-agent-engines-spec.md 顶部为准：无连接入口或标签；模型/深度合并，Fast 位于该弹层更多；项目/真实位置/Git 分支在编辑器上方同一行。继续使用 prewarm pending 候选和隔离 ACP 供应商夹具，不自动转正。Task5 独立运行记录与新截图见 `2026-11-09-acp-experience-verification.md` 的 Task5 追加段；Task4 run6 截图为旧展示合同历史。
+
+最终Task5 run6：AX03/07 exit0、1/1通过，1280/640×深浅主题4图、合并弹层/固定引擎2图与4份矩形JSON已生成并查看；真实Git夹具在完整Electron/Host重启前就绪，未新增产品轮询或弱化分支断言。P11/两家模型首发续聊/Fast拒绝沿Task5 run2通过；深度pending/拒绝沿run4通过。空effort+有效model/Fast由picker两项回归证明，先2失败后22/22全通过；不扩张为该退化组合的真实供应商或桌面覆盖。

@@ -178,6 +178,153 @@ function createReadyService(options: Parameters<typeof createZCodeAgentService>[
 }
 
 describe("窗口外部引擎备用许可", () => {
+  const foreground = async (service: IZCodeAgentService, workspacePath: string) =>
+    service.reportConversationVisibilityV4(
+      withTrustedZCodeAgentV4Connection(
+        { workspacePath, visibleSessionIds: ["visible-session"] },
+        { connectionId: "foreground", clientMode: "desktop-continuous" },
+      ),
+    );
+  const foregroundList = async (
+    service: IZCodeAgentService,
+    params: Parameters<IZCodeAgentService["listSessions"]>[0],
+  ) => {
+    await service.listSessions(params);
+    await service.reportConversationVisibilityV4(
+      withTrustedZCodeAgentV4Connection(
+        { ...params, visibleSessionIds: ["visible-session"] },
+        { connectionId: "foreground", clientMode: "desktop-continuous" },
+      ),
+    );
+  };
+  it.each(["revoke-retry", "held", "released", "late-failure"])(
+    "%s：缓存 A→B→A 的前台资格可恢复，后台列表不抢占，撤销失败可实际重试",
+    async (scenario) => {
+      const sandbox = createRecordingSandbox();
+      setDataBaseDir(sandbox.dir);
+      writeFileSync(
+        sandbox.command.args[0]!,
+        String.raw`
+const fs=require('node:fs'),path=require('node:path'),log=process.argv[2],dir=path.dirname(log);
+const send=f=>process.stdout.write(JSON.stringify(f)+'\n'); let n=0,seen='',pending;
+fs.watch(dir,()=>{const file=path.join(dir,process.pid+'.json');if(fs.existsSync(file)){const raw=fs.readFileSync(file,'utf8');if(raw!==seen){seen=raw;send(JSON.parse(raw));}}if(pending&&fs.existsSync(path.join(dir,'late-fail'))){send({id:pending.id,error:{code:-32603,message:'late failure'}});pending=undefined;fs.unlinkSync(path.join(dir,'late-fail'));}if(pending&&fs.existsSync(path.join(dir,'ack'))){send({id:pending.id,result:{}});pending=undefined;}}).unref();
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const f=JSON.parse(line);fs.appendFileSync(log,JSON.stringify({pid:process.pid,...f})+'\n');
+ if(f.method==='externalEngine/prepareSpare'){send({id:'grant-'+(++n),method:'externalEngine/acquireSpare',params:{requestId:'request-'+process.pid}});send({id:f.id,result:{}});}
+ else if(f.method==='externalEngine/revokeSpare') {if(fs.existsSync(path.join(dir,'fail'))){send({id:f.id,error:{code:-32603,message:'temporary close failure'}});}else if(fs.existsSync(path.join(dir,'ack')))send({id:f.id,result:{}});else pending=f;}
+ else if(f.method)send({id:f.id,result:f.method==='session/list'?{sessions:[]}: {}});
+});`,
+      );
+      const service = createReadyService({
+        commandResolver: () => sandbox.command,
+        externalEnginesSupported: true,
+        selectExternalEngineSpare: async () => ({
+          engine: "codex",
+          connectionProfileId: "inherit",
+        }),
+      });
+      const rows = () =>
+        readFileSync(sandbox.logPath, "utf8")
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line));
+      const command = (pid: number, id: string, method: string) =>
+        writeFileSync(
+          join(sandbox.dir, `${pid}.json`),
+          JSON.stringify({ id, method, params: { requestId: `request-${pid}` } }),
+        );
+      const grants = () => rows().filter((row) => row.result?.leaseId);
+      const revokes = () => rows().filter((row) => row.method === "externalEngine/revokeSpare");
+      const b = join(sandbox.dir, "b");
+      mkdirSync(b);
+      try {
+        await foregroundList(service, { workspacePath: sandbox.dir });
+        await vi.waitFor(() => expect(grants()).toHaveLength(1));
+        const aPid = grants()[0]!.pid;
+        if (scenario === "revoke-retry") writeFileSync(join(sandbox.dir, "fail"), "fail");
+        await service.listSessions({ workspacePath: b });
+        expect(grants()).toHaveLength(1);
+        if (scenario !== "revoke-retry") {
+          expect(revokes()).toHaveLength(0);
+          if (scenario !== "late-failure") writeFileSync(join(sandbox.dir, "ack"), "ack");
+        }
+        await foreground(service, b);
+        await vi.waitFor(() => expect(revokes()).toHaveLength(1));
+        if (scenario === "late-failure") {
+          const bPid = rows()
+            .filter((row) => row.method === "session/list")
+            .find((row) => row.pid !== aPid)!.pid;
+          command(aPid, "late-release-a", "externalEngine/releaseSpare");
+          await vi.waitFor(() =>
+            expect(rows().some((row) => row.id === "late-release-a")).toBe(true),
+          );
+          command(bPid, "new-lease-b", "externalEngine/acquireSpare");
+          await vi.waitFor(() => expect(grants()).toHaveLength(2));
+          const newLease = grants()[1].result;
+          writeFileSync(join(sandbox.dir, "late-fail"), "fail");
+          command(bPid, "replay-new-b", "externalEngine/acquireSpare");
+          await vi.waitFor(() =>
+            expect(rows().find((row) => row.id === "replay-new-b")?.result).toEqual(newLease),
+          );
+          const c = join(sandbox.dir, "c");
+          mkdirSync(c);
+          await service.listSessions({ workspacePath: c });
+          await foreground(service, c);
+          await vi.waitFor(() => expect(revokes()).toHaveLength(2));
+          expect(revokes()[1].pid).toBe(bPid);
+          expect(grants()).toHaveLength(3); // replay仅返回同一lease，没有第三个唯一grant
+          expect(new Set(grants().map((row) => row.result.leaseId)).size).toBe(2);
+          writeFileSync(join(sandbox.dir, "ack"), "ack");
+          await vi.waitFor(() =>
+            expect(new Set(grants().map((row) => row.result.leaseId)).size).toBe(3),
+          );
+        } else if (scenario === "revoke-retry") {
+          expect(grants()).toHaveLength(1);
+          rmSync(join(sandbox.dir, "fail"));
+          const c = join(sandbox.dir, "c");
+          mkdirSync(c);
+          await service.listSessions({ workspacePath: c });
+          await foreground(service, c);
+          await vi.waitFor(() => expect(revokes()).toHaveLength(2));
+          expect(revokes()[1].params).toEqual(revokes()[0].params);
+          expect(grants()).toHaveLength(1);
+          writeFileSync(join(sandbox.dir, "ack"), "ack");
+          await vi.waitFor(() => expect(grants()).toHaveLength(2));
+        } else {
+          await vi.waitFor(() => expect(grants()).toHaveLength(2));
+          const bPid = grants()[1].pid;
+          if (scenario === "released") {
+            command(bPid, "release-b", "externalEngine/releaseSpare");
+            await vi.waitFor(() => expect(rows().some((row) => row.id === "release-b")).toBe(true));
+          }
+          await service.listSessions({ workspacePath: sandbox.dir });
+          command(aPid, "background-a", "externalEngine/acquireSpare");
+          await vi.waitFor(() =>
+            expect(rows().find((row) => row.id === "background-a")?.result).toEqual({}),
+          );
+          await foreground(service, sandbox.dir);
+          if (scenario === "held") await vi.waitFor(() => expect(revokes()).toHaveLength(2));
+          command(aPid, "refill-a", "externalEngine/acquireSpare");
+          await vi.waitFor(() =>
+            expect(rows().find((row) => row.id === "refill-a")?.result?.leaseId).toBeTruthy(),
+          );
+          expect(rows().filter((row) => row.method === "externalEngine/prepareSpare")).toHaveLength(
+            2,
+          );
+          expect(
+            new Set(
+              rows()
+                .filter((row) => row.method === "session/list")
+                .map((row) => row.pid),
+            ).size,
+          ).toBe(2);
+        }
+      } finally {
+        await service.disposeAllAndWait();
+      }
+    },
+  );
   it.each(["unsupported", "remote-identity", "remote-session"] as const)(
     "%s 不提前准备且拒绝备用申请",
     async (scope) => {
@@ -203,7 +350,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
         selectExternalEngineSpare: select,
       });
       try {
-        await service.listSessions({
+        await foregroundList(service, {
           workspacePath: sandbox.dir,
           ...(scope === "remote-identity"
             ? {
@@ -257,12 +404,12 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const command = (pid: number, id: string, method: string, params: unknown) =>
       writeFileSync(join(sandbox.dir, `${pid}.json`), JSON.stringify({ id, method, params }));
     try {
-      await service.listSessions({ workspacePath: sandbox.dir });
+      await foregroundList(service, { workspacePath: sandbox.dir });
       await vi.waitFor(() => expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(1));
       const first = rows().find((row) => row.result?.leaseId)!;
       const secondDir = join(sandbox.dir, "second");
       mkdirSync(secondDir);
-      await service.listSessions({ workspacePath: secondDir });
+      await foregroundList(service, { workspacePath: secondDir });
       await vi.waitFor(() => expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(2));
       const second = rows().filter((row) => row.result?.leaseId)[1]!;
       command(first.pid, "old-release", "externalEngine/releaseSpare", {
@@ -286,7 +433,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       );
       await service.disposeWorkspace({ workspacePath: secondDir });
       // 进程树确实结束之后才能让新一代 CLI 取得名额。
-      await service.listSessions({ workspacePath: secondDir });
+      await foregroundList(service, { workspacePath: secondDir });
       await vi.waitFor(() =>
         expect(rows().filter((row) => row.id === "acquire" && row.result?.leaseId)).toHaveLength(3),
       );
@@ -310,7 +457,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       },
     });
     try {
-      await service.listSessions({ workspacePath: sandbox.dir });
+      await foregroundList(service, { workspacePath: sandbox.dir });
       await selected.promise;
       await service.disposeWorkspace({ workspacePath: sandbox.dir });
       choice.resolve({ engine: "codex", connectionProfileId: "inherit" });
@@ -358,11 +505,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
         .map((line) => JSON.parse(line));
     try {
       expect(commandResolver).not.toHaveBeenCalled();
-      await service.listSessions({ workspacePath: sandbox.dir });
+      await foregroundList(service, { workspacePath: sandbox.dir });
       await vi.waitFor(() => expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(1));
       const secondDir = join(sandbox.dir, "second");
       mkdirSync(secondDir);
-      await service.listSessions({ workspacePath: secondDir });
+      await foregroundList(service, { workspacePath: secondDir });
       await vi.waitFor(() =>
         expect(rows().some((row) => row.method === "externalEngine/revokeSpare")).toBe(true),
       );

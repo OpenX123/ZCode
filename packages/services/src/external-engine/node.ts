@@ -547,6 +547,9 @@ export function createExternalEngineService(
           );
           if (result.code !== 0) throw new Error("external_engine_login_failed");
           if (profile.engine === "codex") connections.markManagedCodexAuth(profile.id);
+          // 首次官方登录会改变有效默认(inherit→official)，必须由同一Host广播完整安全视图。
+          const view = await connections.readView();
+          if (!disposed) profilesEmitter.fire(view);
         } finally {
           loginAbort = undefined;
           if (engine) invalidateStatus(engine);

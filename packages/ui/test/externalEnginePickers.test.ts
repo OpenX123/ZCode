@@ -337,66 +337,114 @@ it("草稿分段引擎选择支持直接切换，仅选中项显示名称；已�
   expect(screen.getByTestId("session-engine-indicator")).toBeDefined();
 });
 
-it("权限独立，模型深度共用一个入口，Fast仅在弹层更多且显式选择才写入", () => {
-  const onChange = vi.fn();
-  const mode = {
-    id: "mode",
-    name: "Permission",
-    currentValue: "fast",
-    options: [{ value: "fast", name: "Fast permission" }],
-  };
-  const model = {
-    id: "model",
-    name: "Model",
-    currentValue: "m",
-    options: [{ value: "m", name: "Model M" }],
-  };
-  const fast = {
-    id: "fast_mode",
-    name: "Fast",
-    currentValue: "off",
-    options: [
-      { value: "off", name: "Off" },
-      { value: "on", name: "On" },
-    ],
-  };
-  render(
-    createElement(ZCodeIntlProvider, {
-      initialLocale: "zh-CN",
-      children: createElement(EngineControls, {
-        engine: "codex",
-        placement: "toolbar",
-        onSelectEngine: vi.fn(),
-        connectionChoices: [choices[1]!],
-        connectionProfileId: "inherit",
-        onSelectConnection: vi.fn(),
-        options: [fast, effort, model, mode],
-        onConfigChange: onChange,
+it.each(["fast_mode", "fast-mode"])(
+  "原生%s权限独立，模型深度共用入口，其余仅在更多且显式选择才写入",
+  async (fastId) => {
+    const onChange = vi.fn();
+    const mode = {
+      id: "mode",
+      name: "Permission",
+      currentValue: "fast",
+      options: [{ value: "fast", name: "Fast permission" }],
+    };
+    const model = {
+      id: "model",
+      name: "Model",
+      currentValue: "m",
+      options: [{ value: "m", name: "Model M" }],
+    };
+    const fast = {
+      id: fastId,
+      name: "Fast",
+      currentValue: "off",
+      options: [
+        { value: "off", name: "Off" },
+        { value: "on", name: "On" },
+      ],
+    };
+    render(
+      createElement(ZCodeIntlProvider, {
+        initialLocale: "zh-CN",
+        children: createElement(EngineControls, {
+          engine: "codex",
+          placement: "toolbar",
+          onSelectEngine: vi.fn(),
+          connectionChoices: [choices[1]!],
+          connectionProfileId: "inherit",
+          onSelectConnection: vi.fn(),
+          options: [
+            fast,
+            effort,
+            model,
+            mode,
+            {
+              id: "collaboration_mode",
+              name: "Collaboration",
+              currentValue: "default",
+              options: [{ value: "default", name: "Default" }],
+            },
+          ],
+          onConfigChange: onChange,
+        }),
       }),
-    }),
-  );
-  expect(screen.queryByTestId("engine-config-fast_mode")).toBeNull();
-  const controls = screen.getByTestId("external-engine-toolbar");
-  expect(
-    Array.from(controls.querySelectorAll("button[data-testid]")).map((node) =>
-      node.getAttribute("data-testid"),
+    );
+    expect(screen.queryByTestId(`engine-config-${fastId}`)).toBeNull();
+    expect(screen.queryByTestId("engine-config-collaboration_mode")).toBeNull();
+    const controls = screen.getByTestId("external-engine-toolbar");
+    expect(
+      Array.from(controls.querySelectorAll("button[data-testid]")).map((node) =>
+        node.getAttribute("data-testid"),
+      ),
+    ).toEqual(["engine-config-mode", "engine-config-model-effort"]);
+    const combined = screen.getByTestId("engine-config-model-effort");
+    expect(combined.textContent).toContain("Model M");
+    expect(combined.textContent).toContain("Medium");
+    expect(screen.queryByTestId("engine-config-more")).toBeNull();
+    fireEvent.click(combined);
+    expect(screen.getByRole("slider", { name: "Reasoning effort" })).toBeDefined();
+    fireEvent.keyDown(screen.getByTestId("engine-config-model"), { key: "ArrowDown" });
+    expect(screen.getByRole("menuitemradio", { name: "Model M" })).toBeDefined();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    fireEvent.click(combined);
+    fireEvent.click(screen.getByTestId("engine-more-options").querySelector("summary")!);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId("engine-config-collaboration_mode")).toBeDefined();
+    fireEvent.keyDown(screen.getByTestId(`engine-config-${fastId}`), { key: "ArrowDown" });
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "On" }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(fastId, "on");
+  },
+);
+
+it("原生fast-mode选择on被拒绝仍显示确认off，打开不写入", async () => {
+  const request = Promise.withResolvers<boolean>();
+  const onChange = vi.fn(() => request.promise);
+  render(
+    tree(
+      [
+        effort,
+        {
+          id: "fast-mode",
+          name: "Fast mode",
+          currentValue: "off",
+          options: [
+            { value: "off", name: "Off" },
+            { value: "on", name: "On" },
+          ],
+        },
+      ],
+      onChange,
     ),
-  ).toEqual(["engine-config-mode", "engine-config-model-effort"]);
-  const combined = screen.getByTestId("engine-config-model-effort");
-  expect(combined.textContent).toContain("Model M");
-  expect(combined.textContent).toContain("Medium");
-  expect(screen.queryByTestId("engine-config-more")).toBeNull();
-  fireEvent.click(combined);
-  expect(screen.getByRole("slider", { name: "Reasoning effort" })).toBeDefined();
-  fireEvent.keyDown(screen.getByTestId("engine-config-model"), { key: "ArrowDown" });
-  expect(screen.getByRole("menuitemradio", { name: "Model M" })).toBeDefined();
-  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
-  fireEvent.click(combined);
+  );
+  fireEvent.click(screen.getByTestId("engine-config-reasoning_effort"));
   fireEvent.click(screen.getByTestId("engine-more-options").querySelector("summary")!);
   expect(onChange).not.toHaveBeenCalled();
-  fireEvent.keyDown(screen.getByTestId("engine-config-fast_mode"), { key: "ArrowDown" });
+  fireEvent.keyDown(screen.getByTestId("engine-config-fast-mode"), { key: "ArrowDown" });
   fireEvent.click(screen.getByRole("menuitemradio", { name: "On" }));
-  expect(onChange).toHaveBeenCalledExactlyOnceWith("fast_mode", "on");
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("fast-mode", "on");
+  await act(async () => request.resolve(false));
+  fireEvent.click(screen.getByTestId("engine-config-reasoning_effort"));
+  fireEvent.click(screen.getByTestId("engine-more-options").querySelector("summary")!);
+  expect(screen.getByTestId("engine-config-fast-mode").textContent).toContain("Off");
 });
 
 it("草稿改选连接：Host 记录上次使用并重建预热，回流前显示所选值；已创建会话只读显示非缺省绑定", async () => {
