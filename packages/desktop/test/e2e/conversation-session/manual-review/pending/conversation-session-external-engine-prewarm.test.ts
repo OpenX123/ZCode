@@ -239,6 +239,33 @@ async function displayed(selector: string) {
   return found!;
 }
 
+/** W2：右下角模型入口（外部引擎为 engine-config-model-effort，YCode 为 chat-model-select-trigger）。 */
+async function composerModelTrigger(scope = "") {
+  const selector = `${scope} [data-testid="engine-config-model-effort"], ${scope} [data-testid="chat-model-select-trigger"]`;
+  return displayed(selector.trim());
+}
+
+/** W2：输入框上方的引擎胶囊已删除，经模型入口弹层顶部的切换行选择引擎后关闭弹层。 */
+async function selectDraftEngine(engine: "zcode" | "claude-code" | "codex", scope = "") {
+  const trigger = await composerModelTrigger(scope);
+  await trigger.waitForClickable({ timeout: 30000 });
+  await trigger.click();
+  const option = await displayed(`[data-testid="engine-switch-option-${engine}"]`);
+  if ((await option.getAttribute("aria-checked")) !== "true") await option.click();
+  // YCode ↔ 外部引擎会替换整个入口与弹层，旧 option 元素随之卸载；以入口图标为准等待切换完成。
+  await browser.waitUntil(async () => (await composerEngine(scope)) === engine, {
+    timeout: 30000,
+    timeoutMsg: `弹层切换到 ${engine} 后入口图标必须刷新`,
+  });
+  if (await $('[data-testid="engine-switch-row"]').isDisplayed()) await browser.keys("Escape");
+}
+
+/** 入口按钮的 14px 引擎图标是当前引擎的只读事实。 */
+async function composerEngine(scope = "") {
+  const trigger = await composerModelTrigger(scope);
+  return (await trigger.$("[data-task-client-logo]")).getAttribute("data-task-client-logo");
+}
+
 async function openModelMenu() {
   await (await displayed('[data-testid="engine-config-model-effort"]')).click();
   await (await displayed('[data-testid="engine-config-model"]')).click();
@@ -265,7 +292,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         })),
       })),
       selectors: [
-        ...document.querySelectorAll<HTMLElement>('[data-testid="session-engine-select"]'),
+        ...document.querySelectorAll<HTMLElement>('[data-testid="engine-switch-row"]'),
       ].map((element) => ({
         text: element.innerText,
         visible: element.getClientRects().length > 0,
@@ -319,16 +346,17 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     const paneId = await getV4FocusedPaneId();
     if (!paneId) throw new Error("缺少 AX03 当前 pane");
     const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
-    const selector = await displayed(`${paneSelector} [data-testid="session-engine-select"]`);
-    expect(await selector.getAttribute("role")).toBe("group");
-    for (const engine of ["zcode", "claude-code", "codex"]) {
-      const segment = await displayed(
-        `${paneSelector} [data-testid="session-engine-option-${engine}"]`,
-      );
-      await segment.waitForClickable({ timeout: 30000 });
-      await segment.click();
-      await expect(segment).toHaveAttribute("aria-pressed", "true");
+    // W2：输入框上方不再有引擎胶囊；切换行在模型入口弹层顶部，是 radiogroup。
+    await expect($(`${paneSelector} [data-testid="session-engine-select"]`)).not.toExist();
+    await expect($(`${paneSelector} [data-testid="composer-engine-selector"]`)).not.toExist();
+    for (const engine of ["zcode", "claude-code", "codex"] as const) {
+      await selectDraftEngine(engine, paneSelector);
     }
+    await (await composerModelTrigger(paneSelector)).click();
+    expect(await (await displayed('[data-testid="engine-switch-row"]')).getAttribute("role")).toBe(
+      "radiogroup",
+    );
+    await browser.keys("Escape");
     const combined = await displayed(`${paneSelector} [data-testid="engine-config-model-effort"]`);
     await combined.waitForEnabled({ timeout: 30000 });
     await expect($(`${paneSelector} [data-testid="engine-config-fast-mode"]`)).not.toExist();
@@ -482,12 +510,14 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     await sendV4Prompt("E2E_AX03_BINDING");
     await waitForV4AssistantMessageContaining("E2E_ENGINE_REPLY_safe_fixture-0_low_1");
     await waitForV4ConversationState((state) => state.state === "idle", "固定绑定会话完成");
-    await expect($(`${paneSelector} [data-testid="session-engine-select"]`)).not.toExist();
+    // 已有会话：入口图标标识引擎，弹层顶部只读显示当前引擎，没有可选 radio。
+    expect(await composerEngine(paneSelector)).toBe("codex");
+    await (await composerModelTrigger(paneSelector)).click();
     await expect(
-      $(
-        `${paneSelector} [data-testid="composer-engine-selector"] [data-testid="session-engine-indicator"]`,
-      ),
-    ).toBeDisplayed();
+      await displayed('[data-testid="engine-switch-row"][data-readonly="true"]'),
+    ).toHaveText(expect.stringContaining("Codex"));
+    await expect($('[data-testid="engine-switch-option-claude-code"]')).not.toExist();
+    await browser.keys("Escape");
     await expect($(`${paneSelector} [data-testid="session-engine-connection"]`)).not.toExist();
     await expect($(`${paneSelector} [data-testid="engine-config-connection"]`)).not.toExist();
     await browser.saveScreenshot(join(artifact, "task5-fixed-engine.png"));
@@ -500,7 +530,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     const paneId = await getV4FocusedPaneId();
     if (!paneId) throw new Error("缺少原生计划回归的当前 pane");
     const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
-    await (await displayed(`${paneSelector} [data-testid="session-engine-option-codex"]`)).click();
+    await selectDraftEngine("codex", paneSelector);
     const mode = () => displayed(`${paneSelector} [data-testid="engine-config-mode"]`);
     await (await mode()).waitForEnabled({ timeout: 30000 });
     const entry = join(
@@ -579,9 +609,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       const paneId = await getV4FocusedPaneId();
       if (!paneId) throw new Error("缺少错误行回归的当前 pane");
       const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
-      await (
-        await displayed(`${paneSelector} [data-testid="session-engine-option-${engine}"]`)
-      ).click();
+      await selectDraftEngine(engine, paneSelector);
       const mode = () => displayed(`${paneSelector} [data-testid="engine-config-mode"]`);
       await (await mode()).waitForEnabled({ timeout: 30000 });
       const entry = join(
@@ -646,7 +674,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       ["Claude Code", "claude-code"],
       ["Codex", "codex"],
     ] as const) {
-      await (await displayed(`[data-testid="session-engine-option-${engine}"]`)).click();
+      await selectDraftEngine(engine);
       await browser.waitUntil(
         async () =>
           (
@@ -655,19 +683,17 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         { timeout: 30000, timeoutMsg: `${name} 选择后必须连接对应引擎` },
       );
       await startNewV4Draft();
-      await browser.waitUntil(
-        async () =>
-          (await (await displayed('[data-testid="session-engine-select"]')).getText()).includes(
-            name,
-          ),
-        { timeout: 30000, timeoutMsg: `${name} 显式选择后新草稿必须继承引擎` },
-      );
+      await browser.waitUntil(async () => (await composerEngine()) === engine, {
+        timeout: 30000,
+        timeoutMsg: `${name} 显式选择后新草稿必须继承引擎`,
+      });
     }
     await reloadElectronSessionPreservingBrowserProfile(browser);
     await startNewV4Draft();
-    expect(await (await displayed('[data-testid="session-engine-select"]')).getText()).toContain(
-      "Codex",
-    );
+    await browser.waitUntil(async () => (await composerEngine()) === "codex", {
+      timeout: 30000,
+      timeoutMsg: "重启后新草稿必须继承 Codex",
+    });
     await browser.waitUntil(
       async () =>
         (await (await displayed('[data-testid="engine-config-model-effort"]')).getText()).includes(
@@ -697,7 +723,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
 
     // 1. 就绪草稿中显式选择模型与深度：snapshot 确认后写入 Codex 的本机记忆；首发提升为真实会话。
     await startNewV4Draft();
-    await (await displayed('[data-testid="session-engine-option-codex"]')).click();
+    await selectDraftEngine("codex");
     await (
       await displayed('[data-testid="engine-config-model-effort"]')
     ).waitForEnabled({
@@ -806,7 +832,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       ["Codex", "codex"],
     ] as const) {
       if (name === "Codex") await startNewV4Draft();
-      await (await displayed(`[data-testid="session-engine-option-${engine}"]`)).click();
+      await selectDraftEngine(engine);
       await displayed('[data-testid="engine-config-model-effort"]');
       await browser.waitUntil(
         async () =>
@@ -1133,14 +1159,16 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     }
     // 最后一次显式选择成为本机默认；新草稿及重启后新草稿都继承 Codex。
     await startNewV4Draft();
-    await expect(await displayed('[data-testid="session-engine-select"]')).toHaveText(
-      expect.stringContaining("Codex"),
-    );
+    await browser.waitUntil(async () => (await composerEngine()) === "codex", {
+      timeout: 30000,
+      timeoutMsg: "重启后新草稿必须继承 Codex",
+    });
     await reloadElectronSessionPreservingBrowserProfile(browser);
     await startNewV4Draft();
-    await expect(await displayed('[data-testid="session-engine-select"]')).toHaveText(
-      expect.stringContaining("Codex"),
-    );
+    await browser.waitUntil(async () => (await composerEngine()) === "codex", {
+      timeout: 30000,
+      timeoutMsg: "重启后新草稿必须继承 Codex",
+    });
   });
 
   it("停止后自动恢复原会话并直接调节思考深度", async () => {
@@ -1154,9 +1182,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       const paneId = await getV4FocusedPaneId();
       if (!paneId) throw new Error("缺少停止回归的当前 pane");
       const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
-      await (
-        await displayed(`${paneSelector} [data-testid="session-engine-option-${engine}"]`)
-      ).click();
+      await selectDraftEngine(engine, paneSelector);
       const effortId = engine === "codex" ? "reasoning_effort" : "effort";
       const effort = () => displayed(`${paneSelector} [data-testid="engine-config-model-effort"]`);
       await (await effort()).waitForEnabled({ timeout: 30000 });
@@ -1230,7 +1256,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     const paneId = await getV4FocusedPaneId();
     if (!paneId) throw new Error("缺少 HTML 预览的当前 pane");
     const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
-    await (await displayed(`${paneSelector} [data-testid="session-engine-option-codex"]`)).click();
+    await selectDraftEngine("codex", paneSelector);
     await (
       await displayed(`${paneSelector} [data-testid="engine-config-model-effort"]`)
     ).waitForEnabled({ timeout: 30000 });
@@ -1318,7 +1344,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       ["Codex", "codex"],
     ] as const) {
       if (engine === "codex") await startNewV4Draft();
-      await (await displayed(`[data-testid="session-engine-option-${engine}"]`)).click();
+      await selectDraftEngine(engine);
       const descriptor = EXTERNAL_ENGINE_RUNTIMES[engine];
       const controlPath = join(
         resolveE2EStorageRoot(),

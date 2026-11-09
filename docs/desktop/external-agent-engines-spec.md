@@ -9,8 +9,8 @@
 - 设置左栏只管理 Claude Code、Codex；每项显示本机可启动性，选择右侧详情不改变新任务默认。右侧先呈现已有配置，再独立更新所选引擎检查；一个引擎失败不阻塞另一个。
 - 检查分为 CLI、adapter、认证与实际路由。Host 的 ready 仅称“运行环境可用”，不代表认证或模型响应通过。诊断携带结构化检查项与修复动作；认证信息只用于其 `connectionProfileId`，不得套用到其他连接。快检不发模型请求；完整版本/认证只在管理页按需检查；测试模型响应保留显式触发与取消。
 - 列表显示连接名称、方式、网关和“上次使用”。选中连接仅切详情；“用于新任务”才调用既有 select。内置沿用 CLI 只读；官方登录、API Key 各显示适用动作。编辑/新增使用共享 Dialog，密钥不回显；保存说明只影响新会话。Host 唯一写者、新 ID 编辑/隐藏删除及旧绑定继续可用保持不变。
-- Composer 草稿上方用紧凑引擎分段选择；未选中只显示可访问 Logo，选中带名称。既有会话只显示固定引擎。项目、运行位置（本地或真实远程名称）、Git 分支在编辑器上方同一行，分支不得降到下方工具条；长名称省略，窄屏保持头部横向收缩，不复制 Git 状态。非 Git 工作区不伪造分支。
-- 底部左侧只保留附件与权限/模式，右侧为一个模型/推理强度入口及发送/停止；弹层参照 Codex 呈现当前深度、可切换模型与深度滑块。原生目录缺少 model 或 effort 时按实际能力退化，不能造选项；确认、拒绝、预览回退、键盘与焦点语义保持。`fast` / `fast_mode` / `speed` / `service_tier` 放入该弹层的“更多选项”，不再增加常驻更多按钮，不改变已有值或执行语义。
+- ~~Composer 草稿上方用紧凑引擎分段选择~~（2026-11-09 第 2 轮起由下文「Composer 引擎切换与外部引擎输入区（W1/W2/R2-1）」取代：输入区上方不再有引擎胶囊，引擎切换并入右下角模型入口弹层顶部）。项目、运行位置（本地或真实远程名称）、Git 分支在编辑器上方同一行，分支不得降到下方工具条；长名称省略，窄屏保持头部横向收缩，不复制 Git 状态。非 Git 工作区不伪造分支。
+- 底部左侧只保留附件与权限/模式，右侧为一个模型/推理强度入口及发送/停止；弹层参照 Codex 呈现当前深度、可切换模型与深度滑块。原生目录缺少 model 或 effort 时按实际能力退化，不能造选项；确认、拒绝、预览回退、键盘与焦点语义保持。Fast 类选项改为弹层左上角闪电开关，其余非模式选项进入“更多选项”（见下文 W1/W2/R2-1 合同），不再增加常驻更多按钮，不改变已有值或执行语义。
 - 输入区移除全部连接配置选择/标签（含“沿用 CLI 配置”、官方与自定义），连接仍由设置页管理并沿用既有草稿 owner 和不可变会话绑定。连接中/失败及安全诊断仍来自既有 runtime snapshot，按需显示错误与恢复，不把 ready 推断为进程常驻，不伪造休眠和阶段。重连仍为 prepare CAS，不能重发已提交 prompt；草稿 connecting 只禁用原生配置，输入与引擎选择仍可操作。
 - 模型/思考偏好按 engine + connectionProfileId 记录，旧 engine 偏好只在该连接没有记录时兼容读取；显式确认后只写当前连接偏好。原生目录仍负责可选值，模型确认后才能恢复 effort；权限与 Fast 不记忆。旧会话绑定与新默认隔离。
 - 性能先改已有 pool：warming 备用允许一个新会话原子独占预留，其他会话冷准备；取消、错误、cwd/profile 不同不得误领用，同会话 single-flight 保留。命中健康备用先避免无变化的重复启动解析；身份与凭据校验不能绕过。失败不影响前台可执行性，不自动安装、登录、请求模型。
@@ -46,7 +46,7 @@ Renderer 按引擎保存展示状态，请求完成只更新对应引擎；切�
 
 ### 已接受验收
 
-Task 2 接口约定：Composer 通过可选 `engineSelector` 展示上方分段选择；`EngineControls.placement` 区分 selector 与 toolbar，展示拆分不拥有引擎状态。`externalEngineConnectionConfigPreferences` 为 engine → connectionProfileId → configId 的本机增量偏好；legacy `externalEngineConfigPreferences` 保留兼容读取，显式确认只写新字段。连接记录存在时整份优先，不从 legacy 混入其他模型的 effort。尚无当前 binding/snapshot 的连接身份时不恢复、不记录，旧快照缺省身份使用既有 resolver。确认回调携带发起时的 session/profile，切换后的旧确认丢弃。
+Task 2 接口约定（2026-11-09 W2 修订：`engineSelector` 与 `EngineControls.placement` 已删除，改为 SessionPane 构建唯一的 `EngineSwitchRow` 节点，经 `engineSwitchRow` 插槽同时交给外部引擎弹层与 YCode 模型弹层，展示不拥有引擎状态）。`externalEngineConnectionConfigPreferences` 为 engine → connectionProfileId → configId 的本机增量偏好；legacy `externalEngineConfigPreferences` 保留兼容读取，显式确认只写新字段。连接记录存在时整份优先，不从 legacy 混入其他模型的 effort。尚无当前 binding/snapshot 的连接身份时不恢复、不记录，旧快照缺省身份使用既有 resolver。确认回调携带发起时的 session/profile，切换后的旧确认丢弃。
 
 Task 2 审查修复：恢复已经开始后，同一 binding 的 ready 消失（options 缺省或 profile 为 null），由 memory owner 将这一轮终结并拒绝当前首发；同 session/profile 重新 ready 后再次等待直接收口，沿用已确认配置，不自动重启记忆覆盖。断连前在途 ACK 不能继续旧轮后续项，切换 binding 的旧 ACK 仍丢弃。远程禁用原因在分段选择旁就地可见，并作为组及禁用项的可访问描述，不能只依赖 disabled 按钮的 title。
 
@@ -628,9 +628,43 @@ sequenceDiagram
 
 ## Composer 配置外观
 
-- 已创建会话的引擎不可切换，输入区上方只展示 16px 灰色 Logo，容器固定 28px，无文字、下拉箭头、按钮语义或点击动作；复用 `TaskClientLogo` 的本地图标、可访问名称与悬停标题。仅输入框对图标去色并降低强调，任务列表仍使用原品牌外观。新建草稿的引擎选择器保持可切换。
+- ~~已创建会话的引擎不可切换，输入区上方只展示 16px 灰色 Logo~~（2026-11-09 W2 起删除；已有会话在模型入口弹层顶部只读显示当前引擎，见下一节）。
+
+### Composer 引擎切换与外部引擎输入区（W1/W2/R2-1，2026-11-09）
+
+来源：`docs/plans/2026-11-09-engine-composer-subagent-polish.md` 的 W1、W2 与第 2 轮 R2-1。本节覆盖本文件中与之冲突的旧 Composer 规则。
+
+**放置规则（`engineConfigOptionPlacement`，`packages/shared/src/external-engine/config-options.ts`）：**
+
+| placement      | 判定（id 去掉 `-`/`_` 并忽略大小写后）                         | 位置                                           |
+| -------------- | -------------------------------------------------------------- | ---------------------------------------------- |
+| `primary-mode` | 原样等于 `mode`                                                | 输入框左侧，紧跟附件按钮；唯一的常驻原生芯片   |
+| `model`        | 原样等于 `model`                                               | 弹层头部行（`›` 打开模型菜单）                 |
+| `effort`       | `effort` / `reasoningeffort` / `thoughtlevel`                  | 弹层滑杆                                       |
+| `fast`         | `fast` / `fastmode` / `speed` / `servicetier`                  | 弹层左上角闪电开关（形态不符时退入更多，见下） |
+| `more`         | 其余（Claude `agent`、Codex `collaboration_mode`、未来新增项） | 弹层底部「更多选项」                           |
+
+**Fast 开关映射（`engineFastToggle`）：** YCode 不向 adapter 声明 `session.configOptions.boolean`，本机 Claude adapter 0.95.0（`acp-agent.js` `createFastModeConfigOption`，id `fast`）与 Codex adapter 2.2.2（`index.js` `FastModeConfig`，id `fast-mode`）因此都发 `type:"select"`、两个取值 `on` / `off`。判定规则：选项恰好两个取值，一个取值（忽略大小写）属于开启集 `on/true/enabled`、另一个属于关闭集 `off/false/disabled`，才渲染为闪电；`currentValue` 等于开启取值即点亮（强调色 `text-icon-blue`、`aria-pressed=true`）。点击回传对侧原始取值，仍走 `onConfigChange` → `setEngineConfigOption`，等 snapshot 确认后才变化。形态不符的 Fast 类选项（多档 `service_tier` 等）不猜语义，作为普通菜单进入「更多选项」。原生 boolean 选项当前会被 `engineConfigOptionSchema`（`currentValue` 为字符串）拒绝，不在本次范围。引擎没有 Fast 类选项时不显示闪电。
+
+**右下角入口（三个引擎统一）：** 14px 引擎图标 + 文案。外部引擎：模型当前值为 adapter 别名 `default` 时只显示思考档位（如「高」）；否则「模型名 · 档位」；没有思考档位时只显示模型名（`default` 用解析出的真实名）；没有模型与档位时显示「更多选项」；尚无原生目录（草稿连接中）时显示引擎名。YCode 入口在本地工作区显示 YCode 图标，Web/远程沿用原样式。
+
+**弹层结构（自上而下）：**
+
+1. `EngineSwitchRow`：YCode / Claude Code / Codex 三段 `radiogroup`，每段 `role="radio"`、roving tabindex，左右方向键与 Home/End 移动并选中（上下键留给外层菜单/弹层）。新草稿 + 本地工作区可交互；已有会话只读显示当前引擎（不是按钮，悬停说明会话创建后不可切换）；远程/Web 工作区（`useExternalEngineService` 为空）整行不渲染，引擎由 `useDraftConfigControl` 强制 YCode。选择走既有 `handleSelectEngine` → `useDraftConfigControl.handleDraftSelectEngine` 写 draft 并回收预热，不新增状态。行在外部引擎弹层与 YCode 模型弹层（`V4ComposerToolbar` → `ModelConfigSelect.contentHeader`）中复用同一节点。草稿 connecting / 原生配置失败时该行仍可操作（入口按钮只有在没有切换行时才随配置禁用）。
+2. 头部行 `[⚡] <模型名> <档位> ›`：闪电见上；`›` 按钮打开模型完整目录。
+3. 思考滑杆：存在其他档位时隐藏 `default` 档；当前值为 `default` 时滑块不填充、档位文案显示「默认」。已知取值本地化 `minimal/low/medium/high/xhigh/max` → 最低/低/中/高/超高/最高，未知取值沿用 adapter 文案；提交仍回传原始 value。
+4. 「更多选项」：placement 为 `more` 的选项（及形态不符的 Fast 类）。
+
+**`default` 模型别名显示：** Claude adapter（`session-model.js` `buildModelConfigOption`）对 `value:"default"` 的条目把 description 设为真实模型的 `displayName`（无对应条目时为 `resolvedModel` id）；未解析出 resolvedModel 时 description 为 SDK 原文。解析规则：description 含 `(currently X)` 取 X；否则 description 不含 `(`、`·`、句号且不超过 48 字符时整体视为模型名；都不满足时显示本地化「默认模型」。模型菜单与头部行显示解析名 + 「默认」标记；界面任何位置不显示 adapter 的 `name`（如 "Default (recommended)"）。
+
+**引擎名：** 原生引擎统一显示「YCode」（`ENGINE_LABELS` 与 `TaskClientLogo` 同源）。
+
+**验收：** UI UT（`packages/ui/test/externalEnginePickers.test.ts`、`externalEngineSettings.test.ts`）覆盖：Claude `agent` 不出芯片、在更多选项可选；Codex `fast-mode` 只渲染为闪电、点亮与回传 on/off；`default` 模型入口只显示档位、弹层显示解析名与「默认」；滑杆无 Default 档、档位中文化；切换行新草稿可切换、已有会话只读、未传入时不渲染、方向键选择。shared `contract.test.ts` 覆盖 placement 与 Fast 映射。桌面候选 `conversation-session-external-engine-prewarm.test.ts` 改为经弹层切换引擎。
+
+### 原生配置菜单与滑杆（通用）
+
 - 引擎选择和原生配置触发器静止时背景透明、无可见边框；保留当前文字、下拉箭头、悬停和键盘聚焦反馈。
-- 模式点击直接展开完整目录；模型由模型/深度弹层内入口展开完整目录，Fast 由该弹层“更多选项”内进入。当前值右侧打勾，不分页。菜单沿用共享下拉层提供的视口可用高度和滚动能力，保持引擎提供的选项顺序；窄视口可滚动访问全部选项，菜单自身不得越出视口。
+- 模式点击直接展开完整目录；模型由模型/深度弹层头部行的 `›` 展开完整目录，Fast 为弹层左上角闪电开关，其余选项由该弹层“更多选项”内进入。当前值右侧打勾，不分页。菜单沿用共享下拉层提供的视口可用高度和滚动能力，保持引擎提供的选项顺序；窄视口可滚动访问全部选项，菜单自身不得越出视口。
 - `effort`、`reasoning_effort`（含连字符形式）、`thought_level` 配置复用模型/深度合并弹层：上方显示当前档位与可切换的模型入口，下方为带档位圆点的原生离散滑动条。档位及顺序完全来自引擎，不猜测额外档位或默认值；单一档位只展示，不允许调节。
 - 拖动期间只在控件内预览，释放指针或方向键后沿现有 `onConfigChange` 提交一次原始 value；Escape 放弃尚未提交的预览。配置事实仍归 snapshot 所有，打开弹层不写配置。禁用时不允许修改。
 - 释放后等待确认期间，滑块保持所选位置，不得先退回旧确认值再跳到新值；提交回调返回异步接受结果（`false` 表示失败）。确认配置回流后由 snapshot 接管，失败或关闭弹层时丢弃局部显示；较早请求的失败不得清掉后续手势。目录或确认值变化仍以新 snapshot 为准，不新增配置缓存或写入路径。

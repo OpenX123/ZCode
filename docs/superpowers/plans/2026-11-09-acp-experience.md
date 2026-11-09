@@ -56,6 +56,8 @@
 
 ### Task 5: 按最新 Codex 参考图精简输入区
 
+> **已被取代（2026-11-09）：** 本任务的输入区精简由 `docs/plans/2026-11-09-engine-composer-subagent-polish.md` 的 W1（外部引擎输入区精简、Fast 闪电开关 R2-1）与 W2（引擎切换并入模型入口、移除输入框上方胶囊）取代，不再单独实现；以下勾选项保留为历史记录，验收以 `docs/desktop/external-agent-engines-spec.md`「Composer 引擎切换与外部引擎输入区（W1/W2/R2-1）」为准。
+
 **来源：** 用户在桌面截图验收后追加“沿用 CLI 配置不要在输入框显示”“分支要在上面，参考 Codex，就只要这些”。最新 spec 的 Composer 三条规则取代 Task2/4 中旧连接入口与独立更多按钮的展示要求；配置、绑定与发送语义保持。
 
 **Files:** 外部引擎 Controls/Picker 与合同；ConversationComposer/SessionPane 的展示接线；项目头部必要的既有 ProjectComposerMenu/WorkspaceShellLayout 展示；聚焦 UI 单测、一个桌面候选、验证文档。只改展示与测试，不扩展 backend，不恢复已移除的 CUA/后台入口。

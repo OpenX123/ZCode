@@ -15,9 +15,17 @@ describe("外部引擎未就绪保持草稿", () => {
       ["Claude Code", "claude-code"],
       ["Codex", "codex"],
     ]) {
-      const choice = $(`[data-testid="session-engine-option-${id}"]`);
+      // W2：引擎切换在右下角模型入口弹层顶部（YCode 为模型选择器，外部引擎为合并入口）。
+      const trigger = $(
+        `[data-testid="engine-config-model-effort"], [data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"]`,
+      );
+      await trigger.waitForClickable({ timeout: 5000 });
+      await trigger.click();
+      const choice = $(`[data-testid="engine-switch-option-${id}"]`);
       await choice.waitForClickable({ timeout: 5000 });
       await choice.click();
+      // YCode → 外部引擎会替换入口与弹层；弹层仍在时才关闭，避免 Escape 落到输入框。
+      if (await $('[data-testid="engine-switch-row"]').isDisplayed()) await browser.keys("Escape");
       await expect($(`[data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"]`)).not.toExist();
       await expect($(`[data-testid="${TID_CHAT_MODE_SELECT_TRIGGER}"]`)).not.toExist();
       const prompt = `E2E_EXTERNAL_ENGINE_NOT_READY ${engine} 草稿`;

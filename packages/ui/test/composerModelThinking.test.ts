@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { createElement, useState } from "react";
+import { createElement, useState, type ReactNode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelConfigSelect } from "@/ModelConfigSelect.js";
@@ -35,6 +35,7 @@ function Harness({
   levelsOverride,
   initialThought,
   effortShortcutLabel = "Ctrl+T",
+  contentHeader,
 }: {
   modelName?: string;
   invalid?: boolean;
@@ -45,6 +46,7 @@ function Harness({
   levelsOverride?: { value: string; label: string }[];
   initialThought?: string;
   effortShortcutLabel?: string;
+  contentHeader?: ReactNode;
 }) {
   const [model, setModel] = useState(empty ? "" : "a/flash");
   const [thought, setThought] = useState(initialThought ?? (invalid ? "missing" : "high"));
@@ -91,6 +93,7 @@ function Harness({
         open,
         onOpenChange: setOpen,
         focusSelectorOnClose: null,
+        contentHeader,
         composerOptions: {
           providerLabel: "Provider",
           modelsLabel: "Models",
@@ -136,6 +139,18 @@ describe("composer combined model and thinking picker", () => {
     expect(screen.getByTestId("chat-model-select-trigger")).toBe(trigger);
   });
 
+  it("renders the engine switch header above the provider list without closing the menu", () => {
+    render(
+      createElement(Harness, {
+        contentHeader: createElement("div", { "data-testid": "engine-switch-row-slot" }, "engines"),
+      }),
+    );
+    const menu = screen.getByRole("menu");
+    const header = screen.getByTestId("engine-switch-row-slot");
+    expect(menu.contains(header)).toBe(true);
+    // 切换行位于弹层最上方，先于供应商与模型列表。
+    expect(menu.textContent!.indexOf("engines")).toBe(0);
+  });
   it("shows the configured effort shortcut and hides an unassigned binding", () => {
     const { rerender } = render(createElement(Harness, { effortShortcutLabel: "Alt+R" }));
     expect(screen.getByTestId("composer-effort-shortcut").textContent).toBe("Alt+R");
