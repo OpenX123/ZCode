@@ -30,6 +30,7 @@
 ### 普通项目
 
 新建读取该项目的草稿；有文字恢复完整选择，没有文字读取该项目 Recent，Plan 默认关闭。
+新默认（2026-11-09，用户决策 Q4「自主 + 高」）：所属范围没有 Recent（新用户或新范围）时，权限默认 `guarded`（自主模式，Ask when there’s risk），不再是 `build`；Recent 为 `plan` 时仍回落 `build`（Plan 不沿用）。思考档位由 `completeNewModelSelection` 构造：模型档位含 `high` 用 `high`，否则用该模型最高档；它同时用于全新初始化与用户主动选模型。历史快照缺少 mode 的解析默认、非法旧值的 `normalizeAvailableZCodeMode` 回落仍为 `build`，属于安全回落而非新默认。CLI 未显式传入且无持久化模式时，`DefaultRuntimeConfig.permission.mode` 同样为 `guarded`。
 项目主要目录用于准备预热 session。首次输入被接纳后，成为正式 session；后续新建继续使用项目当时的主要目录。
 没有 root 的项目沿用 prepareSession 初始化主要目录的现有流程。
 旧 session 执行目录不随项目主要目录修改或 session 移动而改变。

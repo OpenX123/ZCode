@@ -37,12 +37,13 @@ runTurn 发现会话没有健康的 adapter 连接（`ExternalEnginePort.isSessi
 - Codex：AIR 只改变工具行呈现——不再套用 Zed 兼容的标准字段；命令输出在未声明输出通道时不再分块（读取类命令结果不再附带正文）；MCP 进度不再推送；其余为附加 `_meta`。YCode 声明 `capabilities: ["sessionFailure"]`，同时声明非 AIR 专属的 `_meta.terminal_output_delta: true`，使终端命令输出仍按既有 `terminal_output_delta` 追加。残留差异：Codex 读取文件类命令的工具卡不再显示文件正文，搜索/列表结果改为结束时一次性给出；记录为已接受差异。
 - Claude Code：AIR 会让权限请求去掉 `name/kind/content`、Write/Edit 的 `rawInput` 去掉文件正文、Read/Grep/Glob 结果去掉正文、未声明原生子会话时丢弃子智能体流式正文，并把子智能体协议切到 AIR 形态（属于 1.1.0 多智能体里程碑）。审批预览与工具输出会退化，本里程碑不为 Claude 声明 AIR；1.1.0 处理子会话与审批预览后再启用。Claude 的最终失败沿用 JSON-RPC 错误路径结构化（见下）；其重试只经 AIR 通道上报，未声明前不可见，属已知缺口。
 - 1.1.0 起两家都声明 ACP `clientCapabilities.subagents`（Codex 仍是 AIR 客户端，走 AIR 草案子会话形态；Claude 不声明 AIR，走 RFD 形态），细则见 `docs/desktop/external-agent-engines-spec.md`「外部引擎原生子智能体」。不声明 nativeSubagentSessions / asyncTasks 等其他 AIR 能力。
+- ACP `clientCapabilities.session.notices`（2026-11-09 核查 codex-acp 2.2.2，待产品确认后再声明）：形状为对象（如 `{}`），adapter 只判断其为非数组对象。声明后 Codex 用 `session/update {sessionUpdate: "notice", severity, title, description?}` 投递以下事件，而不是 typed failure / 正文：`WarningEvent`、`configWarning`、`deprecationNotice`（severity=warning，原为 typed failure）；`ModelRerouted`（severity=info，原为思考正文 “Model rerouted from … to …”）；未声明 compaction 能力时的上下文压缩（severity=info，原为回复正文 “_Context compacted…_”）。后两项会让对应文字从对话正文/思考中消失，属于 WarningEvent 之外的可见变化，因此本次未声明，等待产品决定。adapter 已实现 notice 的接收与脱敏：`readSessionNotice` 归一为 `{severity: info|warning|error, message}`（与失败摘要同口径脱敏，首行 ≤300 字），经 `onNotice` 交付，不进入 `onUpdate`；会话中 Runtime 只记日志（warning/error 记 warn，info 记 info），不设置 apiRetry、不显示；测试连接把 notice 收入 `warnings`。
 
 ### 失败来源与归一
 
 adapter 把以下来源归一为同一 `EngineConnectionFailure`，原始文本不越过 adapter：
 
-1. AIR typed failure：`session_info_update._meta.jetbrains.air.sessionFailure` 与 `session/prompt` 响应 `_meta.jetbrains.air.sessionFailure`，字段 `{id, revision, category, severity, title, details?}`。severity=warning 表示重试中，error 表示终态。`id` 为失败 ID（同一轮重试与终态共用 `<turnId>:error`，revision 递增）。
+1. AIR typed failure：`session_info_update._meta.jetbrains.air.sessionFailure` 与 `session/prompt` 响应 `_meta.jetbrains.air.sessionFailure`，字段 `{id, revision, category, severity, title, details?}`。severity=warning 表示重试中，error 表示终态。注意区分：notice（`sessionUpdate: "notice"`）是非致命提示，不是失败，不进入本节归一，也不产生“正在重新连接”；未声明 `session.notices` 时 Codex 会把非致命 `WarningEvent` 也作为 severity=warning 的 typed failure 上报（id 含 `:notice:`、category=unknown），会话中仍按重试中显示（已知误报，待声明 notices 后消除），测试连接只以 error 判失败、把 warning 收入 `warnings`（见 external-agent-engines-spec「测试连接」）。`id` 为失败 ID（同一轮重试与终态共用 `<turnId>:error`，revision 递增）。
 2. 非 typed 回退：`session_info_update._meta.codex.error` 的 `message`（如 “Reconnecting... 2/5”）、`additionalDetails`（如 “unexpected status 502 Bad Gateway: …, url: …, request id: …”）与 `codexErrorInfo.*.httpStatusCode`；`willRetry` 决定重试或终态。
 3. JSON-RPC 错误：`session/prompt` 的 error（Claude 为 “Internal error: API Error: 502 …” 与 `data.errorKind`）。
 

@@ -105,6 +105,38 @@ describe("normalizeModelSelection", () => {
       options: { reasoningLevel: "high" },
     });
   });
+  it("默认档位优先 high：目录含 high 时不取更高档，缺少 high 时取最高档", () => {
+    expect(
+      completeNewModelSelection(registryView(["low", "medium", "high", "max"]), {
+        providerId: "provider-a",
+        modelId: "model-a",
+      }),
+    ).toEqual({
+      providerId: "provider-a",
+      modelId: "model-a",
+      options: { reasoningLevel: "high" },
+    });
+    expect(
+      completeNewModelSelection(registryView(["off", "low", "medium"]), {
+        providerId: "provider-a",
+        modelId: "model-a",
+      }),
+    ).toEqual({
+      providerId: "provider-a",
+      modelId: "model-a",
+      options: { reasoningLevel: "medium" },
+    });
+    expect(
+      resolveInitialModelSelection({ registry: registryView(["low", "high", "xhigh"]) }),
+    ).toEqual({
+      source: "registry-fallback",
+      selection: {
+        providerId: "provider-a",
+        modelId: "model-a",
+        options: { reasoningLevel: "high" },
+      },
+    });
+  });
   it("新选择缺少 reasoning 时保留模型并清空 reasoning", () => {
     expect(
       normalizeModelSelection(registryView(), {
@@ -131,7 +163,7 @@ describe("normalizeModelSelection", () => {
   });
 });
 
-function registryView(): ProviderRegistryView {
+function registryView(reasoningLevels: string[] = ["low", "high"]): ProviderRegistryView {
   return {
     revision: 1,
     providers: ["provider-a", "provider-b"].map((providerId) => ({
@@ -164,7 +196,7 @@ function registryView(): ProviderRegistryView {
             }),
             optionSpecs: new ModelOptionSpecsConfig({
               reasoningLevel: {
-                values: ["low", "high"],
+                values: reasoningLevels,
                 map: "{'reasoning': {'effort': reasoningLevel}}",
               },
               maxOutputTokens: {

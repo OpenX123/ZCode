@@ -18,6 +18,7 @@ import {
   AIR_SESSION_FAILURE_CAPABILITY_META,
   readPromptResultFailure,
   readSessionInfoFailure,
+  readSessionNotice,
 } from "./failure.js";
 import { SUBAGENT_FRAME_KINDS, readSubagentFrame, type KnownSubagent } from "./subagent-frames.js";
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
@@ -161,7 +162,13 @@ export class AcpConnection {
       return;
     if (update.sessionUpdate === "config_option_update")
       await this.active.onConfigOptions(configOptions(update.configOptions));
-    else {
+    else if (update.sessionUpdate === "notice") {
+      // 非致命提示（ACP notice）只经 onNotice 交付，不进入 onUpdate/transcript，也不是失败通知；
+      // 规则见 docs/desktop/native-plan-errors-spec.md「能力声明」。
+      const notice = readSessionNotice(update);
+      if (notice) await this.active.onNotice?.(notice);
+      else this.diagnose("external_engine.notice.invalid", sessionId);
+    } else {
       if (update.sessionUpdate === "session_info_update") {
         // load/fork 回放的旧请求错误不是本轮重试；保留标题等历史事实，不恢复活动诊断。
         const notice = this.loadingHistory ? undefined : readSessionInfoFailure(update);

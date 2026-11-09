@@ -37,6 +37,7 @@ function catalog(
       options: [
         { value: "default", name: "Manual" },
         { value: "auto", name: "Auto" },
+        { value: "plan", name: "Plan" },
       ],
     },
     {
@@ -70,13 +71,20 @@ type ApplyOption = (sessionId: string, configId: string, value: string) => Promi
  * gpt-a 的深度目录没有 high，切到 gpt-b 后才出现（模型决定深度目录）。
  */
 function fakeEngine(model = "gpt-a", effort = "low") {
-  const state = { model, effort };
+  const state = { model, effort, mode: "default" };
   return vi.fn<ApplyOption>(async (_sessionId, configId, value) => {
     if (configId === "model") state.model = value;
+    else if (configId === "mode") state.mode = value;
     else state.effort = value;
     const efforts = state.model === "gpt-a" ? ["low", "medium"] : ["low", "medium", "high"];
-    return { confirmedOptions: catalog(state.model, state.effort, efforts) };
+    return { confirmedOptions: withMode(catalog(state.model, state.effort, efforts), state.mode) };
   });
+}
+
+function withMode(options: EngineConfigOption[], mode: string): EngineConfigOption[] {
+  return options.map((option) =>
+    option.id === "mode" ? { ...option, currentValue: mode } : option,
+  );
 }
 
 function deferredAck() {
@@ -177,7 +185,7 @@ describe("按引擎记忆模型与思考深度", () => {
     );
     expect(preferences.update).not.toHaveBeenCalled();
   });
-  it("恢复顺序为模型优先；目录缺失、已是当前值与权限模式都跳过", () => {
+  it("恢复顺序为模型 → 深度 → 模式；目录缺失、已是当前值与计划模式都跳过", () => {
     const remembered = { model: "gpt-b", reasoning_effort: "high", mode: "auto" };
     expect(nextEngineConfigRestoreStep(catalog("gpt-a", "low"), remembered)).toEqual({
       configId: "model",
@@ -186,6 +194,17 @@ describe("按引擎记忆模型与思考深度", () => {
     expect(
       nextEngineConfigRestoreStep(catalog("gpt-a", "low"), remembered, new Set(["model"])),
     ).toEqual({ configId: "reasoning_effort", value: "high" });
+    expect(
+      nextEngineConfigRestoreStep(
+        catalog("gpt-a", "low"),
+        remembered,
+        new Set(["model", "reasoning_effort"]),
+      ),
+    ).toEqual({ configId: "mode", value: "auto" });
+    // 旧版本或手工写入的计划类取值即使在目录内也不恢复。
+    expect(nextEngineConfigRestoreStep(catalog("gpt-a", "low"), { mode: "plan" })).toBeNull();
+    // 只有 configId 恰为 mode 的权限模式参与恢复；其它 other 类配置不恢复。
+    expect(nextEngineConfigRestoreStep(catalog("gpt-a", "low"), { fast: "on" })).toBeNull();
     // 记忆的模型已不在目录：只按当前目录恢复深度。
     expect(
       nextEngineConfigRestoreStep(catalog("gpt-a", "low"), { model: "retired", effort: "x" }),
@@ -202,11 +221,17 @@ describe("按引擎记忆模型与思考深度", () => {
         reasoning_effort: "xhigh",
       }),
     ).toBeNull();
-    expect(nextEngineConfigRestoreStep(catalog("gpt-b", "high"), remembered)).toBeNull();
+    expect(nextEngineConfigRestoreStep(catalog("gpt-b", "high"), remembered)).toEqual({
+      configId: "mode",
+      value: "auto",
+    });
+    expect(
+      nextEngineConfigRestoreStep(withMode(catalog("gpt-b", "high"), "auto"), remembered),
+    ).toBeNull();
     expect(nextEngineConfigRestoreStep(catalog("gpt-a", "low"), undefined)).toBeNull();
   });
 
-  it("显式修改在 snapshot 确认为所选值后才写入，拒绝、改值与权限模式不记忆", async () => {
+  it("显式修改在 snapshot 确认为所选值后才写入，拒绝、改值与计划模式不记忆", async () => {
     const { rerender, result } = renderMemory({ options: catalog("gpt-a", "low") });
     act(() => result.current.recordExplicitChange("model", "gpt-b"));
     expect(preferences.update).not.toHaveBeenCalled();
@@ -217,14 +242,18 @@ describe("按引擎记忆模型与思考深度", () => {
     // 引擎改用其它档位：snapshot 不出现所选值，不写入。
     act(() => result.current.recordExplicitChange("reasoning_effort", "high"));
     rerender({ options: catalog("gpt-b", "medium") });
-    // 权限模式沿用引擎默认，即使确认也不记忆。
-    act(() => result.current.recordExplicitChange("mode", "auto"));
-    rerender({
-      options: catalog("gpt-b", "medium").map((option) =>
-        option.id === "mode" ? { ...option, currentValue: "auto" } : option,
-      ),
-    });
+    // 计划类模式即使确认也不记忆，新草稿不沿用 Plan。
+    act(() => result.current.recordExplicitChange("mode", "plan"));
+    rerender({ options: withMode(catalog("gpt-b", "medium"), "plan") });
     expect(preferences.update).toHaveBeenCalledTimes(1);
+    // 权限模式确认后按引擎 + 连接写入。
+    act(() => result.current.recordExplicitChange("mode", "auto"));
+    rerender({ options: withMode(catalog("gpt-b", "medium"), "auto") });
+    expect(preferences.update).toHaveBeenCalledTimes(2);
+    expect(preferences.update).toHaveBeenLastCalledWith({
+      externalEngineConnectionConfigPreferences: { codex: { inherit: { mode: "auto" } } },
+    });
+    preferences.update.mockClear();
     // snapshot 先于 ACK 确认时立即写入；已记住的值不重复写。
     act(() => result.current.recordExplicitChange("reasoning_effort", "medium"));
     expect(preferences.update).toHaveBeenLastCalledWith({
@@ -237,7 +266,84 @@ describe("按引擎记忆模型与思考深度", () => {
     } as AppSettings;
     rerender({ options: catalog("gpt-b", "medium") });
     act(() => result.current.recordExplicitChange("model", "gpt-b"));
-    expect(preferences.update).toHaveBeenCalledTimes(2);
+    expect(preferences.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("恢复按模型 → 深度 → 模式依次下发；恢复期间显式选择 Plan 也视为接管但不记忆", async () => {
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: {
+        codex: { inherit: { model: "gpt-b", reasoning_effort: "high", mode: "auto" } },
+      },
+    } as AppSettings;
+    const { applyOption } = renderMemory({
+      sessionId: "draft-mode",
+      restoreEnabled: true,
+      options: catalog("gpt-a", "low", ["low", "medium"]),
+    });
+    await flush();
+    expect(applyOption.mock.calls).toEqual([
+      ["draft-mode", "model", "gpt-b"],
+      ["draft-mode", "reasoning_effort", "high"],
+      ["draft-mode", "mode", "auto"],
+    ]);
+    expect(preferences.update).not.toHaveBeenCalled();
+
+    const pendingAck = deferredAck();
+    const takeover = renderMemory(
+      { sessionId: "draft-plan", restoreEnabled: true, options: catalog("gpt-a", "low") },
+      vi.fn<ApplyOption>(() => pendingAck.promise),
+    );
+    await flush();
+    const wait = takeover.result.current.waitForRestore("draft-plan");
+    act(() => takeover.result.current.recordExplicitChange("mode", "plan"));
+    await expect(wait).resolves.toBeUndefined();
+    await act(async () => pendingAck.resolve({ confirmedOptions: catalog("gpt-b", "low") }));
+    await flush();
+    takeover.rerender({
+      sessionId: "draft-plan",
+      restoreEnabled: true,
+      options: withMode(catalog("gpt-b", "low"), "plan"),
+    });
+    expect(takeover.applyOption).toHaveBeenCalledTimes(1);
+    expect(preferences.update).not.toHaveBeenCalled();
+  });
+
+  it("首次使用（该引擎 + 连接无任何记忆）默认深度 high，只下发不写记忆；有记忆或目录无 high 时不套用", async () => {
+    preferences.settings = {} as AppSettings;
+    const first = renderMemory({
+      sessionId: "draft-first",
+      connectionProfileId: "alpha",
+      restoreEnabled: true,
+      options: catalog("gpt-b", "low"),
+    });
+    await flush();
+    expect(first.applyOption.mock.calls).toEqual([["draft-first", "reasoning_effort", "high"]]);
+    await expect(first.result.current.waitForRestore("draft-first")).resolves.toBeUndefined();
+    expect(preferences.update).not.toHaveBeenCalled();
+    first.unmount();
+
+    // 目录没有 high：保持引擎默认，不改成其它档位。
+    const noHigh = renderMemory({
+      sessionId: "draft-no-high",
+      restoreEnabled: true,
+      options: catalog("gpt-a", "low", ["low", "medium"]),
+    });
+    await flush();
+    expect(noHigh.applyOption).not.toHaveBeenCalled();
+    noHigh.unmount();
+
+    // 已有记忆（即使只有模型）：按记忆恢复，不叠加首次默认。
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: { codex: { alpha: { model: "gpt-b" } } },
+    } as AppSettings;
+    const remembered = renderMemory({
+      sessionId: "draft-remembered",
+      connectionProfileId: "alpha",
+      restoreEnabled: true,
+      options: catalog("gpt-a", "low"),
+    });
+    await flush();
+    expect(remembered.applyOption.mock.calls).toEqual([["draft-remembered", "model", "gpt-b"]]);
   });
 
   it("新草稿原生配置就绪后先恢复模型，再按 ACK 确认的新目录恢复深度，且不写回记忆", async () => {

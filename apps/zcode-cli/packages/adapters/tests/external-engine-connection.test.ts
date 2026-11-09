@@ -58,7 +58,22 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     const env = {};
     for (const key of ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ELECTRON_RUN_AS_NODE", "ZCODE_TOOL_ENV_PASSTHROUGH_JSON"]) env[key] = process.env[key];
     if (mode === "report") { text(JSON.stringify({ argv: process.argv.slice(1), execArgv: process.execArgv, env })); send({ id: message.id, result: { stopReason: "end_turn" } }); }
-    else if (mode === "codex-error") info({ codex: { error: { message: "unexpected status 401 Unauthorized: bad key sk-abcdefghijklmnop request id: req_123", httpStatus: 401, willRetry: true } } });
+    else if (mode === "codex-error") {
+      // 重试中的 warning 不结束测试；Codex 重试用尽后发终态 error（willRetry=false）。
+      info({ codex: { error: { message: "unexpected status 401 Unauthorized: bad key sk-abcdefghijklmnop request id: req_123", httpStatus: 401, willRetry: true } } });
+      setTimeout(() => info({ codex: { error: { message: "unexpected status 401 Unauthorized: bad key sk-abcdefghijklmnop request id: req_123", httpStatus: 401, willRetry: false } } }), 50);
+    }
+    else if (mode === "typed-warning-ok") {
+      // 本机 Codex 2.2.2 实测形状：未声明 session.notices 时 WarningEvent 以 typed failure（warning）上报。
+      info({ jetbrains: { air: { sessionFailure: { id: "turn-1:notice:1", revision: 1, severity: "warning", category: "unknown", title: "Model metadata for gw-model not found. Defaulting to fallback metadata; this can degrade performance and cause issues.", actions: [] } } } });
+      text("OK"); send({ id: message.id, result: { stopReason: "end_turn" } });
+    }
+    else if (mode === "notice-ok") {
+      send({ method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "notice", severity: "warning", title: "Model metadata not found", description: "token sk-abcdefghijklmnop leaked" } } });
+      send({ method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "notice", severity: "warning", title: "Model metadata not found", description: "token sk-abcdefghijklmnop leaked" } } });
+      send({ method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "notice", severity: "info", title: "Model rerouted" } } });
+      text("OK"); send({ id: message.id, result: { stopReason: "end_turn" } });
+    }
     else if (mode === "air-error") info({ jetbrains: { air: { sessionFailure: { id: "f1", severity: "error", category: "access", title: "Sign in to continue using Claude." } } } });
     else if (mode === "rpc-error") send({ id: message.id, error: { code: -32603, message: "Internal error", data: { message: "upstream 503 Service Unavailable", httpStatus: 503 } } });
     else if (mode === "text-error") { text("unexpected status 401 Unauthorized at https://gw.example/v1?key=leak token sk-abcdefghijklmnop"); send({ id: message.id, result: { stopReason: "end_turn" } }); }
@@ -337,7 +352,7 @@ describe("测试连接", () => {
     ["codex-error", "authentication", 401],
     ["air-error", "authentication", undefined],
     ["rpc-error", "provider", 503],
-  ] as const)("%s 映射为结构化失败，不等待引擎重试", async (mode, code, httpStatus) => {
+  ] as const)("%s 以终态 error 映射为结构化失败", async (mode, code, httpStatus) => {
     const f = await setup("codex", { FIXTURE_MODE: mode });
     const result = await runExternalEngineConnectionTest(f.port, {
       engine: "codex",
@@ -349,6 +364,71 @@ describe("测试连接", () => {
     expect(result.failure.httpStatus).toBe(httpStatus);
     expect(JSON.stringify(result)).not.toContain("sk-abcdefghijklmnop");
     if (mode === "codex-error") expect(result.failure.requestId).toBe("req_123");
+  });
+
+  // 修复回归（反馈 7）：Codex 把非致命 WarningEvent 作为 typed failure（warning）上报，旧规则见到
+  // 首个失败即判失败；现在只以 error 判失败，收到 OK 即通过并附带脱敏后的警告。
+  test("typed warning 后收到 OK → 通过并带 warnings", async () => {
+    const f = await setup("codex", { FIXTURE_MODE: "typed-warning-ok" });
+    const result = await runExternalEngineConnectionTest(f.port, {
+      engine: "codex",
+      connectionProfileId: "inherit",
+      signal: new AbortController().signal,
+    });
+    expect(result).toMatchObject({
+      status: "success",
+      warnings: [{ message: expect.stringContaining("Model metadata for gw-model not found") }],
+    });
+  });
+
+  test("ACP notice 后收到 OK → 通过，warning 级 notice 脱敏去重后进入 warnings，info 不进入", async () => {
+    const f = await setup("codex", { FIXTURE_MODE: "notice-ok" });
+    const result = await runExternalEngineConnectionTest(f.port, {
+      engine: "codex",
+      connectionProfileId: "inherit",
+      signal: new AbortController().signal,
+    });
+    expect(result.status).toBe("success");
+    if (result.status !== "success") throw new Error("unexpected result");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings?.[0]?.message).toContain("Model metadata not found");
+    expect(JSON.stringify(result)).not.toContain("sk-abcdefghijklmnop");
+    expect(JSON.stringify(result)).not.toContain("Model rerouted");
+  });
+
+  test("会话中 notice 只经 onNotice 交付（脱敏），不进入 onUpdate 或 onFailure", async () => {
+    const f = await setup("codex", { FIXTURE_MODE: "notice-ok" });
+    const updates: Record<string, unknown>[] = [];
+    const notices: unknown[] = [];
+    const onFailure = vi.fn(async () => {});
+    const input = turn("codex", updates);
+    try {
+      await f.port.runTurn({
+        ...input,
+        onFailure,
+        onNotice: async (notice) => void notices.push(notice),
+      });
+    } finally {
+      await f.port.closeSession(input.sessionId);
+    }
+    expect(updates.some((update) => update.sessionUpdate === "notice")).toBe(false);
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(notices).toEqual([
+      { severity: "warning", message: "Model metadata not found — token [REDACTED] leaked" },
+      { severity: "warning", message: "Model metadata not found — token [REDACTED] leaked" },
+      { severity: "info", message: "Model rerouted" },
+    ]);
+  });
+
+  test("没有警告时成功结果不带 warnings 字段", async () => {
+    const f = await setup("codex");
+    const result = await runExternalEngineConnectionTest(f.port, {
+      engine: "codex",
+      connectionProfileId: "inherit",
+      signal: new AbortController().signal,
+    });
+    expect(result.status).toBe("success");
+    expect(result).not.toHaveProperty("warnings");
   });
 
   test("以正文返回的错误显示脱敏摘要，不当成成功", async () => {

@@ -130,6 +130,33 @@ describe("外部引擎原生计划与错误", () => {
     expect(failures.at(-1)).toMatchObject({ payload: { failure: null } });
   });
 
+  test("ACP notice 只记日志：不产生重试中诊断、不写会话事件", async () => {
+    const { runtime, input, events } = setup([]);
+    const warn = vi.fn();
+    const info = vi.fn();
+    (runtime as { logger?: unknown }).logger = { warn, info, debug: vi.fn(), error: vi.fn() };
+    runtime.externalEnginePort!.runTurn = vi.fn(async (turn) => {
+      await turn.onNotice!({ severity: "warning", message: "Model metadata not found" });
+      await turn.onNotice!({ severity: "info", message: "Context compacted" });
+      await turn.onUpdate({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "OK" },
+      });
+      return { stopReason: "end_turn" };
+    });
+    await runExternalEngineTurn(runtime, input);
+    expect(events.filter((event) => event.type === "external_engine_failure_updated")).toEqual([]);
+    expect(JSON.stringify(events)).not.toContain("Model metadata not found");
+    expect(warn).toHaveBeenCalledWith(
+      "External engine notice",
+      expect.objectContaining({ severity: "warning", message: "Model metadata not found" }),
+    );
+    expect(info).toHaveBeenCalledWith(
+      "External engine notice",
+      expect.objectContaining({ severity: "info" }),
+    );
+  });
+
   test("Codex原生计划审批复用显式ExitPlanMode，回复原生选项且不另发实现输入", async () => {
     const { runtime, input, events } = setup([]);
     const requestPermission = vi.fn(async () => ({ decision: "allow" as const }));

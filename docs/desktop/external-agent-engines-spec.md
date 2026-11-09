@@ -12,7 +12,7 @@
 - ~~Composer 草稿上方用紧凑引擎分段选择~~（2026-11-09 第 2 轮起由下文「Composer 引擎切换与外部引擎输入区（W1/W2/R2-1）」取代：输入区上方不再有引擎胶囊，引擎切换并入右下角模型入口弹层顶部）。项目、运行位置（本地或真实远程名称）、Git 分支在编辑器上方同一行，分支不得降到下方工具条；长名称省略，窄屏保持头部横向收缩，不复制 Git 状态。非 Git 工作区不伪造分支。
 - 底部左侧只保留附件与权限/模式，右侧为一个模型/推理强度入口及发送/停止；弹层参照 Codex 呈现当前深度、可切换模型与深度滑块。原生目录缺少 model 或 effort 时按实际能力退化，不能造选项；确认、拒绝、预览回退、键盘与焦点语义保持。Fast 类选项改为弹层左上角闪电开关，其余非模式选项进入“更多选项”（见下文 W1/W2/R2-1 合同），不再增加常驻更多按钮，不改变已有值或执行语义。
 - 输入区移除全部连接配置选择/标签（含“沿用 CLI 配置”、官方与自定义），连接仍由设置页管理并沿用既有草稿 owner 和不可变会话绑定。连接中/失败及安全诊断仍来自既有 runtime snapshot，按需显示错误与恢复，不把 ready 推断为进程常驻，不伪造休眠和阶段。重连仍为 prepare CAS，不能重发已提交 prompt；草稿 connecting 只禁用原生配置，输入与引擎选择仍可操作。
-- 模型/思考偏好按 engine + connectionProfileId 记录，旧 engine 偏好只在该连接没有记录时兼容读取；显式确认后只写当前连接偏好。原生目录仍负责可选值，模型确认后才能恢复 effort；权限与 Fast 不记忆。旧会话绑定与新默认隔离。
+- 模型/思考偏好按 engine + connectionProfileId 记录，旧 engine 偏好只在该连接没有记录时兼容读取；显式确认后只写当前连接偏好。原生目录仍负责可选值，模型确认后才能恢复 effort；2026-11-09 起权限模式（configId `mode`）也按同一 key 记忆并在 effort 之后恢复，计划类取值（Claude `plan`）不记忆，Fast 仍不记忆。该连接没有任何记忆时（首次使用），思考深度默认 `high`（目录提供时）。旧会话绑定与新默认隔离。
 - 性能先改已有 pool：warming 备用允许一个新会话原子独占预留，其他会话冷准备；取消、错误、cwd/profile 不同不得误领用，同会话 single-flight 保留。命中健康备用先避免无变化的重复启动解析；身份与凭据校验不能绕过。失败不影响前台可执行性，不自动安装、登录、请求模型。
 - 资源策略采用同窗口最多一个未绑定备用，实际进程归各 workspace CLI 的 pool；前台不受备用预算阻塞。活动工作区已存在 CLI 且引擎/连接确定时可低优先提前准备，不能为隐藏工作区启动 CLI；准备中的备用与已绑定会话分别记账。关闭、切换或失败释放许可，不取消已绑定连接；本轮不改 10/15 分钟 TTL。
 - Host 只拥有配置、诊断与备用资源调度，CLI runtime 拥有绑定与确认配置、port/pool 拥有连接；Renderer 只有选择草稿和展示状态。workspace identity、owner/lease、stale-run 与 SSH 外部引擎门禁保持不变。
@@ -360,7 +360,8 @@ Claude Code 与 Codex 对称提供沿用 CLI（`inherit`）、官方登录（`of
 
 - 设置页的每个配置都可「测试连接」。UI 调用 Host `testConnection({engine, profileId, workspacePath})`，Agent Service 取该本地 workspace 的 CLI，发送 `externalEngine/testConnection {operationId, engine, connectionProfileId}`。
 - CLI 使用独立的 ExternalEnginePort 和临时 cwd 建立一次性原生会话，不写 SQLite，也不进任务索引。它发送 `Reply with OK`，拒绝全部工具权限，结束后关闭会话、回收进程树并删除临时目录。
-- 结果分为 `success`（耗时）、`unexpectedReply`（耗时与经脱敏、≤120 字的回复摘要，覆盖以正文返回错误的引擎）、`failed`（EngineConnectionFailure：分类、HTTP 状态、脱敏消息、request id）和 `cancelled`。首个原生失败通知即结束测试，不等待引擎自行重试。
+- 结果分为 `success`（耗时，可带 `warnings`）、`unexpectedReply`（耗时与经脱敏、≤120 字的回复摘要，覆盖以正文返回错误的引擎）、`failed`（EngineConnectionFailure：分类、HTTP 状态、脱敏消息、request id）和 `cancelled`。
+- 2026-11-09 起（用户决策 Q8）：只以收到模型正常回复（OK）判定成功。只有 `severity: "error"` 的原生失败通知（及 prompt 响应携带的 typed 终态失败、RPC 错误）立即结束测试；`warning`（引擎仍在重试或非致命提示）不再中止，测试继续等待引擎的终态结果或正常回复，受 90 秒超时约束。测试期间收到的 warning 级失败通知与 ACP `session/update` 的 warning / error 级 `notice`（非致命提示；info 级不提示）经与失败摘要同口径脱敏（首行、≤300 字）、去重后最多保留 5 条，成功时放入结果的可选 `warnings: [{message}]`。设置页成功时显示「测试通过 · n 秒」，有 warnings 时在其下用警告色逐条列出。依据：Codex 把 `WarningEvent`（如 Model metadata not found）作为 typed failure（severity=warning、category=unknown）上报，旧规则见到首个失败即判失败，造成「能用却测试失败」的误报。
 - 取消由 Host `cancelConnectionTest()` 发送 `externalEngine/cancelConnectionTest {operationId}`。这两个方法不进入 CLI 串行队列，测试期间同一 workspace 的会话请求不受阻塞。同一 Host 同时只运行一个测试。
 - 无本地 workspace 时禁用测试并提示打开本地项目。日志只记录引擎、配置 ID、结果分类与耗时。
 
@@ -984,9 +985,10 @@ sequenceDiagram
 
 ### 按引擎与连接记忆模型与思考深度
 
-- 本机 `AppSettings.externalEngineConnectionConfigPreferences` 按外部引擎与 connectionProfileId 分别保存最近一次显式确认的原生值；旧 `externalEngineConfigPreferences` 只在该连接没有记录时兼容读取，不混入已有连接记录，键为 ACP configId、值为引擎原始 option value。只记 `model` 与思考深度（`effort`、`reasoning_effort`、`reasoning-effort`、`thought_level`，去掉 `-`/`_` 并忽略大小写匹配）；权限模式与 fast 等其它配置不记忆，Claude 新会话的 Auto 默认规则不变。
+- 本机 `AppSettings.externalEngineConnectionConfigPreferences` 按外部引擎与 connectionProfileId 分别保存最近一次显式确认的原生值；旧 `externalEngineConfigPreferences` 只在该连接没有记录时兼容读取，不混入已有连接记录，键为 ACP configId、值为引擎原始 option value。记 `model`、思考深度（`effort`、`reasoning_effort`、`reasoning-effort`、`thought_level`，去掉 `-`/`_` 并忽略大小写匹配）与权限模式（configId 恰为 `mode`，2026-11-09 起）；权限模式的计划类取值（`plan`，忽略大小写）不记忆，与 YCode「Plan 不沿用」一致；fast 等其它配置不记忆。schema 只增不改：旧数据（无 `mode`）照常读取；补丁里出现其它 configId 或 `mode: plan` 时拒绝。恢复期间用户显式选择计划类模式同样视为接管（停止剩余恢复），但不写入记忆。
+- 首次使用（2026-11-09，用户决策 Q4「自主 + 高」）：该引擎 + 连接没有任何记忆（连接记录与旧引擎记录都不存在）时，新草稿恢复阶段把思考深度设为 `high`（当前目录提供该值且当前值不同时）；模型保持 adapter 默认，权限模式保持 Claude 新会话 `auto`（见上文 Auto 默认规则）/ Codex adapter 默认（Auto review），二者都等价于「自主」。首次默认值只下发、不写入记忆；用户显式确认任一项后才产生记忆。
 - 写入：用户在草稿或已有会话中显式修改上述配置，命令被接受且 snapshot 显示的当前值等于所选值后写入当前 snapshot 绑定引擎与连接的该项。引擎拒绝、引擎改用其它值、恢复过程自动下发的值都不写入。设置服务在写队列内按引擎、连接与 configId 合并增量，连续确认模型与深度不会互相覆盖。
-- 恢复：只用于本生命周期内新固定引擎的草稿（全新草稿取得默认引擎，或用户在草稿中显式改选引擎）。该草稿的预热会话原生配置 ready 后先恢复模型；模型确认后，再按新模型的目录恢复深度。值不在当前目录、已是当前值或连接未 ready 时跳过该项。恢复复用既有 `configCommandBarrier → setEngineConfigOption` 链路，首发仍排在同一屏障之后。
+- 恢复：只用于本生命周期内新固定引擎的草稿（全新草稿取得默认引擎，或用户在草稿中显式改选引擎）。该草稿的预热会话原生配置 ready 后先恢复模型；模型确认后，再按新模型的目录恢复深度，最后恢复权限模式（顺序：模型 → 深度 → 模式）。值不在当前目录、已是当前值或连接未 ready 时跳过该项。恢复复用既有 `configCommandBarrier → setEngineConfigOption` 链路，首发仍排在同一屏障之后。
 - 2026-11-08 起恢复推进以命令 ACK 为准：`setEngineConfigOption` 的 accepted ACK 带回 runtime 确认后的完整配置（结果 `{ type: "setEngineConfigOption", engineConfigOptions }`），所选值成为当前值即视为确认，并用该列表（含模型切换后的新深度目录）计算下一项；引擎改用其它值或原样保留旧值时本次恢复停止，不再按未确认的目录恢复后续项；ACK 被拒或失败时跳过该项（不重试）；noop 或旧 CLI 不带结果时视为已是当前值，按最新 snapshot 目录继续。依据：引擎保留旧值时 runtime 只再发布一次相同配置、之后没有新帧，按 snapshot 等“值变化”无法区分“确认尚未回流”与“引擎保留旧值”，会让等待恢复的草稿首发一直“正在发送”。snapshot 仍是界面显示与记忆写入的事实来源。
 - 首发等待恢复（见「草稿预热 owner」）：恢复完成、无可恢复项、用户显式接管或恢复停止时首发继续；恢复开始后连接不再就绪（adapter 退出或断联）时首发报错，输入框保留输入，草稿显示原错误与“重新连接”；binding 被丢弃、改选引擎换代或草稿关闭时同样报错保留输入。
 - 每个预热会话最多恢复一次；恢复期间用户显式修改任一配置即停止剩余步骤。持久化恢复出的已有草稿、已创建会话与 fork 不套用记忆，记忆变化也不重配已打开的草稿。
@@ -996,7 +998,7 @@ sequenceDiagram
 
 - 2026-11-08 起草稿不再显示“正在连接引擎…”：`creating` / `connecting` 阶段可直接发送，选择器在就绪前禁用（见「外部引擎进程与异步准备 · 草稿预热 owner」）。失败仍显示原错误与重试入口。阶段仍由 `resolveDraftEngineReadiness` 派生。
 
-回归覆盖：跨项目/重启继承、设置迟到不启动内置引擎、旧草稿与已有会话不变、本机/SSH 设置隔离、偏好保存失败可见；SSH 草稿使用 YCode 且默认偏好不变、远程选择器灰显并说明原因；记忆只写确认的模型/深度、权限模式不记忆、恢复按目录跳过且模型先于深度、已有草稿不套用；预热禁用时不显示连接中。
+回归覆盖：跨项目/重启继承、设置迟到不启动内置引擎、旧草稿与已有会话不变、本机/SSH 设置隔离、偏好保存失败可见；SSH 草稿使用 YCode 且默认偏好不变、远程选择器灰显并说明原因；记忆只写确认的模型/深度/权限模式、Plan 类模式不记忆、首次使用默认深度 high、恢复按目录跳过且按模型 → 深度 → 模式、已有草稿不套用；预热禁用时不显示连接中。
 
 ```mermaid
 flowchart TD

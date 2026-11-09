@@ -360,7 +360,8 @@ describe("Agent 引擎设置", () => {
     fireEvent.click(await screen.findByTestId("engine-connection-codex-view-gw"));
     fireEvent.click(await screen.findByTestId("engine-connection-codex-test-gw"));
     const row = screen.getByTestId("engine-connection-codex-gw");
-    await waitFor(() => expect(row.textContent).toContain("连接成功 · 1.2 秒"));
+    await waitFor(() => expect(row.textContent).toContain("测试通过 · 1.2 秒"));
+    expect(within(row).queryByTestId("engine-connection-test-warnings")).toBeNull();
     expect(testConnection).toHaveBeenCalledWith({
       engine: "codex",
       profileId: "gw",
@@ -389,6 +390,29 @@ describe("Agent 引擎设置", () => {
     const disabled = await screen.findByTestId("engine-connection-codex-test-gw");
     expect(disabled.hasAttribute("disabled")).toBe(true);
     expect(screen.getAllByText("打开一个本地项目后才能测试连接。").length).toBeGreaterThan(0);
+  });
+
+  it("测试通过带警告时显示「测试通过」并用警告色列出每条警告", async () => {
+    const testConnection = vi.fn().mockResolvedValueOnce({
+      status: "success",
+      latencyMs: 2100,
+      warnings: [{ message: "Model metadata for gw-model not found." }, { message: "Second" }],
+    });
+    mount(connectionService({ testConnection }));
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    fireEvent.click(await screen.findByTestId("engine-connection-codex-view-gw"));
+    fireEvent.click(await screen.findByTestId("engine-connection-codex-test-gw"));
+    const row = screen.getByTestId("engine-connection-codex-gw");
+    await waitFor(() => expect(row.textContent).toContain("测试通过 · 2.1 秒"));
+    expect(within(row).queryByRole("alert")).toBeNull();
+    const warnings = within(row).getByTestId("engine-connection-test-warnings");
+    expect(warnings.className).toContain("text-warning");
+    expect(warnings.textContent).toContain("警告");
+    expect(
+      within(warnings)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["Model metadata for gw-model not found.", "Second"]);
   });
 
   it("网关用户显示使用网关而不是未登录；Claude 官方登录按钮调用 Host 登录", async () => {

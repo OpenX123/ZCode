@@ -54,7 +54,13 @@ export function resolveInitialModelSelection(input: {
   return { source: "none" };
 }
 
-/** 仅在用户主动选模型或全新初始化时构造最高档；不能用于恢复/重解析已有选择。 */
+/** 全新初始化与主动选模型的默认档位（用户决策 2026-11-09「自主 + 高」）。 */
+const DEFAULT_NEW_REASONING_LEVEL = "high";
+
+/**
+ * 仅在用户主动选模型或全新初始化时构造默认档位：模型档位含 high 时取 high，否则取最高档；
+ * 不能用于恢复/重解析已有选择。
+ */
 export function completeNewModelSelection(
   registry: ModelSelectionCompletionView,
   selection: ModelSelection,
@@ -62,7 +68,10 @@ export function completeNewModelSelection(
   const model = registry.providers
     .find((provider) => provider.providerId === selection.providerId)
     ?.models.find((candidate) => candidate.modelId === selection.modelId);
-  const reasoningLevel = model?.config.optionSpecs.reasoningLevel.values.at(-1);
+  const values = model?.config.optionSpecs.reasoningLevel.values ?? [];
+  const reasoningLevel = values.includes(DEFAULT_NEW_REASONING_LEVEL)
+    ? DEFAULT_NEW_REASONING_LEVEL
+    : values.at(-1);
   if (!reasoningLevel) return undefined;
   return {
     providerId: selection.providerId,

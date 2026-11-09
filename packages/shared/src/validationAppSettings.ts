@@ -1,8 +1,8 @@
 /* oxlint-disable eslint(max-lines) -- AppSettings schema 聚合历史迁移、默认值和 patch 校验，拆分会削弱设置迁移的单一入口。 */
 import { z } from "zod";
 import {
-  engineConfigOptionKind,
   externalEngineConnectionProfileSchema,
+  isRememberableEngineConfig,
   sessionEngineSchema,
 } from "./external-engine/index.js";
 import { appToolSearchModeSchema } from "./app-runtime-preferences.js";
@@ -26,15 +26,20 @@ import {
 
 const MAX_ENGINE_CONFIG_ID_LENGTH = 64;
 const MAX_ENGINE_CONFIG_VALUE_LENGTH = 256;
-/** 单个外部引擎的记忆只接受模型与思考深度的原始值；权限模式等其余 configId 视为无效。 */
+/**
+ * 单个外部引擎的记忆只接受模型、思考深度与非计划类权限模式（configId `mode`，2026-11-09 起，
+ * 只增不改：旧数据照常读取）的原始值；其余 configId 或 `mode: plan` 视为无效。
+ */
 const externalEngineConfigPreferenceSchema = z
   .record(
     z.string().min(1).max(MAX_ENGINE_CONFIG_ID_LENGTH),
     z.string().min(1).max(MAX_ENGINE_CONFIG_VALUE_LENGTH),
   )
-  .refine((values) => Object.keys(values).every((id) => engineConfigOptionKind(id) !== "other"), {
-    message: "Only model and thinking-depth engine options can be remembered",
-  });
+  .refine(
+    (values) =>
+      Object.entries(values).every(([id, value]) => isRememberableEngineConfig(id, value)),
+    { message: "Only model, thinking-depth and non-plan mode engine options can be remembered" },
+  );
 const externalEngineConfigPreferencesPatchSchema = z.object({
   "claude-code": externalEngineConfigPreferenceSchema.optional(),
   codex: externalEngineConfigPreferenceSchema.optional(),
