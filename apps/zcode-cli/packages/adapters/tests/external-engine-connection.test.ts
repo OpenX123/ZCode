@@ -62,6 +62,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     else if (mode === "air-error") info({ jetbrains: { air: { sessionFailure: { id: "f1", severity: "error", category: "access", title: "Sign in to continue using Claude." } } } });
     else if (mode === "rpc-error") send({ id: message.id, error: { code: -32603, message: "Internal error", data: { message: "upstream 503 Service Unavailable", httpStatus: 503 } } });
     else if (mode === "text-error") { text("unexpected status 401 Unauthorized at https://gw.example/v1?key=leak token sk-abcdefghijklmnop"); send({ id: message.id, result: { stopReason: "end_turn" } }); }
+    else if (mode === "usage") send({ id: message.id, result: { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 1234, thoughtTokens: 300, cachedReadTokens: 4 } } });
     else if (mode === "hang") {}
     else { text("OK"); send({ id: message.id, result: { stopReason: "end_turn" } }); }
   }
@@ -291,6 +292,25 @@ describe("原生配置目录归一", () => {
         ],
       },
     ]);
+  });
+});
+
+describe("轮次 usage", () => {
+  test("Codex usage 的 thoughtTokens 保留为 reasoningTokens（W7 输出提示「含思考」）", async () => {
+    const f = await setup("codex", { FIXTURE_MODE: "usage" });
+    const input = turn("codex");
+    try {
+      const result = await f.port.runTurn(input);
+      expect(result?.usage).toEqual({
+        inputTokens: 10,
+        outputTokens: 1234,
+        cachedReadTokens: 4,
+        cachedWriteTokens: 0,
+        reasoningTokens: 300,
+      });
+    } finally {
+      await f.port.closeSession(input.sessionId);
+    }
   });
 });
 

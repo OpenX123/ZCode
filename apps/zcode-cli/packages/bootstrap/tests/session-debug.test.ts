@@ -30,6 +30,7 @@ function event(id: number, overrides: Record<string, unknown> = {}): SessionEven
       timestamp: new Date(10_000).toISOString(),
       durationMs: 5000,
       timeToFirstContentMs: 2000,
+      reasoningContentStreamed: true,
       usage: { inputTokens: 1000, outputTokens: 120, cacheReadTokens: 800, reasoningTokens: 20 },
       requestHeaders: { authorization: "[redacted]" },
       responseHeaders: { "x-request-id": "upstream" },
@@ -106,6 +107,21 @@ describe("session debug observation", () => {
     observeSessionDebug(target, event(1, { usage: { outputTokens: 0, reasoningTokens: 100 } }));
     expect(readSessionDebug(target).rounds[0]?.tokensPerSecond).toBe(0);
     observeSessionDebug(target, event(2, { usage: {} }));
+    expect(readSessionDebug(target).rounds[1]?.tokensPerSecond).toBeNull();
+  });
+
+  it("excludes hidden reasoning from the numerator and refuses legacy events without the flag", () => {
+    const target = record();
+    observeSessionDebug(
+      target,
+      event(1, {
+        reasoningContentStreamed: false,
+        usage: { outputTokens: 300, reasoningTokens: 180 },
+      }),
+    );
+    // (300 − 180) ÷ 3s = 40：隐藏推理发生在首字之前，不在生成时长内。
+    expect(readSessionDebug(target).rounds[0]?.tokensPerSecond).toBe(40);
+    observeSessionDebug(target, event(2, { reasoningContentStreamed: undefined }));
     expect(readSessionDebug(target).rounds[1]?.tokensPerSecond).toBeNull();
   });
 

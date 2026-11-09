@@ -115,6 +115,13 @@ export const turnHeaderRowSchema = z.object({
   activeMs: z.number().optional(),
   // 当前 product turn 内主链路 ModelComplete 的 output usage 累计；optional 兼容旧快照。
   outputTokens: z.number().int().nonnegative().optional(),
+  // 与 outputTokens 同源累计的推理 token（Codex thoughtTokens / 原生 reasoningTokens）；optional 兼容旧快照。
+  reasoningTokens: z.number().int().nonnegative().optional(),
+  // 原生引擎逐调用口径的整轮输出速度，仅在轮次成功结束时由 CLI 写入；缺数据时不写、不估算
+  // （docs/desktop/turn-output-rate-spec.md）。外部引擎恒缺省。
+  outputTps: z.number().finite().nonnegative().optional(),
+  generationMs: z.number().finite().nonnegative().optional(),
+  firstTokenMs: z.number().finite().nonnegative().optional(),
   // CLI 从运行时事件聚合的真实耗时；optional 兼容旧快照及普通 turn。
   modelDurationMs: z.number().nonnegative().optional(),
   toolDurationMs: z.number().nonnegative().optional(),

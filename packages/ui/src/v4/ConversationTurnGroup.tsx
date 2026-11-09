@@ -1424,6 +1424,7 @@ function ConversationTurnGroupImpl({
               hookInvocations={unit.hookInvocations}
               turnId={unit.turnId}
               sourceCommandIds={deliverySourceCommandIds}
+              turnHeader={unit.header}
               className={cn(
                 "flex items-center gap-1",
                 context.compactForRemoteControl
