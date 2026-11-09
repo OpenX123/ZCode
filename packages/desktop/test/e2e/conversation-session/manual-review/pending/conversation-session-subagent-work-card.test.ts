@@ -6,19 +6,25 @@ import {
   TID_V4_SUBAGENT_WORK_CARD_STOP,
   TID_V4_SUBAGENT_WORK_CARD_STOP_ALL,
 } from "@zcode/shared/test-ids";
+import { join } from "node:path";
 import { clearAppData } from "../../../helpers/desktop-app.js";
 import {
-  prepareConversationE2E,
-  sendPrompt,
-  waitForAssistantMessageContaining,
-  waitForComposerText,
-} from "../../../helpers/conversation-session.js";
+  prepareV4ConversationE2E,
+  sendV4Prompt,
+  waitForV4AssistantMessageContaining,
+  waitForV4ComposerText,
+} from "../../../helpers/v4-conversation.js";
 import { ensureToolCrossProductFullAccessMode } from "../../../helpers/conversation-session-tool-cross-product.js";
 
 // SAT31–SAT33（docs/conversation-session-case-catalog.md；规范见 docs/desktop/multi-agent-display-spec.md
 // 「对话行内 Subagent 工作卡」）：内置引擎（native）派发一个可停的后台子智能体 →
 // 时间线出现工作卡 → 点击成员行在右侧打开只读子会话并实时增长 → 卡片"停止"经父会话
-// cancelBackgroundWork 停止。候选用例：只做 typecheck，待 manual/capture review 后整理 case-local fixture。
+// cancelBackgroundWork 停止。case-local replay fixture：
+// test/e2e/fixtures/upstream/conversation-session/conversation-session-subagent-work-card.json。
+// 修复原因：旧版用 conversation-session.ts 的 prepareConversationE2E，它只认固定的
+// v4-session-pane-workspace-main；双栏工作台（e7adc8ca）后每个 Tab 的 pane id 都是 UUID，
+// 草稿就绪判断永远为 false。这里与同目录 multi-agent-display 一样改用按焦点 pane 解析的 v4 helper。
+// 回放 fixture 不能回显随机 runId，因此 marker 固定；每个 case 前 clearAppData 已隔离历史。
 const TIMEOUT_MS = 240000;
 const PARENT_MARKER = "E2E_SUBAGENT_WORK_CARD_PARENT";
 const LAUNCHED = "E2E_SUBAGENT_WORK_CARD_LAUNCHED";
@@ -72,8 +78,16 @@ async function readChildRowCount(childSessionId: string): Promise<number> {
 describe("Subagent 工作卡 manual review", () => {
   before(async function () {
     this.timeout(TIMEOUT_MS);
-    await prepareConversationE2E();
+    await prepareV4ConversationE2E();
     await ensureToolCrossProductFullAccessMode();
+  });
+
+  afterEach(async function () {
+    if (this.currentTest?.state !== "failed") return;
+    const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
+    if (artifactDir) {
+      await browser.saveScreenshot(join(artifactDir, "subagent-work-card-failure.png"));
+    }
   });
 
   after(async () => {
@@ -83,37 +97,37 @@ describe("Subagent 工作卡 manual review", () => {
 
   it("SAT31-SAT33: 工作卡 → 右侧只读子会话实时更新 → 停止", async function () {
     this.timeout(TIMEOUT_MS);
-    const runId = Date.now();
-    await sendPrompt(
+    await sendV4Prompt(
       [
-        `${PARENT_MARKER}_${runId}: launch exactly one Agent with run_in_background true and subagent_type "Explore".`,
-        `The child must run Bash command "sleep 5" six times in a row, one call at a time, then reply with exactly CHILD_DONE_${runId}.`,
-        `After the background launch tool returns, reply with exactly ${LAUNCHED}_${runId} without waiting.`,
+        `${PARENT_MARKER}: launch exactly one Agent with run_in_background true and subagent_type "Explore".`,
+        `The child must run Bash command "sleep 30" and then Bash command "sleep 60", one call at a time, then reply with exactly E2E_SUBAGENT_WORK_CARD_CHILD_DONE.`,
+        `After the background launch tool returns, reply with exactly ${LAUNCHED} without waiting.`,
       ].join(" "),
     );
-    await waitForComposerText("", "工作卡首发后输入框没有清空");
-    await waitForAssistantMessageContaining(`${LAUNCHED}_${runId}`);
+    await waitForV4ComposerText("", "工作卡首发后输入框没有清空");
+    await waitForV4AssistantMessageContaining(LAUNCHED);
 
     // SAT31：单个带子会话的派发也渲染为工作卡；后台子智能体可停，"停止全部"出现。
     let state: WorkCardState | null = null;
-    await browser.waitUntil(
-      async () => {
-        state = await readWorkCardState();
-        return (
-          state.cards === 1 &&
-          state.state === "running" &&
-          state.memberCount === 1 &&
-          state.openActions === 1 &&
-          state.stopAll === 1 &&
-          state.memberStops === 1
-        );
-      },
-      {
-        interval: 200,
-        timeout: 90000,
-        timeoutMsg: `SAT31 没有出现运行中的工作卡：${JSON.stringify(state)}`,
-      },
-    );
+    try {
+      await browser.waitUntil(
+        async () => {
+          state = await readWorkCardState();
+          return (
+            state.cards === 1 &&
+            state.state === "running" &&
+            state.memberCount === 1 &&
+            state.openActions === 1 &&
+            state.stopAll === 1 &&
+            state.memberStops === 1
+          );
+        },
+        { interval: 200, timeout: 90000 },
+      );
+    } catch (error) {
+      // 修复原因：timeoutMsg 在 waitUntil 调用时就已求值，旧写法永远报告 null；超时后用最新状态报错。
+      throw new Error(`SAT31 没有出现运行中的工作卡：${JSON.stringify(state)}`, { cause: error });
+    }
     expect((await readWorkCardState()).text).toContain("Explore");
 
     // SAT32：点击成员行打开右侧只读子会话；不自动打开。
@@ -130,10 +144,16 @@ describe("Subagent 工作卡 manual review", () => {
     const header = await $(
       `[data-testid="${TID_V4_SUBAGENT_SESSION_HEADER}"][data-child-session-id="${childSessionId}"]`,
     );
-    await header.waitForDisplayed({ timeout: 15000, timeoutMsg: "SAT32 右侧详情没有头部" });
+    await header.waitForDisplayed({
+      timeout: 15000,
+      timeoutMsg: "SAT32 右侧详情没有头部",
+    });
     expect(await header.getAttribute("data-status")).toBe("running");
     const hint = await $(`[data-testid="${TID_V4_SUBAGENT_SESSION_READ_ONLY_HINT}"]`);
-    await hint.waitForDisplayed({ timeout: 5000, timeoutMsg: "SAT32 右侧没有只读提示" });
+    await hint.waitForDisplayed({
+      timeout: 5000,
+      timeoutMsg: "SAT32 右侧没有只读提示",
+    });
 
     const initialRows = await readChildRowCount(childSessionId);
     await browser.waitUntil(async () => (await readChildRowCount(childSessionId)) > initialRows, {

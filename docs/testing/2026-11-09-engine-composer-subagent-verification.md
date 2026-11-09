@@ -79,3 +79,64 @@ miss 原因：Claude `none` 18 次、`warming` 1 次；Codex `none` 5 次；`cwd
 全局：`pnpm typecheck` 通过；CLI 包 `pnpm --filter @zcode/contracts --filter @zcode/adapters --filter @zcode/core --filter @zcode/bootstrap typecheck` 通过；`pnpm lint` 0 errors（91 warnings，均不在本 lane 文件）；`pnpm architecture:check --changed` OK（0 violations）。桌面 E2E 候选 `conversation-session-external-engine-prewarm.test.ts` 新增「W4 Codex → Claude → Codex 热切换」，只做了 `tsc -p packages/desktop/tsconfig.e2e.json --noEmit`，**未运行**。
 
 未验证（需要桌面人工）：真实 Windows 上切换后 `[engine-switch] controls ready` 的 cached ≤100ms / live ≤1s P95；第二个空闲预建进程的实际内存；Host 在 `defaultSessionEngine` 写入后的重调度在真实窗口中的时序（集合扩大与 createSession 并发时，首次切换到新引擎仍可能冷启或领用 warming 备用）。
+
+## 桌面 E2E
+
+日期 2026-11-09（UTC 21:50–23:16），主检出 `codex/acp-connection-experience`（HEAD `1e70dd92` 起），真实 Electron 41 / Host / CLI / stdio，Windows 11。
+
+### 运行方式
+
+从仓库根执行 `.scratch/engine-e2e/run.cjs`（本地 runner，复用 `.scratch/acp-runtime/final-fix-run.cjs` 的隔离配方，不入库）：固定 Node `.scratch/acp-runtime/node-v24.14.0-win-x64/node.exe scripts/mise-run.mjs pnpm --filter @zcode/desktop test:e2e -- --spec <file>`。runner 子进程环境：
+
+- 删除 `ELECTRON_RUN_AS_NODE` 与所有 `ANTHROPIC_` / `OPENAI_` / `CODEX_` / `CLAUDE_` / `AZURE_OPENAI_` 前缀变量，再只设 `ANTHROPIC_BASE_URL=https://claude-inherit.example`、`OPENAI_BASE_URL=https://codex-inherit.example`；
+- `ZCODE_E2E_MANUAL_REVIEW=1`、`E2E_PROVIDER_HTTP_MODE=replay`、`ZCODE_DESKTOP_AGENT_BUILD_MODE=pnpm`；
+- `E2E_PROVIDER_REPLAY_FIXTURE_PATH=<repo>/packages/desktop/test/e2e/fixtures/upstream/common.json`；工作卡用例追加 `,<repo>/packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-subagent-work-card.json`；
+- `ZCODE_E2E_EXTERNAL_ENGINE_FIXTURE_BIN=<repo>/.scratch/acp-runtime/task4-fixture-bin` 并置于 PATH 首位（`claude` / `codex` 状态桩，只回 `--version` 与已登录状态）。HOME / USERPROFILE / 数据目录由 E2E runner 隔离为 `packages/desktop/.e2e-home-<runId>`，未触碰真实 `~/.zcode`、`~/.claude`、`~/.codex`。每轮重建 desktop/CLI；无凭据、无真实供应商请求。
+
+### 结果
+
+| 轮次  | 用例      | 结果                     | 产物目录（`C:/github/ZCode/packages/desktop/.e2e-artifacts/`） | 说明                                                                                               |
+| ----- | --------- | ------------------------ | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| run1  | prewarm   | 4 passed / 7 failed      | `desktop-e2e-20261109215206033-p49496-b81b8ae3ffcbd185`        | 夹具配方生效（不再报缺 PATH）；失败为 W2/W3/D2 旧期望与 W4 引擎胶囊 test id                        |
+| run2  | prewarm   | 4 / 7                    | `desktop-e2e-20261109215954588-p50756-487c129c06638155`        | 同 run1（诊断改动因 CRLF 未落盘）                                                                  |
+| run3  | prewarm   | 6 / 5                    | `desktop-e2e-20261109220651496-p53944-dfd4bce63b7939c6`        | 修就绪判据、档位本地化、W4 经弹层切换后；暴露 W3 默认 high、P11b 不回填、W4 Codex 5.5s             |
+| run4  | prewarm   | 未执行（构建失败）       | `desktop-e2e-20261109222101934-p30652-776a89c497070070`        | 本人新增日志代码丢失类型收窄，adapters tsc 失败，已修                                              |
+| run5  | prewarm   | 8 / 3                    | `desktop-e2e-20261109222723811-p44012-1f77d747f9f41931`        | P11b 通过（Composer 修复）；新日志确认 W4 失败为 `spare.rejected reason=identity` + 约 5s 同步收口 |
+| run6  | prewarm   | 8 / 3                    | `desktop-e2e-20261109224217619-p52476-51bd56da31db6372`        | W4 通过（warm codex 299ms / claude 303ms）；AX03 偶发收起“更多选项”、滑杆用例入口元素重排          |
+| run7  | prewarm   | **10 passed / 1 failed** | `desktop-e2e-20261109225246590-p12408-f320ea0969ceef89`        | 最终；剩 P11（见下）                                                                               |
+| run8  | work card | 0 / 1                    | `desktop-e2e-20261109230028935-p55312-20ddff99c1449c5f`        | before 钩子通过、父轮回放通过；子会话第 3 步缺 fixture                                             |
+| run9  | work card | 0 / 1                    | `desktop-e2e-20261109230558648-p40260-cc43ca70d27629e2`        | 子会话 mid-turn compact（E2E 模型 contextWindow=240）                                              |
+| run10 | work card | **0 / 1**                | `desktop-e2e-20261109231157596-p53300-11714f8f208f5f2e`        | 最终；工作卡在已完成父轮的折叠历史里，见下                                                         |
+
+run7 W4 计时（`external-engine-w4-switch-timing.json`）：warm Codex visible/enabled 302.7ms，Claude 355.9ms；日志无 `spare.rejected reason=identity`。
+
+### 修复
+
+测试夹具（harness）：
+
+- prewarm：W2 起草稿入口挂着引擎切换行而恒可点，入口 enabled 不再代表原生配置就绪；新增 `waitForEngineConfigReady`，以同一 `configDisabled` 驱动的权限芯片 `engine-config-mode` enabled 为判据（AX03、P11、停止、滑杆、冷恢复与 P11 连接中发送断言）。
+- prewarm：W4 用例改为经模型弹层 `engine-switch-option-<engine>` 切换（旧 `session-engine-option-*` 已随 W2 删除），可操作计时同样看权限芯片。
+- prewarm：D2 档位本地化（zh-CN 低/中/高）替换 "High/Medium/Low" 旧期望；W3 首次默认 high 替换 AX03 的 `_low_1` 回复期望。
+- prewarm：夹具入口内容未变时不重写（每个用例重写会改 mtime，使前一用例补位的备用被身份校验作废）；“更多选项”只在未展开时点击；滑杆用例窄窗重排后重新取入口并确认弹层出现；失败诊断按用例序号分文件并附截图。
+- work card：改用按焦点 pane 解析的 `prepareV4ConversationE2E` / `sendV4Prompt` 等 v4 helper。根因：`helpers/conversation-session.ts` 的 `inspectConversationComposer` 写死 `v4-session-pane-workspace-main` 并取第一个 `v4-composer-input`；双栏工作台（`e7adc8ca`，main 上已存在）后每个 Tab 的 pane id 都是 UUID、非活动 Tab 保持挂载隐藏，草稿就绪判断恒为 false。这是共享 helper 的既有缺陷，不是 W2/W5 回归；本轮未改共享 helper（约 104 个 spec 引用，需单独验证）。
+- work card：新增 case-local replay fixture；marker 改为固定值（回放无法回显随机 runId）；SAT31 超时报告最新状态（原 `timeoutMsg` 在调用时求值恒为 null）。
+
+产品修复：
+
+- Composer 草稿首发失败不回填（W5 合同违背，P11b 复现）：乐观清空调用的 Lexical `clear()` 经 `editor.update` 在微任务里回传 `onChange("")`，晚于提交时记录的 `cleanupRevision`，失败时被误判为用户已编辑而跳过回填。修复为乐观清空后编辑器仍为空时照常回填；有新输入时不覆盖。UT：`packages/ui/test/v4ConversationComposerPromptHistory.test.ts` 新增 2 例（先红后绿），全文件 25 passed。
+- W4 预留后失效的备用阻塞前台约 5s：日志补 `external_engine.spare.rejected`（reason），identity / unhealthy 改为后台 retire（许可与 owned 仍在确认退出后释放），关闭/取消/已丢弃保持同步。spec `external-agent-engines-spec.md` 规则 5a；UT `external-engine-process-pool.test.ts` 新增 1 例（先红后绿），“安装入口替换”用例改为最终确认退出，全文件 37 passed。
+
+### 剩余失败
+
+- prewarm P11（连接中立即发送）：重启后首发使用记忆的模型 `fixture-3` 但深度为 low，期望 high。根因（代码证据 `useEngineConfigMemory.ts` 352–360 行、`EngineConfigPicker.tsx` commit 早退）：W3 首次默认 high 只在“该引擎 + 连接没有任何记忆”时下发且不写记忆；用户在显示“高”的滑杆上按 End 是无变化提交，不写记忆；随后选模型产生了记忆 {model}，重启后不再套首次默认，深度回到原生 low。是否应按配置项分别套首次默认（`{...firstUseDefaults, ...remembered}`）属于 W3 语义选择，待用户确认，未改代码。
+- work card SAT31：父轮按指令派发后台 Explore 后立即回复并结束，工作卡位于父轮“已工作 2 秒”折叠历史内，子智能体运行中（胶囊“1 个运行中”）时间线不可见（截图 `C:/github/ZCode/packages/desktop/.e2e-artifacts/desktop-e2e-20261109231157596-p53300-11714f8f208f5f2e/subagent-work-card-failure.png`）。与 spec“运行中不可折叠”的意图冲突，需确认“轮次折叠是否豁免运行中的工作卡”，未改代码；SAT32/SAT33 因此未执行到。
+
+### 截图（run7，人工 review）
+
+- 输入区与弹层：`C:/github/ZCode/packages/desktop/.e2e-artifacts/desktop-e2e-20261109225246590-p12408-f320ea0969ceef89/task5-composer-1280-light.png`、`task5-composer-1280-dark.png`、`task5-composer-640-light.png`、`task5-composer-640-dark.png`、`task5-model-effort-fast-popover.png`、`task5-fixed-engine.png`、`codex-keyup-slider.png`。
+- 首发即时布局 / 失败回填：本轮用例只做 DOM 断言，未产出截图（P11b 通过）；run3 修复前的不回填截图 `C:/github/ZCode/packages/desktop/.e2e-artifacts/desktop-e2e-20261109220651496-p53944-dfd4bce63b7939c6/external-engine-case-07-failure.png`。
+- 工作卡与右侧详情：未产出（SAT31 失败），仅上方失败截图。
+
+### 静态检查
+
+`pnpm typecheck` exit 0；`pnpm lint` exit 0（92 warnings / 0 errors，本轮文件无新增告警）；`pnpm architecture:check --changed` OK（violations/baseline/new 均 0）；`tsc -p packages/desktop/tsconfig.e2e.json --noEmit` exit 0；adapters `tsc --noEmit` exit 0。

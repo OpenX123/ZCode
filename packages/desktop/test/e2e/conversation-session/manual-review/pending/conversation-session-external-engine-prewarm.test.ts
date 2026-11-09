@@ -195,6 +195,11 @@ async function expandTool(toolCallId: string) {
   );
 }
 
+async function writeIfChanged(path: string, content: string) {
+  if ((await readFile(path, "utf8").catch(() => undefined)) === content) return;
+  await writeFile(path, content);
+}
+
 async function installExternalEngineFixtures() {
   const bin = process.env.ZCODE_E2E_EXTERNAL_ENGINE_FIXTURE_BIN;
   if (!bin || !process.env.PATH?.split(process.platform === "win32" ? ";" : ":").includes(bin))
@@ -204,7 +209,10 @@ async function installExternalEngineFixtures() {
     const root = join(resolveE2EStorageRoot(), "engines", managedAdapterInstallDirName(descriptor));
     const entry = join(root, ...managedAdapterEntrySegments(descriptor));
     await mkdir(dirname(entry), { recursive: true });
-    await writeFile(
+    // 修复原因：每个用例都重写同内容入口会改变 mtime/ctime；W4 起备用按入口文件身份校验，
+    // 前一用例补位的备用会被判为安装替换而作废，热切换实测成了冷启。内容未变时不重写，
+    // 与真实安装（不升级就不动文件）一致；内容变化时照常写入并作废旧备用。
+    await writeIfChanged(
       entry,
       adapter
         .replaceAll("ENGINE_ID", engine)
@@ -215,10 +223,14 @@ async function installExternalEngineFixtures() {
         .replace("Fixture model", `${engine} fixture model`)
         .replaceAll("EFFORT_ID", engine === "codex" ? "reasoning_effort" : "effort"),
     );
-    await writeFile(
-      join(root, "node_modules", ...descriptor.adapterPackage.split("/"), "package.json"),
-      JSON.stringify({ version: descriptor.adapterVersion }),
+    const manifest = join(
+      root,
+      "node_modules",
+      ...descriptor.adapterPackage.split("/"),
+      "package.json",
     );
+    await mkdir(dirname(manifest), { recursive: true });
+    await writeIfChanged(manifest, JSON.stringify({ version: descriptor.adapterVersion }));
   }
 }
 
@@ -266,13 +278,56 @@ async function composerEngine(scope = "") {
   return (await trigger.$("[data-task-client-logo]")).getAttribute("data-task-client-logo");
 }
 
+/**
+ * W2（external-agent-engines-spec Composer 合同）：草稿里模型入口挂着引擎切换行，连接中/失败也必须可点，
+ * 因此入口按钮 enabled 不再代表原生配置就绪。改以同一 configDisabled 驱动的权限芯片
+ * `engine-config-mode` enabled，且入口文案属于目标引擎，作为「真实配置可操作」的唯一判据。
+ */
+async function waitForEngineConfigReady(engine: "claude-code" | "codex", scope = "") {
+  await browser.waitUntil(
+    async () =>
+      browser.execute(
+        (scopeSelector, label) => {
+          const root = scopeSelector ? document.querySelector(scopeSelector) : document;
+          const visible = (selector: string) =>
+            [...(root?.querySelectorAll<HTMLElement>(selector) ?? [])].find(
+              (element) => element.getClientRects().length > 0,
+            );
+          const mode = visible('[data-testid="engine-config-mode"]') as
+            | HTMLButtonElement
+            | undefined;
+          const trigger = visible('[data-testid="engine-config-model-effort"]');
+          return Boolean(mode && !mode.disabled && (trigger?.textContent ?? "").includes(label));
+        },
+        scope,
+        `${engine} fixture model`,
+      ),
+    { timeout: 30000, timeoutMsg: `${engine} 原生配置必须就绪可操作` },
+  );
+}
+
+/** D2：已知思考档位按界面语言本地化；E2E 使用 zh-CN（low/medium/high → 低/中/高）。 */
+const EFFORT_LABEL = { low: "低", medium: "中", high: "高" } as const;
+
 async function openModelMenu() {
   await (await displayed('[data-testid="engine-config-model-effort"]')).click();
   await (await displayed('[data-testid="engine-config-model"]')).click();
 }
+/**
+ * 展开弹层「更多选项」：原生 details 点击 summary 是切换语义，弹层未卸载时可能保留上次展开态，
+ * 盲点会把它收起（run6 AX03 的偶发失败）。只在未展开时点击，并等待展开完成。
+ */
+async function expandMoreOptions() {
+  const details = await displayed('[data-testid="engine-more-options"]');
+  if ((await details.getAttribute("open")) === null) await (await details.$("summary")).click();
+  await browser.waitUntil(async () => (await details.getAttribute("open")) !== null, {
+    timeoutMsg: "更多选项必须展开",
+  });
+}
+
 async function openMoreOptions() {
   await (await displayed('[data-testid="engine-config-model-effort"]')).click();
-  await (await displayed('[data-testid="engine-more-options"] summary')).click();
+  await expandMoreOptions();
 }
 
 describe("外部引擎首发前配置与同会话续聊", () => {
@@ -307,15 +362,20 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       drafts: Object.keys(localStorage)
         .filter((key) => key.startsWith("zcode-v4-composer-drafts:v1:"))
         .map((key) => ({ key, value: localStorage.getItem(key) })),
+      popovers: [
+        ...document.querySelectorAll<HTMLElement>('[data-testid="engine-model-popover"]'),
+      ].map((element) => element.outerHTML.slice(0, 6000)),
       text: document.body.innerText.slice(-6000),
     }));
-    const caseKey = this.currentTest?.title.startsWith("原生计划")
-      ? "native-plan"
-      : "engine-config";
+    // 修复原因：多个用例失败时旧逻辑共用同一文件名互相覆盖；按用例序号区分并附截图，便于逐条定位。
+    const caseIndex = this.currentTest?.parent?.tests.indexOf(this.currentTest) ?? -1;
+    const caseKey = `case-${String(caseIndex + 1).padStart(2, "0")}`;
+    const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR!;
     await writeFile(
-      join(process.env.ZCODE_E2E_ARTIFACT_DIR!, `external-engine-${caseKey}-failure.json`),
-      JSON.stringify(diagnostics, null, 2),
+      join(artifactDir, `external-engine-${caseKey}-failure.json`),
+      JSON.stringify({ title: this.currentTest?.title, ...diagnostics }, null, 2),
     );
+    await browser.saveScreenshot(join(artifactDir, `external-engine-${caseKey}-failure.png`));
   });
 
   it("AX03 AX07 Codex合并入口、键盘、项目位置分支同一行与窄屏主题布局", async () => {
@@ -323,7 +383,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     // 只初始化 runner 隔离 HOME 的夹具项目；不触碰仓库 checkout 的分支。
     const git = promisify(execFile);
     await mkdir(DEFAULT_WORKSPACE, { recursive: true });
-    await git("git", ["init", "-b", "composer-layout"], { cwd: DEFAULT_WORKSPACE });
+    await git("git", ["init", "-b", "composer-layout"], {
+      cwd: DEFAULT_WORKSPACE,
+    });
     await git(
       "git",
       [
@@ -358,7 +420,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     );
     await browser.keys("Escape");
     const combined = await displayed(`${paneSelector} [data-testid="engine-config-model-effort"]`);
-    await combined.waitForEnabled({ timeout: 30000 });
+    await waitForEngineConfigReady("codex", paneSelector);
     await expect($(`${paneSelector} [data-testid="engine-config-fast-mode"]`)).not.toExist();
     await expect(
       $(`${paneSelector} [data-testid="engine-config-collaboration_mode"]`),
@@ -385,7 +447,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     const requestsBefore = await readRequests();
     await combined.click();
     await expect($('[data-testid="engine-effort-slider-reasoning_effort"]')).toBeDisplayed();
-    await (await displayed('[data-testid="engine-more-options"] summary')).click();
+    await expandMoreOptions();
     expect(await (await displayed('[data-testid="engine-config-fast-mode"]')).getText()).toContain(
       "Off",
     );
@@ -400,7 +462,10 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         /配置修改未生效|Configuration was not changed/.test(document.body.innerText),
       ),
     );
-    expect((await readRequests()).at(-1)).toMatchObject({ configId: "fast-mode", value: "on" });
+    expect((await readRequests()).at(-1)).toMatchObject({
+      configId: "fast-mode",
+      value: "on",
+    });
     await writeFile(join(fixtureDir, "config-control.json"), "{}");
     await openMoreOptions();
     expect(await (await displayed('[data-testid="engine-config-fast-mode"]')).getText()).toContain(
@@ -430,7 +495,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       for (const theme of ["light", "dark"]) {
         await browser.execute((value) => {
           const actions = (
-            window as typeof window & { __testActions?: { setTheme?: (theme: string) => void } }
+            window as typeof window & {
+              __testActions?: { setTheme?: (theme: string) => void };
+            }
           ).__testActions;
           if (!actions?.setTheme) throw new Error("缺少主题入口");
           actions.setTheme(value);
@@ -503,12 +570,13 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     }
     await setCurrentElectronRendererContentSize(1280, 800);
     await combined.click();
-    await (await displayed('[data-testid="engine-more-options"] summary')).click();
+    await expandMoreOptions();
     await browser.saveScreenshot(join(artifact, "task5-model-effort-fast-popover.png"));
     await browser.keys("Escape");
     await setCurrentElectronRendererContentSize(1280, 800);
     await sendV4Prompt("E2E_AX03_BINDING");
-    await waitForV4AssistantMessageContaining("E2E_ENGINE_REPLY_safe_fixture-0_low_1");
+    // W3（2026-11-09 方案「默认自主 + 高」）：外部引擎首次无记忆时思考档位设为 high，夹具原生默认 low 被覆盖。
+    await waitForV4AssistantMessageContaining("E2E_ENGINE_REPLY_safe_fixture-0_high_1");
     await waitForV4ConversationState((state) => state.state === "idle", "固定绑定会话完成");
     // 已有会话：入口图标标识引擎，弹层顶部只读显示当前引擎，没有可选 radio。
     expect(await composerEngine(paneSelector)).toBe("codex");
@@ -526,7 +594,10 @@ describe("外部引擎首发前配置与同会话续聊", () => {
   it("原生计划审批静态等待且只实施一次，首次502重试可见并恢复", async () => {
     await installExternalEngineFixtures();
     await startNewV4Draft();
-    await prepareV4ConversationE2E({ skipProvider: true, skipShellReady: true });
+    await prepareV4ConversationE2E({
+      skipProvider: true,
+      skipShellReady: true,
+    });
     const paneId = await getV4FocusedPaneId();
     if (!paneId) throw new Error("缺少原生计划回归的当前 pane");
     const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
@@ -605,7 +676,10 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     await installExternalEngineFixtures();
     for (const engine of ["codex", "claude-code"] as const) {
       await startNewV4Draft();
-      await prepareV4ConversationE2E({ skipProvider: true, skipShellReady: true });
+      await prepareV4ConversationE2E({
+        skipProvider: true,
+        skipShellReady: true,
+      });
       const paneId = await getV4FocusedPaneId();
       if (!paneId) throw new Error("缺少错误行回归的当前 pane");
       const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
@@ -699,7 +773,10 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         (await (await displayed('[data-testid="engine-config-model-effort"]')).getText()).includes(
           "codex fixture model",
         ),
-      { timeout: 30000, timeoutMsg: "重启后新草稿必须使用默认 Codex 并连接配置" },
+      {
+        timeout: 30000,
+        timeoutMsg: "重启后新草稿必须使用默认 Codex 并连接配置",
+      },
     );
   });
 
@@ -715,7 +792,20 @@ describe("外部引擎首发前配置与同会话续聊", () => {
           [...document.querySelectorAll<HTMLElement>(selector)].find(
             (element) => element.getClientRects().length > 0,
           );
-        const option = visible(`[data-testid="session-engine-option-${target}"]`);
+        // W2：引擎胶囊已删除，切换行在模型入口弹层顶部；先打开弹层，再从点击切换项开始计时。
+        visible(
+          '[data-testid="engine-config-model-effort"], [data-testid="chat-model-select-trigger"]',
+        )?.click();
+        const optionSelector = `[data-testid="engine-switch-option-${target}"]`;
+        const option = await new Promise<HTMLElement | undefined>((resolve) => {
+          const startedWaiting = performance.now();
+          const poll = () => {
+            const found = visible(optionSelector);
+            if (found || performance.now() - startedWaiting > 5000) resolve(found);
+            else requestAnimationFrame(poll);
+          };
+          poll();
+        });
         if (!option) throw new Error(`缺少引擎选项 ${target}`);
         const label = `${target} fixture model`;
         const startedAt = performance.now();
@@ -734,7 +824,11 @@ describe("外部引擎首发前配置与同会话续聊", () => {
               | undefined;
             if (!trigger || !(trigger.textContent ?? "").includes(label)) return;
             visibleMs ??= performance.now() - startedAt;
-            if (trigger.disabled) return;
+            // W2 起入口在草稿中恒可点；「可操作」以同一 configDisabled 驱动的权限芯片为准。
+            const mode = visible('[data-testid="engine-config-mode"]') as
+              | HTMLButtonElement
+              | undefined;
+            if (!mode || mode.disabled) return;
             enabledMs = performance.now() - startedAt;
             clearTimeout(deadline);
             observer.disconnect();
@@ -750,11 +844,20 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         });
         return { engine: target, visibleMs: visibleMs!, enabledMs: enabledMs! };
       }, engine);
+    // 每次计时后关闭弹层，下一次从入口重新打开，避免再次点击入口把已开弹层关掉。
+    const switchEngine = async (engine: "codex" | "claude-code") => {
+      const sample = await switchEngineTimed(engine);
+      if (await $('[data-testid="engine-switch-row"]').isDisplayed()) await browser.keys("Escape");
+      await $('[data-testid="engine-switch-row"]').waitForDisplayed({
+        reverse: true,
+      });
+      return sample;
+    };
     // 冷启：两家各握手一次，留下缓存清单与补位的预建会话。
-    const cold = [await switchEngineTimed("codex"), await switchEngineTimed("claude-code")];
+    const cold = [await switchEngine("codex"), await switchEngine("claude-code")];
     // 补位在新会话就绪后后台进行；等两家各自的预建会话就绪再测热切换。
     await browser.pause(3000);
-    const warm = [await switchEngineTimed("codex"), await switchEngineTimed("claude-code")];
+    const warm = [await switchEngine("codex"), await switchEngine("claude-code")];
     await writeFile(
       join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "external-engine-w4-switch-timing.json"),
       JSON.stringify({ cold, warm }, null, 2),
@@ -786,11 +889,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     // 1. 就绪草稿中显式选择模型与深度：snapshot 确认后写入 Codex 的本机记忆；首发提升为真实会话。
     await startNewV4Draft();
     await selectDraftEngine("codex");
-    await (
-      await displayed('[data-testid="engine-config-model-effort"]')
-    ).waitForEnabled({
-      timeout: 30000,
-    });
+    await waitForEngineConfigReady("codex");
     await openModelMenu();
     await (await displayed('[role="menuitemradio"]=codex fixture model 3')).click();
     await browser.waitUntil(
@@ -817,7 +916,8 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     await browser.keys("End");
     await browser.waitUntil(
       async () =>
-        (await (await displayed('[data-testid="engine-effort-value"]')).getText()) === "High",
+        (await (await displayed('[data-testid="engine-effort-value"]')).getText()) ===
+        EFFORT_LABEL.high,
       { timeoutMsg: "记忆用深度必须被引擎确认" },
     );
     await browser.keys("Escape");
@@ -839,11 +939,17 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         const shell = document.querySelector<HTMLElement>(`[data-testid="${selector}"]`);
         if (!shell) throw new Error("缺少草稿 pane");
         const regex = new RegExp(pattern);
-        const state = window as typeof window & { __e2eEngineConnectingSeen?: boolean };
+        const state = window as typeof window & {
+          __e2eEngineConnectingSeen?: boolean;
+        };
         state.__e2eEngineConnectingSeen = regex.test(shell.innerText);
         new MutationObserver(() => {
           if (regex.test(shell.innerText)) state.__e2eEngineConnectingSeen = true;
-        }).observe(shell, { subtree: true, childList: true, characterData: true });
+        }).observe(shell, {
+          subtree: true,
+          childList: true,
+          characterData: true,
+        });
       },
       shellTestId,
       connectingPattern,
@@ -854,9 +960,8 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       (selector, sendTestId) => {
         const shell = document.querySelector<HTMLElement>(`[data-testid="${selector}"]`);
         const button = shell?.querySelector<HTMLButtonElement>(`[data-testid="${sendTestId}"]`);
-        const model = shell?.querySelector<HTMLButtonElement>(
-          '[data-testid="engine-config-model-effort"]',
-        );
+        // W2 起草稿入口挂着引擎切换行而恒可点；原生配置是否就绪看同一 configDisabled 驱动的权限芯片。
+        const model = shell?.querySelector<HTMLButtonElement>('[data-testid="engine-config-mode"]');
         const status = shell?.querySelector(
           '[data-testid="external-engine-controls"] [role="status"]',
         );
@@ -872,7 +977,11 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       shellTestId,
       TID_V4_COMPOSER_SEND,
     );
-    expect(atSend).toEqual({ sendEnabled: true, modelPickerReady: false, status: null });
+    expect(atSend).toEqual({
+      sendEnabled: true,
+      modelPickerReady: false,
+      status: null,
+    });
     // W5（engine-performance-1.1-spec「草稿首发的即时会话布局」）：握手仍在 3s 延迟中，
     // 界面必须已切到会话布局：用户气泡 + 「工作中」，没有“正在发送…”卡片、问候语或“正在等待模型…”。
     await browser.waitUntil(
@@ -887,7 +996,11 @@ describe("外部引擎首发前配置与同会话续聊", () => {
             !shell?.querySelector('[data-testid="chat-empty"]'),
           );
         }, shellTestId),
-      { timeout: 1500, interval: 50, timeoutMsg: "点击发送后必须立即显示用户气泡与工作中" },
+      {
+        timeout: 1500,
+        interval: 50,
+        timeoutMsg: "点击发送后必须立即显示用户气泡与工作中",
+      },
     );
     expect(await promptCount()).toBe(before);
     await waitForV4AssistantMessageContaining("E2E_ENGINE_REPLY_safe_fixture-3_high_1");
@@ -1018,7 +1131,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       // 手机宽度允许菜单滚动；逐项实际到达、选择并确认，不能用扩大窗口掩盖溢出。
       for (let index = 0; index < 18; index++) {
         if (index > 0) {
-          await $('[data-testid="engine-config-menu-model"]').waitForExist({ reverse: true });
+          await $('[data-testid="engine-config-menu-model"]').waitForExist({
+            reverse: true,
+          });
           await openModelMenu();
         }
         const modelName = `${engine} fixture model ${index}`;
@@ -1052,7 +1167,8 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       await browser.keys("End");
       await browser.waitUntil(
         async () =>
-          (await (await displayed('[data-testid="engine-effort-value"]')).getText()) === "High",
+          (await (await displayed('[data-testid="engine-effort-value"]')).getText()) ===
+          EFFORT_LABEL.high,
       );
       await browser.keys("Escape");
       await sendV4Prompt("E2E_EXTERNAL_PREWARM first");
@@ -1167,7 +1283,8 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       await browser.keys("ArrowLeft");
       await browser.waitUntil(
         async () =>
-          (await (await displayed('[data-testid="engine-effort-value"]')).getText()) === "Medium",
+          (await (await displayed('[data-testid="engine-effort-value"]')).getText()) ===
+          EFFORT_LABEL.medium,
       );
       await browser.keys("Escape");
       await waitForV4AssistantMessageContaining("E2E_RUNNING_FINAL_safe_fixture-1_medium");
@@ -1252,8 +1369,10 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       await browser.waitUntil(
         async () => {
           const model = await displayed('[data-testid="engine-config-model-effort"]');
+          // W2 起入口挂着（只读）切换行时恒可点，不再代表已连接；以 configDisabled 驱动的权限芯片为准。
+          const mode = await displayed('[data-testid="engine-config-mode"]');
           return (
-            (await model.isEnabled()) &&
+            (await mode.isEnabled()) &&
             (await model.getText()).includes(`${engine} fixture model 1`)
           );
         },
@@ -1272,8 +1391,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       await (await displayed(`[data-testid="engine-config-model-effort"]`)).click();
       await browser.waitUntil(
         async () =>
-          (await (await displayed('[data-testid="engine-effort-value"]')).getText()) === "Medium",
-        { timeoutMsg: "恢复的思考深度必须显示为 Medium" },
+          (await (await displayed('[data-testid="engine-effort-value"]')).getText()) ===
+          EFFORT_LABEL.medium,
+        { timeoutMsg: "恢复的思考深度必须显示为中" },
       );
       await browser.waitUntil(
         async () =>
@@ -1286,7 +1406,8 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       await browser.keys("End");
       await browser.waitUntil(
         async () =>
-          (await (await displayed('[data-testid="engine-effort-value"]')).getText()) === "High",
+          (await (await displayed('[data-testid="engine-effort-value"]')).getText()) ===
+          EFFORT_LABEL.high,
       );
       await browser.keys("Escape");
       await setV4ComposerText("");
@@ -1323,8 +1444,8 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       await selectDraftEngine(engine, paneSelector);
       const effortId = engine === "codex" ? "reasoning_effort" : "effort";
       const effort = () => displayed(`${paneSelector} [data-testid="engine-config-model-effort"]`);
-      await (await effort()).waitForEnabled({ timeout: 30000 });
-      const selectEffort = async (key: string, expected: string) => {
+      await waitForEngineConfigReady(engine, paneSelector);
+      const selectEffort = async (key: string, expected: keyof typeof EFFORT_LABEL) => {
         await (await effort()).waitForClickable();
         await (await effort()).click();
         const slider = $(`[data-testid="engine-effort-slider-${effortId}"]`);
@@ -1338,16 +1459,16 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         );
         await browser.keys(key);
         await browser.waitUntil(async () =>
-          (await (await effort()).getAttribute("title"))?.endsWith(` · ${expected}`),
+          (await (await effort()).getAttribute("title"))?.endsWith(` · ${EFFORT_LABEL[expected]}`),
         );
         await browser.keys("Escape");
         await $('[data-testid="engine-effort-value"]').waitForDisplayed({
           reverse: true,
         });
       };
-      await selectEffort("End", "High");
+      await selectEffort("End", "high");
       for (const scenario of ["HEALTHY", "BROKEN", "EXIT"]) {
-        await selectEffort("End", "High");
+        await selectEffort("End", "high");
         const prompt = `E2E_EXTERNAL_STOP_${scenario}`;
         await sendV4PromptInPane(paneId, prompt);
         await waitForV4AssistantMessageContaining(`E2E_STOP_WAITING_${prompt}`);
@@ -1360,7 +1481,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         if (scenario === "HEALTHY") {
           expect(await reconnect.isExisting()).toBe(false);
           expect(await (await effort()).isEnabled()).toBe(true);
-          expect(await (await effort()).getAttribute("title")).toContain(" · High");
+          expect(await (await effort()).getAttribute("title")).toContain(` · ${EFFORT_LABEL.high}`);
         } else {
           expect(await reconnect.isExisting()).toBe(false);
           const descriptor = EXTERNAL_ENGINE_RUNTIMES[engine];
@@ -1374,9 +1495,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
           );
           const promptCount = JSON.parse(await readFile(promptPath, "utf8"));
           await browser.waitUntil(async () =>
-            (await (await effort()).getAttribute("title"))?.endsWith(" · High"),
+            (await (await effort()).getAttribute("title"))?.endsWith(` · ${EFFORT_LABEL.high}`),
           );
-          await selectEffort("Home", "Low");
+          await selectEffort("Home", "low");
           expect(persistedHistory(taskId).session).toEqual(originalSession);
           expect(JSON.parse(await readFile(promptPath, "utf8"))).toBe(promptCount);
         }
@@ -1421,7 +1542,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
           ...document.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]'),
         ].map((node) => node.innerText),
       }));
-      throw new Error(`HTML 预览未显示 ${JSON.stringify(diagnostics)}`, { cause: error });
+      throw new Error(`HTML 预览未显示 ${JSON.stringify(diagnostics)}`, {
+        cause: error,
+      });
     }
     expect(await frame.getAttribute("sandbox")).toBe("");
     await browser.switchFrame(frame);
@@ -1495,8 +1618,8 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       // 受控延迟制造真实异步确认窗口，保证回跳不能被快速 ACP 响应掩盖。
       await writeFile(controlPath, JSON.stringify({ delayMs: 400 }));
       const effortId = engine === "codex" ? "reasoning_effort" : "effort";
-      const trigger = await displayed(`[data-testid="engine-config-model-effort"]`);
-      await trigger.waitForEnabled();
+      await waitForEngineConfigReady(engine);
+      let trigger = await displayed(`[data-testid="engine-config-model-effort"]`);
       // 保留候选原有窄窗准备；尺寸 helper 会如实拒绝默认最小宽度钳制，不能靠放宽断言通过。
       await browser.electron.execute(
         (electron, url) => {
@@ -1522,12 +1645,15 @@ describe("外部引擎首发前配置与同会话续聊", () => {
           engine === "codex",
         ),
       );
+      // 窄窗与主题切换会重排输入区；按当前可见入口重新取元素再打开弹层，确认弹层已出现。
+      trigger = await displayed(`[data-testid="engine-config-model-effort"]`);
       await trigger.click();
+      await displayed('[data-testid="engine-model-popover"]');
       const slider = $(`[data-testid="engine-effort-slider-${effortId}"]`);
       await slider.waitForClickable();
       for (const [eventName, expected, key] of [
-        ["pointerup", "High", "End"],
-        ["keyup", "Low", "Home"],
+        ["pointerup", EFFORT_LABEL.high, "End"],
+        ["keyup", EFFORT_LABEL.low, "Home"],
       ] as const) {
         await browser.execute(
           (id, event) => {
@@ -1592,7 +1718,9 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         );
         const values: string[] = JSON.parse((await slider.getAttribute("data-commit-trace"))!);
         expect(values.length).toBeGreaterThan(1);
-        expect(values.every((value) => value === (expected === "High" ? "2" : "0"))).toBe(true);
+        expect(
+          values.every((value) => value === (expected === EFFORT_LABEL.high ? "2" : "0")),
+        ).toBe(true);
         expect(await trigger.getAttribute("title")).toContain(` · ${expected}`);
         const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
         if (!artifactDir) throw new Error("缺少滑块回归证据目录");
@@ -1604,10 +1732,14 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       }
       await writeFile(controlPath, JSON.stringify({ delayMs: 400, rejectValue: "high" }));
       await browser.keys("End");
-      await browser.waitUntil(async () => (await slider.getAttribute("aria-valuetext")) === "High");
-      expect(await trigger.getAttribute("title")).toContain(" · Low");
-      await browser.waitUntil(async () => (await slider.getAttribute("aria-valuetext")) === "Low");
-      expect(await trigger.getAttribute("title")).toContain(" · Low");
+      await browser.waitUntil(
+        async () => (await slider.getAttribute("aria-valuetext")) === EFFORT_LABEL.high,
+      );
+      expect(await trigger.getAttribute("title")).toContain(` · ${EFFORT_LABEL.low}`);
+      await browser.waitUntil(
+        async () => (await slider.getAttribute("aria-valuetext")) === EFFORT_LABEL.low,
+      );
+      expect(await trigger.getAttribute("title")).toContain(` · ${EFFORT_LABEL.low}`);
       await browser.keys("Escape");
     }
   });
