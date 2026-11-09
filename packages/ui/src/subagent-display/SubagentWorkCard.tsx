@@ -26,6 +26,8 @@ import {
 import { describeAgentSpawnMember } from "./spawnGroups.js";
 import { SubagentFace } from "./SubagentFace.js";
 
+const SUBAGENT_KNOWN_EFFORT_VALUES = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
+
 const EMPTY_AVATAR_INDEX = buildSubagentAvatarIndex(undefined);
 // 折叠/展开只属于 renderer 内存（与旧派发行同一模式）：虚拟列表重挂不丢，刷新即重置。
 const workCardOpenState = new Map<string, boolean>();
@@ -98,9 +100,15 @@ function MemberRow({
   const statusText = formatMessage({ id: `subagentDisplay.status.${member.status}` });
   const elapsedMs = elapsedOf(member.startedAt, member.endedAt, active, now);
   const elapsed = elapsedMs === undefined ? null : formatSubagentDuration(elapsedMs, formatMessage);
+  // 档位与输入区弹层同口径本地化（复用 engine.effort.* 文案键），未知取值保留原文。
+  const effortValue = member.effort?.toLowerCase();
+  const effortText =
+    effortValue && SUBAGENT_KNOWN_EFFORT_VALUES.has(effortValue)
+      ? formatMessage({ id: `engine.effort.${effortValue}` })
+      : member.effort;
   const modelText = member.model
-    ? member.effort
-      ? `${member.model} ${member.effort}`
+    ? effortText
+      ? `${member.model} ${effortText}`
       : member.model
     : null;
   const steps =

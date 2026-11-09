@@ -129,7 +129,7 @@ describe("SubagentWorkCard", () => {
     const first = view.getByTestId("v4-subagent-open-side-pane-child-a");
     expect(first.tagName).toBe("BUTTON");
     expect(first.textContent).toContain("explorer");
-    expect(first.textContent).toContain("gpt-6.1-sol high");
+    expect(first.textContent).toContain("gpt-6.1-sol 高");
     expect(first.textContent).toContain("运行中 · 58秒");
     expect(first.textContent).toContain("核对排班报错请求契约");
     expect(first.textContent).toContain("16 个步骤");
