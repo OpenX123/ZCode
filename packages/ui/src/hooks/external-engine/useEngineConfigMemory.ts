@@ -27,7 +27,7 @@ const RESTORE_ORDER: ReadonlyArray<(option: EngineConfigOption) => boolean> = [
   (option) => engineConfigOptionKind(option.id) === "effort",
   (option) => option.id === ENGINE_MODE_CONFIG_ID,
 ];
-/** 首次使用（该引擎 + 连接没有任何记忆）的默认思考深度（用户决策 Q4「自主 + 高」）。 */
+/** 未记住思考深度时的默认值（用户决策 Q4「自主 + 高」）。 */
 const FIRST_USE_EFFORT = "high";
 
 export interface EngineConfigRestoreStep {
@@ -59,15 +59,21 @@ export function nextEngineConfigRestoreStep(
 }
 
 /**
- * 首次使用的默认值：目录提供 `high` 档时把思考深度设为 high；模型与权限模式保持引擎默认
- * （Claude 新会话 Auto / Codex Auto review）。只用于恢复下发，不写入记忆。
+ * 按配置项补首次使用默认值：记忆里没有当前目录思考深度项、且目录提供 `high` 档时补 high；
+ * 模型与权限模式没有记忆时保持引擎默认（Claude 新会话 Auto / Codex Auto review）。
+ * 只用于恢复下发，不写入记忆。
+ * 修复依据（P11，2026-11-09）：旧实现只在“该引擎 + 连接没有任何记忆”时套用 high。用户选过模型后
+ * 记忆只含 model，重启后新草稿不再套用 high，深度回落引擎原生默认（如 low）。改为按项判定，并在
+ * 每步按当前（含模型 ACK 确认后的新）目录计算，记住的模型先恢复、再按新目录补 high。
  */
-function firstUseEngineConfigDefaults(
+function withFirstUseEngineConfigDefaults(
   options: readonly EngineConfigOption[],
+  remembered: Readonly<Record<string, string>> | undefined,
 ): Readonly<Record<string, string>> | undefined {
   const effort = options.find((entry) => engineConfigOptionKind(entry.id) === "effort");
-  if (!effort?.options.some((entry) => entry.value === FIRST_USE_EFFORT)) return undefined;
-  return { [effort.id]: FIRST_USE_EFFORT };
+  if (!effort || remembered?.[effort.id]) return remembered;
+  if (!effort.options.some((entry) => entry.value === FIRST_USE_EFFORT)) return remembered;
+  return { ...remembered, [effort.id]: FIRST_USE_EFFORT };
 }
 
 interface PendingConfirmation {
@@ -306,7 +312,11 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
         latest.current.connectionProfileId === run.connectionProfileId;
       let catalog = initialOptions;
       while (isCurrent() && !run.stopped) {
-        const step = nextEngineConfigRestoreStep(catalog, run.remembered, run.settled);
+        const step = nextEngineConfigRestoreStep(
+          catalog,
+          withFirstUseEngineConfigDefaults(catalog, run.remembered),
+          run.settled,
+        );
         if (!step) break;
         const result = await latest.current
           .applyOption(run.sessionId, step.configId, step.value)
@@ -349,14 +359,13 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
       restore.current.connectionProfileId !== connectionProfileId
     ) {
       // 每个预热会话只恢复一次，并冻结就绪时的记忆，之后的偏好变化不重配已打开的草稿。
-      // 该引擎 + 连接没有任何记忆时按首次使用默认（深度 high）恢复。
+      // 没有记住思考深度时由 runRestore 逐步按当前目录补首次默认（深度 high）。
       restore.current = {
         sessionId,
         connectionProfileId,
         remembered:
           settings?.externalEngineConnectionConfigPreferences?.[engine]?.[connectionProfileId] ??
-          settings?.externalEngineConfigPreferences?.[engine] ??
-          firstUseEngineConfigDefaults(options),
+          settings?.externalEngineConfigPreferences?.[engine],
         settled: new Set(),
         started: false,
         stopped: false,

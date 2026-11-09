@@ -308,7 +308,7 @@ describe("按引擎记忆模型与思考深度", () => {
     expect(preferences.update).not.toHaveBeenCalled();
   });
 
-  it("首次使用（该引擎 + 连接无任何记忆）默认深度 high，只下发不写记忆；有记忆或目录无 high 时不套用", async () => {
+  it("没有记住深度时按项默认 high（与模型/模式记忆无关），只下发不写记忆；记住的深度优先、目录无 high 时不套用", async () => {
     preferences.settings = {} as AppSettings;
     const first = renderMemory({
       sessionId: "draft-first",
@@ -332,18 +332,85 @@ describe("按引擎记忆模型与思考深度", () => {
     expect(noHigh.applyOption).not.toHaveBeenCalled();
     noHigh.unmount();
 
-    // 已有记忆（即使只有模型）：按记忆恢复，不叠加首次默认。
+    // P11：只记住了模型（没有记住深度）时仍按项套用 high；先恢复模型，再按 ACK 确认的新目录
+    // （gpt-b 才有 high）下发 high，且不写入记忆。
     preferences.settings = {
       externalEngineConnectionConfigPreferences: { codex: { alpha: { model: "gpt-b" } } },
     } as AppSettings;
-    const remembered = renderMemory({
-      sessionId: "draft-remembered",
+    const modelOnly = renderMemory({
+      sessionId: "draft-model-only",
       connectionProfileId: "alpha",
       restoreEnabled: true,
-      options: catalog("gpt-a", "low"),
+      options: catalog("gpt-a", "low", ["low", "medium"]),
     });
     await flush();
-    expect(remembered.applyOption.mock.calls).toEqual([["draft-remembered", "model", "gpt-b"]]);
+    expect(modelOnly.applyOption.mock.calls).toEqual([
+      ["draft-model-only", "model", "gpt-b"],
+      ["draft-model-only", "reasoning_effort", "high"],
+    ]);
+    await expect(
+      modelOnly.result.current.waitForRestore("draft-model-only"),
+    ).resolves.toBeUndefined();
+    expect(preferences.update).not.toHaveBeenCalled();
+    modelOnly.unmount();
+
+    // 只记住了权限模式：同样补 high，模式仍按记忆最后恢复。
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: { codex: { alpha: { mode: "auto" } } },
+    } as AppSettings;
+    const modeOnly = renderMemory(
+      {
+        sessionId: "draft-mode-only",
+        connectionProfileId: "alpha",
+        restoreEnabled: true,
+        options: catalog("gpt-b", "low"),
+      },
+      fakeEngine("gpt-b"),
+    );
+    await flush();
+    expect(modeOnly.applyOption.mock.calls).toEqual([
+      ["draft-mode-only", "reasoning_effort", "high"],
+      ["draft-mode-only", "mode", "auto"],
+    ]);
+    modeOnly.unmount();
+
+    // 用户显式记住的深度优先（即使是 low）：不套用 high。
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: {
+        codex: { alpha: { model: "gpt-b", reasoning_effort: "low" } },
+      },
+    } as AppSettings;
+    const explicitLow = renderMemory(
+      {
+        sessionId: "draft-explicit-low",
+        connectionProfileId: "alpha",
+        restoreEnabled: true,
+        options: catalog("gpt-a", "medium", ["low", "medium"]),
+      },
+      fakeEngine("gpt-a", "medium"),
+    );
+    await flush();
+    expect(explicitLow.applyOption.mock.calls).toEqual([
+      ["draft-explicit-low", "model", "gpt-b"],
+      ["draft-explicit-low", "reasoning_effort", "low"],
+    ]);
+    explicitLow.unmount();
+
+    // 记住的深度不在当前目录：跳过该项，不改用 high。
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: { codex: { alpha: { reasoning_effort: "xhigh" } } },
+    } as AppSettings;
+    const unknownEffort = renderMemory(
+      {
+        sessionId: "draft-unknown-effort",
+        connectionProfileId: "alpha",
+        restoreEnabled: true,
+        options: catalog("gpt-b", "low"),
+      },
+      fakeEngine("gpt-b"),
+    );
+    await flush();
+    expect(unknownEffort.applyOption).not.toHaveBeenCalled();
   });
 
   it("新草稿原生配置就绪后先恢复模型，再按 ACK 确认的新目录恢复深度，且不写回记忆", async () => {
@@ -398,7 +465,11 @@ describe("按引擎记忆模型与思考深度", () => {
     await flush();
     rerender({ sessionId: "draft-3", restoreEnabled: true, options: catalog("gpt-a", "low") });
     await flush();
-    expect(applyOption).toHaveBeenCalledExactlyOnceWith("draft-3", "model", "gpt-b");
+    // 模型被拒后不重试；记忆没有深度项，按当前目录补首次默认 high（P11 按项判定）。
+    expect(applyOption.mock.calls).toEqual([
+      ["draft-3", "model", "gpt-b"],
+      ["draft-3", "reasoning_effort", "high"],
+    ]);
   });
 
   // P08：creating/connecting 发送在屏障外等待本草稿记忆恢复收口，之后才把 sendText 排入屏障。
@@ -663,7 +734,11 @@ describe("按引擎记忆模型与思考深度", () => {
     preferences.loading = false;
     rerender({ sessionId: "draft-4", restoreEnabled: true, options: catalog("gpt-a", "low") });
     await flush();
-    expect(applyOption).toHaveBeenCalledExactlyOnceWith("draft-4", "model", "gpt-b");
+    // 记忆只有模型：模型确认后按新目录（gpt-b 有 high）补首次默认深度 high。
+    expect(applyOption.mock.calls).toEqual([
+      ["draft-4", "model", "gpt-b"],
+      ["draft-4", "reasoning_effort", "high"],
+    ]);
     rerender({
       engine: "zcode",
       sessionId: "draft-5",
@@ -671,6 +746,6 @@ describe("按引擎记忆模型与思考深度", () => {
       options: catalog("gpt-a", "low"),
     });
     await flush();
-    expect(applyOption).toHaveBeenCalledTimes(1);
+    expect(applyOption).toHaveBeenCalledTimes(2);
   });
 });
