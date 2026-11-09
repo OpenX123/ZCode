@@ -1,4 +1,5 @@
 export { EngineControls } from "./EngineControls.js";
+export { EngineSwitchRow } from "./EngineSwitchRow.js";
 export { EngineSettings } from "./EngineSettings.js";
 export { DefaultEngineSetting } from "./DefaultEngineSetting.js";
 export { TaskClientLogo } from "./TaskClientLogo.js";

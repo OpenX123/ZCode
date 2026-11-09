@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { describeSessionEngine } from "./contract.example.js";
-import { engineConfigOptionKind } from "./config-options.js";
+import {
+  engineConfigOptionKind,
+  engineConfigOptionPlacement,
+  engineFastToggle,
+} from "./config-options.js";
 import {
   EXTERNAL_ENGINE_RUNTIMES,
   externalEngineStatusSchema,
@@ -19,6 +23,67 @@ describe("原生配置类别", () => {
       expect(engineConfigOptionKind(id)).toBe("effort");
     for (const id of ["mode", "permission-mode", "fast", "Model"])
       expect(engineConfigOptionKind(id)).toBe("other");
+  });
+
+  it("输入区放置：仅 mode 常驻，Fast 类按归一化 id 识别，其余进入更多", () => {
+    expect(engineConfigOptionPlacement("mode")).toBe("primary-mode");
+    expect(engineConfigOptionPlacement("model")).toBe("model");
+    expect(engineConfigOptionPlacement("reasoning_effort")).toBe("effort");
+    for (const id of ["fast", "fast-mode", "fast_mode", "Fast", "speed", "service_tier"])
+      expect(engineConfigOptionPlacement(id)).toBe("fast");
+    for (const id of ["agent", "collaboration_mode", "permission-mode", "Mode"])
+      expect(engineConfigOptionPlacement(id)).toBe("more");
+  });
+
+  it("Fast 开关只接受 on/off 类两值 select，点亮跟随确认值，形态不符返回 null", () => {
+    // 本机 adapter（Claude 0.95.0 id fast、Codex 2.2.2 id fast-mode）在未声明 boolean 能力时的真实形态。
+    const codex = {
+      id: "fast-mode",
+      name: "Fast mode",
+      currentValue: "off",
+      options: [
+        { value: "off", name: "Off" },
+        { value: "on", name: "On" },
+      ],
+    };
+    expect(engineFastToggle(codex)).toEqual({ enabled: false, onValue: "on", offValue: "off" });
+    expect(engineFastToggle({ ...codex, id: "fast", currentValue: "on" })).toEqual({
+      enabled: true,
+      onValue: "on",
+      offValue: "off",
+    });
+    expect(
+      engineFastToggle({
+        ...codex,
+        options: [
+          { value: "TRUE", name: "Yes" },
+          { value: "False", name: "No" },
+        ],
+        currentValue: "TRUE",
+      }),
+    ).toEqual({ enabled: true, onValue: "TRUE", offValue: "False" });
+    // 非 Fast 类 id、多档 service tier、未知取值都不渲染为闪电。
+    expect(engineFastToggle({ ...codex, id: "agent" })).toBeNull();
+    expect(
+      engineFastToggle({
+        ...codex,
+        id: "service_tier",
+        options: [
+          { value: "auto", name: "Auto" },
+          { value: "default", name: "Default" },
+          { value: "flex", name: "Flex" },
+        ],
+      }),
+    ).toBeNull();
+    expect(
+      engineFastToggle({
+        ...codex,
+        options: [
+          { value: "native-off", name: "Off" },
+          { value: "native-on", name: "On" },
+        ],
+      }),
+    ).toBeNull();
   });
 });
 

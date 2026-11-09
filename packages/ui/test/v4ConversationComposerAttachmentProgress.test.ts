@@ -160,20 +160,21 @@ describe("ConversationComposer attachment upload progress", () => {
     expect(html).not.toContain('data-testid="v4-composer-background-work-trigger"');
   });
 
-  it("引擎分段选择在输入区上方，外部原生工具行位于发送按钮之前", () => {
+  it("输入区上方不再渲染引擎胶囊，外部原生工具行位于发送按钮之前", () => {
     const html = renderComposer({
       externalEngine: true,
       engineControls: createElement("span", { "data-external-engine-controls": true }),
       engineModelControls: createElement("span", { "data-external-engine-model": true }),
-      engineSelector: createElement("span", { "data-engine-selector": true }),
+      // W2：切换行只挂在模型入口弹层内；外部引擎由 EngineControls 自己的弹层承载。
+      engineSwitchRow: createElement("span", { "data-engine-switch-row": true }),
     });
     const leading = html.indexOf('data-composer-leading-test="true"');
     const submit = html.indexOf('data-composer-submit-test="true"');
     const controls = html.indexOf('data-external-engine-controls="true"');
     expect(leading).toBeGreaterThanOrEqual(0);
     expect(submit).toBeGreaterThan(leading);
-    expect(html.indexOf('data-engine-selector="true"')).toBeGreaterThanOrEqual(0);
-    expect(html.indexOf('data-engine-selector="true"')).toBeLessThan(html.indexOf("<form"));
+    expect(html).not.toContain('data-testid="composer-engine-selector"');
+    expect(html).not.toContain('data-engine-switch-row="true"');
     expect(controls).toBeGreaterThan(leading);
     expect(controls).toBeLessThan(submit);
     expect(html.indexOf('data-external-engine-model="true"')).toBeGreaterThan(submit);

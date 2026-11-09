@@ -393,8 +393,8 @@ export interface ConversationComposerProps {
   engineControls?: ReactNode;
   /** 同一外部配置 owner 的模型/深度展示，位于发送入口左侧。 */
   engineModelControls?: ReactNode;
-  /** 草稿引擎分段选择，位于输入区上方；不包含原生配置。 */
-  engineSelector?: ReactNode;
+  /** W2：引擎切换行，挂在 YCode 模型弹层顶部（外部引擎由 EngineControls 弹层自行承载）。 */
+  engineSwitchRow?: ReactNode;
   engineNotReadyContent?: ReactNode;
   /** 草稿 scope（sessionId；draft 态 null → "__draft__" scope）。 */
   sessionId?: string | null;
@@ -531,7 +531,7 @@ function ConversationComposerImpl({
   externalEngine = false,
   engineControls,
   engineModelControls,
-  engineSelector,
+  engineSwitchRow,
   engineNotReadyContent,
   sessionId = null,
   skillCatalogSessionId = sessionId,
@@ -2279,6 +2279,7 @@ function ConversationComposerImpl({
                 onSwitchMode={onSwitchMode}
                 onRecoverCustomModelSelection={onRecoverCustomModelSelection}
                 onSendCompressionCommand={onSendCompressionCommand}
+                engineSwitchRow={engineSwitchRow}
               />
             )}
           </span>
@@ -2323,6 +2324,7 @@ function ConversationComposerImpl({
     [
       externalEngine,
       engineModelControls,
+      engineSwitchRow,
       canSend,
       activeConfigPicker,
       composerPhase,
@@ -2452,11 +2454,6 @@ function ConversationComposerImpl({
         </div>
       ) : null}
       {engineNotReadyContent}
-      {engineSelector ? (
-        <div className="mb-3 flex min-w-0 justify-center" data-testid="composer-engine-selector">
-          {engineSelector}
-        </div>
-      ) : null}
       {visibleError ? (
         // 仅展示附件错误会漏掉会话级 lastError，任务失败后也应在输入框上方显示原因。
         // 这里复用旧 ChatErrorBanner 壳，只接收 SessionPane 已归一化后的当前错误。

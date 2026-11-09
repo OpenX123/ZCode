@@ -3,7 +3,7 @@ import {
   resolveSessionEngine,
   type SessionEngine,
 } from "@zcode/shared/external-engine";
-import { EngineControls, isEngineNotReadyError } from "@/external-engine/index.js";
+import { EngineControls, EngineSwitchRow, isEngineNotReadyError } from "@/external-engine/index.js";
 import {
   useEngineConfigMemory,
   useEngineConnectionControl,
@@ -3979,6 +3979,21 @@ export function SessionPane({
         : undefined,
     [externalEngine, snapshot?.config.engineCommands],
   );
+  // W2：输入框上方的引擎胶囊已移除；唯一的切换行节点挂到模型入口弹层顶部（外部引擎走
+  // EngineControls 弹层，YCode 走 V4ComposerToolbar 模型弹层）。仅本地工作区（有引擎服务）
+  // 渲染；新草稿可切换并沿用 handleSelectEngine，已有会话只读。memo 保持节点稳定，避免流式
+  // snapshot 重渲染时击穿 Composer 控制簇与 V4ComposerModelControls 的 memo。
+  const engineSwitchRow = useMemo(
+    () =>
+      externalEngineService ? (
+        <EngineSwitchRow
+          engine={sessionEngine}
+          onSelectEngine={sessionId === null ? handleSelectEngine : undefined}
+          disabled={connecting}
+        />
+      ) : undefined,
+    [externalEngineService, sessionEngine, sessionId, handleSelectEngine, connecting],
+  );
   const renderComposer = ({
     leadingActions,
     modelControls,
@@ -3995,22 +4010,7 @@ export function SessionPane({
         draftMode={isDraft}
         draftConfig={draftConfig}
         externalEngine={externalEngine}
-        engineSelector={
-          externalEngineService ||
-          (sessionId === null && baseWorkspaceServices.externalEngineService) ? (
-            <EngineControls
-              engine={sessionEngine}
-              placement="selector"
-              onSelectEngine={sessionId === null ? handleSelectEngine : undefined}
-              disabled={connecting}
-              externalEngineUnavailableReason={
-                externalEngineService
-                  ? undefined
-                  : intl.formatMessage({ id: "engine.unavailable.remote" })
-              }
-            />
-          ) : undefined
-        }
+        engineSwitchRow={externalEngine ? undefined : engineSwitchRow}
         engineControls={leadingActions}
         engineModelControls={modelControls}
         engineNotReadyContent={
@@ -4105,12 +4105,8 @@ export function SessionPane({
     (sessionId === null && baseWorkspaceServices.externalEngineService) ? (
     <EngineControls
       engine={sessionEngine}
-      placement="toolbar"
       renderLayout={renderComposer}
-      onSelectEngine={sessionId === null ? handleSelectEngine : undefined}
-      externalEngineUnavailableReason={
-        externalEngineService ? undefined : intl.formatMessage({ id: "engine.unavailable.remote" })
-      }
+      engineSwitchRow={externalEngine ? engineSwitchRow : undefined}
       connectionChoices={engineConnection.choices}
       connectionProfileId={engineConnection.currentId}
       onSelectConnection={sessionId === null ? engineConnection.select : undefined}
