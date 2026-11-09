@@ -59,6 +59,20 @@ function lifecycleEvent(
   } as ZCodeAgentRuntimeLifecycleEvent;
 }
 
+// 前台事实（业务列表 + 可信非空可见上报）才更新备用候选；后台列表不抢占。
+const foregroundList = async (
+  service: IZCodeAgentService,
+  params: Parameters<IZCodeAgentService["listSessions"]>[0],
+) => {
+  await service.listSessions(params);
+  await service.reportConversationVisibilityV4(
+    withTrustedZCodeAgentV4Connection(
+      { ...params, visibleSessionIds: ["visible-session"] },
+      { connectionId: "foreground", clientMode: "desktop-continuous" },
+    ),
+  );
+};
+
 describe("连接 facade 转发可见性上报", () => {
   it("VR05：握手后注入本连接 connectionId，剥离 Renderer 传入值；超过 64 个拒绝；关闭时发 closed", async () => {
     const { base } = setupFacadeBase();
@@ -185,18 +199,6 @@ describe("窗口外部引擎备用许可", () => {
         { connectionId: "foreground", clientMode: "desktop-continuous" },
       ),
     );
-  const foregroundList = async (
-    service: IZCodeAgentService,
-    params: Parameters<IZCodeAgentService["listSessions"]>[0],
-  ) => {
-    await service.listSessions(params);
-    await service.reportConversationVisibilityV4(
-      withTrustedZCodeAgentV4Connection(
-        { ...params, visibleSessionIds: ["visible-session"] },
-        { connectionId: "foreground", clientMode: "desktop-continuous" },
-      ),
-    );
-  };
   it.each(["revoke-retry", "held", "released", "late-failure"])(
     "%s：缓存 A→B→A 的前台资格可恢复，后台列表不抢占，撤销失败可实际重试",
     async (scenario) => {
@@ -218,10 +220,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       const service = createReadyService({
         commandResolver: () => sandbox.command,
         externalEnginesSupported: true,
-        selectExternalEngineSpare: async () => ({
-          engine: "codex",
-          connectionProfileId: "inherit",
-        }),
+        selectExternalEngineSpares: async () => [
+          { engine: "codex", connectionProfileId: "inherit" },
+        ],
       });
       const rows = () =>
         readFileSync(sandbox.logPath, "utf8")
@@ -577,7 +578,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const command = (pid: number, id: string, method: string, params: unknown) =>
       writeFileSync(join(sandbox.dir, `${pid}.json`), JSON.stringify({ id, method, params }));
     try {
-      await service.listSessions({ workspacePath: sandbox.dir });
+      await foregroundList(service, { workspacePath: sandbox.dir });
       await vi.waitFor(() =>
         expect(
           rows()
@@ -639,7 +640,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
         .filter((row) => row.method === "externalEngine/prepareSpare")
         .map((row) => row.params.engine);
     try {
-      await service.listSessions({ workspacePath: sandbox.dir });
+      await foregroundList(service, { workspacePath: sandbox.dir });
       await vi.waitFor(() => expect(prepared()).toEqual(["codex"]));
       choices = [...choices, { engine: "claude-code", connectionProfileId: "inherit" }];
       notify?.();

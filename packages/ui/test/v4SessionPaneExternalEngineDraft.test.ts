@@ -41,6 +41,7 @@ const CLOSED_PROJECTION = {
 
 const mocks = vi.hoisted(() => ({
   composerProps: [] as Array<Record<string, unknown>>,
+  engineControlsProps: [] as Array<Record<string, unknown>>,
   timelineProps: [] as Array<Record<string, unknown>>,
   layer: { acquire: vi.fn() } as { acquire: ReturnType<typeof vi.fn> },
   sendCommand: vi.fn<(envelope: CommandEnvelope) => Promise<CommandAck>>(),
@@ -150,6 +151,24 @@ vi.mock("@/v4/composer/useDraftConfigControl.js", () => ({
     updateComposerContent: vi.fn(),
   }),
 }));
+// W1/W2 起 EngineControls 通过 renderLayout 把控制节点交给 Composer；这里记录 SessionPane 传给
+// EngineControls 的 props（阶段、选项清单），再以占位节点调用 renderLayout。
+vi.mock("@/external-engine/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/external-engine/index.js")>();
+  const React = await import("react");
+  return {
+    ...actual,
+    EngineControls: (props: Record<string, unknown>) => {
+      mocks.engineControlsProps.push(props);
+      const leadingActions = React.createElement("div", { "data-testid": "mock-engine-leading" });
+      const modelControls = React.createElement("div", { "data-testid": "mock-engine-model" });
+      const renderLayout = props.renderLayout as
+        | ((nodes: { leadingActions?: unknown; modelControls?: unknown }) => unknown)
+        | undefined;
+      return renderLayout ? renderLayout({ leadingActions, modelControls }) : leadingActions;
+    },
+  };
+});
 vi.mock("@/v4/ConversationComposer.js", async () => {
   const React = await import("react");
   return {
@@ -470,7 +489,7 @@ function latestComposer() {
 }
 
 function latestEngineControlsProps() {
-  return (latestComposer().engineControls as ReactElement<Record<string, unknown>>).props;
+  return mocks.engineControlsProps.at(-1)!;
 }
 
 const mountedRoots: Root[] = [];
@@ -479,6 +498,7 @@ afterEach(async () => {
   for (const root of mountedRoots.splice(0)) await act(async () => root.unmount());
   await settle();
   mocks.composerProps.length = 0;
+  mocks.engineControlsProps.length = 0;
   mocks.timelineProps.length = 0;
   mocks.sendCommand.mockReset();
   mocks.projections.clear();
@@ -897,13 +917,9 @@ describe("缓存选项清单先行显示（W4）", () => {
       root.render(renderPane({}));
       await settle();
     });
-    // 合并入口（模型 · 深度）用缓存清单渲染，且在 ready 前禁用。
-    const modelControls = () =>
-      (latestComposer().engineModelControls as ReactElement<Record<string, unknown>> | undefined)
-        ?.props;
-    expect(modelControls()?.option).toEqual(cached[1]);
-    expect(modelControls()?.triggerLabel).toBe("gpt-a · low");
-    expect(modelControls()?.disabled).toBe(true);
+    // 控件用缓存清单渲染，且在 ready 前处于 configPending（禁用）；入口文案规则由 EngineControls UT 覆盖。
+    expect(latestEngineControlsProps().options).toEqual(cached);
+    expect(latestEngineControlsProps().configPending).toBe(true);
     expect(log.some((entry) => entry.type === "setEngineConfigOption")).toBe(false);
 
     await act(async () => {
@@ -912,7 +928,7 @@ describe("缓存选项清单先行显示（W4）", () => {
       publishProjection(prewarmSessionId, liveProjection(ready));
       await settle();
     });
-    expect(modelControls()?.disabled).toBe(false);
+    expect(latestEngineControlsProps().configPending).toBe(false);
     await vi.waitFor(() =>
       expect(relevantCommands(log)).toContain("setEngineConfigOption:model=gpt-b"),
     );
