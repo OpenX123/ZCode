@@ -637,6 +637,68 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     );
   });
 
+  // W4 P12/P15/P17（external-agent-engines-spec「按引擎预热名额与缓存选项清单」）：两家各有预热名额与
+  // 进程内缓存清单后，Codex → Claude → Codex 的热切换在页面内计时：控件先以缓存值出现，再变为可操作。
+  // 夹具握手很快，≤100ms 的缓存目标需以本机真实日志 `[engine-switch] controls ready` 验收；此处断言 ≤1s。
+  it("W4 Codex → Claude → Codex 热切换：控件不空白，预热命中 1 秒内可操作", async () => {
+    await installExternalEngineFixtures();
+    await prepareV4ConversationE2E({ skipProvider: true });
+    const switchEngineTimed = (engine: "codex" | "claude-code") =>
+      browser.execute(async (target) => {
+        const visible = (selector: string) =>
+          [...document.querySelectorAll<HTMLElement>(selector)].find(
+            (element) => element.getClientRects().length > 0,
+          );
+        const option = visible(`[data-testid="session-engine-option-${target}"]`);
+        if (!option) throw new Error(`缺少引擎选项 ${target}`);
+        const label = `${target} fixture model`;
+        const startedAt = performance.now();
+        let visibleMs: number | undefined;
+        let enabledMs: number | undefined;
+        option.click();
+        await new Promise<void>((resolve, reject) => {
+          const observer = new MutationObserver(() => check());
+          const deadline = setTimeout(() => {
+            observer.disconnect();
+            reject(new Error(`${target} 控件 15s 内未就绪`));
+          }, 15000);
+          function check() {
+            const trigger = visible('[data-testid="engine-config-model-effort"]') as
+              | HTMLButtonElement
+              | undefined;
+            if (!trigger || !(trigger.textContent ?? "").includes(label)) return;
+            visibleMs ??= performance.now() - startedAt;
+            if (trigger.disabled) return;
+            enabledMs = performance.now() - startedAt;
+            clearTimeout(deadline);
+            observer.disconnect();
+            resolve();
+          }
+          observer.observe(document.body, {
+            subtree: true,
+            childList: true,
+            characterData: true,
+            attributes: true,
+          });
+          check();
+        });
+        return { engine: target, visibleMs: visibleMs!, enabledMs: enabledMs! };
+      }, engine);
+    // 冷启：两家各握手一次，留下缓存清单与补位的预建会话。
+    const cold = [await switchEngineTimed("codex"), await switchEngineTimed("claude-code")];
+    // 补位在新会话就绪后后台进行；等两家各自的预建会话就绪再测热切换。
+    await browser.pause(3000);
+    const warm = [await switchEngineTimed("codex"), await switchEngineTimed("claude-code")];
+    await writeFile(
+      join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "external-engine-w4-switch-timing.json"),
+      JSON.stringify({ cold, warm }, null, 2),
+    );
+    for (const sample of warm) {
+      expect(sample.visibleMs).toBeLessThanOrEqual(sample.enabledMs);
+      expect(sample.enabledMs).toBeLessThanOrEqual(1000);
+    }
+  });
+
   // P11（external-agent-engines-spec「草稿预热 owner」2026-11-08 草稿无感）：草稿 creating/connecting
   // 即可发送，不显示“正在连接引擎…”；首发排在握手与按引擎记忆恢复（模型→深度）之后，只提交一次。
   it("P11 连接中立即发送：不显示连接中，消息只发一次且使用记忆的模型与深度", async () => {

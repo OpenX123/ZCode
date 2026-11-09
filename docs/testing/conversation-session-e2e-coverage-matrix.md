@@ -4391,3 +4391,13 @@ E01–E11 产品规则已获用户确认，详见 [规格](../desktop/external-a
 ### Task5 最新 Composer 合同（2026-11-09）
 
 AX03/AX07 的最终输入区合同以 external-agent-engines-spec.md 顶部为准：无连接入口或标签；模型/深度合并，Fast 位于该弹层更多；项目/真实位置/Git 分支在编辑器上方同一行。继续使用 prewarm pending 候选和隔离 ACP 供应商夹具，不自动转正。Task5 独立运行记录与新截图见 `2026-11-09-acp-experience-verification.md` 的 Task5 追加段；Task4 run6 截图为旧展示合同历史。
+
+### W4 引擎热切换（2026-11-09）
+
+| Case | 语义                                                                   | 证据计划                                                                                                                                         | 当前状态                            |
+| ---- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
+| P15  | 每个外部引擎各 1 个备用许可（窗口 ≤2），拒绝记 `refill_denied`         | adapters process-pool 与 Host `zcodeAgentConversationVisibility` 定向 UT                                                                         | 定向 UT 通过                        |
+| P16  | 本窗口选择新外部引擎后 Host 重新调度预热                               | services `externalEngineSpareSelection` 与 Host 调度定向 UT                                                                                      | 定向 UT 通过                        |
+| P17  | 新草稿 connecting 先显示缓存清单（`source=cached`），ready 替换为 live | adapters catalog、core runtime、bootstrap projection、UI SessionPane 定向 UT；prewarm pending 候选「W4 Codex → Claude → Codex 热切换」页面内计时 | UT 通过；桌面候选仅类型检查，未运行 |
+
+候选保持 manual-review/pending；≤100ms 缓存显示与 ≤1s P95 以本机真实日志 `[engine-switch] controls ready` 与 `external_engine.handshake.completed` 验收，记录见 `2026-11-09-engine-composer-subagent-verification.md`。

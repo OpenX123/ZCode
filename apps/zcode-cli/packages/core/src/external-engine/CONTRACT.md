@@ -15,3 +15,5 @@ runTurn 抛错意味着 adapter 已清理连接。用户停止时的连接、超
 空闲时配置 RPC 发现迟到断联，则先通过同一 prepareSession 恢复原 externalSessionId 和确认值，再对幂等配置写入重试一次；业务拒绝、运行中和关闭中的调用不进入该恢复路径。
 
 原生子智能体（1.1.0）：`subagents.ts` 是父会话侧唯一 owner。spawned 先经 `createExternalSubagentRuntime` 建立不跑模型、不连 adapter 的子 Runtime 并持久化 `subagent_child` 记录（ID 由父会话 ID 与原生子 ID 确定性派生），再在宿主 writer 合成 `Agent` 工具行并发布 SubagentSpawned（可取消时另发 BackgroundTaskStarted）；子会话正文经同一 `ExternalTranscriptWriter` 写入子会话，state 结束子轮并发布 SubagentStopped。子会话权限以父 sessionId 进入 broker 并带 origin；父轮收尾时仍运行的子会话记 lost/cancelled。`subagent_child` 会话的 prepare 直接返回。规则见根仓 docs/desktop/external-agent-engines-spec.md「外部引擎原生子智能体」。
+
+2026-11-09（W4）：Runtime 仍是选项清单唯一所有者。新草稿 `connecting` 且无确认清单时，`onCachedConfigOptions` 的缓存清单只作为展示副本随 `ExternalEngineConfigUpdated` 发布（`engineConfigOptionsSource:"cached"`），不写入真值、不参与恢复与配置校验；确认清单到达标记 `live` 并丢弃副本，进入 error 清空副本。会话输入带 `workspaceKey = workspaceIdentity?.trim() || workspacePath`。

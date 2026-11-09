@@ -37,3 +37,5 @@ PATH 缺 node 时，为 ACP 子进程补充托管运行时入口（POSIX 符号�
 Task3 审查修复：未绑定备用从构造起选择 `closeAcpProcessAndWait`，包括连接内部错误触发的自关闭；pool 显式要求严格关闭。该 exec 入口先记录进程身份/树，再发终止，确认 OS 中同身份/组的非僵尸进程消失才 resolve；taskkill 失败或观察失败且仍存活则 reject。pool 保留 owned/许可并拒绝成功 ACK；后台失败附 catch 不产生未处理拒绝。已交付仍归 port，预算交接不等待后台授权/释放回复。
 
 迟到 launch 的后台关闭失败不被日志 catch 转换为撤销成功：retire 等待准备结束后再次确认当前连接的严格关闭。快照中已归属的 PID 身份不可被复用后的新身份覆盖。port 开始会话操作后恢复普通会话关闭策略；前台启动/命中不执行进程表查询。
+
+2026-11-09（W4）：budget.acquire 带 `engine`，Host 按外部引擎各授 1 个许可（窗口 ≤2）；被拒时记 info `external_engine.spare.refill_denied`（引擎、连接配置 ID）后放弃补位。`createExternalEngineConfigCatalog` 是每 CLI 一个的内存选项清单缓存，键（引擎，连接配置 ID，工作区身份 key，generation），上限 16、返回副本、不落盘；port 只为新会话在解析身份后、领用备用前经 `onCachedConfigOptions` 交出命中清单，握手确认的清单经 `onConfigOptions` 写回缓存。generation 仍不出 adapter。

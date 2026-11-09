@@ -4,7 +4,10 @@ import {
   EXTERNAL_ENGINE_USER_HOME_ENV,
 } from "@zcode/shared/external-engine";
 import { IExternalEngineService } from "./external-engine/contract.js";
-import { createExternalEngineService } from "./external-engine/node.js";
+import {
+  createExternalEngineService,
+  createExternalEngineSpareSelection,
+} from "./external-engine/node.js";
 import { getZCodeDataRootDir as projectDataRoot } from "#src/paths.js";
 import {
   createProjectService,
@@ -1771,17 +1774,31 @@ export function createLocalServices(options: {
           },
         })
       : undefined;
+  // W4：预热集合 = 启动默认引擎 ∪ 本窗口选择过的外部引擎（Host 进程即窗口作用域）；
+  // “选择过”来自草稿切换引擎时既有的 defaultSessionEngine 写入，不新增 Renderer 上报接口。
+  const externalEngineSpareSelection = externalEngineService
+    ? createExternalEngineSpareSelection({
+        readDefaultEngine: async () => (await settingService.get()).defaultSessionEngine,
+        onDefaultEngineChanged: (listener) =>
+          settingService.onDidUpdate((event) => {
+            if (event.keys.includes("defaultSessionEngine")) listener();
+          }),
+        ...(externalEngineService.isLaunchReady
+          ? { isLaunchReady: (engine) => externalEngineService.isLaunchReady!(engine) }
+          : {}),
+        readDefaultProfiles: async () =>
+          (await externalEngineService.getConnectionProfiles?.())?.defaults,
+      })
+    : undefined;
   const zcodeAgentService = createZCodeAgentService({
     externalEngineService,
     externalEnginesSupported: Boolean(externalEngineService),
-    selectExternalEngineSpare: async () => {
-      if (!externalEngineService) return undefined;
-      const engine = (await settingService.get()).defaultSessionEngine;
-      if (engine !== "codex" && engine !== "claude-code") return undefined;
-      const view = await externalEngineService.getConnectionProfiles?.();
-      const connectionProfileId = view?.defaults[engine];
-      return connectionProfileId ? { engine, connectionProfileId } : undefined;
-    },
+    ...(externalEngineSpareSelection
+      ? {
+          selectExternalEngineSpares: externalEngineSpareSelection.select,
+          watchExternalEngineSpareSelection: externalEngineSpareSelection.watch,
+        }
+      : {}),
     prepareProjectExecution,
     prepareSessionCreation: async (target) =>
       (await taskIndexRepo.getProjectRepository()).reserveCreatedTask({

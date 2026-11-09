@@ -376,6 +376,11 @@ export function externalEngineSessionInput(
       value: currentValue,
     })),
     cwd: runtime.workingDirectory,
+    // 工作区身份 key 与 Host 一致：`workspaceIdentity?.trim() || workspacePath`（仅用于缓存键）。
+    workspaceKey:
+      String(runtime.config.workspaceIdentity ?? "").trim() ||
+      runtime.config.workspacePath ||
+      runtime.workingDirectory,
     signal,
     traceContext,
     async onSession(id) {
@@ -388,6 +393,10 @@ export function externalEngineSessionInput(
     onConfigOptions: async (options) => {
       if (runtime.shuttingDown) return;
       await publishExternalEngineConfig(runtime, options, traceContext);
+    },
+    onCachedConfigOptions: async (options) => {
+      if (runtime.shuttingDown) return;
+      await publishCachedExternalEngineConfig(runtime, options, traceContext);
     },
     onUpdate: (update) => publishExternalEngineSessionUpdate(runtime, update, traceContext),
     onFailure: (notice) => publishExternalEngineFailureNotice(runtime, notice, traceContext),
@@ -462,6 +471,9 @@ export async function publishExternalEngineConfig(
   rememberPlanExitValues(runtime, options);
   await persistExternalEngineConfig(runtime, options);
   runtime.engineConfigOptions = structuredClone(options);
+  // 连接确认的清单到达：丢弃缓存展示副本，后续事件标记 live（W4）。
+  runtime.engineConfigOptionsSource = "live";
+  runtime.cachedEngineConfigOptions = undefined;
   await publishExternalEngineConfigState(
     runtime,
     runtime.engineConfigState === "connecting" ? "connecting" : "ready",
@@ -477,6 +489,42 @@ export async function publishExternalEngineConfig(
   }
 }
 
+/**
+ * W4：新草稿 connecting 时发布进程内缓存的上次清单，只作展示副本（source=cached）。
+ * 会话已有确认清单（恢复/分叉）或已离开 connecting 时忽略；真值仍只来自 onConfigOptions。
+ */
+export async function publishCachedExternalEngineConfig(
+  runtime: AgentRuntimeInternal,
+  options: EngineConfigOption[],
+  traceContext: TraceContext,
+): Promise<void> {
+  if (
+    options.length === 0 ||
+    runtime.engineConfigState !== "connecting" ||
+    runtime.engineConfigOptions.length > 0
+  )
+    return;
+  runtime.cachedEngineConfigOptions = structuredClone(options);
+  await publishExternalEngineConfigState(runtime, "connecting", traceContext);
+}
+
+/** 投影用的选项清单视图：connecting 且无确认清单时取缓存副本（cached），否则取真值。 */
+export function externalEngineConfigOptionsView(runtime: AgentRuntimeInternal): {
+  options: EngineConfigOption[];
+  source?: "cached" | "live";
+} {
+  if (
+    runtime.engineConfigState === "connecting" &&
+    runtime.engineConfigOptions.length === 0 &&
+    runtime.cachedEngineConfigOptions
+  )
+    return { options: structuredClone(runtime.cachedEngineConfigOptions), source: "cached" };
+  return {
+    options: structuredClone(runtime.engineConfigOptions),
+    ...(runtime.engineConfigOptionsSource ? { source: runtime.engineConfigOptionsSource } : {}),
+  };
+}
+
 export async function publishExternalEngineConfigState(
   runtime: AgentRuntimeInternal,
   state: import("@zcode/shared").EngineConfigState,
@@ -485,11 +533,15 @@ export async function publishExternalEngineConfigState(
 ): Promise<void> {
   runtime.engineConfigState = state;
   runtime.engineConfigError = failure;
+  // 失败或就绪后缓存副本失效：error 不能继续展示上一个身份的目录（W4）。
+  if (state !== "connecting") runtime.cachedEngineConfigOptions = undefined;
+  const view = externalEngineConfigOptionsView(runtime);
   const event = runtime.createEvent(
     SessionEventType.ExternalEngineConfigUpdated,
     {
       engine: runtime.config.engine ?? "zcode",
-      engineConfigOptions: runtime.engineConfigOptions,
+      engineConfigOptions: view.options,
+      ...(view.source ? { engineConfigOptionsSource: view.source } : {}),
       engineConfigState: state,
       engineConfigError: failure,
       // 连接配置绑定只读投影给 UI；密钥不在此路径。

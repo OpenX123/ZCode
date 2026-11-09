@@ -680,3 +680,42 @@ describe("外部引擎草稿连接中即可发送（P08）", () => {
     expect(log.filter((entry) => entry.type === "createSession")).toHaveLength(0);
   });
 });
+
+// W4（P17）：CLI 在新草稿 connecting 时发布缓存清单（source=cached）。UI 用它立即渲染禁用控件，
+// 按引擎记忆的恢复仍只读 ready 清单；ready 后控件可用并开始恢复。
+describe("缓存选项清单先行显示（W4）", () => {
+  it("connecting + cached 清单：控件显示且禁用，不提前恢复记忆；ready 后可用", async () => {
+    setupExternalEngine();
+    const prewarmSessionId = "prewarm-cached";
+    const log = installCommandRouter({ prewarmSessionId });
+    const cached = catalog("gpt-a", "low");
+    const cachedSnapshot = snapshotFor(prewarmSessionId, "connecting", cached);
+    (cachedSnapshot.config as Record<string, unknown>).engineConfigOptionsSource = "cached";
+    publishProjection(prewarmSessionId, liveProjection(cachedSnapshot));
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    await act(async () => {
+      root.render(renderPane({}));
+      await settle();
+    });
+    // 合并入口（模型 · 深度）用缓存清单渲染，且在 ready 前禁用。
+    const modelControls = () =>
+      (latestComposer().engineModelControls as ReactElement<Record<string, unknown>> | undefined)
+        ?.props;
+    expect(modelControls()?.option).toEqual(cached[1]);
+    expect(modelControls()?.triggerLabel).toBe("gpt-a · low");
+    expect(modelControls()?.disabled).toBe(true);
+    expect(log.some((entry) => entry.type === "setEngineConfigOption")).toBe(false);
+
+    await act(async () => {
+      const ready = snapshotFor(prewarmSessionId, "ready", catalog("gpt-a", "low"));
+      (ready.config as Record<string, unknown>).engineConfigOptionsSource = "live";
+      publishProjection(prewarmSessionId, liveProjection(ready));
+      await settle();
+    });
+    expect(modelControls()?.disabled).toBe(false);
+    await vi.waitFor(() =>
+      expect(relevantCommands(log)).toContain("setEngineConfigOption:model=gpt-b"),
+    );
+  });
+});

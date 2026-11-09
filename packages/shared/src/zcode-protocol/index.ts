@@ -53,8 +53,14 @@ import { PROTOCOL_V4_LIMITS } from "../zcode-protocol-v4/core.js";
 /** 只宣告动态 Host 预算能力；不是永久授权。 */
 export const EXTERNAL_ENGINE_SPARE_BUDGET_ENV = "ZCODE_EXTERNAL_ENGINE_SPARE_BUDGET";
 const spareRequestIdSchema = z.string().trim().min(1).max(128);
+/** W4：Host 按外部引擎各授 1 个备用许可，窗口至多 2 个。 */
+export const EXTERNAL_ENGINE_SPARE_PERMITS_PER_WINDOW = 2;
 export const zcodeExternalEngineSpareRequestParamsSchema = z
-  .object({ requestId: spareRequestIdSchema })
+  .object({
+    requestId: spareRequestIdSchema,
+    // additive（W4）：acquire 带引擎，Host 按引擎分配许可；缺省（旧 CLI、release）按旧单键处理。
+    engine: z.enum(["codex", "claude-code"]).optional(),
+  })
   .strict();
 export const zcodeExternalEngineAcquireSpareResultSchema = z
   .object({ leaseId: spareRequestIdSchema.optional() })

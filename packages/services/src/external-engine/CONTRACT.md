@@ -39,3 +39,5 @@ sequenceDiagram
 ```
 
 2026-11-09 ACP 管理页：结构化检查为可选安全投影，认证/路由按 connectionProfileId 隔离，ready 仅为运行环境可用。配置先读、所选引擎独立诊断；查看不写上次使用，编辑 Dialog 沿用新 ID 保存与旧绑定。管理检查/安装支持按引擎取消，登录/测试沿用既有取消；详见 external-agent-engines-spec.md「设置诊断接口与取消边界」。
+
+2026-11-09（W4）：`createExternalEngineSpareSelection`（经 `node.ts` 导出）是窗口 Host 的预热集合：启动默认引擎 ∪ 本窗口经 `defaultSessionEngine` 写入选择过的外部引擎，过滤 `isLaunchReady` 与默认连接配置；集合扩大时通知一次，由 Agent Service 对当前候选 CLI 重新调度 `prepareSpare`。集合只在内存、不跨窗口，不新增 Renderer 接口。

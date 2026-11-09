@@ -1,6 +1,7 @@
 // 外部引擎进程池：每个 CLI 进程一个，负责 adapter 进程的“会话之外”的生命周期。
 //
-// - 未绑定备用受窗口 Host 0/1 许可约束，CLI 持有进程；warming 在 await 前独占预留。
+// - 未绑定备用受窗口 Host 许可约束（W4 起每个外部引擎 0/1、窗口 ≤2，申请带 engine），CLI 持有进程；
+//   warming 在 await 前独占预留。
 //   pool 追踪未交付资源，索引只负责领用；取消/关闭等待迟到 spawn 与进程树结束。
 //   ready hit 校验身份及已知入口，领用后进程归会话，未领用备用 10 分钟关闭。
 // - 闲置连接关闭：各会话 port 登记自己的连接事实，池按节拍扫描，关闭不可见、无在途且闲置满窗口
@@ -90,7 +91,8 @@ export interface ExternalEngineProcessPool {
 export interface ExternalEngineProcessPoolOptions {
   logger?: Logger;
   budget?: {
-    acquire(requestId: string, signal: AbortSignal): Promise<boolean>;
+    /** engine 让 Host 按引擎分配许可（W4）；Host 拒绝时本池放弃补位并记 info 日志。 */
+    acquire(requestId: string, signal: AbortSignal, engine: ExternalSessionEngine): Promise<boolean>;
     release(requestId: string): Promise<void>;
   };
   now?: () => number;
@@ -344,8 +346,19 @@ export function createExternalEngineProcessPool(
         try {
           if (
             options.budget &&
-            !(await options.budget.acquire(entry.requestId, entry.controller.signal))
+            !(await options.budget.acquire(
+              entry.requestId,
+              entry.controller.signal,
+              entry.key.engine,
+            ))
           ) {
+            // 修复（W4 基线 2026-11-09）：拒绝分支原先静默丢弃，日志里看不出 Claude 补位一直被
+            // 默认引擎备用占住的窗口单许可挤掉（11 次切换 0 次 Claude spare.ready）。现在留 info 证据。
+            if (isCurrent())
+              logger?.info("External engine spare refill denied", {
+                ...fields(key),
+                event: "external_engine.spare.refill_denied",
+              });
             await discardSpare(entry);
             return;
           }

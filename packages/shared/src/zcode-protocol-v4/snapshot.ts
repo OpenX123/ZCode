@@ -19,8 +19,10 @@ import { workspaceHookReviewRequestPayloadSchema } from "./workspace-hook-review
 import { workflowRunsStateSchema } from "./workflow-runs.js";
 import { sessionConfigStateSchema, sessionModelTransitionSchema } from "./session-config.js";
 export {
+  engineConfigOptionsSourceSchema,
   sessionConfigStateSchema,
   sessionModelTransitionSchema,
+  type EngineConfigOptionsSource,
   type SessionConfigState,
   type SessionModelTransition,
 } from "./session-config.js";
