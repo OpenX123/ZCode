@@ -398,7 +398,9 @@ describe("按引擎记忆模型与思考深度", () => {
 
     // 记住的深度不在当前目录：跳过该项，不改用 high。
     preferences.settings = {
-      externalEngineConnectionConfigPreferences: { codex: { alpha: { reasoning_effort: "xhigh" } } },
+      externalEngineConnectionConfigPreferences: {
+        codex: { alpha: { reasoning_effort: "xhigh" } },
+      },
     } as AppSettings;
     const unknownEffort = renderMemory(
       {
