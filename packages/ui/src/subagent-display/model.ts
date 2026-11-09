@@ -21,6 +21,8 @@ import type {
   SubagentFaceVariant,
   SubagentSessionHeaderModel,
   SubagentStatusCounts,
+  SubagentWorkLiveEntry,
+  SubagentWorkLiveIndex,
 } from "./contract.js";
 
 /** 父会话清单 → 序号表；重复 id 取首次出现，`size` 是去重后的成员数（临时序号的起点）。 */
@@ -224,6 +226,7 @@ export function buildSubagentSessionHeaderModel({
     | {
         subagents?: SubagentProjectionState | undefined;
         backgroundWorks?: readonly BackgroundWorkSummary[] | undefined;
+        rows?: RowsWindow | undefined;
       }
     | null
     | undefined;
@@ -246,11 +249,14 @@ export function buildSubagentSessionHeaderModel({
   const span = childTurnSpan(child?.rows);
   const startedAt = running?.startedAt ?? span.startedAt;
   const endedAt = isSubagentStatusActive(status) ? undefined : span.endedAt;
-  const control = buildSubagentControlWorkIndex(parent?.backgroundWorks).get(childSessionId);
-  const stopWorkId =
-    control && control.cancellable !== false && isSubagentStatusActive(status)
-      ? control.workId
-      : undefined;
+  const stopWorkId = resolveSubagentStopWorkId(
+    cancellableSubagentWorkId(
+      buildSubagentControlWorkIndex(parent?.backgroundWorks).get(childSessionId),
+    ),
+    status,
+  );
+  // 模型：运行中取父会话 running[]；结束后取父时间线中该子会话最后一个 subagent 行（W8）。
+  const modelSource = running ?? latestSubagentRowOf(parent?.rows, childSessionId);
   return {
     avatarIndex,
     variant: resolveSubagentFaceVariant(running?.subagentType ?? subagentType),
@@ -258,5 +264,230 @@ export function buildSubagentSessionHeaderModel({
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(endedAt !== undefined ? { endedAt } : {}),
     ...(stopWorkId ? { stopWorkId } : {}),
+    ...(modelSource?.model ? { model: modelSource.model } : {}),
+    ...(modelSource?.model && modelSource.effort ? { effort: modelSource.effort } : {}),
+  };
+}
+
+function latestSubagentRowOf(
+  rows: RowsWindow | null | undefined,
+  childSessionId: string,
+): SubagentRow | undefined {
+  const window = rows?.window ?? [];
+  for (let index = window.length - 1; index >= 0; index -= 1) {
+    const row = window[index]!;
+    if (row.kind === "subagent" && row.childSessionId === childSessionId) return row;
+  }
+  return undefined;
+}
+
+/** 可停 work 的 workId：精确匹配（null 表示重复身份）且 `cancellable !== false`。 */
+function cancellableSubagentWorkId(
+  control: BackgroundWorkSummary | null | undefined,
+): string | undefined {
+  return control && control.cancellable !== false ? control.workId : undefined;
+}
+
+/**
+ * 停止入口的唯一规则（详情头部与工作卡共用）：有可停 work 且成员仍在运行才给 workId，
+ * 命令沿用父会话 `cancelBackgroundWork(workId)`（docs/desktop/multi-agent-display-spec.md「停止」）。
+ */
+export function resolveSubagentStopWorkId(
+  cancellableWorkId: string | undefined,
+  status: SubagentDisplayStatus | undefined,
+): string | undefined {
+  return cancellableWorkId && isSubagentStatusActive(status) ? cancellableWorkId : undefined;
+}
+
+/**
+ * 父会话运行态 → 工作卡按子会话读取的索引：`running[]` 给 waiting / blocked，
+ * 精确匹配的 backgroundWork 给可停 workId。纯函数；引用稳定由 `useSubagentWorkLiveIndex` 负责。
+ */
+export function buildSubagentWorkLiveIndex(
+  subagents: SubagentProjectionState | null | undefined,
+  backgroundWorks: readonly BackgroundWorkSummary[] | null | undefined,
+): SubagentWorkLiveIndex {
+  const index = new Map<string, SubagentWorkLiveEntry>();
+  for (const item of subagents?.running ?? []) {
+    index.set(item.childSessionId, { liveStatus: item.status });
+  }
+  for (const [childSessionId, control] of buildSubagentControlWorkIndex(
+    backgroundWorks ?? undefined,
+  )) {
+    const cancellableWorkId = cancellableSubagentWorkId(control);
+    if (!cancellableWorkId) continue;
+    index.set(childSessionId, { ...index.get(childSessionId), cancellableWorkId });
+  }
+  return index;
+}
+
+/** 两份索引内容相同（用于保持 context 引用稳定，避免整条时间线重渲染）。 */
+export function sameSubagentWorkLiveIndex(
+  left: SubagentWorkLiveIndex,
+  right: SubagentWorkLiveIndex,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [childSessionId, entry] of left) {
+    const other = right.get(childSessionId);
+    if (
+      !other ||
+      other.liveStatus !== entry.liveStatus ||
+      other.cancellableWorkId !== entry.cancellableWorkId
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+type FormatMessage = (descriptor: { id: string }, values?: Record<string, string>) => string;
+
+/** 紧凑时长："58秒" / "1分 12秒" / "1小时 3分"（en："58s" / "1m 12s"）。 */
+export function formatSubagentDuration(durationMs: number, formatMessage: FormatMessage): string {
+  const total = Math.max(1, Math.round(durationMs / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}${formatMessage({ id: "chat.summaryPanel.duration.hours" })}`);
+  if (minutes > 0) {
+    parts.push(`${minutes}${formatMessage({ id: "chat.summaryPanel.duration.minutes" })}`);
+  }
+  if (hours === 0 && (seconds > 0 || parts.length === 0)) {
+    parts.push(`${seconds}${formatMessage({ id: "chat.summaryPanel.duration.seconds" })}`);
+  }
+  return parts.join(" ");
+}
+
+/** 外部引擎统一使用的通用类型占位值；它不是可读名称。 */
+const GENERIC_SUBAGENT_TYPE = "subagent";
+
+/** 工作卡名称：类型（通用占位除外）→ 可见标题 → 本地化"智能体 N"。 */
+export function subagentWorkCardName({
+  title,
+  subagentType,
+  fallbackName,
+}: {
+  title?: string | null;
+  subagentType?: string | null;
+  fallbackName: string;
+}): string {
+  const type = subagentType?.trim();
+  if (type && type.toLowerCase() !== GENERIC_SUBAGENT_TYPE) return type;
+  return title?.trim() || fallbackName;
+}
+
+export interface SubagentWorkCardMemberInput {
+  key: string;
+  toolCallId: string;
+  title: string;
+  subagentType: string;
+  childSessionId?: string;
+  status: SubagentDisplayStatus;
+  avatarIndex: number;
+  fallbackName: string;
+  model?: string;
+  effort?: string;
+  toolCallCount?: number;
+  startedAt?: number;
+  endedAt?: number;
+  summaryText?: string;
+}
+
+export interface SubagentWorkCardMember {
+  key: string;
+  toolCallId: string;
+  childSessionId?: string;
+  /** 打开 tab 时传的可见标题（可能为空）。 */
+  title: string;
+  subagentType: string;
+  name: string;
+  /** 名称已是标题时为空，避免重复。 */
+  taskSummary?: string;
+  /** 失败 / 已停止的终态摘要。 */
+  resultSummary?: string;
+  status: SubagentDisplayStatus;
+  avatarIndex: number;
+  model?: string;
+  effort?: string;
+  toolCallCount?: number;
+  startedAt?: number;
+  endedAt?: number;
+  stopWorkId?: string;
+}
+
+export interface SubagentWorkCardModel {
+  members: SubagentWorkCardMember[];
+  counts: SubagentStatusCounts;
+  endedCount: number;
+  active: boolean;
+  startedAt?: number;
+  endedAt?: number;
+  /** "停止全部"的目标：每个可停的运行中成员一次（D7）。 */
+  stopAllWorkIds: string[];
+}
+
+/**
+ * 工作卡的纯派生：成员状态以 subagent 行为准，父会话 running[] 的 waiting / blocked 覆盖运行态；
+ * 尚未登记子会话的运行中成员显示"等待启动"。停止只来自 live 索引里的可停 work。
+ */
+export function buildSubagentWorkCardModel(
+  inputs: readonly SubagentWorkCardMemberInput[],
+  liveIndex: SubagentWorkLiveIndex | undefined,
+): SubagentWorkCardModel {
+  const members = inputs.map((input): SubagentWorkCardMember => {
+    const live = input.childSessionId ? liveIndex?.get(input.childSessionId) : undefined;
+    const status: SubagentDisplayStatus = !input.childSessionId
+      ? isSubagentStatusActive(input.status)
+        ? "pending"
+        : input.status
+      : isSubagentStatusActive(input.status) && live?.liveStatus
+        ? live.liveStatus
+        : input.status;
+    const name = subagentWorkCardName({
+      title: input.title,
+      subagentType: input.subagentType,
+      fallbackName: input.fallbackName,
+    });
+    const title = input.title.trim();
+    const summary = input.summaryText?.trim();
+    const stopWorkId = resolveSubagentStopWorkId(live?.cancellableWorkId, status);
+    return {
+      key: input.key,
+      toolCallId: input.toolCallId,
+      ...(input.childSessionId ? { childSessionId: input.childSessionId } : {}),
+      title: input.title,
+      subagentType: input.subagentType,
+      name,
+      ...(title && title !== name ? { taskSummary: title } : {}),
+      ...((status === "failed" || status === "cancelled") && summary && summary !== title
+        ? { resultSummary: summary }
+        : {}),
+      status,
+      avatarIndex: input.avatarIndex,
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.model && input.effort ? { effort: input.effort } : {}),
+      ...(input.toolCallCount !== undefined ? { toolCallCount: input.toolCallCount } : {}),
+      ...(input.startedAt !== undefined ? { startedAt: input.startedAt } : {}),
+      ...(input.endedAt !== undefined && !isSubagentStatusActive(status)
+        ? { endedAt: input.endedAt }
+        : {}),
+      ...(stopWorkId ? { stopWorkId } : {}),
+    };
+  });
+  const counts = summarizeSubagentStatuses(members.map((member) => member.status));
+  const starts = members.flatMap((member) =>
+    member.startedAt !== undefined ? [member.startedAt] : [],
+  );
+  const ends = members.flatMap((member) => (member.endedAt !== undefined ? [member.endedAt] : []));
+  const active = counts.running > 0;
+  return {
+    members,
+    counts,
+    endedCount: members.length - counts.running,
+    active,
+    ...(starts.length > 0 ? { startedAt: Math.min(...starts) } : {}),
+    ...(!active && ends.length > 0 ? { endedAt: Math.max(...ends) } : {}),
+    stopAllWorkIds: members.flatMap((member) => (member.stopWorkId ? [member.stopWorkId] : [])),
   };
 }

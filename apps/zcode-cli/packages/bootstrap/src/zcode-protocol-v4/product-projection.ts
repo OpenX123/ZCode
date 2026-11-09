@@ -3349,7 +3349,10 @@ export class ProductProjection {
   }
 
   private onToolCallScheduled(event: SessionEvent): ConversationDelta[] {
-    if (this.isMirroredSubagentToolEvent(event) || !this.isRunning()) return [];
+    // 镜像子工具事件不进父时间线，但在丢弃前为工作卡计步（W8）；后台子智能体在父轮结束后
+    // 仍会镜像，所以计数放在 isRunning 闸门之前。
+    if (this.isMirroredSubagentToolEvent(event)) return this.countMirroredSubagentTool(event);
+    if (!this.isRunning()) return [];
     const payload = event.payload as ToolCallScheduledPayload;
     const toolCallId = String(payload.toolCallId);
     this.fileToolInputPreviewByCallId.delete(toolCallId);
@@ -4598,6 +4601,10 @@ export class ProductProjection {
             ? "blocked"
             : "running",
         ...(row.startedAt !== undefined ? { startedAt: row.startedAt } : {}),
+        // W8：行是唯一来源，running[] 只复制同值。
+        ...(row.model ? { model: row.model } : {}),
+        ...(row.effort ? { effort: row.effort } : {}),
+        ...(row.toolCallCount !== undefined ? { toolCallCount: row.toolCallCount } : {}),
       });
     }
     running.sort(
@@ -4715,9 +4722,12 @@ export class ProductProjection {
         ...(childSessionId ? { childSessionId } : {}),
         ...(payload.background === true ? { backgrounded: true as const } : {}),
         ...(payload.background === true ? { workId: agentId } : {}),
+        ...this.subagentModelFields(payload),
         startedAt: this.ms(event),
       };
       delete row.endedAt;
+      // resume 开启新一次运行：步骤数只描述当前这次运行，旧值不再沿用。
+      delete row.toolCallCount;
       return [
         { op: "row.upserted", row },
         ...(resumedBackgroundWork ? [resumedBackgroundWork] : []),
@@ -4741,6 +4751,7 @@ export class ProductProjection {
         : {}),
       ...(payload.background === true ? { backgrounded: true as const } : {}),
       ...(payload.background === true ? { workId: agentId } : {}),
+      ...this.subagentModelFields(payload),
       startedAt: this.ms(event),
     };
     this.subagentRowIdByAgentId.set(agentId, row.rowId);
@@ -4809,6 +4820,14 @@ export class ProductProjection {
     const existing = this.findSubagentLifecycleRow(agentId, payload, event);
     const parentToolCallId = this.stringPayload(payload, "parentToolCallId");
     const status = this.mapSubagentStatus(this.stringPayload(payload, "status"));
+    const totalToolUseCount = payload.totalToolUseCount;
+    // 终态以运行时汇总的工具调用数为准（镜像事件不落库，冷启动后实时计数可能不全）。
+    const finalToolCallCount =
+      typeof totalToolUseCount === "number" &&
+      Number.isInteger(totalToolUseCount) &&
+      totalToolUseCount >= 0
+        ? { toolCallCount: totalToolUseCount }
+        : {};
     const summaryText =
       this.stringPayload(payload, "summaryText") ??
       this.stringPayload(payload, "result") ??
@@ -4821,6 +4840,7 @@ export class ProductProjection {
           ...existing,
           status,
           summaryText,
+          ...finalToolCallCount,
           endedAt: this.ms(event),
           // resumed child 的终态同样属于原 Agent row，只在旧 row 缺失锚点时补齐。
           ...(!existing.parentToolCallId && parentToolCallId ? { parentToolCallId } : {}),
@@ -4844,6 +4864,7 @@ export class ProductProjection {
             : {}),
           ...(payload.background === true ? { backgrounded: true as const } : {}),
           ...(payload.background === true ? { workId: agentId } : {}),
+          ...finalToolCallCount,
           endedAt: this.ms(event),
         };
     this.subagentRowIdByAgentId.set(agentId, row.rowId);
@@ -6024,6 +6045,37 @@ export class ProductProjection {
         row.turnId === turnId &&
         row.parentToolCallId === parentToolCallId,
     );
+  }
+
+  /**
+   * W8：SubagentSpawned 的 model 为 `providerId/modelId`，工作卡只展示模型 ID；effort 原值透传。
+   * 引擎未报告（继承父模型、外部引擎未知）时不写字段，UI 即不显示。
+   */
+  private subagentModelFields(
+    payload: Record<string, unknown>,
+  ): Pick<SubagentRow, "model" | "effort"> {
+    const rawModel = this.stringPayload(payload, "model")?.trim();
+    const separator = rawModel?.indexOf("/") ?? -1;
+    const model = rawModel && separator >= 0 ? rawModel.slice(separator + 1).trim() : rawModel;
+    const effort = this.stringPayload(payload, "effort")?.trim();
+    return {
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+    };
+  }
+
+  /** 镜像子工具调用为对应 subagent 行计步；未知子智能体直接丢弃。 */
+  private countMirroredSubagentTool(event: SessionEvent): ConversationDelta[] {
+    const payload = event.payload as unknown as Record<string, unknown>;
+    const agentId = this.stringPayload(payload, "agentId");
+    const row = agentId ? this.findSubagentRow(agentId) : undefined;
+    if (!row || row.status !== "running") return [];
+    return [
+      {
+        op: "row.upserted",
+        row: { ...row, toolCallCount: (row.toolCallCount ?? 0) + 1 },
+      },
+    ];
   }
 
   private subagentAgentId(payload: Record<string, unknown>, event: SessionEvent): string {

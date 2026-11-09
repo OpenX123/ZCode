@@ -144,7 +144,7 @@ import {
 } from "@/v4/conversationLayout.js";
 import { buildConversationStatusPanelModel } from "@/v4/conversationStatusPanelModel.js";
 import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversationStatusPanelModel.js";
-import { buildSubagentAvatarIndex } from "@/subagent-display/index.js";
+import { buildSubagentAvatarIndex, useSubagentWorkLiveIndex } from "@/subagent-display/index.js";
 import {
   buildWorkflowRunByRunId,
   buildWorkflowRunByToolCallId,
@@ -2051,6 +2051,11 @@ export function SessionPane({
     () => buildSubagentAvatarIndex(subagentManifestKey ? subagentManifestKey.split("\n") : []),
     [subagentManifestKey],
   );
+  // 工作卡的 waiting / blocked 与可停 workId；内容不变时引用稳定（计步不会重渲染整条时间线）。
+  const subagentWorkLiveIndex = useSubagentWorkLiveIndex(
+    snapshot?.subagents,
+    snapshot?.backgroundWorks,
+  );
   const rowContext = useMemo<ConversationRowRenderContext>(
     () => ({
       workspacePath,
@@ -2086,6 +2091,7 @@ export function SessionPane({
       onOpenSubagentSession:
         runtimeReady && onOpenSubagentSession ? handleOpenSubagentSession : undefined,
       subagentAvatarIndex,
+      subagentWorkLiveIndex,
       onOpenPlanDetail: runtimeReady && onOpenPlanDetail ? handleOpenPlanDetail : undefined,
       onOpenWorkflowRun: runtimeReady && onOpenWorkflowRun ? handleOpenWorkflowRun : undefined,
       onOpenWorkflowActor:
@@ -2169,6 +2175,7 @@ export function SessionPane({
       onOpenSubagentSession,
       handleOpenSubagentSession,
       subagentAvatarIndex,
+      subagentWorkLiveIndex,
       onOpenPlanDetail,
       handleOpenPlanDetail,
       onOpenWorkflowRun,

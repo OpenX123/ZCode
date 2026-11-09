@@ -3,6 +3,7 @@ export type {
   ConversationAssistantWorkDisplayItem,
   SubagentAvatarIndex,
   SubagentDisplayStatus,
+  SubagentWorkLiveIndex,
 } from "./contract.js";
 export {
   buildSubagentAvatarIndex,
@@ -13,3 +14,5 @@ export { groupConsecutiveAgentSpawns } from "./spawnGroups.js";
 export { SubagentFace, SubagentFaceStack } from "./SubagentFace.js";
 export { ConversationAgentCard, ConversationAgentSpawnRow } from "./ConversationAgentSpawnRow.js";
 export { SubagentSessionHeader } from "./SubagentSessionHeader.js";
+export { SubagentWorkCard } from "./SubagentWorkCard.js";
+export { useSubagentWorkLiveIndex } from "./useSubagentWorkLiveIndex.js";

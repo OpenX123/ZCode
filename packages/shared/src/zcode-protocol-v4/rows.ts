@@ -307,6 +307,11 @@ export const subagentRowSchema = z.object({
   workId: z.string().optional(),
   startedAt: timestampSchema.optional(),
   endedAt: timestampSchema.optional(),
+  // W8 工作卡展示字段（只增不改）：model 为展示用模型 ID（不含 provider 前缀），effort 为思考档位
+  // 原值，二者只在引擎确知时出现；toolCallCount 为本次运行已发起的子工具调用数。
+  model: z.string().trim().min(1).optional(),
+  effort: z.string().trim().min(1).optional(),
+  toolCallCount: z.number().int().nonnegative().optional(),
 });
 export type SubagentRow = z.infer<typeof subagentRowSchema>;
 

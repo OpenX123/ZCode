@@ -29,6 +29,9 @@ const CHILD_SESSION_HASH_LENGTH = 32;
 const CHILD_INPUT_SOURCE = "subagent";
 const CHILD_INPUT_PRESENTATION = "coordinator_input";
 const CHILD_ERROR_NAME = "ExternalSubagentError";
+/** 与内置子智能体镜像（subagent/tool-event-mirror.ts）同一来源标记与工具调用 ID 前缀。 */
+const MIRROR_SOURCE = "subagent";
+const MIRROR_TOOL_CALL_ID_PREFIX = "tool_subagent";
 const DIAGNOSTIC_EVENT_DROPPED = "session.external_engine.subagent.dropped";
 const ENDED_ERROR_TEXT: Record<Exclude<EndState, "completed">, string> = {
   failed: "Subagent failed",
@@ -178,6 +181,33 @@ export function bindExternalSubagentTurn(
     return run;
   };
 
+  /**
+   * W8 工作卡计步：子会话新写一条工具行时，向宿主会话发一次 source=subagent 的镜像 scheduled。
+   * 只走实时 sinks、不落库（与内置子智能体镜像一致）；父会话投影计数后丢弃，不进父时间线。
+   */
+  const mirrorChildTool = async (
+    entry: ChildEntry,
+    run: ChildRun,
+    update: Record<string, unknown>,
+  ): Promise<void> => {
+    const childToolCallId = String(update.toolCallId);
+    const meta = update._meta as { claudeCode?: { toolName?: unknown } } | undefined;
+    const toolName = meta?.claudeCode?.toolName ?? update.name ?? update.title ?? update.kind;
+    await run.host.notifyLive(SessionEventType.ToolCallScheduled, {
+      toolCallId: `${MIRROR_TOOL_CALL_ID_PREFIX}_${entry.nativeSessionId}_${childToolCallId}`,
+      ...(typeof toolName === "string" ? { toolName } : {}),
+      input: {},
+      schedule: { parallelGroups: [], executionOrder: [] },
+      agentId: entry.nativeSessionId,
+      agentType: DEFAULT_SUBAGENT_TYPE,
+      childSessionId: entry.childSessionId,
+      childToolCallId,
+      description: entry.name,
+      parentToolCallId: run.hostCallId,
+      source: MIRROR_SOURCE,
+    });
+  };
+
   const ensureChildTurn = (entry: ChildEntry): Promise<ChildRun> =>
     beginChildTurn(entry, entry.prompt ?? entry.task ?? entry.name);
 
@@ -296,6 +326,8 @@ export function bindExternalSubagentTurn(
       parentToolCallId: run.hostCallId,
       status: end,
       ...(summary || errorText ? { summaryText: summary ?? errorText } : {}),
+      // W8 工作卡步骤数的终值（实时镜像不落库，冷恢复只能依赖这里）。
+      totalToolUseCount: writer.toolCallCount,
     });
     if (entry.cancellable)
       await emitOn(run.host, SessionEventType.BackgroundTaskCompleted, {
@@ -385,7 +417,11 @@ export function bindExternalSubagentTurn(
       const entry = state.children.get(nativeSessionId);
       if (!entry?.run) return drop("child_not_running", nativeSessionId);
       const run = await ensureChildTurn(entry);
-      if (await run.writer!.apply(update)) return;
+      const toolCallsBefore = run.writer!.toolCallCount;
+      if (await run.writer!.apply(update)) {
+        if (run.writer!.toolCallCount > toolCallsBefore) await mirrorChildTool(entry, run, update);
+        return;
+      }
       if (
         update.sessionUpdate === "usage_update" &&
         typeof update.used === "number" &&

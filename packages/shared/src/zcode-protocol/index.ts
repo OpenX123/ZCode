@@ -1937,6 +1937,10 @@ const zcodeSessionSubagentBaseSchema = z
 
 export const zcodeSessionRunningSubagentSchema = zcodeSessionSubagentBaseSchema.extend({
   status: z.enum(["running", "waiting", "blocked"]),
+  // W8：与 V4 snapshot `subagents.running[]` 同名可选字段对齐（只增不改）。
+  model: nonEmptyString.optional(),
+  effort: nonEmptyString.optional(),
+  toolCallCount: z.number().int().nonnegative().optional(),
 });
 export type ZCodeSessionRunningSubagent = z.infer<typeof zcodeSessionRunningSubagentSchema>;
 

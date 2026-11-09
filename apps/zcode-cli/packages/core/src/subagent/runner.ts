@@ -253,6 +253,8 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
                 model: profile.modelSelection
                   ? `${profile.modelSelection.providerId}/${profile.modelSelection.modelId}`
                   : undefined,
+                // W8 工作卡：显式 profile 模型的思考档位；继承父模型时缺席。
+                effort: profile.modelSelection?.options?.reasoningLevel,
               },
             );
             readyGate.resolve();
@@ -502,6 +504,8 @@ export function createExploreSubagentPort(options: ExploreSubagentPortOptions): 
                 model: profile.modelSelection
                   ? `${profile.modelSelection.providerId}/${profile.modelSelection.modelId}`
                   : undefined,
+                // W8 工作卡：显式 profile 模型的思考档位；继承父模型时缺席。
+                effort: profile.modelSelection?.options?.reasoningLevel,
               },
             );
             readyGate.resolve();

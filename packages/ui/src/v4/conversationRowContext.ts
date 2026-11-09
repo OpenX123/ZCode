@@ -11,7 +11,7 @@ import type { WorkflowRunSettingsChange } from "@/components/workflow-timeline/w
 import type { WorkflowDraftPosition, WorkflowRunCardSummary } from "@/ToolCallBlocks/shared.js";
 import type { WorkflowFillGraph } from "@/v4/workflowRunCardJoin.js";
 import type { Theme } from "@/useTheme.js";
-import type { SubagentAvatarIndex } from "@/subagent-display/contract.js";
+import type { SubagentAvatarIndex, SubagentWorkLiveIndex } from "@/subagent-display/contract.js";
 import type { ModelSelectionView } from "@zcode/services";
 import type { ZCodeWorkflowsForRunCandidate } from "@zcode/shared";
 import type { ConversationAttachmentReadParams, ConversationTransport } from "@/v4/transport.js";
@@ -52,8 +52,6 @@ export interface ConversationRowRenderContext {
   sessionId?: string | null;
   /** 当前下钻树的顶层 session；详情 tab 跨嵌套层级按该 id 分组。 */
   rootSessionId?: string | null;
-  /** @deprecated 旧内联下钻标记；新的子会话统一打开侧栏详情。 */
-  inSubagentDrilldown?: boolean;
   /** 手机 /remote 紧凑模式：隐藏外部 App 打开下拉，只保留应用内预览。 */
   compactForRemoteControl?: boolean;
   /** 当前 session 正在 compact 或 goal verify；专用状态 UI 独占进度反馈。 */
@@ -97,6 +95,11 @@ export interface ConversationRowRenderContext {
    * Agent 卡与派发行用它取实例颜色（docs/desktop/multi-agent-display-spec.md）。
    */
   subagentAvatarIndex?: SubagentAvatarIndex;
+  /**
+   * 父会话运行态派生的工作卡索引（waiting / blocked 与可停 workId），内容不变时引用稳定；
+   * 缺席时工作卡只按 subagent 行显示，且没有停止（docs/desktop/multi-agent-display-spec.md）。
+   */
+  subagentWorkLiveIndex?: SubagentWorkLiveIndex;
   onOpenPlanDetail?: (request: OpenPlanDetailSideTabRequest) => void;
   /** 插件 UI：内联卡片请求在侧栏打开；RowView 补 parentSessionId 与 workspace 字段。 */
   onOpenWorkflowRun?: (request: OpenWorkflowRunSideTabRequest) => void;

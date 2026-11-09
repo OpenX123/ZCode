@@ -1981,6 +1981,19 @@ manual/capture review 后再从 pending 转正。普通 Web 使用同一 rendere
 | SAT25b     | partial  | SAT-UT / SAT-E2E-pending                   | focused unit 已覆盖 `attempt=3,maxAttempts=11` 显示 `重新连接中... 3/10`、独占 retry slot 及进展后清除；Main 的三次 fault-stream retry 作为最小 UI E2E 代表，delivery 与协议不新增组合，待 driver 可用后完成 pending E2E                                                                                                                                                                    |
 | SAT26      | partial  | SAT-RT / SAT-GW / SAT-UT / SAT-E2E-pending | core/projection/hydration/renderer 单测覆盖 fresh-only、实际模型、source-less marker 与 cold rebuild；既有 built-in override pending E2E 已扩展 provider-visible model、live copy 和完整冷启恢复。Main 首轮、旧 child 无回填及 parent 不镜像为同组负断言；待人工 review/promotion                                                                                                           |
 
+## Subagent 工作卡覆盖口径（SAT31–SAT34，1.3 W8）
+
+对应 [case catalog](../conversation-session-case-catalog.md) 的 SAT31–SAT34 与[多智能体展示规范](../desktop/multi-agent-display-spec.md)「对话行内 Subagent 工作卡」。
+候选 spec：`packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-subagent-work-card.test.ts`
+（内置引擎后台子智能体：工作卡 → 成员行打开右侧只读子会话并实时增长 → 停止；只做 typecheck，未运行，待人工 review 后整理 case-local fixture）。
+
+| Catalog ID | 覆盖状态 | 自动化                          | 备注                                                                                                              |
+| ---------- | -------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| SAT31      | partial  | SAT-UT / SAT-PROJ / E2E-pending | `subagentWorkCard` 覆盖分组、计数、计时、模型/步骤；bootstrap 投影单测覆盖 model/effort/toolCallCount             |
+| SAT32      | partial  | SAT-UT / E2E-pending            | `subagentWorkCard` 覆盖行点击；`subagentSidePane` / `subagentSessionHeader` 覆盖只读提示与模型标签；实时增长待 review |
+| SAT33      | partial  | SAT-UT / E2E-pending            | 单测覆盖"停止全部"只作用于可停项、不可停成员无"停止"、无可停项时隐藏；E2E 候选点击停止                            |
+| SAT34      | covered  | SAT-UT / SAT-PROJ               | 单测覆盖全部结束折叠与展开；投影单测覆盖 `totalToolUseCount` 校正                                                 |
+
 ## 多智能体展示覆盖口径（MA，1.1.0）
 
 对应 [case catalog](../conversation-session-case-catalog.md) 的 `MA` 分组与[多智能体展示规范](../desktop/multi-agent-display-spec.md)。
