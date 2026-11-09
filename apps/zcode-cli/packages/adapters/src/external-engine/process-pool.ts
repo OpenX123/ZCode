@@ -289,14 +289,36 @@ export function createExternalEngineProcessPool(
       try {
         void releaseBudget(entry);
         await entry.task;
-        if (
-          closed ||
-          signal?.aborted ||
-          entry.discarded ||
-          !entry.connection?.healthy ||
-          (entry.validate && !(await entry.validate()))
-        ) {
-          await retire(entry);
+        const rejectReason = closed
+          ? "closed"
+          : signal?.aborted
+            ? "aborted"
+            : entry.discarded
+              ? "discarded"
+              : !entry.connection?.healthy
+                ? "unhealthy"
+                : entry.validate && !(await entry.validate())
+                  ? "identity"
+                  : undefined;
+        const connection = entry.connection;
+        if (rejectReason || !connection) {
+          const reason = rejectReason ?? "unhealthy";
+          // 诊断补充：预留后被拒原先静默 retire，日志只剩 reserved 与随后冷启的 miss，
+          // 无法区分入口身份失效、连接不健康还是取消；这里记录拒绝原因。
+          logger?.info("External engine spare rejected after reserve", {
+            ...fields(key),
+            event: "external_engine.spare.rejected",
+            reason,
+          });
+          if (reason === "identity" || reason === "unhealthy") {
+            // Bug 根因（2026-11-09 桌面 E2E W4 实测）：失效备用在领用路径上 await retire，前台要等旧
+            // 进程优雅关闭（约 5s）才开始冷启，切换控件 5.5s 才可操作。与预留前的 cwd/generation
+            // 失效同样改为后台收口：许可与 owned 仍由 retire 在确认退出后释放，pool.close 照常等待。
+            void retire(entry).catch(reportCloseFailure);
+          } else {
+            // 关闭池/取消/已丢弃：调用方依赖“返回前已关闭”的既有语义，保持同步收口。
+            await retire(entry);
+          }
           return undefined;
         }
         if (closed || signal?.aborted || entry.discarded) {
@@ -310,7 +332,7 @@ export function createExternalEngineProcessPool(
           ageMs: now() - (entry.readyAt ?? entry.startedAt),
         });
         return {
-          connection: entry.connection,
+          connection,
           refill: () => pool.refillSpare(entry.key, entry.launch, entry.validate),
         };
       } finally {

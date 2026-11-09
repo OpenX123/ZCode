@@ -94,6 +94,37 @@ describe("warming 独占与所有权", () => {
       await pool.close();
     }
   });
+  test("预留后身份校验失败立即按 miss 返回，旧备用在后台关闭，不阻塞前台冷启", async () => {
+    // 回归（2026-11-09 桌面 E2E W4）：入口身份失效的备用原先在领用路径上 await retire，
+    // 前台要等旧进程优雅关闭（实测约 5s）才开始冷启，切换控件 5.5s 才可操作。
+    const closeGate = Promise.withResolvers<void>();
+    let closeStarted = false;
+    const connection = {
+      healthy: true,
+      async prebuild() {},
+      async close() {
+        closeStarted = true;
+        await closeGate.promise;
+      },
+    } as unknown as AcpConnection;
+    const log = recordingLogger();
+    const pool = createExternalEngineProcessPool({ logger: log.logger });
+    pool.refillSpare(
+      key,
+      async () => connection,
+      async () => false,
+    );
+    await vi.waitFor(() => expect(log.named("external_engine.spare.ready")).toHaveLength(1));
+    const claimed = await pool.claimSpare(key);
+    expect(claimed).toBeUndefined();
+    expect(log.named("external_engine.spare.rejected")[0]?.context).toMatchObject({
+      reason: "identity",
+    });
+    await vi.waitFor(() => expect(closeStarted).toBe(true));
+    closeGate.resolve();
+    await pool.close();
+  });
+
   test("许可尚未答复时前台 miss，不等待 Host 预算", async () => {
     const grant = Promise.withResolvers<boolean>();
     const pool = createExternalEngineProcessPool({
@@ -517,7 +548,11 @@ describe("预建会话（spare）", () => {
       }),
     );
     expect(native).not.toBe(`ext-${sparePid}-1`);
-    expect(alive(sparePid)).toBe(false);
+    // 失效备用改为后台收口（不阻塞前台冷启），但仍必须确认退出。
+    await vi.waitFor(() => expect(alive(sparePid)).toBe(false), { timeout: 15_000 });
+    expect(log.named("external_engine.spare.rejected")[0]?.context).toMatchObject({
+      reason: "identity",
+    });
   });
   test("ready hit 十次均不遍历 PATH，补位复用一次解析结果且原生 ID 独立", async () => {
     const resolver = vi.spyOn(sharedNode, "resolveExternalEngineLaunch");
