@@ -477,12 +477,27 @@ function ConnectionTestResult({ test }: { test: TestState }) {
   const { result } = test;
   if (result.status === "success")
     return (
-      <p role="status" className="w-full text-ui-sm text-foreground-subtle">
-        {intl.formatMessage(
-          { id: "engine.profile.testSuccess" },
-          { seconds: seconds(result.latencyMs) },
-        )}
-      </p>
+      <div role="status" className="w-full min-w-0 text-ui-sm">
+        <p className="text-foreground-subtle">
+          {intl.formatMessage(
+            { id: "engine.profile.testSuccess" },
+            { seconds: seconds(result.latencyMs) },
+          )}
+        </p>
+        {/* 非致命提示（Q8）：测试仍算通过，警告用警告色逐条列出，不混入失败样式。 */}
+        {result.warnings?.length ? (
+          <div data-testid="engine-connection-test-warnings" className="text-warning">
+            <p>{intl.formatMessage({ id: "engine.profile.testWarnings" })}</p>
+            <ul className="list-disc pl-4">
+              {result.warnings.map((warning) => (
+                <li key={warning.message} className="select-text break-words">
+                  {warning.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
     );
   if (result.status === "cancelled")
     return (

@@ -3,9 +3,13 @@ import { z } from "zod";
 import { appSettingsPatchSchema, appSettingsSchema } from "#src/validationAppSettings.js";
 
 describe("app settings", () => {
-  it("连接偏好往返、拒绝权限和速度，读取时坏连接不丢弃其他连接", () => {
+  it("连接偏好往返（含权限模式）、拒绝计划模式和速度，读取时坏连接不丢弃其他连接", () => {
     const values = {
-      codex: { alpha: { model: "gpt-a", reasoning_effort: "high" }, beta: { model: "gpt-b" } },
+      codex: {
+        alpha: { model: "gpt-a", reasoning_effort: "high", mode: "auto" },
+        beta: { model: "gpt-b" },
+      },
+      "claude-code": { official: { mode: "acceptEdits" } },
     };
     const patch = appSettingsPatchSchema.parse({
       externalEngineConnectionConfigPreferences: values,
@@ -17,10 +21,17 @@ describe("app settings", () => {
         externalEngineConnectionConfigPreferences: { codex: { alpha: { fast: "on" } } },
       }).success,
     ).toBe(false);
+    // 计划类取值不沿用到新草稿（与 YCode「Plan 不沿用」一致），忽略大小写。
+    for (const mode of ["plan", "Plan"])
+      expect(
+        appSettingsPatchSchema.safeParse({
+          externalEngineConnectionConfigPreferences: { "claude-code": { official: { mode } } },
+        }).success,
+      ).toBe(false);
     expect(
       appSettingsSchema.parse({
         externalEngineConnectionConfigPreferences: {
-          codex: { alpha: { mode: "auto" }, beta: { model: "gpt-b" } },
+          codex: { alpha: { mode: "plan" }, beta: { model: "gpt-b" } },
         },
       }),
     ).toMatchObject({
@@ -49,7 +60,7 @@ describe("app settings", () => {
     });
   });
 
-  it("按引擎记忆的模型与思考深度可往返，不接受权限模式且坏记忆只丢弃该引擎", () => {
+  it("按引擎记忆的模型与思考深度可往返，不接受计划模式与其它配置且坏记忆只丢弃该引擎", () => {
     expect(appSettingsSchema.parse({}).externalEngineConfigPreferences).toBeUndefined();
     const patch = appSettingsPatchSchema.parse({
       externalEngineConfigPreferences: {
@@ -65,8 +76,13 @@ describe("app settings", () => {
         }).success,
       ).toBe(true);
     }
-    // 权限模式沿用引擎默认，不能写入记忆。
-    for (const values of [{ mode: "auto" }, { fast: "on" }, { model: "" }]) {
+    // 计划模式、mode 之外的 other 类 configId（含 fast）不能写入记忆。
+    for (const values of [
+      { mode: "plan" },
+      { "permission-mode": "auto" },
+      { fast: "on" },
+      { model: "" },
+    ]) {
       expect(
         appSettingsPatchSchema.safeParse({
           externalEngineConfigPreferences: { codex: values },
@@ -77,7 +93,7 @@ describe("app settings", () => {
       appSettingsSchema.parse({
         recentProjects: ["/kept"],
         externalEngineConfigPreferences: {
-          codex: { mode: "full-access" },
+          codex: { mode: "plan" },
           "claude-code": { model: "claude-opus-5-5" },
           zcode: { model: "glm" },
         },
@@ -87,9 +103,13 @@ describe("app settings", () => {
       externalEngineConfigPreferences: { "claude-code": { model: "claude-opus-5-5" } },
     });
     expect(
-      appSettingsSchema.parse({ externalEngineConfigPreferences: { codex: { mode: "auto" } } })
+      appSettingsSchema.parse({ externalEngineConfigPreferences: { codex: { fast: "on" } } })
         .externalEngineConfigPreferences?.codex,
     ).toBeUndefined();
+    expect(
+      appSettingsSchema.parse({ externalEngineConfigPreferences: { codex: { mode: "auto" } } })
+        .externalEngineConfigPreferences?.codex,
+    ).toEqual({ mode: "auto" });
   });
 
   it("自动归档默认关闭并保留 30 天，已有天数不覆盖", () => {

@@ -5,6 +5,7 @@ import {
   SessionEventType,
   ExternalEngineConnectionError,
   type ExternalEngineFailureNotice,
+  type ExternalEngineNotice,
   type ExternalEngineSessionInput,
   type SessionEvent,
   type TraceContext,
@@ -391,6 +392,7 @@ export function externalEngineSessionInput(
     },
     onUpdate: (update) => publishExternalEngineSessionUpdate(runtime, update, traceContext),
     onFailure: (notice) => publishExternalEngineFailureNotice(runtime, notice, traceContext),
+    onNotice: async (notice) => logExternalEngineNotice(runtime, notice),
     // 初始化尚无 turn，不能授予任何工具执行权限。
     requestPermission: async () => ({ outcome: "cancelled" }),
   };
@@ -432,6 +434,23 @@ export async function publishExternalEngineConfigError(
     sessionId: runtime.sessionId,
     ...externalEngineFailureLogFields(failure),
   });
+}
+
+/**
+ * ACP notice 是非致命提示（如 Codex 的 Model metadata not found）：只记日志，不设置 apiRetry、
+ * 不写会话事件、不在对话中显示（docs/desktop/native-plan-errors-spec.md「能力声明」）。
+ * warning/error 记 warn，info 记 info；摘要已在 adapter 脱敏，日志再去掉 URL，不落内部地址。
+ */
+function logExternalEngineNotice(runtime: AgentRuntimeInternal, notice: ExternalEngineNotice): void {
+  const fields = {
+    event: "session.external_engine.notice",
+    module: "core.external_engine",
+    sessionId: runtime.sessionId,
+    severity: notice.severity,
+    message: notice.message.replace(/https?:\/\/\S+/gi, "[url]"),
+  };
+  if (notice.severity === "info") runtime.logger?.info("External engine notice", fields);
+  else runtime.logger?.warn("External engine notice", fields);
 }
 
 /** 日志只记录分类与标识；上游摘要与 URL 只进入界面诊断，不落盘。 */

@@ -1,5 +1,6 @@
 import type { ComposerInitialConfig } from "@/store/zcodeSessionStoreTypes.js";
 import type { ModelSelectionView } from "@zcode/services";
+import type { SubmissionMode } from "@zcode/shared/zcode-protocol-v4";
 import { readComposerRecent, resolveDraftInitialModelSelection } from "@/lib/composerRecent.js";
 import {
   readV4ComposerDraft,
@@ -9,6 +10,12 @@ import {
   resolveComposerScope,
   readComposerWorkspaceScope,
 } from "@/v4/composer/composerDraftStore.js";
+
+/**
+ * 新用户 / 所属范围无 Recent 时的默认权限：自主模式（用户决策 2026-11-09「自主 + 高」）。
+ * 只用于"新默认"；历史快照缺 mode 的解析默认与非法旧值回落仍为 build（安全回落）。
+ */
+export const DEFAULT_NEW_SESSION_PERMISSION_MODE = "guarded" satisfies SubmissionMode;
 
 /** 普通新任务与首次分享导入共用初始化；保留 Recent 原意图，由公共 View 解析有效选择。 */
 export function initializeNewTaskDraft(
@@ -21,7 +28,8 @@ export function initializeNewTaskDraft(
   const recent = readComposerRecent(workspacePath, workspaceIdentity, undefined, scope);
   return {
     ...draft,
-    mode: recent?.mode === "plan" ? "build" : (recent?.mode ?? "build"),
+    // 无 Recent（新用户/新范围）默认自主模式；Recent 为 plan 时仍回落 build（Plan 不沿用）。
+    mode: recent?.mode === "plan" ? "build" : (recent?.mode ?? DEFAULT_NEW_SESSION_PERMISSION_MODE),
     planEnabled: false,
     modelSelection:
       recent?.modelSelection ??

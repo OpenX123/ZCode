@@ -609,6 +609,10 @@ export function createExternalEngineService(
                 httpStatus: result.failure.httpStatus,
               }
             : {}),
+          // 只记警告条数，警告正文不进日志。
+          ...(result.status === "success" && result.warnings
+            ? { warningCount: result.warnings.length }
+            : {}),
         });
         return result;
       } finally {

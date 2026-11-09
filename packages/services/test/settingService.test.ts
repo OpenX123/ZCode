@@ -1273,8 +1273,12 @@ describe("settingService", () => {
         "claude-code": { model: "claude-opus-5-5" },
       },
     });
+    // 2026-11-09 起权限模式可记忆，计划类模式与其它配置仍拒绝。
     await expect(
-      service.update({ externalEngineConfigPreferences: { codex: { mode: "full-access" } } }),
+      service.update({ externalEngineConfigPreferences: { codex: { mode: "plan" } } }),
+    ).rejects.toThrow();
+    await expect(
+      service.update({ externalEngineConfigPreferences: { codex: { fast: "on" } } }),
     ).rejects.toThrow();
   });
 

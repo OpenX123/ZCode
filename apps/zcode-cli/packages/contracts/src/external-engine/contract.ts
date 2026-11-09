@@ -63,6 +63,14 @@ export interface ExternalEngineFailureNotice {
   failure: EngineConnectionFailure;
   revision?: number;
 }
+/**
+ * ACP `session/update {sessionUpdate: "notice"}` 的非致命提示（不是失败）：adapter 脱敏后交付，
+ * message 与失败摘要同口径（首行、≤300 字），原始 title/description 不越过 adapter。
+ */
+export interface ExternalEngineNotice {
+  severity: "info" | "warning" | "error";
+  message: string;
+}
 export interface ExternalEngineSessionInput {
   sessionId: string;
   engine: ExternalSessionEngine;
@@ -80,6 +88,8 @@ export interface ExternalEngineSessionInput {
   onUpdate: (update: Record<string, unknown>) => Promise<void>;
   /** 结构化失败（typed sessionFailure 或 Codex 非 typed 错误）；缺省时 adapter 丢弃这类元数据。 */
   onFailure?: (notice: ExternalEngineFailureNotice) => Promise<void>;
+  /** 非致命提示（ACP notice）；不设置重试状态。缺省时 adapter 丢弃。 */
+  onNotice?: (notice: ExternalEngineNotice) => Promise<void>;
   requestPermission: (
     request: ExternalEnginePermissionRequest,
   ) => Promise<ExternalEnginePermissionOutcome>;

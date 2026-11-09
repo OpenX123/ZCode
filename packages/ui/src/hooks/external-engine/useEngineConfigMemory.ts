@@ -1,11 +1,13 @@
-// 按外部引擎与连接记忆最近确认的模型与思考深度（docs/desktop/external-agent-engines-spec.md
+// 按外部引擎与连接记忆最近确认的模型、思考深度与权限模式（docs/desktop/external-agent-engines-spec.md
 // “按引擎与连接记忆模型与思考深度”）。Runtime 仍是已确认配置的唯一所有者：这里只在 snapshot
 // 确认用户显式选择后写本机偏好，并在新草稿原生配置就绪后经既有命令链路恢复；恢复的逐项推进
 // 以命令 ACK 带回的 runtime 确认配置为准，不等 snapshot 帧。
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  ENGINE_MODE_CONFIG_ID,
   engineConfigOptionKind,
   isExternalSessionEngine,
+  isRememberableEngineConfig,
   resolveEngineConnectionProfileId,
   type EngineConfigOption,
   type ExternalEngineConnectionConfigPreferences,
@@ -16,8 +18,17 @@ import { useSettings } from "@/hooks/useSettingService.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { logger } from "@/logger.js";
 
-/** 恢复顺序：深度目录随模型变化，必须在模型确认后再按新目录判断。 */
-const RESTORE_ORDER = ["model", "effort"] as const;
+/**
+ * 恢复顺序：深度目录随模型变化，必须在模型确认后再按新目录判断；权限模式（configId 恰为 `mode`）
+ * 最后恢复（2026-11-09 起）。
+ */
+const RESTORE_ORDER: ReadonlyArray<(option: EngineConfigOption) => boolean> = [
+  (option) => engineConfigOptionKind(option.id) === "model",
+  (option) => engineConfigOptionKind(option.id) === "effort",
+  (option) => option.id === ENGINE_MODE_CONFIG_ID,
+];
+/** 首次使用（该引擎 + 连接没有任何记忆）的默认思考深度（用户决策 Q4「自主 + 高」）。 */
+const FIRST_USE_EFFORT = "high";
 
 export interface EngineConfigRestoreStep {
   configId: string;
@@ -34,15 +45,29 @@ export function nextEngineConfigRestoreStep(
   settled: ReadonlySet<string> = new Set(),
 ): EngineConfigRestoreStep | null {
   if (!remembered) return null;
-  for (const kind of RESTORE_ORDER) {
-    const option = options.find((entry) => engineConfigOptionKind(entry.id) === kind);
+  for (const matches of RESTORE_ORDER) {
+    const option = options.find(matches);
     if (!option || settled.has(option.id)) continue;
     const value = remembered[option.id];
     if (!value || value === option.currentValue) continue;
+    // 旧版本或手工写入的计划类模式即使在目录内也不恢复（Plan 不沿用）。
+    if (!isRememberableEngineConfig(option.id, value)) continue;
     if (!option.options.some((entry) => entry.value === value)) continue;
     return { configId: option.id, value };
   }
   return null;
+}
+
+/**
+ * 首次使用的默认值：目录提供 `high` 档时把思考深度设为 high；模型与权限模式保持引擎默认
+ * （Claude 新会话 Auto / Codex Auto review）。只用于恢复下发，不写入记忆。
+ */
+function firstUseEngineConfigDefaults(
+  options: readonly EngineConfigOption[],
+): Readonly<Record<string, string>> | undefined {
+  const effort = options.find((entry) => engineConfigOptionKind(entry.id) === "effort");
+  if (!effort?.options.some((entry) => entry.value === FIRST_USE_EFFORT)) return undefined;
+  return { [effort.id]: FIRST_USE_EFFORT };
 }
 
 interface PendingConfirmation {
@@ -234,7 +259,7 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
               connectionProfileId: scope.connectionProfileId,
             }) !== current.connectionProfileId)) ||
         !isExternalSessionEngine(current.engine) ||
-        engineConfigOptionKind(configId) === "other"
+        (engineConfigOptionKind(configId) === "other" && configId !== ENGINE_MODE_CONFIG_ID)
       )
         return;
       // 用户已接管本会话的配置：停止（或预先阻止）恢复，避免覆盖其显式选择。
@@ -250,6 +275,8 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
         };
       // 用户的配置命令同样经配置屏障，排在随后入队的首发之前；等待恢复的首发可以继续。
       settleWaiters();
+      // 计划类模式也算接管（不能被随后恢复的记忆覆盖），但不写入记忆。
+      if (!isRememberableEngineConfig(configId, value)) return;
       pending.current.set(configId, {
         sessionId: current.sessionId,
         engine: current.engine,
@@ -322,12 +349,14 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
       restore.current.connectionProfileId !== connectionProfileId
     ) {
       // 每个预热会话只恢复一次，并冻结就绪时的记忆，之后的偏好变化不重配已打开的草稿。
+      // 该引擎 + 连接没有任何记忆时按首次使用默认（深度 high）恢复。
       restore.current = {
         sessionId,
         connectionProfileId,
         remembered:
           settings?.externalEngineConnectionConfigPreferences?.[engine]?.[connectionProfileId] ??
-          settings?.externalEngineConfigPreferences?.[engine],
+          settings?.externalEngineConfigPreferences?.[engine] ??
+          firstUseEngineConfigDefaults(options),
         settled: new Set(),
         started: false,
         stopped: false,

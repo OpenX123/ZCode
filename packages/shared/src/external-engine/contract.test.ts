@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { describeSessionEngine } from "./contract.example.js";
-import { engineConfigOptionKind } from "./config-options.js";
+import { engineConfigOptionKind, isRememberableEngineConfig } from "./config-options.js";
+import { externalEngineConnectionTestResultSchema } from "./connection.js";
 import {
   EXTERNAL_ENGINE_RUNTIMES,
   externalEngineStatusSchema,
@@ -19,6 +20,48 @@ describe("原生配置类别", () => {
       expect(engineConfigOptionKind(id)).toBe("effort");
     for (const id of ["mode", "permission-mode", "fast", "Model"])
       expect(engineConfigOptionKind(id)).toBe("other");
+  });
+});
+
+describe("可记忆的原生配置", () => {
+  it("模型、思考深度与权限模式可记忆；计划类模式与其它配置不记忆", () => {
+    expect(isRememberableEngineConfig("model", "gpt-a")).toBe(true);
+    expect(isRememberableEngineConfig("reasoning_effort", "high")).toBe(true);
+    for (const value of ["auto", "acceptEdits", "bypassPermissions", "default"])
+      expect(isRememberableEngineConfig("mode", value)).toBe(true);
+    for (const value of ["plan", "Plan"])
+      expect(isRememberableEngineConfig("mode", value)).toBe(false);
+    for (const id of ["permission-mode", "fast", "Mode", "collaboration_mode"])
+      expect(isRememberableEngineConfig(id, "auto")).toBe(false);
+  });
+});
+
+describe("测试连接结果", () => {
+  it("success 可带脱敏警告（1–5 条、每条 1–300 字），旧结果不带也合法", () => {
+    const warnings = [{ message: "Model metadata not found" }];
+    expect(
+      externalEngineConnectionTestResultSchema.parse({
+        status: "success",
+        latencyMs: 10,
+        warnings,
+      }),
+    ).toEqual({ status: "success", latencyMs: 10, warnings });
+    expect(
+      externalEngineConnectionTestResultSchema.parse({ status: "success", latencyMs: 10 }),
+    ).toEqual({ status: "success", latencyMs: 10 });
+    for (const invalid of [
+      [],
+      [{ message: "" }],
+      [{ message: "x".repeat(301) }],
+      Array.from({ length: 6 }, (_, index) => ({ message: `w${index}` })),
+    ])
+      expect(
+        externalEngineConnectionTestResultSchema.safeParse({
+          status: "success",
+          latencyMs: 10,
+          warnings: invalid,
+        }).success,
+      ).toBe(false);
   });
 });
 

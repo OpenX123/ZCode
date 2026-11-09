@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   EXTERNAL_ENGINE_RUNTIMES,
+  FAILURE_MESSAGE_MAX_CHARS,
   engineConnectionFailureSchema,
   type ExternalSessionEngine,
 } from "./contract.js";
@@ -96,8 +97,26 @@ export interface ExternalEngineConnectionTestInput {
   /** 承载测试的本地 workspace；测试本身使用临时 cwd。 */
   workspacePath: string;
 }
+/** 测试连接成功时附带的非致命警告上限（条数）；单条与失败摘要同口径脱敏、最多 300 字。 */
+export const ENGINE_CONNECTION_TEST_WARNINGS_MAX = 5;
+const engineConnectionTestWarningSchema = z.object({
+  message: z.string().min(1).max(FAILURE_MESSAGE_MAX_CHARS),
+});
+export type ExternalEngineConnectionTestWarning = z.infer<typeof engineConnectionTestWarningSchema>;
 export const externalEngineConnectionTestResultSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("success"), latencyMs: z.number().int().min(0) }),
+  z.object({
+    status: z.literal("success"),
+    latencyMs: z.number().int().min(0),
+    /**
+     * 2026-11-09 起（只增不改）：测试期间收到的 warning 级失败通知与 ACP notice，成功仍以模型正常
+     * 回复判定；没有警告时缺省。
+     */
+    warnings: z
+      .array(engineConnectionTestWarningSchema)
+      .min(1)
+      .max(ENGINE_CONNECTION_TEST_WARNINGS_MAX)
+      .optional(),
+  }),
   z.object({
     status: z.literal("unexpectedReply"),
     latencyMs: z.number().int().min(0),
