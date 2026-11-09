@@ -59,6 +59,8 @@ import {
   ConversationAgentCard,
   ConversationAgentSpawnRow,
   groupConsecutiveAgentSpawns,
+  isActiveSubagentWorkCard,
+  type ConversationAssistantWorkDisplayItem,
 } from "@/subagent-display/index.js";
 import { ConversationFileSummaryPanel } from "@/v4/ConversationFileSummaryPanel.js";
 import { resolveConversationFlowItemKey } from "@/v4/conversationTurnFlowItems.js";
@@ -449,11 +451,20 @@ function ConversationAssistantWorkItems({
     return null;
   }
 
+  // 修复 SAT31（multi-agent-display-spec「折叠」）：父 Agent 派出后台子智能体后本轮结束，
+  // 完成轮次的工作历史默认收起，仍在运行的工作卡也被折进「已工作 N 秒」，而状态胶囊仍显示
+  // “1 个运行中”。依据：有活跃成员的工作卡豁免折叠——历史收起时把它渲染在 CollapsibleContent
+  // 之外（摘要之下），其余工作项照常折叠；展开时回到原位，全部成员结束后随轮次正常折叠。
+  const pinnedItems =
+    historyContainer && !historyContainer.open ? items.filter(isActiveSubagentWorkCard) : [];
+  const foldedItems =
+    pinnedItems.length > 0 ? items.filter((item) => !pinnedItems.includes(item)) : items;
+
   // 连续工作项的间距由单一容器提供，摘要高度由 ToolSummaryRow 约束，
   // 避免长命令与状态更新造成忽大忽小的留白。
-  const content = (
+  const renderItems = (list: readonly ConversationAssistantWorkDisplayItem[]) => (
     <div className="flex flex-col gap-3">
-      {items.map((item) =>
+      {list.map((item) =>
         item.kind === "row" ? (
           <ConversationTurnRow
             key={item.key}
@@ -476,16 +487,24 @@ function ConversationAssistantWorkItems({
   );
 
   if (!historyContainer) {
-    return content;
+    return renderItems(items);
   }
 
+  const folded =
+    foldedItems.length > 0 ? (
+      <CollapsibleContent
+        data-testid={testId(TID_CHAT_ASSISTANT_HISTORY_CONTENT, historyContainer.chunkKey)}
+        data-history-open={String(historyContainer.open)}
+      >
+        <div className="pt-5">{renderItems(foldedItems)}</div>
+      </CollapsibleContent>
+    ) : null;
+  if (pinnedItems.length === 0) return folded;
   return (
-    <CollapsibleContent
-      data-testid={testId(TID_CHAT_ASSISTANT_HISTORY_CONTENT, historyContainer.chunkKey)}
-      data-history-open={String(historyContainer.open)}
-    >
-      <div className="pt-5">{content}</div>
-    </CollapsibleContent>
+    <>
+      {folded}
+      {renderItems(pinnedItems)}
+    </>
   );
 }
 

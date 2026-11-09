@@ -11,7 +11,7 @@ import type {
   ConversationAssistantWorkDisplayItem,
   SubagentDisplayStatus,
 } from "./contract.js";
-import { resolveAgentSpawnStatus } from "./model.js";
+import { isSubagentStatusActive, resolveAgentSpawnStatus } from "./model.js";
 
 export interface AgentSpawnMemberFacts {
   key: string;
@@ -56,6 +56,18 @@ export function describeAgentSpawnMember(member: AgentSpawnMemberItem): AgentSpa
     ...(subagentRow?.endedAt !== undefined ? { endedAt: subagentRow.endedAt } : {}),
     ...(subagentRow?.summaryText ? { summaryText: subagentRow.summaryText } : {}),
   };
+}
+
+/**
+ * 工作卡仍有活跃成员（运行中 / 等待 / 阻塞 / 等待启动）。与 buildSubagentWorkCardModel 的
+ * `active` 同一判定：live 索引只在成员本身活跃时覆盖为 waiting/blocked，不改变活跃与否，
+ * 因此只读成员行状态即可。用于完成轮次折叠豁免（multi-agent-display-spec「折叠」SAT31）。
+ */
+export function isActiveSubagentWorkCard(item: ConversationAssistantWorkDisplayItem): boolean {
+  if (item.kind !== "agentSpawnGroup" || item.presentation !== "workCard") return false;
+  return item.members.some((member) =>
+    isSubagentStatusActive(describeAgentSpawnMember(member).status),
+  );
 }
 
 /** 旧派发行的合并阈值：无子会话的单个派发已是一行 Agent 卡，只有相邻 ≥2 个才需要合并。 */

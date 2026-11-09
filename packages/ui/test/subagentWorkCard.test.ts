@@ -2,7 +2,7 @@
 // W8 Subagent 工作卡（docs/desktop/multi-agent-display-spec.md「对话行内 Subagent 工作卡」）。
 import { act, cleanup, render } from "@testing-library/react";
 import { createElement } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SubagentRow, ToolCallRow } from "@zcode/shared/zcode-protocol-v4";
 import zhCN from "@/i18n/locales/zh-CN.js";
 import type { SubagentWorkLiveIndex } from "@/subagent-display/contract.js";
@@ -23,6 +23,12 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 
 const NOW = 1_800_000_000_000;
+
+// 冷启动时首个用例里的动态 import 需转译整条渲染链，常超过默认 5s 用例超时（基线即复现）；
+// 在假时钟启用前预热模块缓存，用例本身的断言不变。
+beforeAll(async () => {
+  await import("@/subagent-display/index.js");
+}, 60_000);
 
 beforeEach(() => {
   vi.useFakeTimers();
