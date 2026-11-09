@@ -1014,3 +1014,10 @@ exceptions:
       - packages/ui/src/hooks/useBotGroupTask.ts
       - packages/ui/src/hooks/useBotBoundGroups.ts
     reason: 已准入的上游 Bot 状态 hook 仅把 getBotStates 读取与 bots:group-state 广播订阅改经窗口级共享读取器（docs/desktop/engine-performance-1.1-spec.md「窗口级只读数据共享」P5），读取器复用 store/serviceAuthorityKey.ts 的 createSharedServiceRead；Host 仍是唯一事实源，hook 返回形状、写路径与模块边界不变。精确准入这两个文件，不接管整个 hooks 目录，也不增加架构 baseline。
+
+  - id: turn-output-rate-session-debug-existing-edit
+    rule: unmanaged-new-file
+    paths:
+      - packages/shared/src/session-debug.ts
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol/session-debug.ts
+    reason: 已准入的上游会话调试文件只扩展逐调用 tokens/s 口径（隐藏推理扣除、整轮聚合），供开发者工具与回复悬浮提示共用同一规则（docs/desktop/turn-output-rate-spec.md）；不新增状态所有者或模块依赖，精确准入这两个文件，不接管 shared 包或 bootstrap 目录。

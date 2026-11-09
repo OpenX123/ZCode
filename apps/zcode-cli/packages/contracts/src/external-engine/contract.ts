@@ -100,6 +100,8 @@ export interface ExternalEngineTurnResult {
     outputTokens: number;
     cachedReadTokens?: number;
     cachedWriteTokens?: number;
+    /** ACP usage.thoughtTokens（Codex 报告；Claude Code 缺省）。 */
+    reasoningTokens?: number;
   };
   /** prompt 响应携带的 typed 终态失败（stopReason 可能仍为 end_turn），调用方按请求失败收尾。 */
   failure?: EngineConnectionFailure;

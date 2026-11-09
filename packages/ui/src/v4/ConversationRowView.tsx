@@ -9,6 +9,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -27,7 +28,7 @@ import {
   TrendingUpDownIcon,
   XIcon,
 } from "lucide-react";
-import { parseAutomationRunId } from "@zcode/shared";
+import { parseAutomationRunId, type Locale } from "@zcode/shared";
 import {
   TID_V4_EDIT,
   TID_V4_EDIT_ATTACHMENT_REMOVE,
@@ -94,7 +95,7 @@ import {
 } from "@/ToolCallBlocks/renderers/createWorkflowHoleInput.js";
 import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { resolveWorkflowRunOpenToolCallId } from "@/v4/workflowRunCardJoin.js";
-import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { useZCodeIntl, type IntlInstance } from "@/i18n/IntlProvider.js";
 
 import { logger } from "@/logger.js";
 import { PluginUiModelContextChip, formatPluginDisplayName } from "@/plugin-ui/index.js";
@@ -133,6 +134,7 @@ import { splitUserInputEpilogue } from "@/v4/ConversationUserInputEpilogue.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
 import { formatModelChangeLabel } from "@/v4/composer/modelTriggerDisplay.js";
 import { formatMessageTimeLabel } from "@/v4/messageTimeLabel.js";
+import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
 import { parseConversationShareContext } from "@/lib/conversationShareContext.js";
 
 function RowShell({
@@ -1446,6 +1448,99 @@ const UserInputRowView = memo(function UserInputRowView(
   );
 });
 
+// ── W7 回复输出统计（docs/desktop/turn-output-rate-spec.md）──
+// 放在本文件而非新文件：v4 根目录是未受管模块，新增文件会违反 unmanaged-new-file。
+
+/** 回复操作栏时间元素的输出统计；全部是 CLI 投影写入 turnHeader 的只读事实。 */
+export type TurnOutputStats = Partial<
+  Pick<
+    TurnHeaderRow,
+    "outputTps" | "outputTokens" | "reasoningTokens" | "firstTokenMs" | "activeMs"
+  >
+>;
+
+/** 可从中派生统计的 turnHeader 子集。 */
+export type TurnOutputStatsSource = Pick<TurnHeaderRow, "state"> & TurnOutputStats;
+
+const TURN_STATS_SEPARATOR = " · ";
+
+/**
+ * 只有已完成轮次给出统计（docs/desktop/turn-output-rate-spec.md §1）；运行中与失败轮返回 null。
+ * 是否显示 tokens/s 完全由 CLI 是否写入 outputTps 决定，UI 不判断引擎类型、不估算。
+ */
+export function resolveTurnOutputStats(
+  header: TurnOutputStatsSource | undefined,
+): TurnOutputStats | null {
+  if (!header) return null;
+  if (header.state !== "completedSuccess" && header.state !== "completedInterrupted") return null;
+  return {
+    outputTps: header.outputTps,
+    outputTokens: header.outputTokens,
+    reasoningTokens: header.reasoningTokens,
+    firstTokenMs: header.firstTokenMs,
+    activeMs: header.activeMs,
+  };
+}
+
+export function formatTurnOutputStatsLabel(
+  stats: TurnOutputStats,
+  intl: IntlInstance,
+  locale: Locale,
+): string | null {
+  const number = new Intl.NumberFormat(locale);
+  const segments: string[] = [];
+  if (stats.outputTps !== undefined) {
+    segments.push(
+      intl.formatMessage(
+        { id: "chat.message.turnStats.tps" },
+        {
+          value: new Intl.NumberFormat(locale, {
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1,
+          }).format(stats.outputTps),
+        },
+      ),
+    );
+  }
+  // 冷恢复从 transcript 合成的轮次 usage 为 0，不是真实输出量；0 不显示，避免误导。
+  if (stats.outputTokens !== undefined && stats.outputTokens > 0) {
+    const count = number.format(stats.outputTokens);
+    segments.push(
+      stats.reasoningTokens !== undefined && stats.reasoningTokens > 0
+        ? intl.formatMessage(
+            { id: "chat.message.turnStats.outputWithReasoning" },
+            { count, reasoning: number.format(stats.reasoningTokens) },
+          )
+        : intl.formatMessage({ id: "chat.message.turnStats.output" }, { count }),
+    );
+  }
+  if (stats.firstTokenMs !== undefined) {
+    const seconds = new Intl.NumberFormat(locale, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    }).format(stats.firstTokenMs / 1000);
+    const unit = intl.formatMessage({ id: "chat.history.duration.second" });
+    segments.push(
+      intl.formatMessage(
+        { id: "chat.message.turnStats.firstToken" },
+        // 与工作时长同一单位写法：中文单位前留空格，英文缩写紧贴数字。
+        { duration: `${seconds}${locale === "zh-CN" ? " " : ""}${unit}` },
+      ),
+    );
+  }
+  const total = formatConversationWorkDuration(stats.activeMs, intl, locale);
+  if (total !== null) {
+    segments.push(intl.formatMessage({ id: "chat.message.turnStats.total" }, { duration: total }));
+  }
+  if (segments.length === 0) return null;
+  // 中文全角括号自带间隔，紧跟分隔符时去掉左侧空格，保持「（含思考 300）· 总耗时」的写法。
+  return segments.reduce((label, segment) =>
+    label.endsWith("）")
+      ? `${label}${TURN_STATS_SEPARATOR.trimStart()}${segment}`
+      : `${label}${TURN_STATS_SEPARATOR}${segment}`,
+  );
+}
+
 // memo 组件的数组默认值必须是模块级常量：内联 [] 每次渲染都是新引用，会让 memo 比较失效。
 const EMPTY_SOURCE_COMMAND_IDS: readonly string[] = [];
 
@@ -1458,6 +1553,7 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
   hookInvocations,
   turnId,
   sourceCommandIds = EMPTY_SOURCE_COMMAND_IDS,
+  turnHeader,
   onFork,
   className,
 }: {
@@ -1469,6 +1565,8 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
   hookInvocations?: readonly HookInvocationRow[];
   turnId?: string;
   sourceCommandIds?: readonly string[];
+  /** 轮尾操作栏传入本轮 turnHeader，只读派生已完成轮次的输出统计（W7）。 */
+  turnHeader?: TurnOutputStatsSource;
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   className?: string;
@@ -1477,6 +1575,9 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
   const copyLabel = intl.formatMessage({ id: "chat.message.copy" });
   const forkLabel = intl.formatMessage({ id: "chat.message.fork" });
   const timeLabel = formatMessageTimeLabel(createdAt, locale, intl);
+  const turnStats = resolveTurnOutputStats(turnHeader);
+  const turnStatsLabel = turnStats ? formatTurnOutputStatsLabel(turnStats, intl, locale) : null;
+  const turnStatsDescriptionId = useId();
   const resolveTooltip = (label: string): string | undefined =>
     compactForRemoteControl ? undefined : label;
 
@@ -1509,7 +1610,24 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
       ) : null}
       {/* Bugfix: 旧 conversation surface 删除后，V4 动作栏漏掉了消息创建时间；
           时间是 row.createdAt 的只读派生展示，不新增 renderer 状态。 */}
-      {timeLabel ? (
+      {timeLabel && turnStatsLabel ? (
+        // W7：输出统计挂在时间元素上，悬停或键盘聚焦都能看到；sr-only 描述供读屏。
+        <>
+          <ControlHintTooltip title={turnStatsLabel} side="bottom">
+            <span
+              tabIndex={0}
+              data-v4-turn-output-stats="true"
+              aria-describedby={turnStatsDescriptionId}
+              className="select-none rounded-sm text-ui-sm text-foreground-subtlest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
+            >
+              {timeLabel}
+            </span>
+          </ControlHintTooltip>
+          <span id={turnStatsDescriptionId} className="sr-only">
+            {turnStatsLabel}
+          </span>
+        </>
+      ) : timeLabel ? (
         <span className="select-none text-ui-sm text-foreground-subtlest">{timeLabel}</span>
       ) : null}
       {turnId ? (

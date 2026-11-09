@@ -350,6 +350,7 @@ export async function runExternalEngineTurn(
           totalTokens: state.tokenCount,
           cacheReadTokens: result.usage.cachedReadTokens,
           cacheWriteTokens: result.usage.cachedWriteTokens,
+          reasoningTokens: result.usage.reasoningTokens,
         },
       });
     if (result.stopReason === "cancelled" || input.signal.aborted)

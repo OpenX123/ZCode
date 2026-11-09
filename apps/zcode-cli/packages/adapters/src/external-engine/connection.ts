@@ -528,6 +528,10 @@ export class AcpConnection {
                 outputTokens: Number(usage.outputTokens ?? 0),
                 cachedReadTokens: Number(usage.cachedReadTokens ?? 0),
                 cachedWriteTokens: Number(usage.cachedWriteTokens ?? 0),
+                // Codex 单独报告思考 token；保留给轮次输出提示（「含思考 N」），缺省时不伪造 0。
+                ...(usage.thoughtTokens != null
+                  ? { reasoningTokens: Number(usage.thoughtTokens) }
+                  : {}),
               },
             }
           : {}),

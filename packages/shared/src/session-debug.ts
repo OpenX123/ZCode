@@ -99,3 +99,75 @@ export function calculateOutputTps(
   const tps = (outputTokens * 1000) / generationDurationMs;
   return Number.isFinite(tps) ? tps : null;
 }
+
+/** 单次物理模型请求的输出计时事实（来自 model_request_completed）。 */
+export interface ModelCallOutputTiming {
+  outputTokens?: number;
+  reasoningTokens?: number;
+  durationMs?: number;
+  timeToFirstContentMs?: number;
+  /** 是否流式收到过非空推理 delta；undefined 表示旧事件未记录。 */
+  reasoningContentStreamed?: boolean;
+}
+
+export interface ModelCallOutputRate {
+  /** 落在生成时长内的输出 token（隐藏推理已扣除）。 */
+  streamedOutputTokens: number;
+  generationMs: number;
+}
+
+export interface TurnOutputRate {
+  outputTps: number;
+  generationMs: number;
+  firstTokenMs: number;
+}
+
+function finiteNonNegative(value: number | undefined): value is number {
+  return value !== undefined && Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * 逐调用口径（docs/desktop/turn-output-rate-spec.md §2）：生成时长 = 总时长 − 首字时间；
+ * 隐藏推理发生在首字之前，分子扣除推理 token；无法判断时返回 null，不估算。
+ */
+export function calculateModelCallOutputRate(
+  call: ModelCallOutputTiming,
+): ModelCallOutputRate | null {
+  const { outputTokens, reasoningTokens, durationMs, timeToFirstContentMs } = call;
+  if (
+    !finiteNonNegative(outputTokens) ||
+    !finiteNonNegative(durationMs) ||
+    !finiteNonNegative(timeToFirstContentMs)
+  )
+    return null;
+  const generationMs = durationMs - timeToFirstContentMs;
+  if (generationMs <= 0) return null;
+  let streamedOutputTokens = outputTokens;
+  if (reasoningTokens !== undefined && reasoningTokens !== 0) {
+    if (!finiteNonNegative(reasoningTokens)) return null;
+    // 旧事件没有推理是否流式的标记，无法判断推理是否在生成时长内。
+    if (call.reasoningContentStreamed === undefined) return null;
+    if (!call.reasoningContentStreamed) streamedOutputTokens = outputTokens - reasoningTokens;
+  }
+  if (streamedOutputTokens < 0) return null;
+  return { streamedOutputTokens, generationMs };
+}
+
+/** 整轮 tokens/s = Σ分子 ÷ Σ生成时长；没有调用或任何一次缺数据时返回 null。 */
+export function aggregateTurnOutputRate(
+  calls: readonly ModelCallOutputTiming[],
+): TurnOutputRate | null {
+  const first = calls[0];
+  if (!first || !finiteNonNegative(first.timeToFirstContentMs)) return null;
+  let tokens = 0;
+  let generationMs = 0;
+  for (const call of calls) {
+    const rate = calculateModelCallOutputRate(call);
+    if (!rate) return null;
+    tokens += rate.streamedOutputTokens;
+    generationMs += rate.generationMs;
+  }
+  const outputTps = calculateOutputTps(tokens, generationMs);
+  if (outputTps === null) return null;
+  return { outputTps, generationMs, firstTokenMs: first.timeToFirstContentMs };
+}

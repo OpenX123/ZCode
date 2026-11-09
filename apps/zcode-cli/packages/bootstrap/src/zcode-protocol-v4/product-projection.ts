@@ -95,12 +95,14 @@ import {
   ZCODE_FILE_STREAMING_TOOL_INPUT_PREVIEW_MIN_INTERVAL_MS,
   extractPlanStepsFromToolInput,
   extractPlanStepsFromToolOutput,
+  aggregateTurnOutputRate,
   isHighspeedProviderId,
   isZCodeFileStreamingToolInputPreviewTool,
   isZCodeModelRetryRecoveryProgressPayload,
   parseZCodeBackgroundTaskNotificationText,
   resolveZCodeBackgroundTaskControlKind,
   zcodeBackgroundTaskNotificationToolUpdateStatus,
+  type ModelCallOutputTiming,
 } from "@zcode/shared";
 import { verdictWorkspaceHookReviewRequest } from "@zcode/shared/workspace-hook-review-monotonicity";
 import type {
@@ -574,6 +576,9 @@ export class ProductProjection {
   // Highspeed 分享需要的真实耗时由 CLI 事件聚合，避免 renderer 离场后丢失拆分数据。
   private highspeedModelDurationByTurnId = new Map<string, number>();
   private highspeedToolIntervalsByTurnId = new Map<string, Map<string, HighspeedToolInterval>>();
+  // 轮次 tokens/s 的逐调用事实（主链路 model_request_completed），轮次结束时聚合写入 turnHeader
+  // （docs/desktop/turn-output-rate-spec.md）；与 Highspeed 侧表同样随 clone/adopt 复制。
+  private outputRateCallsByTurnId = new Map<string, ModelCallOutputTiming[]>();
   // 投递语义侧表：TurnSteerQueued 时按事件 payload（或 followupMode 兜底）记录，
   // drain 时决定切轮 vs 内联；账本落地后以账本为准。
   private deliveryByPendingInputId = new Map<string, "guide" | "queue">();
@@ -1285,6 +1290,9 @@ export class ProductProjection {
         new Map([...intervals].map(([toolCallId, interval]) => [toolCallId, { ...interval }])),
       ]),
     );
+    clone.outputRateCallsByTurnId = new Map(
+      [...this.outputRateCallsByTurnId].map(([turnId, calls]) => [turnId, [...calls]]),
+    );
     clone.deliveryByPendingInputId = new Map(this.deliveryByPendingInputId);
     clone.currentTurnId = this.currentTurnId;
     clone.currentTurnStartedModelOnly = this.currentTurnStartedModelOnly;
@@ -1330,6 +1338,7 @@ export class ProductProjection {
     this.currentProductTurnStartedAtMs = candidate.currentProductTurnStartedAtMs;
     this.highspeedModelDurationByTurnId = candidate.highspeedModelDurationByTurnId;
     this.highspeedToolIntervalsByTurnId = candidate.highspeedToolIntervalsByTurnId;
+    this.outputRateCallsByTurnId = candidate.outputRateCallsByTurnId;
     this.deliveryByPendingInputId = candidate.deliveryByPendingInputId;
     this.currentTurnId = candidate.currentTurnId;
     this.currentTurnStartedModelOnly = candidate.currentTurnStartedModelOnly;
@@ -2552,6 +2561,7 @@ export class ProductProjection {
         activeMs,
         payload.historyRoundCount,
         this.highspeedTimingForTurn(this.turnIdOf(event), activeMs),
+        this.outputRateForTurn(this.turnIdOf(event), payload.resultType === "success"),
       ),
       ...(payload.resultType === "success" ? this.markStableForkAssistant(event) : []),
       {
@@ -2641,6 +2651,7 @@ export class ProductProjection {
       undefined,
       undefined,
       this.highspeedTimingForTurn(this.turnIdOf(event)),
+      this.outputRateForTurn(this.turnIdOf(event), false),
     ).map((delta) =>
       delta.op === "row.upserted" && delta.row.kind === "turnHeader" && turnFailure
         ? { ...delta, row: { ...delta.row, failure: turnFailure } }
@@ -2709,6 +2720,12 @@ export class ProductProjection {
         turnId,
         (this.highspeedModelDurationByTurnId.get(turnId) ?? 0) + Math.max(0, payload.durationMs),
       );
+    }
+    if (
+      payload.type === "model_request_completed" &&
+      (payload.querySource === undefined || payload.querySource === "main_turn")
+    ) {
+      this.recordOutputRateCall(this.turnIdOf(event), payload);
     }
     switch (payload.type) {
       case "model_retry_scheduled": {
@@ -4266,6 +4283,7 @@ export class ProductProjection {
             0,
             endedAt - (this.currentProductTurnStartedAtMs ?? headerRow.startedAt),
           ),
+          ...this.outputRateForTurn(previousProductTurnId, true),
           ...(headerRow.workSegments
             ? {
                 workSegments: this.completeWorkSegments(headerRow.workSegments, endedAt),
@@ -5159,6 +5177,13 @@ export class ProductProjection {
             ...(isMainTurn
               ? { outputTokens: (headerRow.outputTokens ?? 0) + (usage.outputTokens ?? 0) }
               : {}),
+            // 与 outputTokens 同源：只有 provider/adapter 报告了推理 token 才累计（Codex thoughtTokens）。
+            ...(isMainTurn && usage.reasoningTokens !== undefined
+              ? {
+                  reasoningTokens:
+                    (headerRow.reasoningTokens ?? 0) + Math.max(0, usage.reasoningTokens),
+                }
+              : {}),
           },
         });
       }
@@ -5757,6 +5782,7 @@ export class ProductProjection {
       toolDurationMs: number;
       otherDurationMs: number;
     },
+    outputRate?: { outputTps: number; generationMs: number; firstTokenMs: number },
   ): ConversationDelta[] {
     const row = this.turnHeaderForEvent(event);
     if (!row) return [];
@@ -5770,6 +5796,7 @@ export class ProductProjection {
           endedAt,
           ...(activeMs !== undefined ? { activeMs } : {}),
           ...highspeedTiming,
+          ...outputRate,
           ...(historyRoundCount !== undefined ? { historyRoundCount } : {}),
           ...(row.workSegments
             ? {
@@ -5804,6 +5831,32 @@ export class ProductProjection {
       ),
     });
     this.highspeedToolIntervalsByTurnId.set(turnId, intervals);
+  }
+
+  private recordOutputRateCall(
+    turnId: string,
+    payload: Extract<ModelNetworkStatusPayload, { type: "model_request_completed" }>,
+  ): void {
+    const calls = this.outputRateCallsByTurnId.get(turnId) ?? [];
+    calls.push({
+      outputTokens: payload.usage?.outputTokens,
+      reasoningTokens: payload.usage?.reasoningTokens,
+      durationMs: payload.durationMs,
+      timeToFirstContentMs: payload.timeToFirstContentMs,
+      reasoningContentStreamed: payload.reasoningContentStreamed,
+    });
+    this.outputRateCallsByTurnId.set(turnId, calls);
+  }
+
+  /** 取出并清理该轮逐调用事实；只有成功收口的轮次写入速度，缺数据时不写（不估算）。 */
+  private outputRateForTurn(
+    turnId: string,
+    completedSuccessfully: boolean,
+  ): { outputTps: number; generationMs: number; firstTokenMs: number } | undefined {
+    const calls = this.outputRateCallsByTurnId.get(turnId);
+    this.outputRateCallsByTurnId.delete(turnId);
+    if (!completedSuccessfully || !calls) return undefined;
+    return aggregateTurnOutputRate(calls) ?? undefined;
   }
 
   private highspeedTimingForTurn(

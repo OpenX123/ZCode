@@ -4952,6 +4952,12 @@ const enUS: Record<string, string> = {
   "chat.message.toolSnapshot.loading": "Loading...",
   "chat.message.toolSnapshot.retry": "Load failed, retry",
   "chat.message.time.yesterday": "Yesterday {time}",
+  "chat.message.turnStats.tps": "{value} tokens/s",
+  "chat.message.turnStats.output": "Output {count} tokens",
+  "chat.message.turnStats.outputWithReasoning":
+    "Output {count} tokens (incl. {reasoning} thinking)",
+  "chat.message.turnStats.firstToken": "First token {duration}",
+  "chat.message.turnStats.total": "Total {duration}",
   "chat.message.retry": "Retry",
   "chat.history.workingFor": "Working for {duration}",
   "chat.history.workedFor": "Worked for {duration}",
