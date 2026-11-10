@@ -275,3 +275,21 @@ sequenceDiagram
 - 不新增 stop-all 协议命令，也不给 Codex 实现取消。
 - 不恢复已退役的手机远控与 relay 入口。
 - 不改变 owner/lease、跨 Host 路由与 CommandInbox admission。
+
+## 9. 实施结果（2026-11-09）
+
+### 9.1 实施中补充的决策
+
+| 编号 | 决策 | 依据 |
+| --- | --- | --- |
+| D9 | 外部引擎「首次默认 high」改为按配置项判定：有效记忆里没有思考深度就补 high（只下发、不写记忆），与模型/模式是否有记忆无关 | E2E P11 暴露：选过模型后重启深度回落引擎原生 low，违背「思考程度默认高」 |
+| D10 | 仍有运行中/等待/阻塞成员的 Subagent 工作卡不参与已完成轮次的折叠，显示在「已工作」摘要下方；全部结束后随轮次折叠 | E2E SAT31 暴露：后台子 agent 运行时卡片被折叠不可见，违背「清晰易懂」 |
+| D11 | 本版不为 Codex 声明 `session.notices`：声明会让「模型已切换」「上下文已压缩」从正文改为 notice；测试连接误报已通过「仅 error 判失败 + warnings」修复。notice 行展示放到后续版本，待用户确认 | lane B 核查 codex-acp 2.2.2 源码 |
+
+### 9.2 合并与验证摘要
+
+- 6 条 lane（W1/W2、W3/W6、W4、W5、W7、W8）在独立 worktree 实施后合入本分支；另一个并行代理会话在主工作区完成的 ACP Task4/5 收尾以单独提交（`ebe7e532`）保留，冲突以本方案为准。
+- 根 `pnpm typecheck`、zcode-cli 各包 typecheck、`pnpm lint`（0 errors）、`pnpm architecture:check --changed`（0 违规）通过。
+- 受影响根 UT：合并后新增的 13 个失败已修复；余下 101 个失败与 origin/main 基线（`4f367fab`）逐条一致。CLI adapters/core/bootstrap 相关测试相对基线无新增失败（并行负载下的子进程超时在低并发重跑后通过）。
+- 桌面 E2E（隔离夹具 + replay，manual-review/pending）：prewarm 12/12、Subagent 工作卡 SAT31–34、多智能体展示 MA01–04、连接设置均通过；过程中修复了首发失败不回填、切回 Codex 约 5.5s 两个产品问题。详细记录见 `docs/testing/2026-11-09-engine-composer-subagent-verification.md`。
+- 未完成：≤100ms / ≤1s 切换指标尚需在安装版真实日志中验收；真实 Claude/Codex 供应商与跨平台未验证。
