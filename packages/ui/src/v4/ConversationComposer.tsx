@@ -178,8 +178,6 @@ import { PptxElementReferenceChip } from "@/v4/composer/PptxElementReferenceChip
 import { useOpenPptxElementReference } from "@/v4/composer/useOpenPptxElementReference.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import { useConversationSelectionReferences } from "@/v4/composer/useConversationSelectionReferences.js";
-import { ConversationBackgroundWorkTrigger } from "@/v4/composer/ConversationBackgroundWorkTrigger.js";
-import { V4ComposerCuaEntry } from "@/v4/composer/V4ComposerCuaEntry.js";
 import {
   V4ComposerModeSwitch,
   V4ComposerModelControls,
@@ -393,6 +391,10 @@ export interface ConversationComposerProps {
   snapshot: ConversationSnapshot | null;
   externalEngine?: boolean;
   engineControls?: ReactNode;
+  /** 同一外部配置 owner 的模型/深度展示，位于发送入口左侧。 */
+  engineModelControls?: ReactNode;
+  /** W2：引擎切换行，挂在 YCode 模型弹层顶部（外部引擎由 EngineControls 弹层自行承载）。 */
+  engineSwitchRow?: ReactNode;
   engineNotReadyContent?: ReactNode;
   /** 草稿 scope（sessionId；draft 态 null → "__draft__" scope）。 */
   sessionId?: string | null;
@@ -480,14 +482,6 @@ export interface ConversationComposerProps {
   /** 选中思考深度；同时带上用户操作时看到的模型，避免异步回流后把 thought 归到另一模型。 */
   onSelectThought: (thought: string, modelContext: { provider: string; model: string }) => void;
   onSwitchMode: (mode: string) => void;
-  /** 打开当前 session 的 Status panel，并直达 Running 明细。 */
-  onOpenRunningBackgroundWorks?: () => void;
-  /**
-   * 后台任务入口点击的落点：`"workflow-run"` = 唯一在跑的工作流直达详情页（宿主判定），
-   * 缺省 `"panel"` = 展开状态胶囊。入口据此换 tooltip；行为本身在 onOpenRunningBackgroundWorks 里。
-   */
-  backgroundWorkOpenTarget?: "panel" | "workflow-run";
-  runningSubagentCount?: number;
   /** prepare/configOptions 失败时，custom provider 选择走 workspace recovery 链。 */
   onRecoverCustomModelSelection?: (
     value: string,
@@ -519,6 +513,11 @@ export interface ConversationComposerProps {
    */
   composerRestoreRequest?: ComposerRestoreRequest | null;
   onComposerRestoreApplied?: (requestId: number) => void;
+  /**
+   * 首屏首发 overlay 的“重新发送”：值变化一次即经同一提交入口提交一次输入框内容；
+   * 挂载时的初始值不触发。
+   */
+  submitRequestId?: number;
   /** 副屏会话不提供 goal 能力；协议层仍会拒绝直接调用。 */
   suppressGoalCommands?: boolean;
   /** App 层本地斜杠命令（如 `/side`），由 SessionPane 按门禁组装后透传。 */
@@ -536,6 +535,8 @@ function ConversationComposerImpl({
   snapshot,
   externalEngine = false,
   engineControls,
+  engineModelControls,
+  engineSwitchRow,
   engineNotReadyContent,
   sessionId = null,
   skillCatalogSessionId = sessionId,
@@ -577,9 +578,6 @@ function ConversationComposerImpl({
   onSelectModel,
   onSelectThought,
   onSwitchMode,
-  onOpenRunningBackgroundWorks,
-  backgroundWorkOpenTarget = "panel",
-  runningSubagentCount = 0,
   onRecoverCustomModelSelection,
   onSendCompressionCommand,
   error,
@@ -592,6 +590,7 @@ function ConversationComposerImpl({
   onExternalTextInsertApplied,
   composerRestoreRequest = null,
   onComposerRestoreApplied,
+  submitRequestId,
   suppressGoalCommands = false,
   appSlashCommands,
   onDropTargetControllerChange,
@@ -1430,7 +1429,14 @@ function ConversationComposerImpl({
       const restoreSubmittedDraft = () => {
         if (!draftSubmissionClaimed) return;
         // 用户在等待期间已经产生更新时，当前完整正文是更新后的事实；旧失败回包不能覆盖。
-        if (contentRevisionRef.current === cleanupRevision) {
+        // Bug 根因（W5 草稿首发失败不回填）：乐观清空调用的 Lexical clear() 经 editor.update 在微任务里
+        // 回传 onChange("")，晚于上面记录的 cleanupRevision，revision 被这次程序性回声推进，
+        // 失败时被误判为“用户已编辑”而跳过回填。乐观清空后编辑器仍为空即说明用户没有新输入，
+        // 仍按原合同回填；有新正文时保持不覆盖。
+        const untouchedSinceCleanup =
+          contentRevisionRef.current === cleanupRevision ||
+          (editorClearedOptimistically && textRef.current === "");
+        if (untouchedSinceCleanup) {
           updateComposerContent(submittedDraft);
           if (submittedCommandId && !submittedCommandResolved) {
             // 传输层失败不等于 CLI 未 admission（ACK 丢失即如此）。正文虽已恢复回草稿，
@@ -1443,7 +1449,7 @@ function ConversationComposerImpl({
         }
         suppressDraftPersistRef.current = false;
         draftSubmissionClaimed = false;
-        if (editorClearedOptimistically && contentRevisionRef.current === cleanupRevision) {
+        if (editorClearedOptimistically && untouchedSinceCleanup) {
           if (submittedDraft.editorStateJson) {
             inputApiRef.current?.setEditorStateJson(submittedDraft.editorStateJson);
           } else {
@@ -1563,10 +1569,12 @@ function ConversationComposerImpl({
           }
         }
         claimSubmittedDraft();
-        if (requestedDelivery === "startNow") {
+        if (requestedDelivery === "startNow" || sessionId === null) {
           // 原子抢占需要等旧 turn 退出并提交新 TurnStarted ACK；
           // 若编辑器也等整条链路才清空，用户会误以为快捷键未生效。
-          // 先清空可见正文；命令拒绝时用冻结 editor state 原样恢复。
+          // 草稿首发同理：SessionPane overlay 已立即显示用户气泡，编辑器若保留正文会与气泡重复
+          // （2026-11-09 W5 删除“正在发送…”卡片后）。
+          // 先清空可见正文；命令拒绝或失败时用冻结 editor state 原样恢复。
           inputApiRef.current?.clear();
           updateText("");
           cleanupRevision = contentRevisionRef.current;
@@ -1720,6 +1728,16 @@ function ConversationComposerImpl({
     },
     [submit],
   );
+
+  // 首屏首发失败后的“重新发送”请求：只消费挂载之后的新值，重挂载不重放旧请求。
+  const handledSubmitRequestIdRef = useRef(submitRequestId);
+  useEffect(() => {
+    if (submitRequestId === undefined || submitRequestId === handledSubmitRequestIdRef.current) {
+      return;
+    }
+    handledSubmitRequestIdRef.current = submitRequestId;
+    void submit();
+  }, [submit, submitRequestId]);
 
   const handleModifiedEditorSubmit = useCallback(
     (value: string) => {
@@ -2253,12 +2271,15 @@ function ConversationComposerImpl({
         {remoteAvailable ? (
           <span className="flex min-w-0 shrink items-center gap-1 overflow-hidden empty:hidden">
             {externalEngine ? (
-              <ChatContextUsage
-                taskUsage={externalContextUsage}
-                selectedProvider={provider ?? ZCODE_AGENT_PROVIDER}
-                intl={intl}
-                locale={locale}
-              />
+              <>
+                {engineModelControls}
+                <ChatContextUsage
+                  taskUsage={externalContextUsage}
+                  selectedProvider={provider ?? ZCODE_AGENT_PROVIDER}
+                  intl={intl}
+                  locale={locale}
+                />
+              </>
             ) : (
               <V4ComposerModelControls
                 workspacePath={workspacePath}
@@ -2283,6 +2304,7 @@ function ConversationComposerImpl({
                 onSwitchMode={onSwitchMode}
                 onRecoverCustomModelSelection={onRecoverCustomModelSelection}
                 onSendCompressionCommand={onSendCompressionCommand}
+                engineSwitchRow={engineSwitchRow}
               />
             )}
           </span>
@@ -2326,6 +2348,8 @@ function ConversationComposerImpl({
     ),
     [
       externalEngine,
+      engineModelControls,
+      engineSwitchRow,
       canSend,
       activeConfigPicker,
       composerPhase,
@@ -2367,13 +2391,13 @@ function ConversationComposerImpl({
     ],
   );
 
-  // 左下：模式选择 + CUA 入口 + 当前 session 后台任务入口。followupMode 由 app 设置页同步到 CLI，
-  // 不在 composer 暴露局部开关；后台入口只消费同一 snapshot，不维护第二份任务状态。
+  // 左下只保留模式选择。Computer Use 与后台工作入口仍由各自页面承载，
+  // 不在 composer 工具条重复占用输入宽度。
   const leadingActionsNode = useMemo(
     () => (
       <>
         {engineControls ? (
-          <fieldset disabled={pending} className="min-w-0">
+          <fieldset disabled={!externalEngine && pending} className="min-w-0 shrink">
             {engineControls}
           </fieldset>
         ) : null}
@@ -2389,23 +2413,6 @@ function ConversationComposerImpl({
             onSwitchMode={onSwitchMode}
           />
         ) : null}
-        {/* Bug 原因：附件画廊 rebase 曾整段覆盖 leadingActions，误删 staging 的 CUA 常驻入口。
-            入口自身继续负责平台、远程与设置可见性，不在 composer 重复判定。 */}
-        {!externalEngine ? (
-          <V4ComposerCuaEntry
-            workspacePath={workspacePath}
-            workspaceIdentity={workspaceIdentity}
-            remoteSessionId={remoteSessionId}
-            isWebRemoteControl={isWebRemoteControl}
-            currentSessionBusy={canStop}
-          />
-        ) : null}
-        <ConversationBackgroundWorkTrigger
-          backgroundWorks={snapshot?.backgroundWorks ?? []}
-          runningSubagentCount={runningSubagentCount}
-          onOpen={onOpenRunningBackgroundWorks}
-          openTarget={backgroundWorkOpenTarget}
-        />
       </>
     ),
     [
@@ -2413,19 +2420,12 @@ function ConversationComposerImpl({
       pending,
       externalEngine,
       activeConfigPicker,
-      canStop,
       disabled,
       runtimeBlocked,
       draftConfig,
       handleConfigPickerOpenChange,
-      isWebRemoteControl,
-      backgroundWorkOpenTarget,
-      onOpenRunningBackgroundWorks,
       onSwitchMode,
       provider,
-      remoteSessionId,
-      runningSubagentCount,
-      snapshot?.backgroundWorks,
       workspaceIdentity,
       workspacePath,
     ],
@@ -2461,23 +2461,6 @@ function ConversationComposerImpl({
         className="hidden"
         onChange={attachmentsApi.handleAttachmentInputChange}
       />
-      {pendingSubmission ? (
-        <div
-          data-testid="composer-submission-preview"
-          role="status"
-          className="mb-3 flex items-start gap-2 rounded-lg border border-border/50 bg-surface px-3 py-2 text-ui-sm text-foreground-subtle"
-        >
-          <Spinner className="mt-0.5 size-3.5 shrink-0" />
-          <div className="min-w-0">
-            <div>{intl.formatMessage({ id: "chat.submission.sending" })}</div>
-            {pendingSubmission.text ? (
-              <div className="line-clamp-2 whitespace-pre-wrap break-words text-foreground">
-                {pendingSubmission.text}
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
       {engineNotReadyContent}
       {visibleError ? (
         // 仅展示附件错误会漏掉会话级 lastError，任务失败后也应在输入框上方显示原因。
@@ -2539,7 +2522,10 @@ function ConversationComposerImpl({
       >
         {contextHeader ? (
           // 旧 ChatViewComposer contextHeaderContent 同款包装（workspace 菜单 + Git 分支）。
-          <div className="relative z-10 p-1.5 flex min-w-0 flex-wrap items-center gap-0">
+          <div
+            className="relative z-10 flex min-w-0 flex-nowrap items-center gap-0 overflow-hidden p-1.5"
+            data-testid="composer-context-header"
+          >
             <ComposerSubmissionPendingContext.Provider value={updateTargetSelectionPending}>
               {contextHeader}
             </ComposerSubmissionPendingContext.Provider>

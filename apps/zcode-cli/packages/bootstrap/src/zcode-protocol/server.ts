@@ -1,3 +1,10 @@
+import {
+  EXTERNAL_ENGINE_SPARE_BUDGET_ENV,
+  zcodeExternalEngineAcquireSpareResultSchema,
+  zcodeExternalEnginePrepareSpareParamsSchema,
+  zcodeExternalEngineSpareRequestParamsSchema,
+  zcodeExternalEngineSpareResultSchema,
+} from "@zcode/shared";
 import { querySessionDebug } from "./session-debug.js";
 import { createNodeNetworkCapture } from "@zcode/shared/node";
 import {
@@ -14,6 +21,7 @@ import {
   zcodeWorkspaceHookTrustGrantParamsSchema,
 } from "@zcode/shared";
 import {
+  createExternalEngineConfigCatalog,
   createExternalEnginePort,
   createExternalEngineProcessPool,
   runExternalEngineConnectionTest,
@@ -281,6 +289,8 @@ export class ZCodeProtocolAgentServer {
   private readonly workspaceGenerateTextControllers = new Map<string, AbortController>();
   private readonly externalEngineConnectionTests = new Map<string, AbortController>();
   private readonly externalEngineProcessPool: ExternalEngineProcessPool;
+  /** 进程级选项清单缓存（W4），与 pool 同生命周期，注入每个会话 port。 */
+  private readonly externalEngineConfigCatalog = createExternalEngineConfigCatalog();
   /** `process/residentSessions` 的进程内序号（从 1 起单调递增）。 */
   private residentSessionsSequence = 0;
   /**
@@ -299,6 +309,7 @@ export class ZCodeProtocolAgentServer {
       deps.createZCodeApp({
         ...options,
         externalEngineProcessPool: this.externalEngineProcessPool,
+        externalEngineConfigCatalog: this.externalEngineConfigCatalog,
       }),
     );
     const resolvedDeps = {
@@ -311,9 +322,38 @@ export class ZCodeProtocolAgentServer {
         deps.workspaceHookPolicyProvider ?? new InMemoryWorkspaceHookPolicyProvider(),
     };
     this.logger = createProtocolLogger(resolvedDeps);
-    this.externalEngineProcessPool = createExternalEngineProcessPool(
-      this.logger ? { logger: this.logger } : {},
-    );
+    this.externalEngineProcessPool = createExternalEngineProcessPool({
+      ...(this.logger ? { logger: this.logger } : {}),
+      ...((deps.env ?? process.env)[EXTERNAL_ENGINE_SPARE_BUDGET_ENV] === "host"
+        ? {
+            budget: {
+              acquire: async (
+                requestId: string,
+                signal: AbortSignal,
+                engine: "codex" | "claude-code",
+              ) =>
+                Boolean(
+                  (
+                    await this.requestClient(
+                      zcodeProtocolMethods.externalEngineAcquireSpare,
+                      // W4：带引擎，Host 按引擎各授 1 个许可。
+                      { requestId, engine },
+                      zcodeExternalEngineAcquireSpareResultSchema,
+                      { signal },
+                    )
+                  ).leaseId,
+                ),
+              release: async (requestId: string) => {
+                await this.requestClient(
+                  zcodeProtocolMethods.externalEngineReleaseSpare,
+                  { requestId },
+                  zcodeExternalEngineSpareResultSchema,
+                );
+              },
+            },
+          }
+        : {}),
+    });
     this.context = {
       assertServing: () => this.runtimeResources.assertServing(),
       deps: resolvedDeps,
@@ -794,6 +834,26 @@ export class ZCodeProtocolAgentServer {
         return this.cancelWorkspaceGenerateText(request.params);
       case zcodeProtocolMethods.providerTestModelConnectivity:
         return await testProviderModelConnectivity(this.context, request.params);
+      case zcodeProtocolMethods.externalEnginePrepareSpare: {
+        const params = parseParams(zcodeExternalEnginePrepareSpareParamsSchema, request.params);
+        // 接收即 ACK；后台工作不占 session lane，关闭 pool 后迟到解析也无法创建资源。
+        void createExternalEnginePort({
+          env: this.context.deps.env,
+          processPool: this.externalEngineProcessPool,
+        })
+          .prepareSpare(
+            params.engine,
+            params.connectionProfileId,
+            this.context.deps.cwd ?? process.cwd(),
+          )
+          .catch(() => {});
+        return {};
+      }
+      case zcodeProtocolMethods.externalEngineRevokeSpare: {
+        const params = parseParams(zcodeExternalEngineSpareRequestParamsSchema, request.params);
+        await this.externalEngineProcessPool.revokeSpare(params.requestId);
+        return {};
+      }
       case zcodeProtocolMethods.externalEngineTestConnection:
         return await this.testExternalEngineConnection(request.params);
       case zcodeProtocolMethods.externalEngineCancelConnectionTest:

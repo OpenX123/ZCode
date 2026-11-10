@@ -81,3 +81,86 @@ test("原生子会话 Stop：可取消的转为 cancelSubagent，不可取消的
     externalSubagentSessionId(sessionId, "child-fixed"),
   );
 });
+
+// W8 工作卡步骤数（docs/desktop/multi-agent-display-spec.md「引擎无关合同」第 6 条）：
+// 子会话每写一条工具行，父会话实时收到一次 source=subagent 的镜像 scheduled（不落库），
+// 结束时 SubagentStopped 带 totalToolUseCount；外部引擎不知道子模型时不发 model/effort。
+test("原生子会话工具行计步：实时镜像到父会话、不落库，结束时写入 totalToolUseCount", async () => {
+  const sessionId = createSessionId();
+  const events: SessionEvent[] = [];
+  const eventStore = createTestSessionEventStore();
+  const port: ExternalEnginePort = {
+    async prepareSession() {},
+    async runTurn(input) {
+      await input.onSession("native-root");
+      await input.onSubagent!({
+        type: "spawned",
+        nativeSessionId: "child-steps",
+        name: "Explorer",
+        task: "核对契约",
+        cancellable: false,
+      });
+      const tool = (toolCallId: string) =>
+        input.onChildUpdate!("child-steps", {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Read",
+          rawInput: { path: "README.md" },
+          status: "pending",
+        });
+      await tool("child-tool-1");
+      // 同一工具调用的后续更新不再计步。
+      await input.onChildUpdate!("child-steps", {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "child-tool-1",
+        status: "completed",
+        rawOutput: "ok",
+      });
+      await tool("child-tool-2");
+      await input.onSubagent!({ type: "state", nativeSessionId: "child-steps", state: "completed" });
+      return { stopReason: "end_turn" };
+    },
+    setConfigOption: vi.fn(),
+    closeSession: vi.fn(),
+  };
+  const runtime = new AgentRuntime(
+    sessionId,
+    { engine: "codex", workingDirectory: "/workspace" },
+    {
+      eventStore,
+      sessionStore: createRecordingSubagentSessionStore(),
+      modelFactory: () => {
+        throw new Error("Provider must not run");
+      },
+      externalEnginePort: port,
+      eventSink: { onSessionEvent: async (event) => void events.push(event) },
+    },
+  );
+  await runtime.executeTurn("派发");
+
+  const childSessionId = externalSubagentSessionId(sessionId, "child-steps");
+  const mirrored = events.filter(
+    (event) =>
+      event.sessionId === sessionId &&
+      event.type === SessionEventType.ToolCallScheduled &&
+      (event.payload as { source?: string }).source === "subagent",
+  );
+  expect(mirrored.map((event) => event.payload)).toEqual([
+    expect.objectContaining({
+      agentId: "child-steps",
+      childSessionId,
+      childToolCallId: "child-tool-1",
+      source: "subagent",
+    }),
+    expect.objectContaining({ agentId: "child-steps", childToolCallId: "child-tool-2" }),
+  ]);
+  const persisted = await eventStore.getEvents(sessionId);
+  expect(
+    persisted.filter((event) => (event.payload as { source?: string }).source === "subagent"),
+  ).toEqual([]);
+  const spawned = persisted.find((event) => event.type === SessionEventType.SubagentSpawned);
+  expect(spawned?.payload).not.toHaveProperty("model");
+  expect(spawned?.payload).not.toHaveProperty("effort");
+  const stopped = persisted.find((event) => event.type === SessionEventType.SubagentStopped);
+  expect(stopped?.payload).toMatchObject({ childSessionId, totalToolUseCount: 2 });
+});

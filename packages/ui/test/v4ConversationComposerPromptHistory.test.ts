@@ -642,7 +642,8 @@ describe("ConversationComposer prompt history", () => {
       resolveSend();
       await flushAsyncWork();
     });
-    expect(inputClear).not.toHaveBeenCalled();
+    // 2026-11-09 W5：草稿首发先乐观清空一次编辑器（气泡已由 overlay 显示）；迟到成功不能再清除新正文。
+    expect(inputClear).toHaveBeenCalledTimes(1);
     expect(readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT)?.text).toBe("下一条");
     await act(async () => root.unmount());
   });
@@ -718,6 +719,79 @@ describe("ConversationComposer prompt history", () => {
     });
   });
 
+  it("草稿首发失败时，乐观清空的 Lexical 异步回声不能阻止正文回填", async () => {
+    // 真实 LexicalChatInput 的 clear() 走 editor.update，update listener 在微任务里回传 onChange("")，
+    // 晚于提交时记录的 cleanupRevision；这次回声不是用户编辑，失败后仍必须回填（W5 失败回填合同）。
+    inputClear.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        (chatPromptEditorProps.at(-1)?.onChange as ((value: string) => void) | undefined)?.("");
+      });
+    });
+    inputSetText.mockClear();
+    let rejectSend: (error: Error) => void = () => {};
+    const onSendText = vi.fn(
+      () =>
+        new Promise<ConversationComposerSendResult>((_resolve, reject) => {
+          rejectSend = reject;
+        }),
+    );
+    const { root } = renderComposer(onSendText);
+    const submit = chatPromptEditorProps.at(-1)?.onSubmit;
+
+    await act(async () => {
+      (submit as (value: string) => boolean)("首发失败的消息");
+      await flushAsyncWork();
+    });
+    expect(inputClear).toHaveBeenCalled();
+
+    await act(async () => {
+      rejectSend(new Error("engine initialize failed"));
+      await flushAsyncWork();
+    });
+
+    expect(inputSetText).toHaveBeenCalledWith("首发失败的消息");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("草稿首发等待期间用户输入了新正文时，失败回包不覆盖新正文", async () => {
+    inputSetText.mockClear();
+    let rejectSend: (error: Error) => void = () => {};
+    const onSendText = vi.fn(
+      () =>
+        new Promise<ConversationComposerSendResult>((_resolve, reject) => {
+          rejectSend = reject;
+        }),
+    );
+    const { root } = renderComposer(onSendText);
+    const submit = chatPromptEditorProps.at(-1)?.onSubmit;
+
+    await act(async () => {
+      (submit as (value: string) => boolean)("第一条");
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      const onChange = chatPromptEditorProps.at(-1)?.onChange as
+        | ((value: string) => void)
+        | undefined;
+      expect(onChange).toBeTypeOf("function");
+      onChange?.("等待期间的新输入");
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      rejectSend(new Error("send failed"));
+      await flushAsyncWork();
+    });
+
+    expect(inputSetText).not.toHaveBeenCalledWith("第一条");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
   it("keeps the editor draft and prompt history untouched when a product guard blocks send", async () => {
     const onSendText = vi.fn(async () => "blocked" as const);
     const { root } = renderComposer(onSendText);
@@ -729,7 +803,9 @@ describe("ConversationComposer prompt history", () => {
     });
 
     expect(onSendText).toHaveBeenCalledWith("/goal 保留这段输入", expectedLocalTimingSendOptions());
-    expect(inputClear).not.toHaveBeenCalled();
+    // 草稿首发乐观清空后，guard 拒绝按冻结正文原样恢复编辑器（W5）。
+    expect(inputClear).toHaveBeenCalledTimes(1);
+    expect(inputSetText).toHaveBeenLastCalledWith("/goal 保留这段输入");
     expect(attachmentState.adoptSentAttachments).not.toHaveBeenCalled();
     expect(readPromptHistoryEntries("/workspace")).toEqual([]);
     expect(readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT)?.text).toBe(
@@ -752,7 +828,9 @@ describe("ConversationComposer prompt history", () => {
     });
 
     expect(dialogOpenStates.at(-1)).toBe(true);
-    expect(inputClear).not.toHaveBeenCalled();
+    // 草稿首发乐观清空后，等待队列确认时按冻结正文原样恢复编辑器（W5）。
+    expect(inputClear).toHaveBeenCalledTimes(1);
+    expect(inputSetText).toHaveBeenLastCalledWith("等待确认的消息");
     expect(attachmentState.adoptSentAttachments).not.toHaveBeenCalled();
     expect(readPromptHistoryEntries("/workspace")).toEqual([]);
     expect(readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT)?.text).toBe(

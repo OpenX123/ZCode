@@ -1,3 +1,10 @@
+import {
+  EXTERNAL_ENGINE_SPARE_PERMITS_PER_WINDOW,
+  zcodeExternalEnginePrepareSpareParamsSchema,
+  zcodeExternalEngineSpareRequestParamsSchema,
+  zcodeExternalEngineSpareResultSchema,
+  type ZCodeExternalEnginePrepareSpareParams,
+} from "@zcode/shared";
 import { zcodeSessionForkTransferSchema, zcodeSessionImportForkResultSchema } from "@zcode/shared";
 import {
   isExternalSessionEngine,
@@ -968,6 +975,13 @@ interface CreateZCodeAgentServiceOptions extends Omit<
 > {
   /** 仅桌面本地装配；远端明确为 false，拒绝读取到的外部引擎会话。 */
   externalEnginesSupported?: boolean;
+  /**
+   * W4：只读预热集合（默认引擎 ∪ 本窗口选择过的外部引擎，已过滤 launch 就绪与默认连接配置）；
+   * 不枚举项目、不启动 CLI。每个引擎至多一项，按优先级排序。
+   */
+  selectExternalEngineSpares?: () => Promise<readonly ZCodeExternalEnginePrepareSpareParams[]>;
+  /** W4：预热集合变化通知；Host 据此对当前候选 client 重新调度。返回取消订阅。 */
+  watchExternalEngineSpareSelection?: (onChange: () => void) => () => void;
   externalEngineService?: IExternalEngineService;
   /** 仅供 MCP 状态探测进程使用（默认 5 分钟）。 */
   mcpStatusIdleTimeoutMs?: number;
@@ -1220,6 +1234,144 @@ export function createZCodeAgentService(
     PendingSessionRuntimePreferencesRequest
   >();
   const activeClientsByWorkspaceKey = new Map<string, ActiveWorkspaceClient>();
+  let spareServiceClosed = false;
+  /**
+   * W4：未绑定备用许可按外部引擎各 1 个、窗口至多 EXTERNAL_ENGINE_SPARE_PERMITS_PER_WINDOW 个。
+   * 修复依据（2026-11-09 基线）：旧实现每窗口只有 1 个许可，默认引擎 Codex 的备用一直占住它，
+   * Claude 补位每次被拒，11 次切换全部冷启（p50 1.74s）。缺 engine 的旧申请归入 legacy 键。
+   */
+  type SparePermitKey = ZCodeExternalEnginePrepareSpareParams["engine"] | "legacy";
+  interface SpareLease {
+    client: ZCodeProtocolClient;
+    requestId: string;
+    leaseId: string;
+    permitKey: SparePermitKey;
+    revoking?: Promise<void>;
+  }
+  const spareLeases = new Map<SparePermitKey, SpareLease>();
+  /** Host 已为某 client 准备过的引擎 → 连接配置 ID；同配置不重复 prepare（CLI 领用后自行补位）。 */
+  const preparedSpares = new WeakMap<
+    ZCodeProtocolClient,
+    Map<ZCodeExternalEnginePrepareSpareParams["engine"], string>
+  >();
+  let spareCandidateClient: ZCodeProtocolClient | undefined;
+  let spareCandidateEntry: ActiveWorkspaceClient | undefined;
+  // 串行化资源切换，而非会话业务：握手、前台冷启与 CLI 取得不等待此链。
+  let sparePreparation = Promise.resolve();
+  function retireClientSpare(client: ZCodeProtocolClient): void {
+    const leases = [...spareLeases.values()].filter((lease) => lease.client === client);
+    if (leases.length === 0) return;
+    const revoking = Promise.resolve()
+      .then(() => processManager.disposeClientAndWait(client))
+      .then(() => {
+        for (const lease of leases)
+          if (spareLeases.get(lease.permitKey) === lease) spareLeases.delete(lease.permitKey);
+      });
+    for (const lease of leases) lease.revoking = revoking;
+    // 关闭失败保持占用，不能把 protocol-close 当作进程树已经退出。
+    void revoking.catch(() => {});
+  }
+  async function revokeSpareLease(lease: SpareLease): Promise<void> {
+    if (!lease.revoking) {
+      const revoking = (async () => {
+        const result = await lease.client.request(
+          zcodeProtocolMethods.externalEngineRevokeSpare,
+          { requestId: lease.requestId },
+          zcodeExternalEngineSpareResultSchema,
+          { lifecycle: "observation" },
+        );
+        zcodeExternalEngineSpareResultSchema.parse(result);
+        if (spareLeases.get(lease.permitKey) === lease) spareLeases.delete(lease.permitKey);
+      })();
+      lease.revoking = revoking;
+      // 临时关闭/RPC失败不等于资源已回收；仅清本代在途标记，允许下次合法切换重试。
+      void revoking.catch(() => {
+        if (spareLeases.get(lease.permitKey) === lease && lease.revoking === revoking)
+          delete lease.revoking;
+      });
+    }
+    await lease.revoking;
+  }
+  /** 对当前候选 client 按预热集合补齐准备；集合外与旧 client 的许可撤销。串行、幂等。 */
+  function syncSpares(): void {
+    const entry = spareCandidateEntry;
+    const select = options?.selectExternalEngineSpares;
+    if (!entry || !select) return;
+    const current = () =>
+      !spareServiceClosed &&
+      spareCandidateEntry === entry &&
+      spareCandidateClient === entry.client &&
+      !entry.client.isDisposed &&
+      activeClientsByWorkspaceKey.get(resolveWorkspaceKey(entry.workspace)) === entry;
+    sparePreparation = sparePreparation
+      .catch(() => {})
+      .then(async () => {
+        if (!current()) return;
+        const wanted = new Map<ZCodeExternalEnginePrepareSpareParams["engine"], string>();
+        for (const choice of await select()) {
+          const params = zcodeExternalEnginePrepareSpareParamsSchema.parse(choice);
+          if (!wanted.has(params.engine) && wanted.size < EXTERNAL_ENGINE_SPARE_PERMITS_PER_WINDOW)
+            wanted.set(params.engine, params.connectionProfileId);
+        }
+        if (!current()) return;
+        // 候选切换或引擎离开集合：先撤销旧许可，确认关闭后才可重授。循环内有 await，先取快照。
+        for (const lease of Array.from(spareLeases.values())) {
+          const outside =
+            lease.client !== entry.client ||
+            (lease.permitKey !== "legacy" && !wanted.has(lease.permitKey));
+          if (outside) await revokeSpareLease(lease);
+        }
+        const prepared =
+          preparedSpares.get(entry.client) ??
+          new Map<ZCodeExternalEnginePrepareSpareParams["engine"], string>();
+        preparedSpares.set(entry.client, prepared);
+        for (const engine of prepared.keys()) if (!wanted.has(engine)) prepared.delete(engine);
+        for (const [engine, connectionProfileId] of wanted) {
+          if (!current()) return;
+          if (prepared.get(engine) === connectionProfileId) continue;
+          // Host 曾以另一连接配置准备该引擎：旧备用占着该引擎许可，先撤销再准备新配置。
+          const held = spareLeases.get(engine);
+          if (held && prepared.has(engine)) await revokeSpareLease(held);
+          if (!current()) return;
+          prepared.set(engine, connectionProfileId);
+          await entry.client.request(
+            zcodeProtocolMethods.externalEnginePrepareSpare,
+            { engine, connectionProfileId },
+            zcodeExternalEngineSpareResultSchema,
+            { lifecycle: "observation" },
+          );
+        }
+      })
+      .catch(() => {});
+  }
+  function scheduleSpare(entry: ActiveWorkspaceClient): void {
+    if (
+      !options?.externalEnginesSupported ||
+      !options.selectExternalEngineSpares ||
+      entry.workspace.remoteSessionId ||
+      isRemoteWorkspaceIdentity(entry.workspace.workspaceIdentity ?? "") ||
+      entry.client.isDisposed ||
+      activeClientsByWorkspaceKey.get(resolveWorkspaceKey(entry.workspace)) !== entry ||
+      spareCandidateClient === entry.client
+    )
+      return;
+    // 前台候选与一次性提前准备分开；缓存复用可恢复refill资格，后台读取不调用此入口。
+    spareCandidateClient = entry.client;
+    spareCandidateEntry = entry;
+    syncSpares();
+  }
+  function noteForegroundClient(
+    params: ZCodeAgentWorkspaceTarget,
+    client: ZCodeProtocolClient,
+  ): void {
+    const entry = activeClientsByWorkspaceKey.get(resolveWorkspaceKey(params));
+    if (entry?.client === client) scheduleSpare(entry);
+  }
+  // W4：预热集合变化（本窗口选择了新的外部引擎）时对当前候选 client 重新调度。
+  const stopWatchingSpareSelection = options?.watchExternalEngineSpareSelection?.(() =>
+    syncSpares(),
+  );
+
   const interactionPreferenceSyncByWorkspaceKey = new Map<string, Promise<void>>();
   let latestAppRuntimePreferences: ZCodeAgentAppRuntimePreferences | undefined;
   /** 服务端「提供」的进程内单次读取；见 resolveDynamicWorkflowGate 的注释。 */
@@ -1254,6 +1406,11 @@ export function createZCodeAgentService(
   const resolveSessionRuntimePreferences = options?.resolveSessionRuntimePreferences;
 
   function invalidateWorkspaceClient(workspaceKey: string, client: ZCodeProtocolClient): void {
+    if (spareCandidateClient === client) {
+      spareCandidateClient = undefined;
+      spareCandidateEntry = undefined;
+    }
+    retireClientSpare(client);
     for (const [key, pending] of pendingPermissions) {
       if (pending.client === client) {
         pendingPermissions.delete(key);
@@ -2107,6 +2264,53 @@ export function createZCodeAgentService(
         }
       }),
       client.onRequest((request) => {
+        if (
+          request.method === zcodeProtocolMethods.externalEngineAcquireSpare ||
+          request.method === zcodeProtocolMethods.externalEngineReleaseSpare
+        ) {
+          const params = zcodeExternalEngineSpareRequestParamsSchema.safeParse(request.params);
+          if (!params.success) {
+            void client.respondError(request.id, {
+              code: -32602,
+              message: "Invalid spare request",
+            });
+            return;
+          }
+          const { requestId, engine } = params.data;
+          if (request.method === zcodeProtocolMethods.externalEngineReleaseSpare) {
+            // requestId + 实际 client 对象双重匹配；旧 client 迟到 release 无权清除下一代。
+            for (const lease of spareLeases.values())
+              if (lease.client === client && lease.requestId === requestId)
+                spareLeases.delete(lease.permitKey);
+            void client.respond(request.id, {}).catch(() => {});
+            return;
+          }
+          const permitKey: SparePermitKey = engine ?? "legacy";
+          const active = activeClientsByWorkspaceKey.get(resolveWorkspaceKey(workspace));
+          const eligible =
+            !spareServiceClosed &&
+            options?.externalEnginesSupported &&
+            active?.client === client &&
+            spareCandidateClient === client &&
+            !client.isDisposed &&
+            !active.workspace.remoteSessionId &&
+            !isRemoteWorkspaceIdentity(active.workspace.workspaceIdentity ?? "");
+          // W4：每个引擎（或 legacy 键）各 1 个，窗口总数不超过上限；不同引擎互不挤占。
+          if (
+            eligible &&
+            !spareLeases.has(permitKey) &&
+            spareLeases.size < EXTERNAL_ENGINE_SPARE_PERMITS_PER_WINDOW
+          )
+            spareLeases.set(permitKey, { client, requestId, permitKey, leaseId: randomUUID() });
+          const lease = spareLeases.get(permitKey);
+          const leaseId =
+            eligible && lease?.client === client && lease.requestId === requestId && !lease.revoking
+              ? lease.leaseId
+              : undefined;
+          void client.respond(request.id, leaseId ? { leaseId } : {}).catch(() => {});
+          return;
+        }
+
         if (request.method === zcodeProtocolMethods.subagentsReadRuntimeConfig) {
           void (async () => {
             const parsed = zcodeSubagentsReadRuntimeConfigParamsSchema.safeParse(request.params);
@@ -3322,6 +3526,7 @@ export function createZCodeAgentService(
       }
       const startedAt = Date.now();
       const client = externalClient ?? (await getClient(params));
+      noteForegroundClient(params, client);
       if (!isExternalSessionEngine(engine))
         await refreshProviderRegistryForClient(client, "session_create");
       const sessionTraceId = params.sessionTraceId;
@@ -4722,6 +4927,7 @@ export function createZCodeAgentService(
       const startedAt = Date.now();
       const engine = await sessionEngineForExecution(params);
       const client = await clientForEngine(params, engine);
+      noteForegroundClient(params, client);
       if (!isExternalSessionEngine(engine))
         await refreshProviderRegistryForClient(client, "session_send");
       const sessionTraceId = params.sessionTraceId?.trim() || getSessionTraceId(params);
@@ -5337,6 +5543,8 @@ export function createZCodeAgentService(
         v4ConversationVisibilityResultSchema,
         { lifecycle: "observation" },
       );
+      // 非空可见是既有Renderer事实；不拉起隐藏CLI，空上报/后台订阅不抢候选。
+      if (visibleSessionIds.length) noteForegroundClient(params, client);
     },
 
     async subscribeConversationV4(params: ZCodeAgentConversationSubscribeParams) {
@@ -5501,6 +5709,8 @@ export function createZCodeAgentService(
         requiresProviderRegistryRefresh(params.envelope.type) ||
           params.envelope.type === "setEngineConfigOption",
       );
+      if (params.envelope.type === "createSession" || params.envelope.type === "sendText")
+        noteForegroundClient(params, client);
       const planPayload = params.envelope.payload as {
         planEnabled?: boolean;
         config?: { planEnabled?: boolean };
@@ -6119,6 +6329,8 @@ export function createZCodeAgentService(
     },
 
     disposeAll(): void {
+      spareServiceClosed = true;
+      stopWatchingSpareSelection?.();
       processManager.disposeAll();
       pluginProcessManager.disposeAll();
       mcpStatusProcessManager.disposeAll();
@@ -6130,6 +6342,8 @@ export function createZCodeAgentService(
     },
 
     async disposeAllAndWait(): Promise<void> {
+      spareServiceClosed = true;
+      stopWatchingSpareSelection?.();
       cancelAllWaitingWorkspaceStartups();
       await Promise.all([
         processManager.disposeAllAndWait(),

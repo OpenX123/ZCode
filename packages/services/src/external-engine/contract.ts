@@ -18,7 +18,8 @@ export interface IExternalEngineService {
   getStatus(engine: ExternalSessionEngine): Promise<ExternalEngineStatus>;
   /** 发送门禁只检查安装和路径，不启动 CLI；健康续聊复用结果。 */
   isLaunchReady?(engine: ExternalSessionEngine): Promise<boolean>;
-  invalidateStatus?(engine: ExternalSessionEngine): Promise<void>;
+  /** 使缓存失效；可选 cancel 仅中止指定引擎的管理检查或安装，不影响会话。 */
+  invalidateStatus?(engine: ExternalSessionEngine, cancel?: "check" | "install"): Promise<void>;
   /** 设置页显式刷新；发送路径继续复用缓存。 */
   refreshStatus?(engine: ExternalSessionEngine): Promise<ExternalEngineStatus>;
   /** 两家引擎的配置视图（含内置配置与隐藏配置），不含凭据。 */

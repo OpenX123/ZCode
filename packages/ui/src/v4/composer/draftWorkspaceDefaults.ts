@@ -3,6 +3,7 @@ import type { ZCodeConfigOption } from "@zcode/shared";
 import type { ModelSelectionView } from "@zcode/services";
 import type { SessionConfigState } from "@zcode/shared/zcode-protocol-v4";
 import { resolveModelThoughtOption } from "@/lib/modelThoughtOption.js";
+import { DEFAULT_NEW_SESSION_PERMISSION_MODE } from "@/v4/composer/newTaskDraft.js";
 /** 只将结构化选择投影给现有展示控件；不能借旧 Snapshot 或平铺别名填满空选择。 */
 export function resolveDraftDisplayedConfig(
   composer: Partial<SessionConfigState>,
@@ -16,7 +17,8 @@ export function resolveDraftDisplayedConfig(
     thought: selection.options?.reasoningLevel ?? "",
     thoughtLevels: [],
     followupMode: composer.followupMode ?? "queue",
-    mode: composer.mode ?? "build",
+    // 草稿尚未初始化权限时按新默认展示，与随后写入的初始化值一致。
+    mode: composer.mode ?? DEFAULT_NEW_SESSION_PERMISSION_MODE,
   };
 }
 

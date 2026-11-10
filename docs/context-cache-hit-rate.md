@@ -98,7 +98,12 @@ outputTokens / ((durationMs - timeToFirstContentMs) / 1000)
 Both durations come from the same provider request clock. First content is the first non-empty
 text, reasoning or tool-argument output observed by the adapter. The end is that model request's
 completion, not the end of the user turn or tool execution. The numerator is the provider's
-`outputTokens`, without adding reasoning tokens again. Missing output/timing, non-finite values
+`outputTokens`, without adding reasoning tokens again. Hidden reasoning (`reasoningTokens > 0`
+while the adapter reports `reasoningContentStreamed === false`) happens before first content, so
+the numerator becomes `outputTokens - reasoningTokens`; when `reasoningTokens > 0` but the event
+does not record `reasoningContentStreamed` (older events) the rate is unknown. The rule is shared
+with the per-turn tooltip via `calculateModelCallOutputRate`
+(see `docs/desktop/turn-output-rate-spec.md`). Missing output/timing, non-finite values
 or a non-positive generation duration display `—`; an observed zero output with valid timing
 displays zero. The column tooltip explains the denominator.
 

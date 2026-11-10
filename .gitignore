@@ -76,3 +76,4 @@ __pycache__/
 *.pyc
 .zcode-runtime
 .playwright-cli/
+.scratch/

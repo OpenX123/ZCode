@@ -88,6 +88,8 @@ const SESSIONLESS_METHODS = new Set<string>([
   // 可见性上报只替换 CLI 内存中的可见集合（外部引擎闲置豁免），不创建、恢复或常驻会话
   // （docs/desktop/engine-performance-1.1-spec.md「会话可见性上报」）。
   V4_METHODS.conversationVisibility,
+  zcodeProtocolMethods.externalEnginePrepareSpare,
+  zcodeProtocolMethods.externalEngineRevokeSpare,
 ]);
 
 /** 这些方法按 topic 区分：sessions-index / workspace-config 是工作区级被动订阅，不是会话订阅。 */

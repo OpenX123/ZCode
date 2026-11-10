@@ -5,6 +5,7 @@ import {
 } from "@zcode/contracts";
 import {
   SESSION_DEBUG_LIMITS,
+  calculateModelCallOutputRate,
   calculateOutputTps,
   sessionDebugParamsSchema,
   zcodeTaskNetworkDebugStatusFromPayload,
@@ -104,6 +105,15 @@ export function observeSessionDebug(record: SessionRecord, event: SessionEvent):
   const first = token(payload.timeToFirstContentMs);
   const generationDurationMs =
     duration !== undefined && first !== undefined && duration > first ? duration - first : null;
+  // 与轮次 tokens/s 提示共用逐调用口径：隐藏推理不在生成时长内，分子需扣除
+  // （docs/desktop/turn-output-rate-spec.md §2）。
+  const callRate = calculateModelCallOutputRate({
+    outputTokens,
+    reasoningTokens: token(usage?.reasoningTokens),
+    durationMs: duration,
+    timeToFirstContentMs: first,
+    reasoningContentStreamed: payload.reasoningContentStreamed,
+  });
   observation.hasUnknownCacheUsage ||= inputTokens === undefined || cacheReadTokens === undefined;
   const previous = state.cache;
   const totalInputTokens = (previous?.totalInputTokens ?? 0) + (inputTokens ?? 0);
@@ -142,7 +152,9 @@ export function observeSessionDebug(record: SessionRecord, event: SessionEvent):
           ? cacheReadTokens / inputTokens
           : null,
       generationDurationMs,
-      tokensPerSecond: calculateOutputTps(outputTokens, generationDurationMs),
+      tokensPerSecond: callRate
+        ? calculateOutputTps(callRate.streamedOutputTokens, callRate.generationMs)
+        : null,
     },
   ].slice(-SESSION_DEBUG_LIMITS.rounds);
 }

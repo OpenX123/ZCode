@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -18,15 +18,17 @@ import {
 import { spawnAcpProcess } from "../exec/acp-process.js";
 import { AcpConnection } from "./connection.js";
 import { resolveExternalEngineLaunch } from "@zcode/shared/node";
-import { resolveEngineConnection } from "./connection-profile.js";
-import {
-  adapterLaunchArgs,
-  ensureNodeRuntimeOnPath,
-  withNetworkEgressEnv,
-} from "./adapter-env.js";
+import { resolveEngineConnectionIdentity } from "./connection-profile.js";
+import { adapterLaunchArgs, ensureNodeRuntimeOnPath, withNetworkEgressEnv } from "./adapter-env.js";
 import type { ExternalEngineAdapterOptions } from "./contract.js";
 import type { ExternalEngineSpareKey } from "./process-pool.js";
+import type { ExternalEngineConfigCatalogKey } from "./config-catalog.js";
 export { runExternalEngineConnectionTest } from "./connection-test.js";
+export {
+  createExternalEngineConfigCatalog,
+  type ExternalEngineConfigCatalog,
+  type ExternalEngineConfigCatalogKey,
+} from "./config-catalog.js";
 export {
   createExternalEngineProcessPool,
   type ExternalEngineProcessPool,
@@ -45,6 +47,7 @@ interface Launch {
   args: string[];
   env: NodeJS.ProcessEnv;
   profileId: string;
+  validate(): Promise<boolean>;
   setup?: (connection: AcpConnection) => Promise<void>;
 }
 /** 会话级连接事实：在途计数与最近使用时间供闲置关闭判断，连接本身仍在 sessions 表。 */
@@ -68,7 +71,13 @@ function failureCode(error: unknown): string {
 
 export function createExternalEnginePort(
   options: ExternalEngineAdapterOptions = {},
-): ExternalEnginePort {
+): ExternalEnginePort & {
+  prepareSpare(
+    engine: ExternalSessionEngine,
+    connectionProfileId: string,
+    cwd: string,
+  ): Promise<void>;
+} {
   const sessions = new Map<string, AcpConnection>();
   const env = options.env ?? process.env;
   const executable = options.executable ?? process.execPath;
@@ -77,6 +86,9 @@ export function createExternalEnginePort(
   const preparations = new Map<string, { controller: AbortController; promise: Promise<void> }>();
   const activities = new Map<string, SessionActivity>();
   const providersSetMs = new WeakMap<AcpConnection, number>();
+  const configCatalog = options.configCatalog;
+  /** 本 port 会话最近一次解析出的缓存键；确认清单到达时按它记录（W4）。 */
+  const catalogKeys = new Map<string, ExternalEngineConfigCatalogKey>();
 
   const activityFor = (sessionId: string, engine: ExternalSessionEngine): SessionActivity => {
     let activity = activities.get(sessionId);
@@ -112,7 +124,21 @@ export function createExternalEnginePort(
     return activity;
   };
 
-  const resolveLaunch = async (input: LaunchInput): Promise<Launch> => {
+  const resolveIdentity = async (input: LaunchInput) => {
+    const root = env[EXTERNAL_ENGINES_DIR_ENV];
+    const home = env[EXTERNAL_ENGINE_USER_HOME_ENV];
+    if (!root || !isAbsolute(root) || (home !== undefined && !isAbsolute(home)))
+      throw new ExternalEngineConnectionError({ code: "not_ready" });
+    return resolveEngineConnectionIdentity(root, input, {
+      ...env,
+      ...(home ? { HOME: home, USERPROFILE: home } : {}),
+      ZCODE_ACP_EXECUTABLE: executable,
+    });
+  };
+  const resolveLaunch = async (
+    input: LaunchInput,
+    identity: Awaited<ReturnType<typeof resolveIdentity>>,
+  ): Promise<Launch> => {
     const runtime = EXTERNAL_ENGINE_RUNTIMES[input.engine];
     const root = env[EXTERNAL_ENGINES_DIR_ENV];
     const home = env[EXTERNAL_ENGINE_USER_HOME_ENV];
@@ -147,19 +173,40 @@ export function createExternalEnginePort(
     // 1.0.7 只在 macOS/Linux 补 node 入口：Windows 无系统 Node 时 adapter 自带的 codex.js 无法启动。
     await ensureNodeRuntimeOnPath(root, executable, childEnv);
     // 计费与网关变量按会话绑定的连接方式处理（含 APP_SERVER_LOGS），规则见共享 buildEngineConnectionEnv。
-    const resolved = await resolveEngineConnection(root, input, childEnv);
+    const resolved = await identity.materialize(childEnv);
     // 修复前沿用 CLI 时 adapter 丢失用户的代理/证书变量；按工具子进程的既有规则恢复，YCode 显式配置优先。
     childEnv = withNetworkEgressEnv(resolved.env, env);
+    // 命中只检查已解析绝对入口的文件身份，不重复扫描 PATH 或重新解析 Windows shim。
+    const paths = [entry, executable, ...(official && isAbsolute(official) ? [official] : [])];
+    const fingerprints = await Promise.all(
+      paths.map(async (path) => {
+        const value = await stat(path);
+        return `${value.dev}:${value.ino}:${value.size}:${value.mtimeMs}:${value.ctimeMs}`;
+      }),
+    );
     return {
+      async validate() {
+        try {
+          const current = await Promise.all(
+            paths.map(async (path) => {
+              const value = await stat(path);
+              return `${value.dev}:${value.ino}:${value.size}:${value.mtimeMs}:${value.ctimeMs}`;
+            }),
+          );
+          return current.every((value, index) => value === fingerprints[index]);
+        } catch {
+          return false;
+        }
+      },
       entry,
       args: adapterLaunchArgs(entry, official),
       env: childEnv,
-      profileId: resolved.profile.id,
+      profileId: identity.profile.id,
       ...(resolved.setup ? { setup: resolved.setup } : {}),
     };
   };
 
-  const spawnConnection = (launch: Launch, cwd: string): AcpConnection => {
+  const spawnConnection = (launch: Launch, cwd: string, unboundSpare = false): AcpConnection => {
     const setup = launch.setup;
     return new AcpConnection(
       spawnAcpProcess(executable, launch.args, cwd, launch.env),
@@ -170,6 +217,7 @@ export function createExternalEnginePort(
             providersSetMs.set(target, Date.now() - startedAt);
           }
         : undefined,
+      unboundSpare,
     );
   };
 
@@ -188,7 +236,7 @@ export function createExternalEnginePort(
           spare: "hit" | "miss" | "none";
           launchMs: number;
           fresh: boolean;
-          key: ExternalEngineSpareKey;
+          refill?: () => void;
         }
       | undefined;
     try {
@@ -200,20 +248,50 @@ export function createExternalEnginePort(
       }
       if (!connection) {
         launching = true;
-        const launch = await resolveLaunch(input);
+        const identity = await resolveIdentity(input);
         // 路径探测含异步 IO；关闭会话后不能由迟到的探测重新创建进程。
         input.signal.throwIfAborted();
-        const key = { engine: input.engine, connectionProfileId: launch.profileId, cwd: input.cwd };
+        const key: ExternalEngineSpareKey = {
+          engine: input.engine,
+          connectionProfileId: identity.profile.id,
+          cwd: input.cwd,
+          generation: identity.generation,
+        };
         // 只有新会话领用预建会话（已完成 session/new）：resume/load/fork 走原连接恢复语义。
         // 领用后 AcpConnection 跳过 initialize 与 session/new，以预建的原生 ID 走 onSession 与配置恢复。
         const fresh = mode === "session" && !input.externalSessionId;
-        const claimed = fresh ? pool?.claimSpare(key) : undefined;
-        connection = claimed ?? spawnConnection(launch, input.cwd);
+        const catalogKey: ExternalEngineConfigCatalogKey = {
+          engine: input.engine,
+          connectionProfileId: identity.profile.id,
+          workspaceKey: input.workspaceKey?.trim() || input.cwd,
+          generation: identity.generation,
+        };
+        catalogKeys.set(input.sessionId, catalogKey);
+        // W4：新会话先交出同键上次确认的清单（展示副本），再领用备用或冷启；resume/fork 有自己的确认值。
+        const cached = fresh ? configCatalog?.lookup(catalogKey) : undefined;
+        if (cached && input.onCachedConfigOptions) await input.onCachedConfigOptions(cached);
+        input.signal.throwIfAborted();
+        const claimed = fresh ? await pool?.claimSpare(key, input.signal) : undefined;
+        // pool 的 Promise 完成后到 port 恢复执行前也可能取消；已交付连接必须由接收方收口。
+        if (input.signal.aborted) await claimed?.connection.close();
+        input.signal.throwIfAborted();
+        const launch = claimed ? undefined : await resolveLaunch(input, identity);
+        input.signal.throwIfAborted();
+        connection = claimed?.connection ?? spawnConnection(launch!, input.cwd);
         established = {
           spare: !fresh || !pool ? "none" : claimed ? "hit" : "miss",
           launchMs: Date.now() - startedAt,
           fresh,
-          key,
+          refill:
+            claimed?.refill ??
+            (launch && pool
+              ? () =>
+                  pool.refillSpare(
+                    key,
+                    async () => spawnConnection(launch, key.cwd, true),
+                    launch.validate,
+                  )
+              : undefined),
         };
         sessions.set(input.sessionId, connection);
       }
@@ -262,18 +340,7 @@ export function createExternalEnginePort(
           totalMs: Date.now() - startedAt,
         });
         // 新会话成功后才补位（预建到 session/new）：配置与引擎已证实可用，且补位不与本次握手争抢启动资源。
-        if (established.fresh && pool) {
-          const { key } = established;
-          pool.refillSpare(key, async () =>
-            spawnConnection(
-              await resolveLaunch({
-                engine: key.engine,
-                connectionProfileId: key.connectionProfileId,
-              }),
-              key.cwd,
-            ),
-          );
-        }
+        if (established.fresh) established.refill?.();
       }
       return result;
     } catch (error) {
@@ -332,6 +399,12 @@ export function createExternalEnginePort(
               connectionProfileId = id;
               await input.onConnectionProfile?.(id);
             },
+            // 确认清单写入进程内缓存（W4），供同键下一个新草稿 connecting 时先显示。
+            async onConfigOptions(list: Parameters<typeof input.onConfigOptions>[0]) {
+              const catalogKey = catalogKeys.get(input.sessionId);
+              if (catalogKey) configCatalog?.remember(catalogKey, list);
+              await input.onConfigOptions(list);
+            },
           };
           await execute(attemptInput, (connection) => connection.prepare(attemptInput));
           return;
@@ -389,6 +462,16 @@ export function createExternalEnginePort(
     );
   };
   return {
+    async prepareSpare(engine, connectionProfileId, cwd) {
+      if (!pool) return;
+      const identity = await resolveIdentity({ engine, connectionProfileId });
+      const launch = await resolveLaunch({ engine, connectionProfileId }, identity);
+      pool.refillSpare(
+        { engine, connectionProfileId: identity.profile.id, cwd, generation: identity.generation },
+        async () => spawnConnection(launch, cwd, true),
+        launch.validate,
+      );
+    },
     prepareSession,
     isSessionConnected: (sessionId) => sessions.get(sessionId)?.healthy === true,
     async forkSession(input) {
@@ -464,6 +547,7 @@ export function createExternalEnginePort(
       const connection = sessions.get(sessionId);
       sessions.delete(sessionId);
       activities.delete(sessionId);
+      catalogKeys.delete(sessionId);
       pool?.untrackSession(sessionId);
       await connection?.close();
       await preparing?.promise.catch(() => {});

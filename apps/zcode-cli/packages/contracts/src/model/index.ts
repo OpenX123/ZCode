@@ -218,6 +218,11 @@ export interface ModelRequestCompletedStatusEvent extends ModelNetworkStatusBase
   streamMaxIdleMs?: number;
   streamStallCount?: number;
   streamOutputCommitted?: boolean;
+  /**
+   * 本次物理请求是否流式收到过非空推理 delta。false 且 usage.reasoningTokens > 0 表示隐藏推理，
+   * tokens/s 分子需扣除推理 token（docs/desktop/turn-output-rate-spec.md）；缺省为旧事件。
+   */
+  reasoningContentStreamed?: boolean;
 }
 
 export interface ModelRequestFailedStatusEvent extends ModelNetworkStatusBase {

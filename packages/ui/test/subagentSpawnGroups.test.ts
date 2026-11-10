@@ -65,8 +65,8 @@ function build(rows: AssistantWorkRow[]) {
   );
 }
 
-describe("派发行分组（docs/desktop/multi-agent-display-spec.md「分组」）", () => {
-  it("同一轮相邻的配对 Agent 与未配对 Agent 合并为一行，身份锚定首个成员", () => {
+describe("派发分组（docs/desktop/multi-agent-display-spec.md「对话行内 Subagent 工作卡 · 分组」）", () => {
+  it("同一轮相邻且任一成员已有子会话时合并为一张工作卡，身份锚定首个成员", () => {
     const items = build([
       agentCall(1),
       agentCall(2),
@@ -78,7 +78,8 @@ describe("派发行分组（docs/desktop/multi-agent-display-spec.md「分组」
     const group = items[0]!;
     expect(group.kind).toBe("agentSpawnGroup");
     if (group.kind !== "agentSpawnGroup") return;
-    expect(group.key).toBe("agentSpawnGroup:1");
+    expect(group.presentation).toBe("workCard");
+    expect(group.key).toBe("subagentWorkCard:1");
     expect(group.members.map((member) => member.kind)).toEqual([
       "agentToolCall",
       "agentToolCall",
@@ -92,11 +93,47 @@ describe("派发行分组（docs/desktop/multi-agent-display-spec.md「分组」
     expect(describeAgentSpawnMember(group.members[2]!).childSessionId).toBeUndefined();
   });
 
-  it("只合并相邻派发：中间夹其它可见工作项即断开，单个派发保持原卡片", () => {
+  it("只合并相邻派发：中间夹其它可见工作项即断开；无子会话的单个派发保持原卡片", () => {
     const items = build([agentCall(1), text(2), agentCall(3), agentCall(4), text(5), agentCall(6)]);
     expect(items.map((item) => item.kind)).toEqual(["row", "row", "agentSpawnGroup", "row", "row"]);
     const group = items[2]!;
     expect(group.kind === "agentSpawnGroup" && group.members.length).toBe(2);
+    // 都没有子会话：保持旧"A、B 和 C 开始工作"行。
+    expect(group.kind === "agentSpawnGroup" && group.presentation).toBe("sentence");
+    expect(group.key).toBe("agentSpawnGroup:3");
+  });
+
+  it("单个带子会话的派发也渲染为工作卡，并带出模型、档位、步骤数与起止时间", () => {
+    const items = build([
+      agentCall(1),
+      {
+        ...subagent(2, 1, "child-1"),
+        model: "gpt-6.1-sol",
+        effort: "high",
+        toolCallCount: 16,
+        startedAt: 1_000,
+      },
+    ]);
+    expect(items).toHaveLength(1);
+    const card = items[0]!;
+    if (card.kind !== "agentSpawnGroup") throw new Error("expected work card");
+    expect(card.presentation).toBe("workCard");
+    expect(card.members).toHaveLength(1);
+    expect(describeAgentSpawnMember(card.members[0]!)).toMatchObject({
+      childSessionId: "child-1",
+      model: "gpt-6.1-sol",
+      effort: "high",
+      toolCallCount: 16,
+      startedAt: 1_000,
+    });
+  });
+
+  it("组内任一成员登记子会话后整组切换为工作卡，未登记成员留在卡内", () => {
+    const items = build([agentCall(1), agentCall(2), subagent(3, 2, "child-2")]);
+    expect(items).toHaveLength(1);
+    const card = items[0]!;
+    expect(card.kind === "agentSpawnGroup" && card.presentation).toBe("workCard");
+    expect(card.kind === "agentSpawnGroup" && card.members.length).toBe(2);
   });
 
   it("不同轮次的相邻派发不合并", () => {

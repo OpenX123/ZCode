@@ -1,13 +1,16 @@
-// 按外部引擎记忆最近确认的模型与思考深度（docs/desktop/external-agent-engines-spec.md
-// “按引擎记忆模型与思考深度”）。Runtime 仍是已确认配置的唯一所有者：这里只在 snapshot
+// 按外部引擎与连接记忆最近确认的模型、思考深度与权限模式（docs/desktop/external-agent-engines-spec.md
+// “按引擎与连接记忆模型与思考深度”）。Runtime 仍是已确认配置的唯一所有者：这里只在 snapshot
 // 确认用户显式选择后写本机偏好，并在新草稿原生配置就绪后经既有命令链路恢复；恢复的逐项推进
 // 以命令 ACK 带回的 runtime 确认配置为准，不等 snapshot 帧。
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  ENGINE_MODE_CONFIG_ID,
   engineConfigOptionKind,
   isExternalSessionEngine,
+  isRememberableEngineConfig,
+  resolveEngineConnectionProfileId,
   type EngineConfigOption,
-  type ExternalEngineConfigPreferences,
+  type ExternalEngineConnectionConfigPreferences,
   type ExternalSessionEngine,
   type SessionEngine,
 } from "@zcode/shared/external-engine";
@@ -15,8 +18,17 @@ import { useSettings } from "@/hooks/useSettingService.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { logger } from "@/logger.js";
 
-/** 恢复顺序：深度目录随模型变化，必须在模型确认后再按新目录判断。 */
-const RESTORE_ORDER = ["model", "effort"] as const;
+/**
+ * 恢复顺序：深度目录随模型变化，必须在模型确认后再按新目录判断；权限模式（configId 恰为 `mode`）
+ * 最后恢复（2026-11-09 起）。
+ */
+const RESTORE_ORDER: ReadonlyArray<(option: EngineConfigOption) => boolean> = [
+  (option) => engineConfigOptionKind(option.id) === "model",
+  (option) => engineConfigOptionKind(option.id) === "effort",
+  (option) => option.id === ENGINE_MODE_CONFIG_ID,
+];
+/** 未记住思考深度时的默认值（用户决策 Q4「自主 + 高」）。 */
+const FIRST_USE_EFFORT = "high";
 
 export interface EngineConfigRestoreStep {
   configId: string;
@@ -33,25 +45,47 @@ export function nextEngineConfigRestoreStep(
   settled: ReadonlySet<string> = new Set(),
 ): EngineConfigRestoreStep | null {
   if (!remembered) return null;
-  for (const kind of RESTORE_ORDER) {
-    const option = options.find((entry) => engineConfigOptionKind(entry.id) === kind);
+  for (const matches of RESTORE_ORDER) {
+    const option = options.find(matches);
     if (!option || settled.has(option.id)) continue;
     const value = remembered[option.id];
     if (!value || value === option.currentValue) continue;
+    // 旧版本或手工写入的计划类模式即使在目录内也不恢复（Plan 不沿用）。
+    if (!isRememberableEngineConfig(option.id, value)) continue;
     if (!option.options.some((entry) => entry.value === value)) continue;
     return { configId: option.id, value };
   }
   return null;
 }
 
+/**
+ * 按配置项补首次使用默认值：记忆里没有当前目录思考深度项、且目录提供 `high` 档时补 high；
+ * 模型与权限模式没有记忆时保持引擎默认（Claude 新会话 Auto / Codex Auto review）。
+ * 只用于恢复下发，不写入记忆。
+ * 修复依据（P11，2026-11-09）：旧实现只在“该引擎 + 连接没有任何记忆”时套用 high。用户选过模型后
+ * 记忆只含 model，重启后新草稿不再套用 high，深度回落引擎原生默认（如 low）。改为按项判定，并在
+ * 每步按当前（含模型 ACK 确认后的新）目录计算，记住的模型先恢复、再按新目录补 high。
+ */
+function withFirstUseEngineConfigDefaults(
+  options: readonly EngineConfigOption[],
+  remembered: Readonly<Record<string, string>> | undefined,
+): Readonly<Record<string, string>> | undefined {
+  const effort = options.find((entry) => engineConfigOptionKind(entry.id) === "effort");
+  if (!effort || remembered?.[effort.id]) return remembered;
+  if (!effort.options.some((entry) => entry.value === FIRST_USE_EFFORT)) return remembered;
+  return { ...remembered, [effort.id]: FIRST_USE_EFFORT };
+}
+
 interface PendingConfirmation {
   sessionId: string;
   engine: ExternalSessionEngine;
+  connectionProfileId: string;
   value: string;
 }
 
 interface RestoreRun {
   sessionId: string;
+  connectionProfileId?: string;
   remembered: Readonly<Record<string, string>> | undefined;
   settled: Set<string>;
   /** 恢复循环已启动；每个预热会话只跑一次。 */
@@ -74,6 +108,8 @@ interface RestoreWaiter {
 
 export interface EngineConfigMemoryParams {
   engine: SessionEngine;
+  /** snapshot 的绑定 ID；旧 snapshot 缺省时 resolver 回退，null 表示当前绑定尚未就绪。 */
+  connectionProfileId?: string | null;
   /** snapshot 所属会话（草稿为预热会话）；null 表示还没有原生配置。 */
   sessionId: string | null;
   /** snapshot 已确认的原生配置；连接未 ready 或引擎不一致时为 undefined。 */
@@ -93,7 +129,11 @@ export interface EngineConfigMemoryParams {
 
 export interface EngineConfigMemory {
   /** 用户显式修改被接受后调用；snapshot 确认为所选值后才写入本机记忆。 */
-  recordExplicitChange: (configId: string, value: string) => void;
+  recordExplicitChange: (
+    configId: string,
+    value: string,
+    scope?: { sessionId: string; connectionProfileId: string | null | undefined },
+  ) => void;
   /**
    * 首发前等待该预热会话的记忆恢复收口：全部恢复项确认、无可恢复项、用户接管，或引擎改用其它值
    * / 保留旧值（以 ACK 确认值判定）。
@@ -106,11 +146,34 @@ export interface EngineConfigMemory {
 
 export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineConfigMemory {
   const { engine, sessionId, options, restoreEnabled, applyOption } = params;
+  const connectionProfileId =
+    params.connectionProfileId === null || !isExternalSessionEngine(engine)
+      ? null
+      : resolveEngineConnectionProfileId(undefined, {
+          engine,
+          connectionProfileId: params.connectionProfileId,
+        });
   // 设备偏好只写本机 Host，远端工作区也不写远端设置（与 defaultSessionEngine 同一所有者）。
   const services = useBaseWorkspaceServices();
   const { settings, loading, update } = useSettings({ services });
-  const latest = useRef({ engine, sessionId, options, settings, update, applyOption });
-  latest.current = { engine, sessionId, options, settings, update, applyOption };
+  const latest = useRef({
+    engine,
+    sessionId,
+    connectionProfileId,
+    options,
+    settings,
+    update,
+    applyOption,
+  });
+  latest.current = {
+    engine,
+    sessionId,
+    connectionProfileId,
+    options,
+    settings,
+    update,
+    applyOption,
+  };
   const pending = useRef(new Map<string, PendingConfirmation>());
   const restore = useRef<RestoreRun | null>(null);
   const waiters = useRef(new Set<RestoreWaiter>());
@@ -120,18 +183,26 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
   const settleWaiters = useCallback(() => {
     const run = restore.current;
     const current = latest.current;
+    const interrupted = Boolean(
+      run?.started &&
+      current.sessionId === run.sessionId &&
+      (!current.options || current.connectionProfileId === null),
+    );
+    // 断连会令在途 ACK 的身份校验提前退出，不能遗留 started=true/stopped=false 的无执行者轮次。
+    // 由同一 owner 在断连时终结本轮；当前首发仍失败，重连后的再次发送可沿用已确认配置。
+    if (interrupted && run) run.stopped = true;
     for (const waiter of waiters.current) {
       if (run?.sessionId !== waiter.sessionId) continue;
-      if (run.stopped) {
-        waiters.current.delete(waiter);
-        waiter.detach();
-        waiter.resolve();
-      } else if (current.sessionId === waiter.sessionId && !current.options) {
+      if (interrupted) {
         // 恢复已开始而连接不再就绪（adapter 退出或断联）：恢复无法在首发前完成，首发按失败处理，
         // 由发送链抛错保留输入，草稿显示原错误与“重新连接”。
         waiters.current.delete(waiter);
         waiter.detach();
         waiter.reject(new Error("引擎连接已中断，请重新连接后发送"));
+      } else if (run.stopped) {
+        waiters.current.delete(waiter);
+        waiter.detach();
+        waiter.resolve();
       }
     }
   }, []);
@@ -140,7 +211,11 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
     const current = latest.current;
     for (const [configId, entry] of pending.current) {
       // 会话或引擎已切换：该次选择的确认值不会再出现在当前 snapshot。
-      if (entry.sessionId !== current.sessionId || entry.engine !== current.engine) {
+      if (
+        entry.sessionId !== current.sessionId ||
+        entry.engine !== current.engine ||
+        entry.connectionProfileId !== current.connectionProfileId
+      ) {
         pending.current.delete(configId);
         continue;
       }
@@ -148,32 +223,49 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
       // 引擎拒绝或改用其它值时 snapshot 不会出现所选值，不写入记忆。
       if (option?.currentValue !== entry.value) continue;
       pending.current.delete(configId);
-      const remembered = current.settings?.externalEngineConfigPreferences?.[entry.engine];
+      const remembered =
+        current.settings?.externalEngineConnectionConfigPreferences?.[entry.engine]?.[
+          entry.connectionProfileId
+        ];
       if (remembered?.[configId] === entry.value) continue;
-      // 只提交确认的增量，设置服务在写队列内按引擎与 configId 合并。
-      const patch: ExternalEngineConfigPreferences = {};
-      patch[entry.engine] = { [configId]: entry.value };
-      void current.update({ externalEngineConfigPreferences: patch }).catch((error: unknown) => {
-        logger.warn("[external-engine] 引擎配置记忆保存失败", {
-          engine: entry.engine,
-          configId,
-          error: error instanceof Error ? error.message : String(error),
+      // 只提交确认的增量，设置服务在写队列内按引擎、连接与 configId 合并。
+      const patch: ExternalEngineConnectionConfigPreferences = {};
+      patch[entry.engine] = { [entry.connectionProfileId]: { [configId]: entry.value } };
+      void current
+        .update({ externalEngineConnectionConfigPreferences: patch })
+        .catch((error: unknown) => {
+          logger.warn("[external-engine] 引擎配置记忆保存失败", {
+            engine: entry.engine,
+            configId,
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
-      });
     }
   }, []);
 
   useEffect(() => {
     confirmPending();
-  }, [confirmPending, engine, sessionId, options]);
+  }, [confirmPending, engine, sessionId, connectionProfileId, options]);
 
   const recordExplicitChange = useCallback(
-    (configId: string, value: string) => {
+    (
+      configId: string,
+      value: string,
+      scope?: { sessionId: string; connectionProfileId: string | null | undefined },
+    ) => {
       const current = latest.current;
       if (
         !current.sessionId ||
+        !current.connectionProfileId ||
+        (scope &&
+          (scope.sessionId !== current.sessionId ||
+            scope.connectionProfileId === null ||
+            resolveEngineConnectionProfileId(undefined, {
+              engine: current.engine as ExternalSessionEngine,
+              connectionProfileId: scope.connectionProfileId,
+            }) !== current.connectionProfileId)) ||
         !isExternalSessionEngine(current.engine) ||
-        engineConfigOptionKind(configId) === "other"
+        (engineConfigOptionKind(configId) === "other" && configId !== ENGINE_MODE_CONFIG_ID)
       )
         return;
       // 用户已接管本会话的配置：停止（或预先阻止）恢复，避免覆盖其显式选择。
@@ -181,6 +273,7 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
       else
         restore.current = {
           sessionId: current.sessionId,
+          connectionProfileId: current.connectionProfileId,
           remembered: undefined,
           settled: new Set(),
           started: true,
@@ -188,9 +281,12 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
         };
       // 用户的配置命令同样经配置屏障，排在随后入队的首发之前；等待恢复的首发可以继续。
       settleWaiters();
+      // 计划类模式也算接管（不能被随后恢复的记忆覆盖），但不写入记忆。
+      if (!isRememberableEngineConfig(configId, value)) return;
       pending.current.set(configId, {
         sessionId: current.sessionId,
         engine: current.engine,
+        connectionProfileId: current.connectionProfileId,
         value,
       });
       // snapshot 可能先于 ACK 到达；立即按当前确认值检查一次。
@@ -209,10 +305,18 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
    */
   const runRestore = useCallback(
     async (run: RestoreRun, initialOptions: readonly EngineConfigOption[]) => {
-      const isCurrent = () => restore.current === run && !unmounted.current;
+      const isCurrent = () =>
+        restore.current === run &&
+        !unmounted.current &&
+        latest.current.sessionId === run.sessionId &&
+        latest.current.connectionProfileId === run.connectionProfileId;
       let catalog = initialOptions;
       while (isCurrent() && !run.stopped) {
-        const step = nextEngineConfigRestoreStep(catalog, run.remembered, run.settled);
+        const step = nextEngineConfigRestoreStep(
+          catalog,
+          withFirstUseEngineConfigDefaults(catalog, run.remembered),
+          run.settled,
+        );
         if (!step) break;
         const result = await latest.current
           .applyOption(run.sessionId, step.configId, step.value)
@@ -240,14 +344,28 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
   );
 
   useEffect(() => {
-    if (!restoreEnabled || !sessionId || !options || !isExternalSessionEngine(engine)) return;
+    if (
+      !restoreEnabled ||
+      !sessionId ||
+      !connectionProfileId ||
+      !options ||
+      !isExternalSessionEngine(engine)
+    )
+      return;
     // 本机设置尚在首次读取时等待，不能把“未读到”当成“没有记忆”。
     if (!settings && loading) return;
-    if (restore.current?.sessionId !== sessionId) {
+    if (
+      restore.current?.sessionId !== sessionId ||
+      restore.current.connectionProfileId !== connectionProfileId
+    ) {
       // 每个预热会话只恢复一次，并冻结就绪时的记忆，之后的偏好变化不重配已打开的草稿。
+      // 没有记住思考深度时由 runRestore 逐步按当前目录补首次默认（深度 high）。
       restore.current = {
         sessionId,
-        remembered: settings?.externalEngineConfigPreferences?.[engine],
+        connectionProfileId,
+        remembered:
+          settings?.externalEngineConnectionConfigPreferences?.[engine]?.[connectionProfileId] ??
+          settings?.externalEngineConfigPreferences?.[engine],
         settled: new Set(),
         started: false,
         stopped: false,
@@ -257,12 +375,21 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
     if (run.started || run.stopped) return;
     run.started = true;
     void runRestore(run, options);
-  }, [restoreEnabled, sessionId, options, engine, settings, loading, runRestore]);
+  }, [
+    restoreEnabled,
+    sessionId,
+    connectionProfileId,
+    options,
+    engine,
+    settings,
+    loading,
+    runRestore,
+  ]);
 
   // 连接就绪状态变化时复查等待者（恢复开始后连接不再就绪即拒绝）；恢复推进由 runRestore 收口。
   useEffect(() => {
     settleWaiters();
-  }, [settleWaiters, sessionId, options]);
+  }, [settleWaiters, sessionId, connectionProfileId, options]);
 
   useEffect(() => {
     unmounted.current = false;
@@ -281,7 +408,14 @@ export function useEngineConfigMemory(params: EngineConfigMemoryParams): EngineC
     (targetSessionId: string, signal?: AbortSignal) => {
       if (signal?.aborted) return Promise.reject(signal.reason);
       const run = restore.current;
-      if (run?.sessionId === targetSessionId && run.stopped) return Promise.resolve();
+      if (
+        run?.sessionId === targetSessionId &&
+        run.stopped &&
+        latest.current.sessionId === targetSessionId &&
+        latest.current.options &&
+        latest.current.connectionProfileId
+      )
+        return Promise.resolve();
       return new Promise<void>((resolve, reject) => {
         const onAbort = () => {
           if (!waiters.current.delete(waiter)) return;

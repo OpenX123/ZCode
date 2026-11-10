@@ -16,8 +16,6 @@ const attachmentState = vi.hoisted(() => ({
   retryAttachment: vi.fn(),
 }));
 
-const cuaEntryProps = vi.hoisted(() => [] as Array<Record<string, unknown>>);
-
 vi.mock("@/ControlHintTooltip.js", async () => {
   const React = await import("react");
   return {
@@ -34,8 +32,16 @@ vi.mock("@/prompt-editor/ChatPromptEditor.js", async () => {
         "form",
         null,
         props.topContent as ReactNode,
-        props.leadingActions as ReactNode,
-        props.submitControl as ReactNode,
+        React.createElement(
+          "div",
+          { "data-composer-leading-test": true },
+          props.leadingActions as ReactNode,
+        ),
+        React.createElement(
+          "div",
+          { "data-composer-submit-test": true },
+          props.submitControl as ReactNode,
+        ),
       ),
   };
 });
@@ -105,16 +111,6 @@ vi.mock("@/v4/composer/useComposerAttachments.js", () => ({
   },
 }));
 
-vi.mock("@/v4/composer/V4ComposerCuaEntry.js", async () => {
-  const React = await import("react");
-  return {
-    V4ComposerCuaEntry: (props: Record<string, unknown>) => {
-      cuaEntryProps.push(props);
-      return React.createElement("span", { "data-cua-entry": "true" });
-    },
-  };
-});
-
 vi.mock("@/v4/composer/V4ComposerToolbar.js", async () => {
   const React = await import("react");
   return {
@@ -149,7 +145,7 @@ function renderComposer(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ConversationComposer attachment upload progress", () => {
-  it("只让聚焦且未禁用的 composer 监听 add-to-chat，并保留 CUA 常驻入口", () => {
+  it("只让聚焦且未禁用的 composer 监听 add-to-chat，并隐藏 CUA 与后台工作入口", () => {
     const html = renderComposer({
       disabled: true,
       isWebRemoteControl: true,
@@ -160,13 +156,31 @@ describe("ConversationComposer attachment upload progress", () => {
     expect(attachmentState.hookOptions.at(-1)).toMatchObject({
       listenAddToChatEvents: false,
     });
-    expect(html).toContain('data-cua-entry="true"');
-    expect(cuaEntryProps.at(-1)).toMatchObject({
-      currentSessionBusy: false,
-      isWebRemoteControl: true,
-      remoteSessionId: "remote-1",
-      workspacePath: "/workspace",
+    expect(html).not.toContain('data-cua-entry="true"');
+    expect(html).not.toContain('data-testid="v4-composer-background-work-trigger"');
+  });
+
+  it("输入区上方不再渲染引擎胶囊，外部原生工具行位于发送按钮之前", () => {
+    const html = renderComposer({
+      externalEngine: true,
+      engineControls: createElement("span", { "data-external-engine-controls": true }),
+      engineModelControls: createElement("span", { "data-external-engine-model": true }),
+      // W2：切换行只挂在模型入口弹层内；外部引擎由 EngineControls 自己的弹层承载。
+      engineSwitchRow: createElement("span", { "data-engine-switch-row": true }),
     });
+    const leading = html.indexOf('data-composer-leading-test="true"');
+    const submit = html.indexOf('data-composer-submit-test="true"');
+    const controls = html.indexOf('data-external-engine-controls="true"');
+    expect(leading).toBeGreaterThanOrEqual(0);
+    expect(submit).toBeGreaterThan(leading);
+    expect(html).not.toContain('data-testid="composer-engine-selector"');
+    expect(html).not.toContain('data-engine-switch-row="true"');
+    expect(controls).toBeGreaterThan(leading);
+    expect(controls).toBeLessThan(submit);
+    expect(html.indexOf('data-external-engine-model="true"')).toBeGreaterThan(submit);
+    expect(html.indexOf('data-external-engine-model="true"')).toBeLessThan(
+      html.indexOf('data-testid="v4-composer-send"'),
+    );
   });
 
   it("图片显示上传圆环与百分比，未 ready 时发送按钮 disabled", () => {

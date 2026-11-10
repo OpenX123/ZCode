@@ -1,6 +1,10 @@
 /* oxlint-disable eslint(max-lines) -- AppSettings schema 聚合历史迁移、默认值和 patch 校验，拆分会削弱设置迁移的单一入口。 */
 import { z } from "zod";
-import { engineConfigOptionKind, sessionEngineSchema } from "./external-engine/index.js";
+import {
+  externalEngineConnectionProfileSchema,
+  isRememberableEngineConfig,
+  sessionEngineSchema,
+} from "./external-engine/index.js";
 import { appToolSearchModeSchema } from "./app-runtime-preferences.js";
 import type { AppSettings } from "./protocol.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
@@ -22,15 +26,20 @@ import {
 
 const MAX_ENGINE_CONFIG_ID_LENGTH = 64;
 const MAX_ENGINE_CONFIG_VALUE_LENGTH = 256;
-/** 单个外部引擎的记忆只接受模型与思考深度的原始值；权限模式等其余 configId 视为无效。 */
+/**
+ * 单个外部引擎的记忆只接受模型、思考深度与非计划类权限模式（configId `mode`，2026-11-09 起，
+ * 只增不改：旧数据照常读取）的原始值；其余 configId 或 `mode: plan` 视为无效。
+ */
 const externalEngineConfigPreferenceSchema = z
   .record(
     z.string().min(1).max(MAX_ENGINE_CONFIG_ID_LENGTH),
     z.string().min(1).max(MAX_ENGINE_CONFIG_VALUE_LENGTH),
   )
-  .refine((values) => Object.keys(values).every((id) => engineConfigOptionKind(id) !== "other"), {
-    message: "Only model and thinking-depth engine options can be remembered",
-  });
+  .refine(
+    (values) =>
+      Object.entries(values).every(([id, value]) => isRememberableEngineConfig(id, value)),
+    { message: "Only model, thinking-depth and non-plan mode engine options can be remembered" },
+  );
 const externalEngineConfigPreferencesPatchSchema = z.object({
   "claude-code": externalEngineConfigPreferenceSchema.optional(),
   codex: externalEngineConfigPreferenceSchema.optional(),
@@ -39,6 +48,32 @@ const externalEngineConfigPreferencesPatchSchema = z.object({
 const externalEngineConfigPreferencesSettingsSchema = z.object({
   "claude-code": externalEngineConfigPreferenceSchema.optional().catch(undefined),
   codex: externalEngineConfigPreferenceSchema.optional().catch(undefined),
+});
+const engineConnectionProfilePreferenceId = externalEngineConnectionProfileSchema.shape.id;
+const externalEngineConnectionPreferencesPatchSchema = z.object({
+  "claude-code": z
+    .record(engineConnectionProfilePreferenceId, externalEngineConfigPreferenceSchema)
+    .optional(),
+  codex: z
+    .record(engineConnectionProfilePreferenceId, externalEngineConfigPreferenceSchema)
+    .optional(),
+});
+// 单个损坏连接不能使同引擎其他连接的记忆丢失；补丁仍严格拒绝非法配置。
+const engineConnectionPreferencesSettingsSchema = z
+  .record(
+    engineConnectionProfilePreferenceId,
+    externalEngineConfigPreferenceSchema.optional().catch(undefined),
+  )
+  .transform((profiles) =>
+    Object.fromEntries(
+      Object.entries(profiles).filter(
+        (entry): entry is [string, Record<string, string>] => entry[1] !== undefined,
+      ),
+    ),
+  );
+const externalEngineConnectionPreferencesSettingsSchema = z.object({
+  "claude-code": engineConnectionPreferencesSettingsSchema.optional().catch(undefined),
+  codex: engineConnectionPreferencesSettingsSchema.optional().catch(undefined),
 });
 
 /** 引导职业枚举；单独导出供 onboarding 记录回填 settings 时做窄化校验。 */
@@ -528,6 +563,9 @@ const appSettingsObjectSchema = z.object({
   externalEngineConfigPreferences: externalEngineConfigPreferencesSettingsSchema
     .optional()
     .catch(undefined),
+  externalEngineConnectionConfigPreferences: externalEngineConnectionPreferencesSettingsSchema
+    .optional()
+    .catch(undefined),
   dismissedDesktopUpdateVersion: nonEmptyStringSchema.nullable().optional().catch(undefined),
   recentProjects: z.array(z.string()).default([]),
   locale: localeSchema.default("zh-CN"),
@@ -634,6 +672,8 @@ export const appSettingsSchema = z.preprocess(
 export const appSettingsPatchSchema = z.object({
   defaultSessionEngine: sessionEngineSchema.optional(),
   externalEngineConfigPreferences: externalEngineConfigPreferencesPatchSchema.optional(),
+  externalEngineConnectionConfigPreferences:
+    externalEngineConnectionPreferencesPatchSchema.optional(),
   dismissedDesktopUpdateVersion: nonEmptyStringSchema.nullable().optional(),
   recentProjects: z.array(z.string()).optional(),
   locale: localeSchema.optional(),

@@ -15,7 +15,7 @@
  * 提交时由宿主（SessionPane）把冻结选择随 Submission 一起发送。
  * 三件套不能全部门控在 config!==null 上——草稿态会整体不渲染。
  */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ZCODE_AGENT_PROVIDER, type ZCodeConfigOption, type ZCodeProvider } from "@zcode/shared";
 import { TID_V4_MODEL_CONFIG, TID_V4_COMPOSER_INPUT } from "@zcode/shared/test-ids";
 import type {
@@ -26,7 +26,9 @@ import type {
 import { ModelConfigSelect, type ModelSelectGroup } from "@/ModelConfigSelect.js";
 import type { ComposerModelOptions } from "@/chat-input-toolbar/ComposerModelMenu.js";
 import { Button } from "@/components/ui/button.js";
+import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu.js";
 import { ChatContextUsage } from "@/chat-input-toolbar/display.js";
+import { TaskClientLogo } from "@/external-engine/index.js";
 
 import {
   getNextThoughtLevelValue,
@@ -118,6 +120,11 @@ export interface V4ComposerToolbarProps {
     sourceModel: ModelSelectionSource | null,
   ) => Promise<void> | void;
   onSendCompressionCommand?: (command: string) => void;
+  /**
+   * W2：SessionPane 构建的引擎切换行（本地工作区才有），挂在模型弹层顶部；
+   * 传入时入口按钮同时显示 14px YCode 图标。只展示，选择仍走 SessionPane 的 handleSelectEngine。
+   */
+  engineSwitchRow?: ReactNode;
 }
 
 /** 模型 / 思考深度 / context usage 簇（渲染在发送键左侧，与旧 UI 同位）。 */
@@ -140,6 +147,7 @@ function V4ComposerModelControlsImpl({
   onSelectThought,
   onSendCompressionCommand,
   onRecoverCustomModelSelection,
+  engineSwitchRow,
 }: V4ComposerToolbarProps) {
   const { intl, locale } = useZCodeIntl();
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
@@ -422,6 +430,33 @@ function V4ComposerModelControlsImpl({
     [intl, thoughtShortcutLabel, thoughtOption, displayProvider, handleThoughtValueChange],
   );
   const isModelOptionLocked = useCallback(() => false, []);
+  // 菜单只在 item 间做 roving focus；切换行包进一个不关闭菜单的 item，聚焦时把焦点交给选中的 radio。
+  const engineSwitchHeader = useMemo(
+    () =>
+      engineSwitchRow ? (
+        <>
+          <DropdownMenuItem
+            className="block px-1 py-1 focus:bg-transparent"
+            data-testid="composer-engine-switch-item"
+            onSelect={(event) => event.preventDefault()}
+            onFocus={(event) => {
+              if (event.target !== event.currentTarget) return;
+              event.currentTarget
+                .querySelector<HTMLElement>('[role="radio"][tabindex="0"]')
+                ?.focus();
+            }}
+          >
+            {engineSwitchRow}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator className="bg-border/50" />
+        </>
+      ) : undefined,
+    [engineSwitchRow],
+  );
+  const engineTriggerIcon = useMemo(
+    () => (engineSwitchRow ? <TaskClientLogo engine="zcode" size="compact" /> : undefined),
+    [engineSwitchRow],
+  );
 
   // 键盘热键（旧 useToolbarShortcutBindings）：Ctrl+M 打开模型菜单、Ctrl+T 循环思考深度。
   // 模式循环（Ctrl+Shift+M）由 V4ComposerModeSwitch 单独绑定（modeOption 在彼处）。
@@ -548,6 +583,8 @@ function V4ComposerModelControlsImpl({
           triggerLabelClassName="block min-w-0 text-left group-data-[composer-model-icon=true]/toolbar:hidden [&>span]:max-w-full [&>span>span]:block [&>span>span]:truncate"
           triggerClassName="composer-model-trigger group-data-[composer-model-icon=true]/toolbar:px-1.5 group-data-[composer-model-icon=true]/toolbar:justify-center"
           triggerIconClassName="hidden group-data-[composer-model-icon=true]/toolbar:inline-flex"
+          triggerIcon={engineTriggerIcon}
+          contentHeader={engineSwitchHeader}
           focusSelectorOnClose={V4_COMPOSER_INPUT_SELECTOR}
           providerSubmenuClassName={providerSubmenuClassName}
         />

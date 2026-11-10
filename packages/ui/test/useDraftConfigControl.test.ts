@@ -847,7 +847,7 @@ describe("useDraftConfigControl slash command hydration", () => {
       }
       await act(async () => root.render(createElement(Probe, { ready: true })));
       expect(control!.composerDraft.text).toBe("content stays");
-      expect(control!.draftConfig.mode).toBe("build");
+      expect(control!.draftConfig.mode).toBe("guarded");
       expect(control!.draftConfig.planEnabled).toBe(edited === "mode");
       if (edited === "mode") expect(control!.composerDraft.modelSelection).toBeUndefined();
       else expect(control!.draftConfig.modelSelection?.modelId).toBe("model");
@@ -1231,7 +1231,7 @@ describe("useDraftConfigControl slash command hydration", () => {
     act(() => control!.updateComposerContent({ text: "保留原选择" }));
     act(() => control!.handleDraftSwitchMode("plan"));
     expect(readV4ComposerDraft(workspacePath, undefined, "__draft__")).toMatchObject({
-      mode: "build",
+      mode: "guarded",
       planEnabled: true,
       text: "保留原选择",
       modelSelection: { providerId: "provider", modelId: "old" },
@@ -1437,6 +1437,35 @@ describe("useDraftConfigControl slash command hydration", () => {
       readComposerRecent(workspacePath, undefined, undefined, testScope(workspacePath)),
     ).toMatchObject({ mode: "yolo" });
     act(() => root.unmount());
+  });
+
+  it("无 Recent 的新 Root 默认自主模式 guarded；Recent 为 plan 时仍回落 build", async () => {
+    const view = modelSelectionView(1, ["model"], "model");
+    let control: ReturnType<typeof useDraftConfigControl>;
+    function Probe({ workspacePath }: { workspacePath: string }) {
+      control = useDraftConfigControl({
+        workspacePath,
+        sessionId: null,
+        sessionConfig: null,
+        agentStartupAllowed: false,
+        modelSelectionView: view,
+      });
+      return null;
+    }
+    const fresh = createRoot(installMinimalDom());
+    await act(async () => fresh.render(createElement(Probe, { workspacePath: "/fresh-user" })));
+    expect(control!.draftConfig.mode).toBe("guarded");
+    act(() => fresh.unmount());
+
+    // installMinimalDom 会重建 storage，先装 DOM 再写 Recent。
+    const planned = createRoot(installMinimalDom());
+    captureComposerRecentSubmission("/recent-plan", {
+      modelSelection: view.preferredSelection!,
+      mode: "plan",
+    })();
+    await act(async () => planned.render(createElement(Probe, { workspacePath: "/recent-plan" })));
+    expect(control!.draftConfig.mode).toBe("build");
+    act(() => planned.unmount());
   });
 
   it("目录重解析期间主动选模型仍使用同 Host 目录补齐思考", async () => {

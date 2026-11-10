@@ -17,6 +17,41 @@ rules:
     - "evidence-only"
 
 nodes:
+  - id: "capability.external-agent-engines"
+    kind: "capability"
+    label: "Local ACP external agent engines"
+    aliases: ["ACP", "Agent 引擎", "Claude Code", "Codex", "外部引擎"]
+    docs: ["docs/desktop/external-agent-engines-spec.md"]
+    codeSeeds:
+      - file: "packages/services/src/external-engine/node.ts"
+        symbol: "createExternalEngineService"
+      - file: "apps/zcode-cli/packages/adapters/src/external-engine/index.ts"
+        symbol: "createExternalEnginePort"
+    invariants:
+      - "Host owns connection profiles; Runtime owns immutable session binding and confirmed options; Port/Pool own ACP connections."
+      - "Local desktop only; SSH and service-less Web do not gain an external-engine execution path. Prompts are never automatically resubmitted."
+  - id: "surface.external-engine-settings"
+    kind: "ui-surface"
+    label: "Agent engine master/detail settings"
+    docs: ["docs/desktop/external-agent-engines-spec.md"]
+    codeSeeds:
+      - file: "packages/ui/src/external-engine/EngineSettings.tsx"
+        symbol: "EngineSettings"
+      - file: "packages/ui/src/external-engine/EngineConnectionProfiles.tsx"
+        symbol: "EngineConnectionProfiles"
+    invariants:
+      - "Inspecting an engine/profile does not change lastUsed. Host launch-ready is distinct from authentication and actual session readiness."
+  - id: "surface.external-engine-composer"
+    kind: "ui-surface"
+    label: "Draft engine selection and bound session options"
+    docs: ["docs/desktop/external-agent-engines-spec.md"]
+    codeSeeds:
+      - file: "packages/ui/src/external-engine/EngineControls.tsx"
+        symbol: "EngineControls"
+      - file: "packages/ui/src/hooks/external-engine/useEngineConfigMemory.ts"
+        symbol: "useEngineConfigMemory"
+    invariants:
+      - "Draft selection and existing session binding remain isolated. UI retains intentions only; confirmed options come from Runtime. Fast is advanced, not a permanent toolbar control."
   - id: "capability.tool-search"
     kind: "capability"
     label: "Provider-aware deferred ToolSearch"
@@ -4704,6 +4739,21 @@ nodes:
         file: "packages/ui/src/ToolCallBlocks/resolveRenderer.ts"
 
 edges:
+  - from: "capability.external-agent-engines"
+    to: "surface.external-engine-settings"
+    type: "renders-in"
+    rank: "must-inspect"
+    condition: "Host owns profiles and engine diagnostics; viewing settings never changes the session binding or last-used profile."
+  - from: "capability.external-agent-engines"
+    to: "surface.external-engine-composer"
+    type: "renders-in"
+    rank: "must-inspect"
+    condition: "Drafts select an engine/profile; existing sessions retain immutable bindings and Runtime-confirmed configuration."
+  - from: "capability.external-agent-engines"
+    to: "boundary.workspace-key"
+    type: "isolated-by"
+    rank: "must-inspect"
+    condition: "Workspace identity, engine and connection profile isolate session preparation and spare ownership."
   - from: "capability.tool-search"
     to: "surface.tool-search-settings"
     type: "renders-in"

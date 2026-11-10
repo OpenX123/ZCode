@@ -292,7 +292,9 @@ export const DefaultRuntimeConfig: RuntimeConfig = {
     idleTimeoutMs: DEFAULT_MODEL_STREAM_IDLE_TIMEOUT_MS,
   },
   permission: {
-    mode: "build",
+    // 新用户默认自主模式（用户决策 2026-11-09「自主 + 高」，与 Desktop 新草稿默认一致）；
+    // 显式传入或持久化的模式优先，见 bootstrap runtime-config。
+    mode: "guarded",
     allowedTools: [],
     disallowedTools: [],
     autoApproveHighRisk: false,

@@ -940,7 +940,7 @@ describe("botsService messageFlow", () => {
         modelSelection: {
           providerId: "custom-provider",
           modelId: "glm-4.7",
-          options: { reasoningLevel: "max" },
+          options: { reasoningLevel: "high" },
         },
       }),
     );
@@ -1059,7 +1059,7 @@ describe("botsService messageFlow", () => {
     expect(legacyTaskService.setModel).toHaveBeenCalledWith(
       expect.objectContaining({
         taskId: "task-1",
-        modelSelection: { providerId, modelId, options: { reasoningLevel: "max" } },
+        modelSelection: { providerId, modelId, options: { reasoningLevel: "high" } },
       }),
     );
     service.disposeAll();
@@ -1154,7 +1154,7 @@ describe("botsService messageFlow", () => {
     expect(zcodeTaskService.setModel).toHaveBeenCalledWith(
       expect.objectContaining({
         taskId: "task-1",
-        modelSelection: { providerId, modelId, options: { reasoningLevel: "max" } },
+        modelSelection: { providerId, modelId, options: { reasoningLevel: "high" } },
       }),
     );
     expect(updateProviderRegistry).not.toHaveBeenCalled();
@@ -1367,7 +1367,7 @@ describe("botsService messageFlow", () => {
         modelSelection: {
           providerId: "runtime-provider",
           modelId: "gpt-5.4",
-          options: { reasoningLevel: "max" },
+          options: { reasoningLevel: "high" },
         },
       }),
     );

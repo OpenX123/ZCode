@@ -235,7 +235,7 @@ describe("外部引擎 App 集成", () => {
         ))
           cold.applyEvent(event);
         checkAgentDetails(cold);
-        // 停止时的非法通知会使 adapter 清理连接；必须同步撤销 ready，重连不能重发 prompt。
+        // 停止时协议故障按现有 spec 自动恢复原会话；非停止断联才保留 error，均不能重发 prompt。
         for (const scenario of ["healthy-cancel", "broken-cancel", "disconnect"]) {
           let completion: Promise<unknown>;
           if (scenario === "disconnect") {
@@ -251,7 +251,7 @@ describe("外部引擎 App 集成", () => {
           }
           await completion;
           expect(app.runtime.getEngineConfigState()).toBe(
-            scenario === "healthy-cancel" ? "ready" : "error",
+            scenario === "disconnect" ? "error" : "ready",
           );
           expect(app.runtime.getEngineConfigOptions()[1]?.currentValue).toBe("high");
           const before = (await readFile(env.ACP_TEST_REQUESTS, "utf8"))

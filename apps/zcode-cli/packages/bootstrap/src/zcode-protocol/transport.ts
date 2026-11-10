@@ -252,9 +252,7 @@ export class ZCodeProtocolNdjsonConnection {
       // 停止/取消控制必须等它前面的同道请求真正进入 handler、建立 abort controller，再越过该请求的
       // 异步执行；只延后一轮微任务会让控制请求提前成为空操作。只等到达时已入队的最后一个请求。
       const barriers = plan.laneKeys.map((key) => this.lanes.get(key)?.started);
-      this.track(
-        Promise.all(barriers).then(() => this.runTimed(message, "control", enqueuedAt)),
-      );
+      this.track(Promise.all(barriers).then(() => this.runTimed(message, "control", enqueuedAt)));
       return;
     }
     this.enqueueInLanes(message, plan.laneKind, plan.laneKeys, enqueuedAt);
@@ -463,6 +461,8 @@ const IMMEDIATE_METHODS = new Set<string>([
   V4_METHODS.connectionFlow,
   // 会话可见性上报：只整体替换内存中的可见集合（外部引擎闲置豁免依据），不读写会话状态。
   V4_METHODS.conversationVisibility,
+  zcodeProtocolMethods.externalEnginePrepareSpare,
+  zcodeProtocolMethods.externalEngineRevokeSpare,
   // 连接测试最长需等待一次真实模型请求，且只使用独立 port 与临时 cwd；排队会阻塞同 workspace
   // 的会话请求，取消请求也会排在测试之后失效，因此二者收到即处理。
   zcodeProtocolMethods.externalEngineTestConnection,
@@ -551,7 +551,8 @@ export function planProtocolDispatch(message: ZCodeProtocolMessage): ProtocolDis
   }
   const sessionLaneKeys = collectSessionLaneKeys(method, params);
   if (sessionLaneKeys.length > 0) {
-    if (SESSION_READ_METHODS.has(method)) return { kind: "session-read", laneKeys: sessionLaneKeys };
+    if (SESSION_READ_METHODS.has(method))
+      return { kind: "session-read", laneKeys: sessionLaneKeys };
     return { kind: "lane", laneKind: "session", laneKeys: sessionLaneKeys };
   }
   const topicLaneKey = collectTopicLaneKey(params);

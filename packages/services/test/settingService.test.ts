@@ -1273,9 +1273,42 @@ describe("settingService", () => {
         "claude-code": { model: "claude-opus-5-5" },
       },
     });
+    // 2026-11-09 起权限模式可记忆，计划类模式与其它配置仍拒绝。
     await expect(
-      service.update({ externalEngineConfigPreferences: { codex: { mode: "full-access" } } }),
+      service.update({ externalEngineConfigPreferences: { codex: { mode: "plan" } } }),
     ).rejects.toThrow();
+    await expect(
+      service.update({ externalEngineConfigPreferences: { codex: { fast: "on" } } }),
+    ).rejects.toThrow();
+  });
+
+  it("按连接偏好并发增量不会覆盖其他引擎、连接或同连接的深度", async () => {
+    const service = await createSettingServiceInHome(makeTempHome());
+    await Promise.all([
+      service.update({
+        externalEngineConnectionConfigPreferences: { codex: { alpha: { model: "gpt-a" } } },
+      }),
+      service.update({
+        externalEngineConnectionConfigPreferences: {
+          codex: { alpha: { reasoning_effort: "high" } },
+        },
+      }),
+      service.update({
+        externalEngineConnectionConfigPreferences: { codex: { beta: { model: "gpt-b" } } },
+      }),
+      service.update({
+        externalEngineConnectionConfigPreferences: { "claude-code": { alpha: { model: "opus" } } },
+      }),
+    ]);
+    await service.update({
+      externalEngineConnectionConfigPreferences: { codex: { alpha: { model: "gpt-new" } } },
+    });
+    await expect(service.get()).resolves.toMatchObject({
+      externalEngineConnectionConfigPreferences: {
+        codex: { alpha: { model: "gpt-new", reasoning_effort: "high" }, beta: { model: "gpt-b" } },
+        "claude-code": { alpha: { model: "opus" } },
+      },
+    });
   });
 
   it("会持久化 ZCode 交互行为配置", async () => {

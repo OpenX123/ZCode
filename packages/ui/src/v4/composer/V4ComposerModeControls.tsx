@@ -37,6 +37,7 @@ import {
   useToolbarShortcutBindings,
 } from "@/v4/composer/toolbarShortcuts.js";
 import type { V4ComposerToolbarProps } from "@/v4/composer/V4ComposerToolbar.js";
+import { DEFAULT_NEW_SESSION_PERMISSION_MODE } from "@/v4/composer/newTaskDraft.js";
 
 function noop(): void {}
 
@@ -80,7 +81,7 @@ function V4ComposerModeSwitchImpl({
       name: "Mode",
       category: "mode",
       type: "select",
-      currentValue: draftConfig?.mode ?? "build",
+      currentValue: draftConfig?.mode ?? DEFAULT_NEW_SESSION_PERMISSION_MODE,
       options: getZCodeAgentAvailableModes()
         .filter((mode) => mode.id !== "plan")
         .map((mode) => ({ value: mode.id, name: mode.name })),

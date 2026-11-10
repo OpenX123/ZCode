@@ -1,14 +1,16 @@
 // 外部引擎进程池：每个 CLI 进程一个，负责 adapter 进程的“会话之外”的生命周期。
 //
-// - 预建会话（spare）：每个（引擎，连接配置 ID）至多一个已完成 initialize（与 providers/set）、
-//   在其 cwd 的 session/new 与新会话默认配置、但从未提交 prompt 的 adapter；新会话 cwd 一致时同步
-//   领用（不一致按未命中，补位时替换），新会话就绪后后台补位，闲置 10 分钟关闭。
+// - 未绑定备用受窗口 Host 许可约束（W4 起每个外部引擎 0/1、窗口 ≤2，申请带 engine），CLI 持有进程；
+//   warming 在 await 前独占预留。
+//   pool 追踪未交付资源，索引只负责领用；取消/关闭等待迟到 spawn 与进程树结束。
+//   ready hit 校验身份及已知入口，领用后进程归会话，未领用备用 10 分钟关闭。
 // - 闲置连接关闭：各会话 port 登记自己的连接事实，池按节拍扫描，关闭不可见、无在途且闲置满窗口
 //   （发过 prompt 的会话 15 分钟、草稿 10 分钟）的 adapter 进程；会话状态（ready、配置、
 //   externalSessionId）不在此处，保持不变。可见事实由 Renderer 拥有，经 V4
 //   `v4/conversation/visibility` 按连接上报，池只保存副本用作豁免。
 //
 // 规则见 docs/desktop/external-agent-engines-spec.md「外部引擎进程与异步准备」。
+import { randomUUID } from "node:crypto";
 import type { Logger } from "@zcode/contracts";
 import { ExternalEngineConnectionError } from "@zcode/contracts";
 import type { ExternalSessionEngine } from "@zcode/shared";
@@ -29,9 +31,11 @@ export interface ExternalEngineSpareKey {
   connectionProfileId: string;
   /** spawn cwd；领用要求一致，避免把别的目录启动的进程交给会话。 */
   cwd: string;
+  /** 仅 adapter 内部使用，包含配置、凭据与启动环境的有效性代次。 */
+  generation?: string;
 }
 
-export type ExternalEngineSpareMissReason = "none" | "warming" | "unhealthy" | "cwd";
+export type ExternalEngineSpareMissReason = "none" | "budget" | "unhealthy" | "cwd" | "generation";
 
 /** 会话 port 登记的连接事实；池只读取并请求释放，连接仍归 port 所有。 */
 export interface ExternalEngineTrackedSession {
@@ -52,11 +56,25 @@ export interface ExternalEngineTrackedSession {
   releaseIdle(): Promise<boolean>;
 }
 
+export interface ExternalEngineSpareClaim {
+  connection: AcpConnection;
+  refill(): void;
+}
+
 export interface ExternalEngineProcessPool {
-  /** 新会话握手前同步领用预建会话；未命中返回 undefined，由调用方冷启动。 */
-  claimSpare(key: ExternalEngineSpareKey): AcpConnection | undefined;
+  /** 第一个 await 前独占 warming/ready；取消关闭未交付连接。 */
+  claimSpare(
+    key: ExternalEngineSpareKey,
+    signal?: AbortSignal,
+  ): Promise<ExternalEngineSpareClaim | undefined>;
   /** 该（引擎，配置，cwd）新会话就绪后后台补位：spawn → initialize → session/new；失败只写日志。 */
-  refillSpare(key: ExternalEngineSpareKey, launch: () => Promise<AcpConnection>): void;
+  refillSpare(
+    key: ExternalEngineSpareKey,
+    launch: () => Promise<AcpConnection>,
+    validate?: () => Promise<boolean>,
+  ): void;
+  /** Host 撤销只关闭未绑定备用；预留已归前台，不受撤销影响。 */
+  revokeSpare(requestId: string): Promise<void>;
   trackSession(sessionId: string, session: ExternalEngineTrackedSession): void;
   untrackSession(sessionId: string): void;
   /**
@@ -72,6 +90,11 @@ export interface ExternalEngineProcessPool {
 
 export interface ExternalEngineProcessPoolOptions {
   logger?: Logger;
+  budget?: {
+    /** engine 让 Host 按引擎分配许可（W4）；Host 拒绝时本池放弃补位并记 info 日志。 */
+    acquire(requestId: string, signal: AbortSignal, engine: ExternalSessionEngine): Promise<boolean>;
+    release(requestId: string): Promise<void>;
+  };
   now?: () => number;
   spareIdleMs?: number;
   idleCloseMs?: number;
@@ -80,12 +103,20 @@ export interface ExternalEngineProcessPoolOptions {
 }
 
 interface SpareEntry {
+  requestId: string;
+  launch: () => Promise<AcpConnection>;
+  controller: AbortController;
+  acquired: boolean;
+  reserved?: boolean;
+  discarded?: boolean;
+  validate?: () => Promise<boolean>;
+  releasing?: Promise<void>;
   key: ExternalEngineSpareKey;
   startedAt: number;
   readyAt?: number;
   connection?: AcpConnection;
-  /** 已关闭的连接；关闭与启动任务的 catch 可能都会走到，避免重复结束进程树。 */
-  closedConnection?: AcpConnection;
+  /** 并发关闭共享完成事实，不能在“已经开始 close”时提前释放 Host 许可。 */
+  closing?: Promise<void>;
   timer?: ReturnType<typeof setTimeout>;
   task?: Promise<void>;
 }
@@ -108,6 +139,8 @@ export function createExternalEngineProcessPool(
   const sweepIntervalMs = options.sweepIntervalMs ?? EXTERNAL_ENGINE_IDLE_SWEEP_INTERVAL_MS;
   const logger = options.logger;
   const spares = new Map<string, SpareEntry>();
+  // 索引不是所有权：预留摘索引后，仍需追踪迟到 spawn，直到正式交付。
+  const owned = new Set<SpareEntry>();
   const sessions = new Map<string, ExternalEngineTrackedSession>();
   /** 上报来源（V4 连接 ID）→ 该来源可见的会话；Renderer 事实的 CLI 侧副本，只用于闲置豁免。 */
   const visibleBySource = new Map<string, ReadonlySet<string>>();
@@ -126,13 +159,43 @@ export function createExternalEngineProcessPool(
   });
 
   const discardSpare = async (entry: SpareEntry): Promise<void> => {
+    entry.discarded = true;
+    entry.controller.abort();
     clearTimeout(entry.timer);
     const mapKey = spareMapKey(entry.key);
     if (spares.get(mapKey) === entry) spares.delete(mapKey);
     const connection = entry.connection;
-    if (!connection || entry.closedConnection === connection) return;
-    entry.closedConnection = connection;
-    await connection.close();
+    if (!connection) return;
+    entry.closing ??= connection.close(true);
+    const closing = entry.closing;
+    try {
+      await closing;
+    } catch (error) {
+      // 失败不是退出事实；保留 owned 和许可，允许后续撤销/关闭重试同一资源。
+      if (entry.closing === closing) entry.closing = undefined;
+      throw error;
+    }
+  };
+
+  const reportCloseFailure = () =>
+    logger?.warn("External engine spare exit unconfirmed", {
+      module: LOG_MODULE,
+      event: "external_engine.spare.close_failed",
+    });
+
+  const releaseBudget = (entry: SpareEntry): Promise<void> => {
+    entry.releasing ??=
+      options.budget?.release(entry.requestId).catch(() => {}) ?? Promise.resolve();
+    // 释放是幂等通知语义：Host 未收到时保守保留许可；不能让丢失的 ACK 卡住前台或关闭。
+    return Promise.resolve();
+  };
+  const retire = async (entry: SpareEntry) => {
+    await discardSpare(entry);
+    await entry.task;
+    // launch 可能在第一次 discard 之后才交付；后台失败日志不等于退出，必须再次确认同一资源。
+    await discardSpare(entry);
+    await releaseBudget(entry);
+    owned.delete(entry);
   };
 
   const armExpiry = (entry: SpareEntry) => {
@@ -143,7 +206,7 @@ export function createExternalEngineProcessPool(
         event: "external_engine.spare.expired",
         idleMs: now() - (entry.readyAt ?? entry.startedAt),
       });
-      void discardSpare(entry);
+      void retire(entry).catch(reportCloseFailure);
     }, spareIdleMs);
     entry.timer.unref?.();
   };
@@ -190,19 +253,19 @@ export function createExternalEngineProcessPool(
     return sweeping;
   };
 
-  return {
-    claimSpare(key) {
+  const pool: ExternalEngineProcessPool = {
+    async claimSpare(key, signal) {
       const mapKey = spareMapKey(key);
       const entry = spares.get(mapKey);
       let reason: ExternalEngineSpareMissReason | undefined;
-      if (!entry) reason = "none";
-      else if (!entry.readyAt || !entry.connection) reason = "warming";
+      if (!entry || closed || signal?.aborted) reason = "none";
+      else if (!entry.acquired) reason = "budget";
       else if (entry.key.cwd !== key.cwd) reason = "cwd";
-      else if (!entry.connection.healthy) {
-        reason = "unhealthy";
-        void discardSpare(entry);
-      }
-      if (reason || !entry?.connection) {
+      else if (entry.key.generation !== key.generation) reason = "generation";
+      else if (entry.connection && !entry.connection.healthy) reason = "unhealthy";
+      if (reason || !entry) {
+        if (entry && reason !== "none" && reason !== "budget")
+          void retire(entry).catch(reportCloseFailure);
         logger?.info("External engine spare missed", {
           ...fields(key),
           event: "external_engine.spare.miss",
@@ -210,44 +273,131 @@ export function createExternalEngineProcessPool(
         });
         return undefined;
       }
-      clearTimeout(entry.timer);
+      // 必须先同步预留；否则两个新会话会领到同一个原生 session ID。
+      entry.reserved = true;
       spares.delete(mapKey);
-      logger?.info("External engine spare claimed", {
+      clearTimeout(entry.timer);
+      logger?.info("External engine spare reserved", {
         ...fields(key),
-        event: "external_engine.spare.claimed",
-        ageMs: now() - (entry.readyAt ?? entry.startedAt),
+        event: "external_engine.spare.reserved",
+        warming: entry.readyAt === undefined,
       });
-      return entry.connection;
+      const abort = () => {
+        void discardSpare(entry).catch(reportCloseFailure);
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      try {
+        void releaseBudget(entry);
+        await entry.task;
+        const rejectReason = closed
+          ? "closed"
+          : signal?.aborted
+            ? "aborted"
+            : entry.discarded
+              ? "discarded"
+              : !entry.connection?.healthy
+                ? "unhealthy"
+                : entry.validate && !(await entry.validate())
+                  ? "identity"
+                  : undefined;
+        const connection = entry.connection;
+        if (rejectReason || !connection) {
+          const reason = rejectReason ?? "unhealthy";
+          // 诊断补充：预留后被拒原先静默 retire，日志只剩 reserved 与随后冷启的 miss，
+          // 无法区分入口身份失效、连接不健康还是取消；这里记录拒绝原因。
+          logger?.info("External engine spare rejected after reserve", {
+            ...fields(key),
+            event: "external_engine.spare.rejected",
+            reason,
+          });
+          if (reason === "identity" || reason === "unhealthy") {
+            // Bug 根因（2026-11-09 桌面 E2E W4 实测）：失效备用在领用路径上 await retire，前台要等旧
+            // 进程优雅关闭（约 5s）才开始冷启，切换控件 5.5s 才可操作。与预留前的 cwd/generation
+            // 失效同样改为后台收口：许可与 owned 仍由 retire 在确认退出后释放，pool.close 照常等待。
+            void retire(entry).catch(reportCloseFailure);
+          } else {
+            // 关闭池/取消/已丢弃：调用方依赖“返回前已关闭”的既有语义，保持同步收口。
+            await retire(entry);
+          }
+          return undefined;
+        }
+        if (closed || signal?.aborted || entry.discarded) {
+          await retire(entry);
+          return undefined;
+        }
+        owned.delete(entry);
+        logger?.info("External engine spare claimed", {
+          ...fields(key),
+          event: "external_engine.spare.claimed",
+          ageMs: now() - (entry.readyAt ?? entry.startedAt),
+        });
+        return {
+          connection,
+          refill: () => pool.refillSpare(entry.key, entry.launch, entry.validate),
+        };
+      } finally {
+        signal?.removeEventListener("abort", abort);
+      }
     },
-    refillSpare(key, launch) {
+    refillSpare(key, launch, validate) {
       if (closed) return;
       const mapKey = spareMapKey(key);
       const existing = spares.get(mapKey);
       if (existing) {
-        if (!existing.readyAt) return;
-        if (existing.key.cwd === key.cwd && existing.connection?.healthy) return;
-        void discardSpare(existing);
+        if (
+          existing.key.cwd === key.cwd &&
+          existing.key.generation === key.generation &&
+          (!existing.connection || existing.connection.healthy)
+        )
+          return;
+        void retire(existing).catch(reportCloseFailure);
       }
-      const entry: SpareEntry = { key, startedAt: now() };
+      const entry: SpareEntry = {
+        key,
+        launch,
+        acquired: !options.budget,
+        startedAt: now(),
+        requestId: randomUUID(),
+        controller: new AbortController(),
+        ...(validate ? { validate } : {}),
+      };
       spares.set(mapKey, entry);
-      const isCurrent = () => !closed && spares.get(mapKey) === entry;
+      owned.add(entry);
+      const isCurrent = () => !closed && !entry.discarded && owned.has(entry);
       entry.task = (async () => {
         try {
+          if (
+            options.budget &&
+            !(await options.budget.acquire(
+              entry.requestId,
+              entry.controller.signal,
+              entry.key.engine,
+            ))
+          ) {
+            // 修复（W4 基线 2026-11-09）：拒绝分支原先静默丢弃，日志里看不出 Claude 补位一直被
+            // 默认引擎备用占住的窗口单许可挤掉（11 次切换 0 次 Claude spare.ready）。现在留 info 证据。
+            if (isCurrent())
+              logger?.info("External engine spare refill denied", {
+                ...fields(key),
+                event: "external_engine.spare.refill_denied",
+              });
+            await discardSpare(entry);
+            return;
+          }
+          entry.acquired = true;
+          if (!isCurrent()) return;
           entry.connection = await launch();
           if (!isCurrent()) throw new Error("External engine spare superseded");
-          // 预建到 session/new（含 Claude Auto 默认）：Claude 的 session/new 要拉起官方 CLI（本机约 1.5s），
-          // 只预热到 initialize 时命中仍需约 1.76s。连接先登记再预建，关闭池时可直接结束仍在准备的进程。
           await entry.connection.prebuild(key.engine, key.cwd);
           if (!isCurrent()) throw new Error("External engine spare superseded");
           entry.readyAt = now();
-          armExpiry(entry);
+          if (!entry.reserved) armExpiry(entry);
           logger?.info("External engine spare ready", {
             ...fields(key),
             event: "external_engine.spare.ready",
             durationMs: entry.readyAt - entry.startedAt,
           });
         } catch (error) {
-          // 预建会话只是加速手段：失败不进入任何会话状态，下一次新会话冷启动。
           if (isCurrent())
             logger?.warn("External engine spare failed", {
               ...fields(key),
@@ -255,8 +405,18 @@ export function createExternalEngineProcessPool(
               code: failureCode(error),
             });
           await discardSpare(entry);
+        } finally {
+          if (entry.discarded || closed) {
+            await discardSpare(entry);
+            await releaseBudget(entry);
+            owned.delete(entry);
+          }
         }
-      })();
+      })().catch(reportCloseFailure);
+    },
+    async revokeSpare(requestId) {
+      const entry = [...owned].find((item) => item.requestId === requestId);
+      if (entry && !entry.reserved) await retire(entry);
     },
     trackSession(sessionId, session) {
       if (closed) return;
@@ -279,14 +439,13 @@ export function createExternalEngineProcessPool(
       closed = true;
       visibleBySource.clear();
       stopSweepIfIdle();
-      const entries = [...spares.values()];
+      const entries = [...owned];
       await Promise.all(
         entries.map(async (entry) => {
-          await discardSpare(entry);
-          // 仍在 spawn/initialize/session/new 的预建会话：等启动任务收口（其 catch 会再次关闭），不留孤儿。
-          await entry.task;
+          await retire(entry);
         }),
       );
     },
   };
+  return pool;
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile, mkdir } from "node:fs/promises";
+import { access, readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWritePrivateTextFile, withFileLock } from "@zcode/shared/node";
 import {
@@ -53,6 +53,7 @@ function normalizeBaseUrl(engine: ExternalSessionEngine, value: string | undefin
 /** Host 是连接配置唯一写者：所有写入在文件锁内读改写并原子落盘，密钥只进 CredentialService。 */
 export function createEngineConnections(enginesDir: string, credentials?: ICredentialService) {
   const file = join(enginesDir, EXTERNAL_ENGINE_CONNECTIONS_FILE);
+  const managedCodexAuthProfiles = new Set<string>();
   const read = async (): Promise<ExternalEngineConnections> => {
     try {
       return externalEngineConnectionsSchema.parse(JSON.parse(await readFile(file, "utf8")));
@@ -62,7 +63,33 @@ export function createEngineConnections(enginesDir: string, credentials?: ICrede
       throw new Error("external_engine_connections_unreadable");
     }
   };
-  const view = (connections: ExternalEngineConnections): ExternalEngineConnectionsView => {
+  const hasManagedCodexAuth = async (profileId: string): Promise<boolean> => {
+    if (managedCodexAuthProfiles.has(profileId)) return true;
+    try {
+      await access(join(enginesDir, ...engineConnectionCodexHomeSegments(profileId), "auth.json"));
+      return true;
+    } catch (error) {
+      if (["ENOENT", "ENOTDIR", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? ""))
+        return false;
+      throw error;
+    }
+  };
+  const resolveDefaultProfileId = async (
+    connections: ExternalEngineConnections,
+    engine: ExternalSessionEngine,
+  ): Promise<string> => {
+    const candidate = lastUsedEngineConnectionProfileId(connections, engine);
+    // Codex 官方配置首次创建时还没有专用 auth.json。此时沿用本地 CLI 身份，
+    // 避免用户已经在 ~/.codex 登录却被空的 YCode 专用目录挡住；应用内登录完成后，
+    // 专用目录出现凭据，下一次读取自然恢复到该配置。
+    if (engine === "codex" && candidate !== INHERIT_ENGINE_CONNECTION_ID) {
+      const profile = findEngineConnectionProfile(connections, engine, candidate);
+      if (profile?.mode === "official" && !(await hasManagedCodexAuth(profile.id)))
+        return INHERIT_ENGINE_CONNECTION_ID;
+    }
+    return candidate;
+  };
+  const view = async (connections: ExternalEngineConnections): Promise<ExternalEngineConnectionsView> => {
     // 视图 schema 不含 credentialKey，解析即剥离凭据定位信息。
     const visible = (profile: ExternalEngineConnectionProfile, builtIn: boolean) => {
       const gatewayHost = engineConnectionGatewayHost(profile);
@@ -73,10 +100,14 @@ export function createEngineConnections(enginesDir: string, credentials?: ICrede
       });
     };
     const engines: ExternalSessionEngine[] = ["claude-code", "codex"];
+    const [claudeDefault, codexDefault] = await Promise.all([
+      resolveDefaultProfileId(connections, "claude-code"),
+      resolveDefaultProfileId(connections, "codex"),
+    ]);
     return {
       defaults: {
-        "claude-code": lastUsedEngineConnectionProfileId(connections, "claude-code"),
-        codex: lastUsedEngineConnectionProfileId(connections, "codex"),
+        "claude-code": claudeDefault,
+        codex: codexDefault,
       },
       profiles: [
         ...engines.flatMap((engine) =>
@@ -127,7 +158,7 @@ export function createEngineConnections(enginesDir: string, credentials?: ICrede
           lastUsed[command.engine] = requireProfile(current, command.engine, command.profileId).id;
           const next = { ...current, lastUsed };
           await write(next);
-          return { connections: view(next) };
+          return { connections: await view(next) };
         }
         if (command.type === "delete") {
           const target = requireProfile(current, command.engine, command.profileId);
@@ -143,7 +174,7 @@ export function createEngineConnections(enginesDir: string, credentials?: ICrede
             ),
           };
           await write(next);
-          return { connections: view(next) };
+          return { connections: await view(next) };
         }
         if (command.mode === "inherit") throw new Error("external_engine_connection_invalid");
         const previous =
@@ -199,7 +230,7 @@ export function createEngineConnections(enginesDir: string, credentials?: ICrede
         };
         await write(next);
         savedCredential = undefined;
-        return { connections: view(next), profileId: id };
+        return { connections: await view(next), profileId: id };
       });
     } finally {
       if (savedCredential) await credentials!.delete(savedCredential).catch(() => {});
@@ -208,7 +239,12 @@ export function createEngineConnections(enginesDir: string, credentials?: ICrede
   return {
     read,
     readView: async () => view(await read()),
+    defaultProfileId: async (engine: ExternalSessionEngine) =>
+      resolveDefaultProfileId(await read(), engine),
     update,
+    markManagedCodexAuth: (profileId: string) => {
+      managedCodexAuthProfiles.add(profileId);
+    },
     home: (id: string) => join(enginesDir, ...engineConnectionCodexHomeSegments(id)),
   };
 }

@@ -32,6 +32,13 @@ vi.mock("@/subagent-display/index.js", async () => {
   };
 });
 
+vi.mock("@/i18n/IntlProvider.js", () => ({
+  useZCodeIntl: () => ({
+    locale: "zh-CN",
+    intl: { formatMessage: ({ id }: { id: string }) => id },
+  }),
+}));
+
 vi.mock("@/v4/V4ConversationContext.js", async () => {
   const React = await import("react");
   return {
@@ -74,7 +81,7 @@ describe("subagent side pane tabs", () => {
 
     for (const allowedContext of [
       { ...context, compactForRemoteControl: true },
-      { ...context, inSubagentDrilldown: true, sessionId: "nested-parent" },
+      { ...context, sessionId: "nested-parent" },
     ]) {
       expect(
         openSubagentSessionFromSummary({
@@ -260,6 +267,12 @@ describe("subagent side pane tabs", () => {
     // 头部位于只读对话之上，且与对话同处一个 provider（共享父/子 lease）。
     expect(html.indexOf("mock-subagent-session-header")).toBeLessThan(
       html.indexOf("mock-session-pane"),
+    );
+    // W8：子会话只读，原输入区位置显示只读提示（i18n 键在 mock 下原样输出）。
+    expect(html).toContain("v4-subagent-session-read-only-hint");
+    expect(html).toContain("subagentDisplay.sidePane.readOnlyHint");
+    expect(html.indexOf("mock-session-pane")).toBeLessThan(
+      html.indexOf("v4-subagent-session-read-only-hint"),
     );
     expect(paneState.props).toMatchObject({
       allowWorkspaceFileRewind: true,

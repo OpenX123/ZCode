@@ -1,8 +1,9 @@
-import type { ExternalEngineFailureNotice } from "@zcode/contracts";
+import type { ExternalEngineFailureNotice, ExternalEngineNotice } from "@zcode/contracts";
 import {
   engineConnectionFailureSchema,
   isRetryableHttpStatus,
   readExternalEngineFailure,
+  sanitizeFailureMessage,
   type EngineConnectionFailure,
 } from "@zcode/shared";
 
@@ -129,4 +130,22 @@ export function readSessionInfoFailure(
 export function readPromptResultFailure(result: JsonObject): EngineConnectionFailure | undefined {
   const notice = readAirSessionFailure(result._meta);
   return notice?.severity === "error" ? notice.failure : undefined;
+}
+
+const NOTICE_SEVERITIES = new Set<ExternalEngineNotice["severity"]>(["info", "warning", "error"]);
+
+/**
+ * ACP `session/update {sessionUpdate: "notice", severity, title, description?}`（客户端声明
+ * `session.notices` 后 adapter 才发送）：非致命提示，不是失败，不进入失败归一。title 与 description
+ * 合并后按失败摘要同口径脱敏（首行、≤300 字）；形状不符或无可展示文本时返回 undefined。
+ */
+export function readSessionNotice(update: JsonObject): ExternalEngineNotice | undefined {
+  if (update.sessionUpdate !== "notice") return undefined;
+  const severity = update.severity as ExternalEngineNotice["severity"];
+  if (!NOTICE_SEVERITIES.has(severity) || typeof update.title !== "string") return undefined;
+  const description = typeof update.description === "string" ? update.description.trim() : "";
+  const message = sanitizeFailureMessage(
+    [update.title.trim(), description].filter(Boolean).join(" — "),
+  );
+  return message ? { severity, message } : undefined;
 }

@@ -62,6 +62,23 @@ function mergeExternalEngineConfigPreferences(
   return merged;
 }
 
+function mergeEngineConnectionPreferences(
+  current: AppSettings["externalEngineConnectionConfigPreferences"],
+  patch: NonNullable<AppSettings["externalEngineConnectionConfigPreferences"]>,
+): NonNullable<AppSettings["externalEngineConnectionConfigPreferences"]> {
+  const merged = { ...current };
+  for (const engine of ["claude-code", "codex"] as const) {
+    const profiles = patch[engine];
+    if (!profiles) continue;
+    const next = { ...current?.[engine] };
+    for (const [profileId, values] of Object.entries(profiles)) {
+      next[profileId] = { ...next[profileId], ...values };
+    }
+    merged[engine] = next;
+  }
+  return merged;
+}
+
 function defaultSettings(): AppSettings {
   return appSettingsSchema.parse({});
 }
@@ -352,6 +369,13 @@ export function createSettingServiceWithMigrations(): {
           merged.externalEngineConfigPreferences = mergeExternalEngineConfigPreferences(
             current.externalEngineConfigPreferences,
             validatedPatch.externalEngineConfigPreferences,
+          );
+        }
+        if (validatedPatch.externalEngineConnectionConfigPreferences) {
+          // 并发确认只携带一项增量；必须在写队列读取最新值后逐连接合并，避免覆盖他方偏好。
+          merged.externalEngineConnectionConfigPreferences = mergeEngineConnectionPreferences(
+            current.externalEngineConnectionConfigPreferences,
+            validatedPatch.externalEngineConnectionConfigPreferences,
           );
         }
 

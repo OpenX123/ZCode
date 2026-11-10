@@ -13,6 +13,7 @@ import {
 } from "@zcode/shared/external-engine";
 import { resolveE2EStorageRoot } from "../../../helpers/e2e-runtime-paths.js";
 import {
+  approveV4Permission,
   getV4FocusedPaneId,
   getV4PaneSnapshot,
   prepareV4ConversationE2E,
@@ -69,6 +70,18 @@ async function displayed(selector: string) {
   return element;
 }
 
+/** W2：输入框上方的引擎胶囊已删除，经模型入口弹层顶部的切换行选择引擎后关闭弹层。 */
+async function selectDraftEngine(engine: "claude-code" | "codex", paneSelector: string) {
+  const trigger = await displayed(
+    `${paneSelector} [data-testid="engine-config-model-effort"], ${paneSelector} [data-testid="chat-model-select-trigger"]`,
+  );
+  await trigger.waitForClickable({ timeout: 30000 });
+  await trigger.click();
+  await (await displayed(`[data-testid="engine-switch-option-${engine}"]`)).click();
+  // YCode → 外部引擎会替换入口与弹层；弹层仍在时才关闭，避免 Escape 落到输入框。
+  if (await $('[data-testid="engine-switch-row"]').isDisplayed()) await browser.keys("Escape");
+}
+
 describe("外部引擎原生子智能体（Codex AIR / Claude RFD）", () => {
   it("Codex 原生子智能体落为子会话记录，父会话不混入子会话正文", async () => {
     await installNativeSubagentAdapter("codex", "codex-air.json");
@@ -77,9 +90,10 @@ describe("外部引擎原生子智能体（Codex AIR / Claude RFD）", () => {
     const paneId = await getV4FocusedPaneId();
     if (!paneId) throw new Error("缺少当前 pane");
     const paneSelector = `[data-testid="v4-session-pane-${paneId}"]`;
-    await (await displayed(`${paneSelector} [data-testid="session-engine-select"]`)).click();
-    await $('[role="option"]=Codex').click();
+    await selectDraftEngine("codex", paneSelector);
     await sendV4PromptInPane(paneId, "检查鉴权性能");
+    // 共用 ACP 帧会等待子会话权限应答；桌面须经父会话真实交互批准，不能直接等最终正文。
+    expect(await approveV4Permission()).toBe(true);
     await waitForV4AssistantMessageContaining("子智能体已完成。");
     const parentId = (await getV4PaneSnapshot()).sessionId;
     if (!parentId) throw new Error("缺少父会话 ID");

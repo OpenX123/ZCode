@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Emitter } from "@zcode/rpc";
+import { buildServerRemoteWorkspaceIdentity } from "@zcode/shared";
 import type {
   IZCodeAgentService,
   ZCodeAgentRuntimeLifecycleEvent,
@@ -57,6 +58,20 @@ function lifecycleEvent(
     state,
   } as ZCodeAgentRuntimeLifecycleEvent;
 }
+
+// 前台事实（业务列表 + 可信非空可见上报）才更新备用候选；后台列表不抢占。
+const foregroundList = async (
+  service: IZCodeAgentService,
+  params: Parameters<IZCodeAgentService["listSessions"]>[0],
+) => {
+  await service.listSessions(params);
+  await service.reportConversationVisibilityV4(
+    withTrustedZCodeAgentV4Connection(
+      { ...params, visibleSessionIds: ["visible-session"] },
+      { connectionId: "foreground", clientMode: "desktop-continuous" },
+    ),
+  );
+};
 
 describe("连接 facade 转发可见性上报", () => {
   it("VR05：握手后注入本连接 connectionId，剥离 Renderer 传入值；超过 64 个拒绝；关闭时发 closed", async () => {
@@ -175,6 +190,473 @@ function createReadyService(options: Parameters<typeof createZCodeAgentService>[
     ...options,
   });
 }
+
+describe("窗口外部引擎备用许可", () => {
+  const foreground = async (service: IZCodeAgentService, workspacePath: string) =>
+    service.reportConversationVisibilityV4(
+      withTrustedZCodeAgentV4Connection(
+        { workspacePath, visibleSessionIds: ["visible-session"] },
+        { connectionId: "foreground", clientMode: "desktop-continuous" },
+      ),
+    );
+  it.each(["revoke-retry", "held", "released", "late-failure"])(
+    "%s：缓存 A→B→A 的前台资格可恢复，后台列表不抢占，撤销失败可实际重试",
+    async (scenario) => {
+      const sandbox = createRecordingSandbox();
+      setDataBaseDir(sandbox.dir);
+      writeFileSync(
+        sandbox.command.args[0]!,
+        String.raw`
+const fs=require('node:fs'),path=require('node:path'),log=process.argv[2],dir=path.dirname(log);
+const send=f=>process.stdout.write(JSON.stringify(f)+'\n'); let n=0,seen='',pending;
+fs.watch(dir,()=>{const file=path.join(dir,process.pid+'.json');if(fs.existsSync(file)){const raw=fs.readFileSync(file,'utf8');if(raw!==seen){seen=raw;send(JSON.parse(raw));}}if(pending&&fs.existsSync(path.join(dir,'late-fail'))){send({id:pending.id,error:{code:-32603,message:'late failure'}});pending=undefined;fs.unlinkSync(path.join(dir,'late-fail'));}if(pending&&fs.existsSync(path.join(dir,'ack'))){send({id:pending.id,result:{}});pending=undefined;}}).unref();
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const f=JSON.parse(line);fs.appendFileSync(log,JSON.stringify({pid:process.pid,...f})+'\n');
+ if(f.method==='externalEngine/prepareSpare'){send({id:'grant-'+(++n),method:'externalEngine/acquireSpare',params:{requestId:'request-'+process.pid}});send({id:f.id,result:{}});}
+ else if(f.method==='externalEngine/revokeSpare') {if(fs.existsSync(path.join(dir,'fail'))){send({id:f.id,error:{code:-32603,message:'temporary close failure'}});}else if(fs.existsSync(path.join(dir,'ack')))send({id:f.id,result:{}});else pending=f;}
+ else if(f.method)send({id:f.id,result:f.method==='session/list'?{sessions:[]}: {}});
+});`,
+      );
+      const service = createReadyService({
+        commandResolver: () => sandbox.command,
+        externalEnginesSupported: true,
+        selectExternalEngineSpares: async () => [
+          { engine: "codex", connectionProfileId: "inherit" },
+        ],
+      });
+      const rows = () =>
+        readFileSync(sandbox.logPath, "utf8")
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line));
+      const command = (pid: number, id: string, method: string) =>
+        writeFileSync(
+          join(sandbox.dir, `${pid}.json`),
+          JSON.stringify({ id, method, params: { requestId: `request-${pid}` } }),
+        );
+      const grants = () => rows().filter((row) => row.result?.leaseId);
+      const revokes = () => rows().filter((row) => row.method === "externalEngine/revokeSpare");
+      const b = join(sandbox.dir, "b");
+      mkdirSync(b);
+      try {
+        await foregroundList(service, { workspacePath: sandbox.dir });
+        await vi.waitFor(() => expect(grants()).toHaveLength(1));
+        const aPid = grants()[0]!.pid;
+        if (scenario === "revoke-retry") writeFileSync(join(sandbox.dir, "fail"), "fail");
+        await service.listSessions({ workspacePath: b });
+        expect(grants()).toHaveLength(1);
+        if (scenario !== "revoke-retry") {
+          expect(revokes()).toHaveLength(0);
+          if (scenario !== "late-failure") writeFileSync(join(sandbox.dir, "ack"), "ack");
+        }
+        await foreground(service, b);
+        await vi.waitFor(() => expect(revokes()).toHaveLength(1));
+        if (scenario === "late-failure") {
+          const bPid = rows()
+            .filter((row) => row.method === "session/list")
+            .find((row) => row.pid !== aPid)!.pid;
+          command(aPid, "late-release-a", "externalEngine/releaseSpare");
+          await vi.waitFor(() =>
+            expect(rows().some((row) => row.id === "late-release-a")).toBe(true),
+          );
+          command(bPid, "new-lease-b", "externalEngine/acquireSpare");
+          await vi.waitFor(() => expect(grants()).toHaveLength(2));
+          const newLease = grants()[1].result;
+          writeFileSync(join(sandbox.dir, "late-fail"), "fail");
+          command(bPid, "replay-new-b", "externalEngine/acquireSpare");
+          await vi.waitFor(() =>
+            expect(rows().find((row) => row.id === "replay-new-b")?.result).toEqual(newLease),
+          );
+          const c = join(sandbox.dir, "c");
+          mkdirSync(c);
+          await service.listSessions({ workspacePath: c });
+          await foreground(service, c);
+          await vi.waitFor(() => expect(revokes()).toHaveLength(2));
+          expect(revokes()[1].pid).toBe(bPid);
+          expect(grants()).toHaveLength(3); // replay仅返回同一lease，没有第三个唯一grant
+          expect(new Set(grants().map((row) => row.result.leaseId)).size).toBe(2);
+          writeFileSync(join(sandbox.dir, "ack"), "ack");
+          await vi.waitFor(() =>
+            expect(new Set(grants().map((row) => row.result.leaseId)).size).toBe(3),
+          );
+        } else if (scenario === "revoke-retry") {
+          expect(grants()).toHaveLength(1);
+          rmSync(join(sandbox.dir, "fail"));
+          const c = join(sandbox.dir, "c");
+          mkdirSync(c);
+          await service.listSessions({ workspacePath: c });
+          await foreground(service, c);
+          await vi.waitFor(() => expect(revokes()).toHaveLength(2));
+          expect(revokes()[1].params).toEqual(revokes()[0].params);
+          expect(grants()).toHaveLength(1);
+          writeFileSync(join(sandbox.dir, "ack"), "ack");
+          await vi.waitFor(() => expect(grants()).toHaveLength(2));
+        } else {
+          await vi.waitFor(() => expect(grants()).toHaveLength(2));
+          const bPid = grants()[1].pid;
+          if (scenario === "released") {
+            command(bPid, "release-b", "externalEngine/releaseSpare");
+            await vi.waitFor(() => expect(rows().some((row) => row.id === "release-b")).toBe(true));
+          }
+          await service.listSessions({ workspacePath: sandbox.dir });
+          command(aPid, "background-a", "externalEngine/acquireSpare");
+          await vi.waitFor(() =>
+            expect(rows().find((row) => row.id === "background-a")?.result).toEqual({}),
+          );
+          await foreground(service, sandbox.dir);
+          if (scenario === "held") await vi.waitFor(() => expect(revokes()).toHaveLength(2));
+          command(aPid, "refill-a", "externalEngine/acquireSpare");
+          await vi.waitFor(() =>
+            expect(rows().find((row) => row.id === "refill-a")?.result?.leaseId).toBeTruthy(),
+          );
+          expect(rows().filter((row) => row.method === "externalEngine/prepareSpare")).toHaveLength(
+            2,
+          );
+          expect(
+            new Set(
+              rows()
+                .filter((row) => row.method === "session/list")
+                .map((row) => row.pid),
+            ).size,
+          ).toBe(2);
+        }
+      } finally {
+        await service.disposeAllAndWait();
+      }
+    },
+  );
+  it.each(["unsupported", "remote-identity", "remote-session"] as const)(
+    "%s 不提前准备且拒绝备用申请",
+    async (scope) => {
+      const sandbox = createRecordingSandbox();
+      setDataBaseDir(sandbox.dir);
+      writeFileSync(
+        sandbox.command.args[0]!,
+        String.raw`
+const fs=require('node:fs'),log=process.argv[2];const send=f=>process.stdout.write(JSON.stringify(f)+'\n');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const f=JSON.parse(line);fs.appendFileSync(log,JSON.stringify(f)+'\n');
+ if(f.method==='session/list')send({id:'denied',method:'externalEngine/acquireSpare',params:{requestId:'r'}});
+ if(f.method)send({id:f.id,result:f.method==='session/list'?{sessions:[]}: {}});
+});`,
+      );
+      const select = vi.fn(async () => [
+        {
+          engine: "codex" as const,
+          connectionProfileId: "inherit",
+        },
+      ]);
+      const service = createReadyService({
+        commandResolver: () => sandbox.command,
+        externalEnginesSupported: scope !== "unsupported",
+        selectExternalEngineSpares: select,
+      });
+      try {
+        await foregroundList(service, {
+          workspacePath: sandbox.dir,
+          ...(scope === "remote-identity"
+            ? {
+                workspaceIdentity: buildServerRemoteWorkspaceIdentity({
+                  serverId: "fixture",
+                  workspacePath: sandbox.dir,
+                }),
+              }
+            : {}),
+          ...(scope === "remote-session" ? { remoteSessionId: "fixture-remote" } : {}),
+        });
+        await vi.waitFor(() =>
+          expect(readFileSync(sandbox.logPath, "utf8")).toContain('"id":"denied","result":{}'),
+        );
+        expect(select).not.toHaveBeenCalled();
+        expect(readFileSync(sandbox.logPath, "utf8")).not.toContain("externalEngine/prepareSpare");
+      } finally {
+        await service.disposeAllAndWait();
+      }
+    },
+  );
+  it("旧 client 迟到释放不能清掉当前许可；同申请重放幂等，非法载荷拒绝", async () => {
+    const sandbox = createRecordingSandbox();
+    setDataBaseDir(sandbox.dir);
+    writeFileSync(
+      sandbox.command.args[0]!,
+      String.raw`
+const fs=require('node:fs'),path=require('node:path'),log=process.argv[2],dir=path.dirname(log);
+const send=f=>process.stdout.write(JSON.stringify(f)+'\n');
+let seen='';
+fs.watch(dir,()=>{const file=path.join(dir,process.pid+'.json');if(!fs.existsSync(file))return;const raw=fs.readFileSync(file,'utf8');if(raw===seen)return;seen=raw;send(JSON.parse(raw));}).unref();
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const f=JSON.parse(line);fs.appendFileSync(log,JSON.stringify({pid:process.pid,...f})+'\n');
+ if(f.method==='externalEngine/prepareSpare') {
+  send({id:'acquire',method:'externalEngine/acquireSpare',params:{requestId:'same-request'}});
+  send({id:f.id,result:{}});
+ } else if(f.method) send({id:f.id,result:f.method==='session/list'?{sessions:[]}: {}});
+});`,
+    );
+    const service = createReadyService({
+      commandResolver: () => sandbox.command,
+      externalEnginesSupported: true,
+      selectExternalEngineSpares: async () => [{ engine: "codex", connectionProfileId: "inherit" }],
+    });
+    const rows = () =>
+      readFileSync(sandbox.logPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+    const command = (pid: number, id: string, method: string, params: unknown) =>
+      writeFileSync(join(sandbox.dir, `${pid}.json`), JSON.stringify({ id, method, params }));
+    try {
+      await foregroundList(service, { workspacePath: sandbox.dir });
+      await vi.waitFor(() => expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(1));
+      const first = rows().find((row) => row.result?.leaseId)!;
+      const secondDir = join(sandbox.dir, "second");
+      mkdirSync(secondDir);
+      await foregroundList(service, { workspacePath: secondDir });
+      await vi.waitFor(() => expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(2));
+      const second = rows().filter((row) => row.result?.leaseId)[1]!;
+      command(first.pid, "old-release", "externalEngine/releaseSpare", {
+        requestId: "same-request",
+      });
+      await vi.waitFor(() => expect(rows().find((row) => row.id === "old-release")).toBeDefined());
+      command(second.pid, "replay", "externalEngine/acquireSpare", { requestId: "same-request" });
+      await vi.waitFor(() =>
+        expect(rows().find((row) => row.id === "replay")?.result).toEqual(second.result),
+      );
+      command(first.pid, "old-acquire", "externalEngine/acquireSpare", { requestId: "different" });
+      await vi.waitFor(() =>
+        expect(rows().find((row) => row.id === "old-acquire")?.result).toEqual({}),
+      );
+      command(second.pid, "bad", "externalEngine/acquireSpare", {
+        requestId: "x",
+        workspacePath: "forged",
+      });
+      await vi.waitFor(() =>
+        expect(rows().find((row) => row.id === "bad")?.error.code).toBe(-32602),
+      );
+      await service.disposeWorkspace({ workspacePath: secondDir });
+      // 进程树确实结束之后才能让新一代 CLI 取得名额。
+      await foregroundList(service, { workspacePath: secondDir });
+      await vi.waitFor(() =>
+        expect(rows().filter((row) => row.id === "acquire" && row.result?.leaseId)).toHaveLength(3),
+      );
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+  it("selector 在途关闭 workspace 时不投递迟到准备", async () => {
+    const sandbox = createRecordingSandbox();
+    setDataBaseDir(sandbox.dir);
+    const choice = Promise.withResolvers<Array<{ engine: "codex"; connectionProfileId: string }>>();
+    const selected = Promise.withResolvers<void>();
+    const service = createReadyService({
+      commandResolver: () => sandbox.command,
+      externalEnginesSupported: true,
+      selectExternalEngineSpares: async () => {
+        selected.resolve();
+        return choice.promise;
+      },
+    });
+    try {
+      await foregroundList(service, { workspacePath: sandbox.dir });
+      await selected.promise;
+      await service.disposeWorkspace({ workspacePath: sandbox.dir });
+      choice.resolve([{ engine: "codex", connectionProfileId: "inherit" }]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(readFileSync(sandbox.logPath, "utf8")).not.toContain("externalEngine/prepareSpare");
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+  it("只对已启动 CLI 提前准备；第二 workspace 先撤销旧许可", async () => {
+    const sandbox = createRecordingSandbox();
+    setDataBaseDir(sandbox.dir);
+    const script = String.raw`
+const fs=require('node:fs'), path=require('node:path'), log=process.argv[2];
+let n=0, current;
+const send=f=>process.stdout.write(JSON.stringify(f)+'\n');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const f=JSON.parse(line);
+ fs.appendFileSync(log,JSON.stringify({pid:process.pid,...f})+'\n');
+ if(f.method==='externalEngine/prepareSpare'){
+  current='request-'+process.pid+'-'+(++n);
+  send({id:'acquire-'+n,method:'externalEngine/acquireSpare',params:{requestId:current}});
+  send({id:f.id,result:{}});
+ } else if(f.method==='externalEngine/revokeSpare') {
+  const gate=path.join(path.dirname(log),'revoke-ack');
+  if(fs.existsSync(gate)) send({id:f.id,result:{}});
+  else { const watch=fs.watch(path.dirname(log),()=>{if(fs.existsSync(gate)){watch.close();send({id:f.id,result:{}});}}); }
+ } else if(f.method) send({id:f.id,result:f.method==='session/list'?{sessions:[]}: {}});
+});`;
+    writeFileSync(sandbox.command.args[0]!, script);
+    const commandResolver = vi.fn(() => sandbox.command);
+    const service = createReadyService({
+      commandResolver,
+      externalEnginesSupported: true,
+      selectExternalEngineSpares: async () => [
+        {
+          engine: "codex",
+          connectionProfileId: "codex:inherit",
+        },
+      ],
+    });
+    const rows = () =>
+      readFileSync(sandbox.logPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+    try {
+      expect(commandResolver).not.toHaveBeenCalled();
+      await foregroundList(service, { workspacePath: sandbox.dir });
+      await vi.waitFor(() => expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(1));
+      const secondDir = join(sandbox.dir, "second");
+      mkdirSync(secondDir);
+      await foregroundList(service, { workspacePath: secondDir });
+      await vi.waitFor(() =>
+        expect(rows().some((row) => row.method === "externalEngine/revokeSpare")).toBe(true),
+      );
+      expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(1);
+      expect(rows().filter((row) => row.method === "externalEngine/prepareSpare")).toHaveLength(1);
+      writeFileSync(join(sandbox.dir, "revoke-ack"), "ready");
+      await vi.waitFor(() => expect(rows().filter((row) => row.result?.leaseId)).toHaveLength(2));
+      const log = rows();
+      const revoke = log.findIndex((row) => row.method === "externalEngine/revokeSpare");
+      const grants = log
+        .map((row, index) => (row.result?.leaseId ? index : -1))
+        .filter((index) => index >= 0);
+      expect(revoke).toBeGreaterThan(grants[0]!);
+      expect(revoke).toBeLessThan(grants[1]!);
+      expect(commandResolver).toHaveBeenCalledTimes(2);
+      expect(
+        mayRequestHostSessions("externalEngine/prepareSpare", {
+          engine: "codex",
+          connectionProfileId: "codex:inherit",
+        }),
+      ).toBe(false);
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+});
+
+// W4（P15/P16）：Host 按外部引擎各授 1 个许可（窗口 ≤2）；预热集合变化时对当前 client 重新调度。
+describe("按引擎备用许可与预热集合（W4）", () => {
+  // CLI 夹具：每次 prepareSpare 以 engine 为 requestId 申请许可；另可经 <pid>.json 注入任意请求。
+  const PER_ENGINE_AGENT = String.raw`
+const fs=require('node:fs'),path=require('node:path'),log=process.argv[2],dir=path.dirname(log);
+const send=f=>process.stdout.write(JSON.stringify(f)+'\n');
+let seen='';
+fs.watch(dir,()=>{const file=path.join(dir,process.pid+'.json');if(!fs.existsSync(file))return;const raw=fs.readFileSync(file,'utf8');if(raw===seen)return;seen=raw;send(JSON.parse(raw));}).unref();
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const f=JSON.parse(line);fs.appendFileSync(log,JSON.stringify({pid:process.pid,...f})+'\n');
+ if(f.method==='externalEngine/prepareSpare'){
+  send({id:'acquire-'+f.params.engine,method:'externalEngine/acquireSpare',params:{requestId:'req-'+f.params.engine,engine:f.params.engine}});
+  send({id:f.id,result:{}});
+ } else if(f.method) send({id:f.id,result:f.method==='session/list'?{sessions:[]}: {}});
+});`;
+  const rowsOf = (logPath: string) =>
+    readFileSync(logPath, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+
+  it("Codex 与 Claude 各得 1 个许可互不挤占；同引擎第二个申请被拒；缺 engine 按旧单键", async () => {
+    const sandbox = createRecordingSandbox();
+    setDataBaseDir(sandbox.dir);
+    writeFileSync(sandbox.command.args[0]!, PER_ENGINE_AGENT);
+    const service = createReadyService({
+      commandResolver: () => sandbox.command,
+      externalEnginesSupported: true,
+      selectExternalEngineSpares: async () => [
+        { engine: "codex", connectionProfileId: "inherit" },
+        { engine: "claude-code", connectionProfileId: "inherit" },
+      ],
+    });
+    const rows = () => rowsOf(sandbox.logPath);
+    const command = (pid: number, id: string, method: string, params: unknown) =>
+      writeFileSync(join(sandbox.dir, `${pid}.json`), JSON.stringify({ id, method, params }));
+    try {
+      await foregroundList(service, { workspacePath: sandbox.dir });
+      await vi.waitFor(() =>
+        expect(
+          rows()
+            .filter((row) => row.result?.leaseId)
+            .map((row) => row.id)
+            .sort(),
+        ).toEqual(["acquire-claude-code", "acquire-codex"]),
+      );
+      const pid = rows().find((row) => row.id === "acquire-codex")!.pid as number;
+      command(pid, "second-codex", "externalEngine/acquireSpare", {
+        requestId: "other-codex",
+        engine: "codex",
+      });
+      await vi.waitFor(() =>
+        expect(rows().find((row) => row.id === "second-codex")?.result).toEqual({}),
+      );
+      // 窗口已有 2 个许可：缺 engine 的旧申请也不能突破上限。
+      command(pid, "legacy", "externalEngine/acquireSpare", { requestId: "legacy-request" });
+      await vi.waitFor(() => expect(rows().find((row) => row.id === "legacy")?.result).toEqual({}));
+      // Claude 备用被领用（release）后，Claude 补位重新获得 Claude 许可，Codex 许可不受影响。
+      command(pid, "release-claude", "externalEngine/releaseSpare", {
+        requestId: "req-claude-code",
+      });
+      await vi.waitFor(() =>
+        expect(rows().find((row) => row.id === "release-claude")).toBeDefined(),
+      );
+      command(pid, "refill-claude", "externalEngine/acquireSpare", {
+        requestId: "refill-claude",
+        engine: "claude-code",
+      });
+      await vi.waitFor(() =>
+        expect(rows().find((row) => row.id === "refill-claude")?.result?.leaseId).toBeTruthy(),
+      );
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("预热集合变化后对当前 client 追加准备新引擎，已准备的引擎不重复", async () => {
+    const sandbox = createRecordingSandbox();
+    setDataBaseDir(sandbox.dir);
+    writeFileSync(sandbox.command.args[0]!, PER_ENGINE_AGENT);
+    let choices: Array<{ engine: "codex" | "claude-code"; connectionProfileId: string }> = [
+      { engine: "codex", connectionProfileId: "inherit" },
+    ];
+    let notify: (() => void) | undefined;
+    const unsubscribe = vi.fn();
+    const service = createReadyService({
+      commandResolver: () => sandbox.command,
+      externalEnginesSupported: true,
+      selectExternalEngineSpares: async () => choices,
+      watchExternalEngineSpareSelection: (listener) => {
+        notify = listener;
+        return unsubscribe;
+      },
+    });
+    const prepared = () =>
+      rowsOf(sandbox.logPath)
+        .filter((row) => row.method === "externalEngine/prepareSpare")
+        .map((row) => row.params.engine);
+    try {
+      await foregroundList(service, { workspacePath: sandbox.dir });
+      await vi.waitFor(() => expect(prepared()).toEqual(["codex"]));
+      choices = [...choices, { engine: "claude-code", connectionProfileId: "inherit" }];
+      notify?.();
+      await vi.waitFor(() => expect(prepared()).toEqual(["codex", "claude-code"]));
+      notify?.();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(prepared()).toEqual(["codex", "claude-code"]);
+      await vi.waitFor(() =>
+        expect(rowsOf(sandbox.logPath).filter((row) => row.result?.leaseId)).toHaveLength(2),
+      );
+    } finally {
+      await service.disposeAllAndWait();
+    }
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+});
 
 describe("base service 转发可见性上报", () => {
   it("VR06：CLI 不在时不拉起；CLI 在时发 v4/conversation/visibility，且不阻止闲置回收", async () => {

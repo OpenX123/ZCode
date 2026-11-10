@@ -62,6 +62,7 @@ export function ProjectComposerMenu({
   triggerClassName,
   triggerIndicator,
   showEditProject = false,
+  showLocation = false,
   children,
 }: {
   workspacePath: string;
@@ -87,6 +88,8 @@ export function ProjectComposerMenu({
   triggerIndicator?: ReactNode;
   /** 聊天头部启用当前项目编辑，其他项目选择器保持原有入口。 */
   showEditProject?: boolean;
+  /** Composer 头行显示真实运行位置；其他使用者保持原展示。 */
+  showLocation?: boolean;
   /** 分支等控件位于项目选择器与编辑按钮之间。 */
   children?: ReactNode;
 }) {
@@ -317,6 +320,13 @@ export function ProjectComposerMenu({
   }, [projects, workspaceSearchQuery, deviceNames, directory.hosts]);
   const currentWorkspaceTitle =
     currentProject?.name ?? intl.formatMessage({ id: "chat.empty.selectProject" });
+  const locationLabel = hostId
+    ? (deviceNames?.get(currentProject ? (projectSourceServerId(currentProject) ?? "") : "") ??
+      (() => {
+        const host = directory.hosts.find((host) => host.id === hostId);
+        return host ? remoteHostLabel(host) : hostId;
+      })())
+    : intl.formatMessage({ id: "project.thisComputer" });
   const currentWorkspaceIconClassName = cn(
     "size-4 text-foreground-subtle transition-opacity",
     // Bugfix: 关闭按钮和项目图标占用同一位置。只有允许脱离项目时才隐藏底层图标，
@@ -582,6 +592,15 @@ export function ProjectComposerMenu({
   return (
     <>
       {menu}
+      {showLocation ? (
+        <span
+          data-testid="composer-project-location"
+          title={locationLabel}
+          className="max-w-28 shrink truncate px-2 text-ui-sm text-foreground-subtle"
+        >
+          {locationLabel}
+        </span>
+      ) : null}
       {children}
       {canEditProject ? (
         <ControlHintTooltip title={intl.formatMessage({ id: "project.edit" })}>

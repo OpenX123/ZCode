@@ -50,6 +50,32 @@ export * from "../process-diagnostic.js";
 export { attachmentSourceKindSchema, type AttachmentSourceKind } from "../attachment-source.js";
 import { PROTOCOL_V4_LIMITS } from "../zcode-protocol-v4/core.js";
 
+/** 只宣告动态 Host 预算能力；不是永久授权。 */
+export const EXTERNAL_ENGINE_SPARE_BUDGET_ENV = "ZCODE_EXTERNAL_ENGINE_SPARE_BUDGET";
+const spareRequestIdSchema = z.string().trim().min(1).max(128);
+/** W4：Host 按外部引擎各授 1 个备用许可，窗口至多 2 个。 */
+export const EXTERNAL_ENGINE_SPARE_PERMITS_PER_WINDOW = 2;
+export const zcodeExternalEngineSpareRequestParamsSchema = z
+  .object({
+    requestId: spareRequestIdSchema,
+    // additive（W4）：acquire 带引擎，Host 按引擎分配许可；缺省（旧 CLI、release）按旧单键处理。
+    engine: z.enum(["codex", "claude-code"]).optional(),
+  })
+  .strict();
+export const zcodeExternalEngineAcquireSpareResultSchema = z
+  .object({ leaseId: spareRequestIdSchema.optional() })
+  .strict();
+export const zcodeExternalEngineSpareResultSchema = z.object({}).strict();
+export const zcodeExternalEnginePrepareSpareParamsSchema = z
+  .object({
+    engine: z.enum(["codex", "claude-code"]),
+    connectionProfileId: z.string().trim().min(1).max(80),
+  })
+  .strict();
+export type ZCodeExternalEnginePrepareSpareParams = z.infer<
+  typeof zcodeExternalEnginePrepareSpareParamsSchema
+>;
+
 export const zcodeTopicResourceReadParamsSchema = z
   .object({
     requestId: z.string().min(1).max(256),
@@ -1917,6 +1943,10 @@ const zcodeSessionSubagentBaseSchema = z
 
 export const zcodeSessionRunningSubagentSchema = zcodeSessionSubagentBaseSchema.extend({
   status: z.enum(["running", "waiting", "blocked"]),
+  // W8：与 V4 snapshot `subagents.running[]` 同名可选字段对齐（只增不改）。
+  model: nonEmptyString.optional(),
+  effort: nonEmptyString.optional(),
+  toolCallCount: z.number().int().nonnegative().optional(),
 });
 export type ZCodeSessionRunningSubagent = z.infer<typeof zcodeSessionRunningSubagentSchema>;
 
@@ -4048,6 +4078,10 @@ export const zcodeProtocolMethods = {
   workspaceCancelGenerateText: "workspace/cancelGenerateText",
   providerTestModelConnectivity: "provider/testModelConnectivity",
   // 外部引擎连接测试与取消都不进入串行队列，测试期间同 workspace 的会话请求不受阻塞。
+  externalEngineAcquireSpare: "externalEngine/acquireSpare",
+  externalEngineReleaseSpare: "externalEngine/releaseSpare",
+  externalEngineRevokeSpare: "externalEngine/revokeSpare",
+  externalEnginePrepareSpare: "externalEngine/prepareSpare",
   externalEngineTestConnection: "externalEngine/testConnection",
   externalEngineCancelConnectionTest: "externalEngine/cancelConnectionTest",
   mcpList: "mcp/list",

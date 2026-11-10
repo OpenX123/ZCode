@@ -19,8 +19,10 @@ import { workspaceHookReviewRequestPayloadSchema } from "./workspace-hook-review
 import { workflowRunsStateSchema } from "./workflow-runs.js";
 import { sessionConfigStateSchema, sessionModelTransitionSchema } from "./session-config.js";
 export {
+  engineConfigOptionsSourceSchema,
   sessionConfigStateSchema,
   sessionModelTransitionSchema,
+  type EngineConfigOptionsSource,
   type SessionConfigState,
   type SessionModelTransition,
 } from "./session-config.js";
@@ -418,6 +420,10 @@ export const runningSubagentSummarySchema = z.object({
   summary: z.string().optional(),
   status: z.enum(["running", "waiting", "blocked"]),
   startedAt: timestampSchema.optional(),
+  // W8：与同一子会话 subagent 行上的同名字段同值（行是唯一来源），缺席即未知。
+  model: z.string().trim().min(1).optional(),
+  effort: z.string().trim().min(1).optional(),
+  toolCallCount: z.number().int().nonnegative().optional(),
 });
 export type RunningSubagentSummary = z.infer<typeof runningSubagentSummarySchema>;
 

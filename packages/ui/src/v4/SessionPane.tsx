@@ -3,10 +3,11 @@ import {
   resolveSessionEngine,
   type SessionEngine,
 } from "@zcode/shared/external-engine";
-import { EngineControls, isEngineNotReadyError } from "@/external-engine/index.js";
+import { EngineControls, EngineSwitchRow, isEngineNotReadyError } from "@/external-engine/index.js";
 import {
   useEngineConfigMemory,
   useEngineConnectionControl,
+  useEngineSwitchReadyMarker,
   useExternalEngineService,
 } from "@/hooks/external-engine/index.js";
 import type { ComposerTimingSeed } from "@/v4/telemetry/localTtftObserver.js";
@@ -125,6 +126,10 @@ import type { ConversationDropTargetController } from "@/v4/composer/conversatio
 import { shouldIgnoreEscapeForStopGeneration } from "@/v4/composer/escapeStop.js";
 import { useConversationPanePresentation } from "@/side-pane-full-view/index.js";
 import { ConversationDraftEmptyState } from "@/v4/ConversationDraftEmptyState.js";
+import {
+  mergeDraftSubmissionOverlayRows,
+  useDraftSubmissionOverlay,
+} from "@/v4/draftSubmissionOverlay.js";
 import { ConversationHeader, type PaneWorkspaceBadge } from "@/v4/ConversationHeader.js";
 import { ConversationQueuePanel } from "@/v4/ConversationQueuePanel.js";
 import { projectPendingGuideQueue } from "@/v4/pendingGuideProjection.js";
@@ -142,12 +147,9 @@ import {
   resolveConversationStatusPanelVariant,
   shouldUseConversationStatusPanelInlineLayout,
 } from "@/v4/conversationLayout.js";
-import {
-  buildConversationStatusPanelModel,
-  resolveSoleRunningWorkflowRunTarget,
-} from "@/v4/conversationStatusPanelModel.js";
+import { buildConversationStatusPanelModel } from "@/v4/conversationStatusPanelModel.js";
 import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversationStatusPanelModel.js";
-import { buildSubagentAvatarIndex } from "@/subagent-display/index.js";
+import { buildSubagentAvatarIndex, useSubagentWorkLiveIndex } from "@/subagent-display/index.js";
 import {
   buildWorkflowRunByRunId,
   buildWorkflowRunByToolCallId,
@@ -363,6 +365,8 @@ const EMPTY_SUBAGENT_PROJECTION: NonNullable<ConversationSnapshot["subagents"]> 
   running: [],
   endedTotal: 0,
 };
+
+const EMPTY_TIMELINE_ROWS: ConversationSnapshot["rows"]["window"] = [];
 
 const MAX_CONVERSATION_FILE_CHANGES_CACHE_ENTRIES = 20;
 
@@ -773,6 +777,28 @@ export function SessionPane({
   );
 
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
+  // 草稿首发的 pending optimistic overlay（engine-performance-1.1-spec「草稿首发的即时会话布局」）：
+  // 只在 Renderer 展示，真实行到达（sourceCommandId 相同）即移除，不改变发送屏障与 promotion。
+  const draftSubmissionOverlay = useDraftSubmissionOverlay({
+    sessionId,
+    resetKey: `${workspaceKey}\0${draftTabId ?? ""}`,
+  });
+  const {
+    overlay: draftOverlay,
+    begin: beginDraftOverlay,
+    attachCommand: attachDraftOverlayCommand,
+    bindSession: bindDraftOverlaySession,
+    settleAccepted: settleDraftOverlayAccepted,
+    fail: failDraftOverlay,
+    clear: clearDraftOverlay,
+    reconcile: reconcileDraftOverlay,
+  } = draftSubmissionOverlay;
+  const [draftRetrySubmitRequestId, setDraftRetrySubmitRequestId] = useState(0);
+  // overlay 失败行的“重新发送”：只请求 Composer 走同一提交入口重发输入框内容（已回填），
+  // 不另开发送路径，避免发送成功后输入框仍残留同一段正文。
+  const handleRetryDraftSubmission = useCallback(async () => {
+    setDraftRetrySubmitRequestId((id) => id + 1);
+  }, []);
   const workspaceConfigOptions = useZCodeSessionStore(
     (store) => store.getWorkspaceState(workspacePath, workspaceIdentity).configOptions,
   );
@@ -1006,9 +1032,17 @@ export function SessionPane({
     },
     [engineReadinessScope],
   );
+  // W4 埋点：切换引擎 → 控件可见（cached）/可操作（live），只读快照派生。
+  const { markEngineSwitch } = useEngineSwitchReadyMarker({
+    engine: snapshot?.config.engine,
+    optionCount: snapshot?.config.engineConfigOptions?.length ?? 0,
+    source: snapshot?.config.engineConfigOptionsSource,
+    state: snapshot?.config.engineConfigState,
+  });
   const handleSelectEngine = useCallback(
     (engine: SessionEngine) => {
       if (sessionId || !externalEngineService) return;
+      markEngineSwitch(engine);
       void handleDraftSelectEngine(engine).catch(() => {
         toast(intl.formatMessage({ id: "engine.preferenceSaveFailed" }), { variant: "warning" });
       });
@@ -1023,6 +1057,7 @@ export function SessionPane({
       handleDraftSelectEngine,
       intl,
       invalidateOwnedDraftRuntime,
+      markEngineSwitch,
     ],
   );
   const engineConnection = useEngineConnectionControl({
@@ -1099,6 +1134,8 @@ export function SessionPane({
         // 因而把数小时闲置时间误记为 total/react。创建边界先标记本 pane 的首次绑定；离开后
         // 再次显式打开同一 Session 时标记会清除，恢复正常的已有 Session 打开测量。
         newlyCreatedSessionIdRef.current = createdSessionId;
+        // overlay 必须在导航前同步绑定新会话，否则 sessionId 变化会被当成“离开草稿”而丢弃。
+        bindDraftOverlaySession(createdSessionId);
         promoteComposerDraft(createdSessionId);
         onSessionCreated?.(createdSessionId);
       };
@@ -1161,6 +1198,7 @@ export function SessionPane({
       }
     },
     [
+      bindDraftOverlaySession,
       commitCreatedTask,
       baseWorkspaceServices.taskGroupService,
       refreshTaskGroups,
@@ -2054,6 +2092,11 @@ export function SessionPane({
     () => buildSubagentAvatarIndex(subagentManifestKey ? subagentManifestKey.split("\n") : []),
     [subagentManifestKey],
   );
+  // 工作卡的 waiting / blocked 与可停 workId；内容不变时引用稳定（计步不会重渲染整条时间线）。
+  const subagentWorkLiveIndex = useSubagentWorkLiveIndex(
+    snapshot?.subagents,
+    snapshot?.backgroundWorks,
+  );
   const rowContext = useMemo<ConversationRowRenderContext>(
     () => ({
       workspacePath,
@@ -2089,6 +2132,7 @@ export function SessionPane({
       onOpenSubagentSession:
         runtimeReady && onOpenSubagentSession ? handleOpenSubagentSession : undefined,
       subagentAvatarIndex,
+      subagentWorkLiveIndex,
       onOpenPlanDetail: runtimeReady && onOpenPlanDetail ? handleOpenPlanDetail : undefined,
       onOpenWorkflowRun: runtimeReady && onOpenWorkflowRun ? handleOpenWorkflowRun : undefined,
       onOpenWorkflowActor:
@@ -2124,7 +2168,11 @@ export function SessionPane({
             })
           : undefined,
       onResendFailedTurn:
-        runtimeReady && sessionId && !readOnly ? handleResendFailedTurn : undefined,
+        runtimeReady && sessionId && !readOnly
+          ? handleResendFailedTurn
+          : sessionId === null && draftOverlay?.status === "failed"
+            ? handleRetryDraftSubmission
+            : undefined,
       workflowSaveCandidatesByRunId,
       ...(workflowSessionModel === undefined ? {} : { workflowSessionModel }),
       workflowRunByToolCallId,
@@ -2172,6 +2220,7 @@ export function SessionPane({
       onOpenSubagentSession,
       handleOpenSubagentSession,
       subagentAvatarIndex,
+      subagentWorkLiveIndex,
       onOpenPlanDetail,
       handleOpenPlanDetail,
       onOpenWorkflowRun,
@@ -2190,6 +2239,8 @@ export function SessionPane({
       handleAmendWorkflowRunSettings,
       handleSendWorkflowSaveRequest,
       handleResendFailedTurn,
+      draftOverlay?.status,
+      handleRetryDraftSubmission,
       workflowSaveCandidatesByRunId,
       workflowSessionModel,
       workflowRunByToolCallId,
@@ -2864,11 +2915,33 @@ export function SessionPane({
         inputRoutingMode: snapshotRef.current?.inputRouting.mode ?? null,
         heldQueueDisposition: options?.heldQueueDisposition,
       });
+      // 首屏首发：点击即切会话布局，用 pending overlay 显示用户气泡与「工作中」（替代已删除的
+      // “正在发送…”卡片）。overlay 只包装 onCommandCreated 取得去重身份，不改变发送链与屏障。
+      const overlayId =
+        sessionId === null && !readOnly
+          ? beginDraftOverlay({
+              text,
+              ...(options?.attachments?.length ? { attachments: options.attachments } : {}),
+              startedAt: options?.telemetrySeed?.sendTime ?? Date.now(),
+            })
+          : null;
+      const sendOptions: ConversationComposerSendOptions | undefined = overlayId
+        ? {
+            ...options,
+            onCommandCreated: (commandId: string) => {
+              attachDraftOverlayCommand(overlayId, commandId);
+              options?.onCommandCreated?.(commandId);
+            },
+          }
+        : options;
       try {
-        const sendResult = await dispatchSendText(text, options);
+        const sendResult = await dispatchSendText(text, sendOptions);
         if (sendResult === "blocked" || sendResult === "confirmationRequired") {
+          // 产品 guard / 引擎未就绪 / 队列确认不是失败：回到首屏，正文由 Composer 回填。
+          if (overlayId) clearDraftOverlay(overlayId);
           return sendResult;
         }
+        if (overlayId) settleDraftOverlayAccepted(overlayId);
         setSendSubmissionError(null);
         if (shouldFocusLatest) {
           focusTimelineToLatest();
@@ -2881,7 +2954,7 @@ export function SessionPane({
         // 仅写日志，不会生成 snapshot.control.lastError，用户看到的结果就是“点击没反应”。
         // 这里把 admission 前失败收口为 pane-local 错误横幅，不改变 desktop continuous 或
         // Web remote replayable 的发送/恢复语义，草稿仍由 Composer 原路径保留。
-        setSendSubmissionError({
+        const submissionError = {
           code:
             getRemoteConnectionFailureCode(error) ??
             (runtimeModelUnavailable ? "ZCODE_RUNTIME_MODEL_UNAVAILABLE" : "SEND_FAILED"),
@@ -2890,11 +2963,31 @@ export function SessionPane({
             : intl.formatMessage({ id: "chat.error.sendFailed" }),
           detail,
           ...(sessionId ? { taskId: sessionId } : {}),
-        });
+        };
+        if (overlayId) {
+          // 首屏首发失败由 overlay 气泡下的行内错误行承载（含“重新发送”），不再重复横幅。
+          failDraftOverlay(overlayId, {
+            code: submissionError.code,
+            summary: submissionError.message,
+          });
+        } else {
+          setSendSubmissionError(submissionError);
+        }
         throw error;
       }
     },
-    [dispatchSendText, focusTimelineToLatest, intl, sessionId],
+    [
+      attachDraftOverlayCommand,
+      beginDraftOverlay,
+      clearDraftOverlay,
+      dispatchSendText,
+      failDraftOverlay,
+      focusTimelineToLatest,
+      intl,
+      readOnly,
+      sessionId,
+      settleDraftOverlayAccepted,
+    ],
   );
   // 上面那个 ref 的唯一赋值点（见 handleSendWorkflowSaveRequest 的说明）。
   sendTextRef.current = handleSendText;
@@ -3307,12 +3400,17 @@ export function SessionPane({
   );
   const engineConfigSnapshotOptions =
     externalEngine &&
+    snapshot?.sessionId === (sessionId ?? prewarmSessionId) &&
     snapshot?.config.engine === sessionEngine &&
     snapshot.config.engineConfigState === "ready"
       ? snapshot.config.engineConfigOptions
       : undefined;
   const engineConfigMemory = useEngineConfigMemory({
     engine: sessionEngine,
+    // 只把本代 snapshot 绑定交给偏好 owner；切连接后旧 snapshot 不可标为新选择的 profile。
+    connectionProfileId: engineConfigSnapshotOptions
+      ? snapshot?.config.engineConnectionProfileId
+      : null,
     sessionId: snapshot?.sessionId ?? null,
     options: engineConfigSnapshotOptions,
     restoreEnabled:
@@ -3657,6 +3755,17 @@ export function SessionPane({
     !isDraft && (lease === null || sessionLeaseReady) && snapshot?.sessionId === sessionId
       ? snapshot
       : null;
+  // 首屏首发 overlay 在场时，草稿已是会话布局：不居中、不显示问候语与草稿项目栏。
+  const draftOverlayActive = draftOverlay !== null;
+  const draftLandingLayout = isDraft && !draftOverlayActive;
+  const projectedTimelineRows = timelineSnapshot?.rows.window ?? EMPTY_TIMELINE_ROWS;
+  const timelineRows = useMemo(
+    () => mergeDraftSubmissionOverlayRows(projectedTimelineRows, draftOverlay),
+    [projectedTimelineRows, draftOverlay],
+  );
+  useEffect(() => {
+    reconcileDraftOverlay(projectedTimelineRows);
+  }, [projectedTimelineRows, reconcileDraftOverlay]);
   const shareHandoverContext =
     snapshot?.sharedContextImport && "contextId" in snapshot.sharedContextImport
       ? snapshot.sharedContextImport
@@ -3813,10 +3922,6 @@ export function SessionPane({
       workspacePath,
     ],
   );
-  const runningBackgroundWorkCount =
-    statusPanelModel.runningBashWorks.length +
-    statusPanelModel.runningSubagentWorks.length +
-    statusPanelModel.runningWorkflowRuns.length;
   const runningTerminalCount = statusPanelModel.runningBashWorks.length;
   const runningAgentCount = statusPanelModel.runningSubagentWorks.length;
   const runningWorkflowCount = statusPanelModel.runningWorkflowRuns.length;
@@ -3843,35 +3948,6 @@ export function SessionPane({
       setAgentSectionOpen(false);
     }
   }, [runningAgentCount]);
-  // composer 徽标直达：唯一在跑的是一条可开
-  // 详情页的 workflow run 时，徽标点击直接开它的 side tab，胶囊不动。判定吃胶囊的同一份模型；
-  // 宿主没给 onOpenWorkflowRun（面板行同样不可点）时不直达。
-  const soleRunningWorkflowRunTarget = useMemo(
-    () => (onOpenWorkflowRun ? resolveSoleRunningWorkflowRunTarget(statusPanelModel) : null),
-    [onOpenWorkflowRun, statusPanelModel],
-  );
-  const handleOpenRunningBackgroundWorks = useCallback(() => {
-    if (runningBackgroundWorkCount === 0) return;
-    if (soleRunningWorkflowRunTarget) {
-      // 与面板行同一个 handler：不存在第二条打开路径。
-      handleOpenWorkflowRunFromPanel(soleRunningWorkflowRunTarget);
-      return;
-    }
-    // 产品规则：Composer 是全部实时活动的入口；分区拆开后一次点击仍要展开所有非空类型，
-    // 但三个区块后续保持独立折叠状态，不能再共享一个 open 布尔值。
-    setTerminalSectionOpen(runningTerminalCount > 0);
-    setAgentSectionOpen(runningAgentCount > 0);
-    setWorkflowSectionOpen(runningWorkflowCount > 0);
-    handleSummaryPanelVariantChange("panel");
-  }, [
-    handleOpenWorkflowRunFromPanel,
-    handleSummaryPanelVariantChange,
-    runningAgentCount,
-    runningBackgroundWorkCount,
-    runningTerminalCount,
-    runningWorkflowCount,
-    soleRunningWorkflowRunTarget,
-  ]);
   const statusPanelVariant = resolveConversationStatusPanelVariant({
     variantOverride: effectiveSummaryPanelVariantOverride,
   });
@@ -4010,7 +4086,25 @@ export function SessionPane({
         : undefined,
     [externalEngine, snapshot?.config.engineCommands],
   );
-  const composerNode = readOnly ? null : (
+  // W2：输入框上方的引擎胶囊已移除；唯一的切换行节点挂到模型入口弹层顶部（外部引擎走
+  // EngineControls 弹层，YCode 走 V4ComposerToolbar 模型弹层）。仅本地工作区（有引擎服务）
+  // 渲染；新草稿可切换并沿用 handleSelectEngine，已有会话只读。memo 保持节点稳定，避免流式
+  // snapshot 重渲染时击穿 Composer 控制簇与 V4ComposerModelControls 的 memo。
+  const engineSwitchRow = useMemo(
+    () =>
+      externalEngineService ? (
+        <EngineSwitchRow
+          engine={sessionEngine}
+          onSelectEngine={sessionId === null ? handleSelectEngine : undefined}
+          disabled={connecting}
+        />
+      ) : undefined,
+    [externalEngineService, sessionEngine, sessionId, handleSelectEngine, connecting],
+  );
+  const renderComposer = ({
+    leadingActions,
+    modelControls,
+  }: { leadingActions?: ReactNode; modelControls?: ReactNode } = {}) => (
     <SlashCommandsProvider commands={engineSlashCommands}>
       <ConversationComposer
         key="conversation-composer"
@@ -4023,83 +4117,9 @@ export function SessionPane({
         draftMode={isDraft}
         draftConfig={draftConfig}
         externalEngine={externalEngine}
-        engineControls={
-          // 桌面远程工作区的草稿仍显示选择器（外部引擎灰显说明原因）；Web 无本机引擎服务。
-          externalEngineService ||
-          (sessionId === null && baseWorkspaceServices.externalEngineService) ? (
-            <EngineControls
-              engine={sessionEngine}
-              onSelectEngine={sessionId === null ? handleSelectEngine : undefined}
-              externalEngineUnavailableReason={
-                externalEngineService
-                  ? undefined
-                  : intl.formatMessage({ id: "engine.unavailable.remote" })
-              }
-              connectionChoices={engineConnection.choices}
-              connectionProfileId={engineConnection.currentId}
-              onSelectConnection={sessionId === null ? engineConnection.select : undefined}
-              connectionLabel={engineConnection.label}
-              options={
-                externalEngine && snapshot?.config.engine === sessionEngine
-                  ? snapshot.config.engineConfigOptions
-                  : undefined
-              }
-              // 已有会话（空闲重连、停止后恢复）仍显示“正在连接引擎…”。
-              loading={
-                externalEngine &&
-                sessionId !== null &&
-                (connecting || snapshot?.config.engineConfigState === "connecting")
-              }
-              // 2026-11-08 草稿无感：creating / connecting 不显示连接中文案、可直接发送，只把原生配置
-              // 选择器显示为禁用；阶段仍由 owner 在途状态与预热 snapshot 派生。
-              configPending={
-                externalEngine &&
-                sessionId === null &&
-                (draftEngineReadiness === "creating" || draftEngineReadiness === "connecting")
-              }
-              error={
-                externalEngine
-                  ? sessionId === null
-                    ? prewarmError?.message
-                    : snapshot?.config.engineConfigState === "error"
-                      ? intl.formatMessage({ id: "engine.restoreFailed" })
-                      : undefined
-                  : undefined
-              }
-              connectionFailure={
-                snapshot?.config.engineConfigState === "error"
-                  ? snapshot.config.engineConfigError
-                  : undefined
-              }
-              onRetry={
-                externalEngine && (sessionId !== null || draftEngineReadiness === "failed")
-                  ? () => {
-                      void configCommandBarrier.enqueue(async () => {
-                        // 草稿未建立 binding 时 dispatchConfigCas 无目标并跳过；发送入口仍会由 owner 重建。
-                        await dispatchConfigCas("prepareExternalEngineSession", {});
-                      });
-                    }
-                  : undefined
-              }
-              // 运行中配置由引擎确认，不应与发送/停止的 busy 状态共用禁用条件。
-              disabled={connecting}
-              onConfigChange={(configId, value) => {
-                // 配置与发送复用同一屏障，禁止刚选中的引擎模式尚未应用就开始下一轮。
-                return configCommandBarrier.enqueue(async () => {
-                  const ack = await dispatchConfigCas("setEngineConfigOption", { configId, value });
-                  const accepted = ack?.status === "accepted" || ack?.status === "noop";
-                  if (!accepted) {
-                    toast(intl.formatMessage({ id: "engine.configChangeFailed" }));
-                  } else {
-                    // 只有 snapshot 确认为所选值后才写入按引擎记忆；权限模式等不记忆。
-                    engineConfigMemory.recordExplicitChange(configId, value);
-                  }
-                  return accepted;
-                });
-              }}
-            />
-          ) : undefined
-        }
+        engineSwitchRow={externalEngine ? undefined : engineSwitchRow}
+        engineControls={leadingActions}
+        engineModelControls={modelControls}
         engineNotReadyContent={
           engineNotReady ? (
             <div
@@ -4138,8 +4158,11 @@ export function SessionPane({
         createSubmissionFromComposer={externalEngine ? undefined : createSubmissionFromComposer}
         telemetryDraftConfig={telemetryDraftConfig}
         // 完整视图浮窗默认是一条输入框：草稿项目栏不进入浮窗，切到对话 tab 再选择项目。
-        contextHeader={isDraft && !isFloatingPresentation ? draftComposerHeader : undefined}
-        centered={isDraft}
+        contextHeader={
+          draftLandingLayout && !isFloatingPresentation ? draftComposerHeader : undefined
+        }
+        centered={draftLandingLayout}
+        submitRequestId={draftRetrySubmitRequestId}
         layout={isFloatingPresentation ? "inline" : "stacked"}
         workingDurationMs={
           floatingTurnRunning ? floatingLatestTurnSummary?.workDurationMs : undefined
@@ -4174,14 +4197,6 @@ export function SessionPane({
         onSelectModel={handleSelectModel}
         onSelectThought={handleSelectThought}
         onSwitchMode={handleSwitchMode}
-        onOpenRunningBackgroundWorks={
-          sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
-        }
-        backgroundWorkOpenTarget={soleRunningWorkflowRunTarget ? "workflow-run" : "panel"}
-        // 父轮结束后 subagents.running 的目录投影可能短暂落后于仍为 running 的
-        // backgroundWorks；Composer 若直接读目录会提前隐藏 Agent 入口。这里复用状态面板按
-        // childSessionId 精确回退后的计数，让两个入口共享同一份运行态真值。
-        runningSubagentCount={runningAgentCount}
         onRecoverCustomModelSelection={handleRecoverCustomModelSelection}
         onSendCompressionCommand={handleSendCompressionCommand}
         error={composerError}
@@ -4195,6 +4210,84 @@ export function SessionPane({
         onDropTargetControllerChange={handleDropTargetControllerChange}
       />
     </SlashCommandsProvider>
+  );
+  const composerNode = readOnly ? null : externalEngineService ||
+    (sessionId === null && baseWorkspaceServices.externalEngineService) ? (
+    <EngineControls
+      engine={sessionEngine}
+      renderLayout={renderComposer}
+      engineSwitchRow={externalEngine ? engineSwitchRow : undefined}
+      connectionChoices={engineConnection.choices}
+      connectionProfileId={engineConnection.currentId}
+      onSelectConnection={sessionId === null ? engineConnection.select : undefined}
+      connectionLabel={engineConnection.label}
+      options={
+        externalEngine && snapshot?.config.engine === sessionEngine
+          ? snapshot.config.engineConfigOptions
+          : undefined
+      }
+      // 已有会话（空闲重连、停止后恢复）仍显示“正在连接引擎…”。
+      loading={
+        externalEngine &&
+        sessionId !== null &&
+        (connecting || snapshot?.config.engineConfigState === "connecting")
+      }
+      // 2026-11-08 草稿无感：creating / connecting 不显示连接中文案、可直接发送，只把原生配置
+      // 选择器显示为禁用；阶段仍由 owner 在途状态与预热 snapshot 派生。
+      configPending={
+        externalEngine &&
+        sessionId === null &&
+        (draftEngineReadiness === "creating" || draftEngineReadiness === "connecting")
+      }
+      error={
+        externalEngine
+          ? sessionId === null
+            ? prewarmError?.message
+            : snapshot?.config.engineConfigState === "error"
+              ? intl.formatMessage({ id: "engine.restoreFailed" })
+              : undefined
+          : undefined
+      }
+      connectionFailure={
+        snapshot?.config.engineConfigState === "error"
+          ? snapshot.config.engineConfigError
+          : undefined
+      }
+      onRetry={
+        externalEngine && (sessionId !== null || draftEngineReadiness === "failed")
+          ? () => {
+              void configCommandBarrier.enqueue(async () => {
+                // 草稿未建立 binding 时 dispatchConfigCas 无目标并跳过；发送入口仍会由 owner 重建。
+                await dispatchConfigCas("prepareExternalEngineSession", {});
+              });
+            }
+          : undefined
+      }
+      // 运行中配置由引擎确认，不应与发送/停止的 busy 状态共用禁用条件。
+      disabled={connecting}
+      onConfigChange={(configId, value) => {
+        const confirmationScope = snapshot
+          ? {
+              sessionId: snapshot.sessionId,
+              connectionProfileId: snapshot.config.engineConnectionProfileId,
+            }
+          : undefined;
+        // 配置与发送复用同一屏障，禁止刚选中的引擎模式尚未应用就开始下一轮。
+        return configCommandBarrier.enqueue(async () => {
+          const ack = await dispatchConfigCas("setEngineConfigOption", { configId, value });
+          const accepted = ack?.status === "accepted" || ack?.status === "noop";
+          if (!accepted) {
+            toast(intl.formatMessage({ id: "engine.configChangeFailed" }));
+          } else {
+            // 只有 snapshot 确认为所选值后才写入按引擎记忆；权限模式等不记忆。
+            engineConfigMemory.recordExplicitChange(configId, value, confirmationScope);
+          }
+          return accepted;
+        });
+      }}
+    />
+  ) : (
+    renderComposer()
   );
   const pendingGuideProjection = snapshot ? projectPendingGuideQueue(snapshot.queue) : null;
   const conversationBottomDockContent = readOnly ? null : (
@@ -4447,10 +4540,13 @@ export function SessionPane({
                   scrollToBottomActionRef={timelineScrollToBottomRef}
                   scrollToQueryActionRef={timelineScrollToQueryRef}
                   selectionPanelLayoutContainerRef={conversationLayoutContainerRef}
-                  rows={timelineSnapshot?.rows.window ?? []}
+                  rows={timelineRows}
                   pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
                   apiRetry={timelineSnapshot?.control.apiRetry ?? null}
-                  totalCount={timelineSnapshot?.rows.totalCount ?? 0}
+                  totalCount={
+                    (timelineSnapshot?.rows.totalCount ?? 0) +
+                    (timelineRows.length - projectedTimelineRows.length)
+                  }
                   sessionKey={sessionId ?? "draft"}
                   scrollMemoryKey={timelineScrollMemoryKey}
                   rowContext={rowContext}
@@ -4491,7 +4587,7 @@ export function SessionPane({
                       <div className="p-6 text-center text-ui-base text-foreground-subtle">
                         {intl.formatMessage({ id: "remote.conversation.placeholder" })}
                       </div>
-                    ) : isDraft ? (
+                    ) : draftLandingLayout ? (
                       <div data-testid={TID_CHAT_EMPTY} className="w-full">
                         <ConversationDraftEmptyState
                           compactForRemoteControl={compactForRemoteControl}
@@ -4500,7 +4596,7 @@ export function SessionPane({
                     ) : null
                   }
                   // 浮窗形态只露出底部输入区，空会话也必须贴底，不能居中。
-                  centerEmptyStateWithDock={isDraft && !isFloatingPresentation}
+                  centerEmptyStateWithDock={draftLandingLayout && !isFloatingPresentation}
                   floatingComposerDock={isFloatingPresentation}
                   onComposerDockHeightChange={
                     isFloatingPresentation && focused

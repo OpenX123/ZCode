@@ -1693,7 +1693,7 @@ BG13/BG18 增量埋点断言：保留内部工具逐条上报及零 token 断言
 | CHL02      | covered  | `v4ConversationTurnGroup.test.ts`                                                   | running 轮含 assistant text、reasoning、tool 或 subagent 进展时资格和 loading 可见性保持；reserved slot 不增减高度                                                                                                                                                                      |
 | CHL03      | covered  | `chatLoading.test.ts`、`v4ConversationTurnGroup.test.ts`                            | permission、AskUserQuestion、pendingApproval blocker 存续时隐藏；解除后若仍 running 则立即恢复                                                                                                                                                                                          |
 | CHL04      | covered  | `chatLoading.test.ts`、`v4ConversationTurnGroup.test.ts`                            | `compact` / `goalVerifier` active work 与行级 fallback 均阻塞；其它 active work kind 保持 eligible                                                                                                                                                                                      |
-| CHL05      | covered  | `v4ConversationTimelineLiveTail.test.ts`、CLT                                       | controlled-stream formal replay 先铺满真实 Markdown 段落，再以 550ms 间隔追加 16 段；覆盖溢出后至少 8 次 live-tail 增高，均由 ResizeObserver 在可绘制状态前同步吸底，loading 立即可见且无下移再回位                                                                                     |
+| CHL05      | covered  | `v4ConversationTimelineLiveTail.test.ts`、CLT                                       | controlled-stream formal replay 先铺满真实 Markdown 段落，再以 550ms 间隔追加 16 段；覆盖溢出后至少 8 次 live-tail 增高，均由 ResizeObserver 在可绘制状态前同步吸底，无下移再回位；2026-11-09（W5）起普通 running 不渲染底部 loading，CLT 改为断言全程 loading 不可见                                                                                     |
 | CHL06      | covered  | `v4ConversationTurnGroup.test.ts`、`v4ConversationTimelineLiveTail.test.ts`         | terminal turn 回归虚拟历史且不显示；background structured turn 仍服从主轮 running 生命周期；UI 不引入额外 timer 或协议状态                                                                                                                                                              |
 | CHL07      | covered  | `v4TimelineScrollAnchor.test.ts`、`v4ConversationTimelineScrollMemory.test.ts`、CLT | focused test 证明没有用户输入时 terminal 折叠/virtualizer 的 `scrollTop` 回退不解除跟随；controlled-stream formal replay 使用长 assistant history + 长最终正文，采样 live tail 消失后的终态结算，断言持续在 48px 底部容差内且不出现回到底部按钮                                         |
 | CHL08      | covered  | `v4TimelineScrollAnchor.test.ts`、`v4ConversationTimelineScrollMemory.test.ts`、CLT | focused test 覆盖 wheel/touch/键盘/滚动条输入来源与“用户向上滚动优先于布局”状态机；controlled-stream formal replay 在终态前真实发起向上 wheel，断言 live tail 消失和历史折叠后仍 `following=false`、保持离底且不被强拉到底                                                              |
@@ -1980,6 +1980,19 @@ manual/capture review 后再从 pending 转正。普通 Web 使用同一 rendere
 | SAT25a     | covered  | SAT-UT                                     | `control.apiRetry.attempt=1/2` 时同位置显示 `ChatLoading`，不出现重连文案或空 slot；权限/AskUserQuestion/maintenance 阻塞时仍不显示 loading。已由 `v4ConversationTurnGroup` focused unit 覆盖                                                                                                                                                                                               |
 | SAT25b     | partial  | SAT-UT / SAT-E2E-pending                   | focused unit 已覆盖 `attempt=3,maxAttempts=11` 显示 `重新连接中... 3/10`、独占 retry slot 及进展后清除；Main 的三次 fault-stream retry 作为最小 UI E2E 代表，delivery 与协议不新增组合，待 driver 可用后完成 pending E2E                                                                                                                                                                    |
 | SAT26      | partial  | SAT-RT / SAT-GW / SAT-UT / SAT-E2E-pending | core/projection/hydration/renderer 单测覆盖 fresh-only、实际模型、source-less marker 与 cold rebuild；既有 built-in override pending E2E 已扩展 provider-visible model、live copy 和完整冷启恢复。Main 首轮、旧 child 无回填及 parent 不镜像为同组负断言；待人工 review/promotion                                                                                                           |
+
+## Subagent 工作卡覆盖口径（SAT31–SAT34，1.3 W8）
+
+对应 [case catalog](../conversation-session-case-catalog.md) 的 SAT31–SAT34 与[多智能体展示规范](../desktop/multi-agent-display-spec.md)「对话行内 Subagent 工作卡」。
+候选 spec：`packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-subagent-work-card.test.ts`
+（内置引擎后台子智能体：工作卡 → 成员行打开右侧只读子会话并实时增长 → 停止；只做 typecheck，未运行，待人工 review 后整理 case-local fixture）。
+
+| Catalog ID | 覆盖状态 | 自动化                          | 备注                                                                                                              |
+| ---------- | -------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| SAT31      | partial  | SAT-UT / SAT-PROJ / E2E-pending | `subagentWorkCard` 覆盖分组、计数、计时、模型/步骤；bootstrap 投影单测覆盖 model/effort/toolCallCount             |
+| SAT32      | partial  | SAT-UT / E2E-pending            | `subagentWorkCard` 覆盖行点击；`subagentSidePane` / `subagentSessionHeader` 覆盖只读提示与模型标签；实时增长待 review |
+| SAT33      | partial  | SAT-UT / E2E-pending            | 单测覆盖"停止全部"只作用于可停项、不可停成员无"停止"、无可停项时隐藏；E2E 候选点击停止                            |
+| SAT34      | covered  | SAT-UT / SAT-PROJ               | 单测覆盖全部结束折叠与展开；投影单测覆盖 `totalToolUseCount` 校正                                                 |
 
 ## 多智能体展示覆盖口径（MA，1.1.0）
 
@@ -4371,3 +4384,35 @@ E01–E11 产品规则已获用户确认，详见 [规格](../desktop/external-a
 ### SFA01–03 会话菜单链接与分叉（2026-11-06）
 
 候选 `conversation-session/manual-review/pending/conversation-session-session-actions.test.ts` 对应 [会话链接与分叉规格](../desktop/session-links-and-forks-spec.md)。SFA01 复制稳定深链；SFA02 当前目录分叉的 child、继承历史、空输入和零排队；SFA03 真实 Git 工作树分叉的新目录/分支、HEAD 祖先、未提交文件以及源 index 不变。使用隔离文件与 case-local provider 回放，实际执行证据单独记录，保持 pending。
+
+### AX01–AX07 ACP 体验改造（2026-11-09）
+
+| Case | 语义 | 证据计划 | 当前状态 |
+| --- | --- | --- | --- |
+| AX01/AX02 | 左侧引擎列表、右详情、配置来源与认证隔离、编辑生效范围 | connections pending 真实 Electron 通过：主从、查看不改默认、显式用于新任务、Dialog 取消/保存、编辑新 ID、密钥不回显；认证隔离/旧绑定由 service/UI/CLI UT 证明 | accepted；pending，已验证上述范围 |
+| AX03 | 引擎分段、紧凑配置，Fast 仅在更多，绑定不可变 | prewarm pending AX03/07 与两家首发/续聊/Fast 拒绝回归通过，picker UT 通过；既有会话仅固定 Logo 与只读连接，无改选 | accepted；pending，已验证 |
+| AX04 | engine/profile 模型与深度偏好隔离 | memory、setting merge、schema 及迟到确认定向 UT 通过；P11 真实 Electron 首发屏障通过 | accepted；UT 与定向桌面通过 |
+| AX05 | warming spare 独占，取消/失败/关闭释放 | adapters 最终分次 80 passed / 3 平台条件跳过，含真实 stdio 与 Windows 严格进程树关闭 | accepted；定向验证通过，POSIX 实测未执行 |
+| AX06 | 窗口一个未绑定备用；仅已有活动CLI提前准备 | bootstrap 34、Host 11、shared 4 定向通过；P1 关闭确认修复复审通过 | accepted；定向验证通过 |
+| AX07 | 窄屏、主题、键盘及SSH能力门禁 | run6 真实 Electron 1280/640 × 深浅主题 8 图及固定绑定 1 图；更多 Esc/Enter/焦点通过；SSH 原因可见/可访问由定向 UT 证明 | accepted；pending，桌面布局/键盘通过，未跑真实 SSH |
+
+候选保持 pending，不自动转正；夹具结果不等同真实供应商、外部SSH或发布性能。
+
+本轮四份候选聚焦 9 场景：run5 为 7 passed / 2 failed，两个测试适配问题修正后 run6 定向补跑 3 passed / 0 failed，9 个不同场景均有最终通过证据；没有将分次结果改写为一次全绿。命令、失败依据、清理环境后的截图绝对路径和未运行范围见 [ACP 验证记录](2026-11-09-acp-experience-verification.md)。
+
+
+### Task5 最新 Composer 合同（2026-11-09）
+
+AX03/AX07 的最终输入区合同以 external-agent-engines-spec.md 顶部为准：无连接入口或标签；模型/深度合并，Fast 位于该弹层更多；项目/真实位置/Git 分支在编辑器上方同一行。继续使用 prewarm pending 候选和隔离 ACP 供应商夹具，不自动转正。Task5 独立运行记录与新截图见 `2026-11-09-acp-experience-verification.md` 的 Task5 追加段；Task4 run6 截图为旧展示合同历史。
+
+最终Task5 run6：AX03/07 exit0、1/1通过，1280/640×深浅主题4图、合并弹层/固定引擎2图与4份矩形JSON已生成并查看；真实Git夹具在完整Electron/Host重启前就绪，未新增产品轮询或弱化分支断言。P11/两家模型首发续聊/Fast拒绝沿Task5 run2通过；深度pending/拒绝沿run4通过。空effort+有效model/Fast由picker两项回归证明，先2失败后22/22全通过；不扩张为该退化组合的真实供应商或桌面覆盖。
+
+### W4 引擎热切换（2026-11-09）
+
+| Case | 语义                                                                   | 证据计划                                                                                                                                         | 当前状态                            |
+| ---- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
+| P15  | 每个外部引擎各 1 个备用许可（窗口 ≤2），拒绝记 `refill_denied`         | adapters process-pool 与 Host `zcodeAgentConversationVisibility` 定向 UT                                                                         | 定向 UT 通过                        |
+| P16  | 本窗口选择新外部引擎后 Host 重新调度预热                               | services `externalEngineSpareSelection` 与 Host 调度定向 UT                                                                                      | 定向 UT 通过                        |
+| P17  | 新草稿 connecting 先显示缓存清单（`source=cached`），ready 替换为 live | adapters catalog、core runtime、bootstrap projection、UI SessionPane 定向 UT；prewarm pending 候选「W4 Codex → Claude → Codex 热切换」页面内计时 | UT 通过；桌面候选仅类型检查，未运行 |
+
+候选保持 manual-review/pending；≤100ms 缓存显示与 ≤1s P95 以本机真实日志 `[engine-switch] controls ready` 与 `external_engine.handshake.completed` 验收，记录见 `2026-11-09-engine-composer-subagent-verification.md`。

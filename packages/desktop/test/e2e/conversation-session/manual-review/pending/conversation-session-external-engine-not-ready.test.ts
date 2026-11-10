@@ -11,13 +11,21 @@ import { getV4ComposerText, prepareV4ConversationE2E } from "../../../helpers/v4
 describe("外部引擎未就绪保持草稿", () => {
   it("两家引擎均隐藏内置配置，发送被门禁且保留文本，设置展示官方登录命令", async () => {
     await prepareV4ConversationE2E({ skipProvider: true });
-    for (const engine of ["Claude Code", "Codex"]) {
-      const selector = $('[data-testid="session-engine-select"]');
-      await selector.waitForClickable({ timeout: 30000 });
-      await selector.click();
-      const choice = $(`[role="option"]=${engine}`);
+    for (const [engine, id] of [
+      ["Claude Code", "claude-code"],
+      ["Codex", "codex"],
+    ]) {
+      // W2：引擎切换在右下角模型入口弹层顶部（YCode 为模型选择器，外部引擎为合并入口）。
+      const trigger = $(
+        `[data-testid="engine-config-model-effort"], [data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"]`,
+      );
+      await trigger.waitForClickable({ timeout: 5000 });
+      await trigger.click();
+      const choice = $(`[data-testid="engine-switch-option-${id}"]`);
       await choice.waitForClickable({ timeout: 5000 });
       await choice.click();
+      // YCode → 外部引擎会替换入口与弹层；弹层仍在时才关闭，避免 Escape 落到输入框。
+      if (await $('[data-testid="engine-switch-row"]').isDisplayed()) await browser.keys("Escape");
       await expect($(`[data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"]`)).not.toExist();
       await expect($(`[data-testid="${TID_CHAT_MODE_SELECT_TRIGGER}"]`)).not.toExist();
       const prompt = `E2E_EXTERNAL_ENGINE_NOT_READY ${engine} 草稿`;
@@ -45,16 +53,22 @@ describe("外部引擎未就绪保持草稿", () => {
         return items[modelIndex + 1]?.getAttribute("data-settings-section-nav");
       }),
     ).toBe("agentEngines");
-    const text = await settings.getText();
-    expect(text).toContain("claude auth login");
-    expect(text).toContain("codex login");
-    // 首次只读检测完成前安装按钮会禁用；等待实际可用状态，避免把加载过程误判为安装失败。
-    await expect($('[data-testid="engine-install-claude-code"]')).toBeEnabled();
-    await expect($('[data-testid="engine-install-codex"]')).toBeEnabled();
-    const details = $('[data-testid="engine-settings-claude-code"] details');
-    expect(await details.getAttribute("open")).toBeNull();
-    await details.$("summary").click();
-    await expect(details).toHaveAttribute("open");
+    for (const [engine, id, command] of [
+      ["Claude Code", "claude-code", "claude auth login"],
+      ["Codex", "codex", "codex login"],
+    ]) {
+      await settings.$(`button[aria-label="${engine}"]`).click();
+      // 技术详情与检查项各自使用 details，必须按语义核对原先的默认折叠约定。
+      const details = $(
+        `//div[@data-testid="engine-settings-${id}"]//details[summary[contains(.,"技术详情")]]`,
+      );
+      expect(await details.getAttribute("open")).toBeNull();
+      await details.$("summary").click();
+      await expect(details).toHaveAttribute("open");
+      expect(await details.getText()).toContain(command);
+      // 首次只读检测完成前按钮禁用；只在选中对应引擎之后等待。
+      await expect($(`[data-testid="engine-install-${id}"]`)).toBeEnabled();
+    }
     await $('[data-settings-section-nav="modelProvider"]').click();
     await expect(settings).not.toExist();
     await expect($('[data-model-provider-split-panel="true"]')).toBeDisplayed();

@@ -13,6 +13,7 @@ import {
   type EngineConfigOption,
 } from "@zcode/shared/external-engine";
 import {
+  engineConfigOptionsSourceSchema,
   nativePermissionOptionSchema,
   PERMISSION_FULL_ACCESS_OPTION_ID,
   planStateSchema,
@@ -95,12 +96,14 @@ import {
   ZCODE_FILE_STREAMING_TOOL_INPUT_PREVIEW_MIN_INTERVAL_MS,
   extractPlanStepsFromToolInput,
   extractPlanStepsFromToolOutput,
+  aggregateTurnOutputRate,
   isHighspeedProviderId,
   isZCodeFileStreamingToolInputPreviewTool,
   isZCodeModelRetryRecoveryProgressPayload,
   parseZCodeBackgroundTaskNotificationText,
   resolveZCodeBackgroundTaskControlKind,
   zcodeBackgroundTaskNotificationToolUpdateStatus,
+  type ModelCallOutputTiming,
 } from "@zcode/shared";
 import { verdictWorkspaceHookReviewRequest } from "@zcode/shared/workspace-hook-review-monotonicity";
 import type {
@@ -265,6 +268,7 @@ function hookExecutionDisplayName(
 export interface SessionConfigSeed {
   engine?: SessionEngine;
   engineConfigOptions?: EngineConfigOption[];
+  engineConfigOptionsSource?: "cached" | "live";
   engineConfigState?: import("@zcode/shared").EngineConfigState;
   engineConfigError?: import("@zcode/shared").EngineConnectionFailure;
   permissionGrant?: { interactionId: string };
@@ -574,6 +578,9 @@ export class ProductProjection {
   // Highspeed 分享需要的真实耗时由 CLI 事件聚合，避免 renderer 离场后丢失拆分数据。
   private highspeedModelDurationByTurnId = new Map<string, number>();
   private highspeedToolIntervalsByTurnId = new Map<string, Map<string, HighspeedToolInterval>>();
+  // 轮次 tokens/s 的逐调用事实（主链路 model_request_completed），轮次结束时聚合写入 turnHeader
+  // （docs/desktop/turn-output-rate-spec.md）；与 Highspeed 侧表同样随 clone/adopt 复制。
+  private outputRateCallsByTurnId = new Map<string, ModelCallOutputTiming[]>();
   // 投递语义侧表：TurnSteerQueued 时按事件 payload（或 followupMode 兜底）记录，
   // drain 时决定切轮 vs 内联；账本落地后以账本为准。
   private deliveryByPendingInputId = new Map<string, "guide" | "queue">();
@@ -690,6 +697,16 @@ export class ProductProjection {
       JSON.stringify(config.engineConfigOptions) !== JSON.stringify(seed.engineConfigOptions)
     ) {
       config.engineConfigOptions = structuredClone(seed.engineConfigOptions);
+      changed = true;
+    }
+    // W4：来源标记与清单同源同步；种子带清单而无来源时（恢复值）删除旧标记。
+    if (
+      seed.engineConfigOptions !== undefined &&
+      config.engineConfigOptionsSource !== seed.engineConfigOptionsSource
+    ) {
+      if (seed.engineConfigOptionsSource)
+        config.engineConfigOptionsSource = seed.engineConfigOptionsSource;
+      else delete config.engineConfigOptionsSource;
       changed = true;
     }
     if (
@@ -1285,6 +1302,9 @@ export class ProductProjection {
         new Map([...intervals].map(([toolCallId, interval]) => [toolCallId, { ...interval }])),
       ]),
     );
+    clone.outputRateCallsByTurnId = new Map(
+      [...this.outputRateCallsByTurnId].map(([turnId, calls]) => [turnId, [...calls]]),
+    );
     clone.deliveryByPendingInputId = new Map(this.deliveryByPendingInputId);
     clone.currentTurnId = this.currentTurnId;
     clone.currentTurnStartedModelOnly = this.currentTurnStartedModelOnly;
@@ -1330,6 +1350,7 @@ export class ProductProjection {
     this.currentProductTurnStartedAtMs = candidate.currentProductTurnStartedAtMs;
     this.highspeedModelDurationByTurnId = candidate.highspeedModelDurationByTurnId;
     this.highspeedToolIntervalsByTurnId = candidate.highspeedToolIntervalsByTurnId;
+    this.outputRateCallsByTurnId = candidate.outputRateCallsByTurnId;
     this.deliveryByPendingInputId = candidate.deliveryByPendingInputId;
     this.currentTurnId = candidate.currentTurnId;
     this.currentTurnStartedModelOnly = candidate.currentTurnStartedModelOnly;
@@ -1566,6 +1587,7 @@ export class ProductProjection {
         const payload = event.payload as {
           engine: unknown;
           engineConfigOptions: unknown;
+          engineConfigOptionsSource?: unknown;
           engineConfigState?: unknown;
           engineConfigError?: unknown;
           engineConnectionProfileId?: unknown;
@@ -1574,14 +1596,21 @@ export class ProductProjection {
         const engineConfigOptions = engineConfigOptionSchema
           .array()
           .parse(payload.engineConfigOptions);
+        const engineConfigOptionsSource = engineConfigOptionsSourceSchema
+          .optional()
+          .parse(payload.engineConfigOptionsSource);
+        // 来源标记随每次清单整体替换；缺省时去掉旧标记，避免 cached 残留到确认后的快照（W4）。
+        const { engineConfigOptionsSource: _previousSource, ...previousConfig } =
+          this.snapshot.config;
         return [
           {
             op: "state.updated",
             patch: {
               config: {
-                ...this.snapshot.config,
+                ...previousConfig,
                 engine,
                 engineConfigOptions,
+                ...(engineConfigOptionsSource ? { engineConfigOptionsSource } : {}),
                 // 绑定只在 Runtime 解析后出现；尚未解析的 connecting 事件保留已投影的值。
                 ...(typeof payload.engineConnectionProfileId === "string"
                   ? { engineConnectionProfileId: payload.engineConnectionProfileId }
@@ -2552,6 +2581,7 @@ export class ProductProjection {
         activeMs,
         payload.historyRoundCount,
         this.highspeedTimingForTurn(this.turnIdOf(event), activeMs),
+        this.outputRateForTurn(this.turnIdOf(event), payload.resultType === "success"),
       ),
       ...(payload.resultType === "success" ? this.markStableForkAssistant(event) : []),
       {
@@ -2641,6 +2671,7 @@ export class ProductProjection {
       undefined,
       undefined,
       this.highspeedTimingForTurn(this.turnIdOf(event)),
+      this.outputRateForTurn(this.turnIdOf(event), false),
     ).map((delta) =>
       delta.op === "row.upserted" && delta.row.kind === "turnHeader" && turnFailure
         ? { ...delta, row: { ...delta.row, failure: turnFailure } }
@@ -2709,6 +2740,12 @@ export class ProductProjection {
         turnId,
         (this.highspeedModelDurationByTurnId.get(turnId) ?? 0) + Math.max(0, payload.durationMs),
       );
+    }
+    if (
+      payload.type === "model_request_completed" &&
+      (payload.querySource === undefined || payload.querySource === "main_turn")
+    ) {
+      this.recordOutputRateCall(this.turnIdOf(event), payload);
     }
     switch (payload.type) {
       case "model_retry_scheduled": {
@@ -3349,7 +3386,10 @@ export class ProductProjection {
   }
 
   private onToolCallScheduled(event: SessionEvent): ConversationDelta[] {
-    if (this.isMirroredSubagentToolEvent(event) || !this.isRunning()) return [];
+    // 镜像子工具事件不进父时间线，但在丢弃前为工作卡计步（W8）；后台子智能体在父轮结束后
+    // 仍会镜像，所以计数放在 isRunning 闸门之前。
+    if (this.isMirroredSubagentToolEvent(event)) return this.countMirroredSubagentTool(event);
+    if (!this.isRunning()) return [];
     const payload = event.payload as ToolCallScheduledPayload;
     const toolCallId = String(payload.toolCallId);
     this.fileToolInputPreviewByCallId.delete(toolCallId);
@@ -4266,6 +4306,7 @@ export class ProductProjection {
             0,
             endedAt - (this.currentProductTurnStartedAtMs ?? headerRow.startedAt),
           ),
+          ...this.outputRateForTurn(previousProductTurnId, true),
           ...(headerRow.workSegments
             ? {
                 workSegments: this.completeWorkSegments(headerRow.workSegments, endedAt),
@@ -4598,6 +4639,10 @@ export class ProductProjection {
             ? "blocked"
             : "running",
         ...(row.startedAt !== undefined ? { startedAt: row.startedAt } : {}),
+        // W8：行是唯一来源，running[] 只复制同值。
+        ...(row.model ? { model: row.model } : {}),
+        ...(row.effort ? { effort: row.effort } : {}),
+        ...(row.toolCallCount !== undefined ? { toolCallCount: row.toolCallCount } : {}),
       });
     }
     running.sort(
@@ -4715,9 +4760,12 @@ export class ProductProjection {
         ...(childSessionId ? { childSessionId } : {}),
         ...(payload.background === true ? { backgrounded: true as const } : {}),
         ...(payload.background === true ? { workId: agentId } : {}),
+        ...this.subagentModelFields(payload),
         startedAt: this.ms(event),
       };
       delete row.endedAt;
+      // resume 开启新一次运行：步骤数只描述当前这次运行，旧值不再沿用。
+      delete row.toolCallCount;
       return [
         { op: "row.upserted", row },
         ...(resumedBackgroundWork ? [resumedBackgroundWork] : []),
@@ -4741,6 +4789,7 @@ export class ProductProjection {
         : {}),
       ...(payload.background === true ? { backgrounded: true as const } : {}),
       ...(payload.background === true ? { workId: agentId } : {}),
+      ...this.subagentModelFields(payload),
       startedAt: this.ms(event),
     };
     this.subagentRowIdByAgentId.set(agentId, row.rowId);
@@ -4809,6 +4858,14 @@ export class ProductProjection {
     const existing = this.findSubagentLifecycleRow(agentId, payload, event);
     const parentToolCallId = this.stringPayload(payload, "parentToolCallId");
     const status = this.mapSubagentStatus(this.stringPayload(payload, "status"));
+    const totalToolUseCount = payload.totalToolUseCount;
+    // 终态以运行时汇总的工具调用数为准（镜像事件不落库，冷启动后实时计数可能不全）。
+    const finalToolCallCount =
+      typeof totalToolUseCount === "number" &&
+      Number.isInteger(totalToolUseCount) &&
+      totalToolUseCount >= 0
+        ? { toolCallCount: totalToolUseCount }
+        : {};
     const summaryText =
       this.stringPayload(payload, "summaryText") ??
       this.stringPayload(payload, "result") ??
@@ -4821,6 +4878,7 @@ export class ProductProjection {
           ...existing,
           status,
           summaryText,
+          ...finalToolCallCount,
           endedAt: this.ms(event),
           // resumed child 的终态同样属于原 Agent row，只在旧 row 缺失锚点时补齐。
           ...(!existing.parentToolCallId && parentToolCallId ? { parentToolCallId } : {}),
@@ -4844,6 +4902,7 @@ export class ProductProjection {
             : {}),
           ...(payload.background === true ? { backgrounded: true as const } : {}),
           ...(payload.background === true ? { workId: agentId } : {}),
+          ...finalToolCallCount,
           endedAt: this.ms(event),
         };
     this.subagentRowIdByAgentId.set(agentId, row.rowId);
@@ -5158,6 +5217,13 @@ export class ProductProjection {
             // replayable 也可能首次恢复即终态。单 Turn token 必须在权威事件投影中累计。
             ...(isMainTurn
               ? { outputTokens: (headerRow.outputTokens ?? 0) + (usage.outputTokens ?? 0) }
+              : {}),
+            // 与 outputTokens 同源：只有 provider/adapter 报告了推理 token 才累计（Codex thoughtTokens）。
+            ...(isMainTurn && usage.reasoningTokens !== undefined
+              ? {
+                  reasoningTokens:
+                    (headerRow.reasoningTokens ?? 0) + Math.max(0, usage.reasoningTokens),
+                }
               : {}),
           },
         });
@@ -5757,6 +5823,7 @@ export class ProductProjection {
       toolDurationMs: number;
       otherDurationMs: number;
     },
+    outputRate?: { outputTps: number; generationMs: number; firstTokenMs: number },
   ): ConversationDelta[] {
     const row = this.turnHeaderForEvent(event);
     if (!row) return [];
@@ -5770,6 +5837,7 @@ export class ProductProjection {
           endedAt,
           ...(activeMs !== undefined ? { activeMs } : {}),
           ...highspeedTiming,
+          ...outputRate,
           ...(historyRoundCount !== undefined ? { historyRoundCount } : {}),
           ...(row.workSegments
             ? {
@@ -5804,6 +5872,32 @@ export class ProductProjection {
       ),
     });
     this.highspeedToolIntervalsByTurnId.set(turnId, intervals);
+  }
+
+  private recordOutputRateCall(
+    turnId: string,
+    payload: Extract<ModelNetworkStatusPayload, { type: "model_request_completed" }>,
+  ): void {
+    const calls = this.outputRateCallsByTurnId.get(turnId) ?? [];
+    calls.push({
+      outputTokens: payload.usage?.outputTokens,
+      reasoningTokens: payload.usage?.reasoningTokens,
+      durationMs: payload.durationMs,
+      timeToFirstContentMs: payload.timeToFirstContentMs,
+      reasoningContentStreamed: payload.reasoningContentStreamed,
+    });
+    this.outputRateCallsByTurnId.set(turnId, calls);
+  }
+
+  /** 取出并清理该轮逐调用事实；只有成功收口的轮次写入速度，缺数据时不写（不估算）。 */
+  private outputRateForTurn(
+    turnId: string,
+    completedSuccessfully: boolean,
+  ): { outputTps: number; generationMs: number; firstTokenMs: number } | undefined {
+    const calls = this.outputRateCallsByTurnId.get(turnId);
+    this.outputRateCallsByTurnId.delete(turnId);
+    if (!completedSuccessfully || !calls) return undefined;
+    return aggregateTurnOutputRate(calls) ?? undefined;
   }
 
   private highspeedTimingForTurn(
@@ -6024,6 +6118,37 @@ export class ProductProjection {
         row.turnId === turnId &&
         row.parentToolCallId === parentToolCallId,
     );
+  }
+
+  /**
+   * W8：SubagentSpawned 的 model 为 `providerId/modelId`，工作卡只展示模型 ID；effort 原值透传。
+   * 引擎未报告（继承父模型、外部引擎未知）时不写字段，UI 即不显示。
+   */
+  private subagentModelFields(
+    payload: Record<string, unknown>,
+  ): Pick<SubagentRow, "model" | "effort"> {
+    const rawModel = this.stringPayload(payload, "model")?.trim();
+    const separator = rawModel?.indexOf("/") ?? -1;
+    const model = rawModel && separator >= 0 ? rawModel.slice(separator + 1).trim() : rawModel;
+    const effort = this.stringPayload(payload, "effort")?.trim();
+    return {
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+    };
+  }
+
+  /** 镜像子工具调用为对应 subagent 行计步；未知子智能体直接丢弃。 */
+  private countMirroredSubagentTool(event: SessionEvent): ConversationDelta[] {
+    const payload = event.payload as unknown as Record<string, unknown>;
+    const agentId = this.stringPayload(payload, "agentId");
+    const row = agentId ? this.findSubagentRow(agentId) : undefined;
+    if (!row || row.status !== "running") return [];
+    return [
+      {
+        op: "row.upserted",
+        row: { ...row, toolCallCount: (row.toolCallCount ?? 0) + 1 },
+      },
+    ];
   }
 
   private subagentAgentId(payload: Record<string, unknown>, event: SessionEvent): string {

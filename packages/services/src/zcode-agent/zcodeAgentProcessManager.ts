@@ -1459,6 +1459,18 @@ export class ZCodeAgentProcessManager {
     }
   }
 
+  /** 等待精确旧 client 的进程树收口，不能按 workspace 误杀新一代。 */
+  async disposeClientAndWait(client: ZCodeProtocolClient): Promise<void> {
+    const managed = [...this.ownedProcesses].find((entry) => entry.client === client);
+    if (!managed) return;
+    await this.cleanupManagedProcessWithRetry(
+      managed,
+      "protocol-close",
+      "workspace-dispose-retry",
+      "retired client",
+    );
+  }
+
   async disposeWorkspace(params: {
     workspacePath: string;
     workspaceIdentity?: string;

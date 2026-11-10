@@ -1,0 +1,209 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-subagent-work-card",
+  "spec": "./test/e2e/conversation-session/manual-review/pending/conversation-session-subagent-work-card.test.ts",
+  "fixtures": [
+    {
+      "id": "subagent-work-card-title",
+      "description": "标题生成固定返回，避免标题请求落入主对话 fixture。",
+      "metadata": {
+        "kind": "title",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "标题与工作卡断言无关，固定返回保证回放确定。"
+      },
+      "maxMatches": 4,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["Generate a concise title", "E2E_SUBAGENT_WORK_CARD_PARENT"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "upstream-e2e-subagent-work-card-title",
+          "text": "{\"title\":\"Subagent work card\"}"
+        }
+      }
+    },
+    {
+      "id": "subagent-work-card-memory-noop",
+      "description": "记忆提取子智能体固定无操作。",
+      "metadata": {
+        "kind": "subagent",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "与断言无关的后台记忆提取请求固定返回。"
+      },
+      "maxMatches": 8,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["You are now acting as the memory extraction subagent"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "upstream-e2e-subagent-work-card-memory-noop",
+          "text": "Nothing to save."
+        }
+      }
+    },
+    {
+      "id": "subagent-work-card-parent-launch",
+      "description": "父模型启动一个 run_in_background 的 Explore 子智能体。",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-tool-use",
+        "source": "synthetic",
+        "syntheticReason": "固定派发单个可停的后台子智能体，覆盖 SAT31 单成员工作卡与停止入口。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_SUBAGENT_WORK_CARD_PARENT"],
+        "bodyIncludes": ["E2E_SUBAGENT_WORK_CARD_PARENT", "E2E_SUBAGENT_WORK_CARD_LAUNCHED"],
+        "bodyExcludes": [
+          "Async agent launched successfully",
+          "Generate a concise title",
+          "CRITICAL: Respond with TEXT ONLY"
+        ]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_e2e_subagent_work_card_agent",
+          "name": "Agent",
+          "inputTokens": 32,
+          "input": {
+            "description": "E2E work card child",
+            "prompt": "E2E_SUBAGENT_WORK_CARD_CHILD_TASK: run Bash \"sleep 30\", then Bash \"sleep 60\", one call at a time, then reply E2E_SUBAGENT_WORK_CARD_CHILD_DONE.",
+            "run_in_background": true,
+            "subagent_type": "Explore"
+          },
+          "messageId": "msg_e2e_subagent_work_card_agent"
+        }
+      }
+    },
+    {
+      "id": "subagent-work-card-parent-launched",
+      "description": "后台派发工具返回后父模型立即回复 LAUNCHED，不等待子智能体。",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "父轮结束后子智能体继续运行，工作卡需保持 running。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["Async agent launched successfully"],
+        "bodyIncludes": ["E2E_SUBAGENT_WORK_CARD_PARENT", "toolu_e2e_subagent_work_card_agent"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "upstream-e2e-subagent-work-card-launched",
+          "text": "E2E_SUBAGENT_WORK_CARD_LAUNCHED"
+        }
+      }
+    },
+    {
+      "id": "subagent-work-card-parent-notification",
+      "description": "子智能体被停止后父会话收到 task-notification，固定收口。",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "停止后的父 continuation 与断言无关，固定文本避免未匹配请求。"
+      },
+      "maxMatches": 2,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["<task-notification>"],
+        "bodyIncludes": ["E2E_SUBAGENT_WORK_CARD_PARENT", "<task-notification>"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "upstream-e2e-subagent-work-card-notification",
+          "text": "E2E_SUBAGENT_WORK_CARD_NOTIFIED"
+        }
+      }
+    },
+    {
+      "id": "subagent-work-card-child-bash-01",
+      "description": "子智能体第 1 步：Bash sleep 30，保持 running 并在完成时让右侧详情增长。",
+      "metadata": {
+        "kind": "subagent",
+        "timingPolicy": "fast-tool-use",
+        "source": "synthetic",
+        "syntheticReason": "E2E 上游模型上下文窗口只有 240 token，多步子会话会触发 mid-turn compact；只用两步长工具覆盖实时增长、计步与停止窗口。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_SUBAGENT_WORK_CARD_CHILD_TASK"],
+        "bodyExcludes": [
+          "toolu_e2e_subagent_work_card_child_bash_01",
+          "Generate a concise title",
+          "CRITICAL: Respond with TEXT ONLY"
+        ]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_e2e_subagent_work_card_child_bash_01",
+          "messageId": "msg_e2e_subagent_work_card_child_bash_01",
+          "name": "Bash",
+          "input": {
+            "command": "sleep 30",
+            "description": "E2E work card step 1"
+          }
+        }
+      }
+    },
+    {
+      "id": "subagent-work-card-child-bash-02",
+      "description": "子智能体第 2 步：Bash sleep 60，停止发生在这一步运行期间。",
+      "metadata": {
+        "kind": "subagent",
+        "timingPolicy": "fast-tool-use",
+        "source": "synthetic",
+        "syntheticReason": "同上；第二步足够长，保证 SAT33 停止时子智能体仍在运行。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": [
+          "E2E_SUBAGENT_WORK_CARD_CHILD_TASK",
+          "toolu_e2e_subagent_work_card_child_bash_01"
+        ],
+        "bodyExcludes": [
+          "toolu_e2e_subagent_work_card_child_bash_02",
+          "Generate a concise title",
+          "CRITICAL: Respond with TEXT ONLY"
+        ]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_e2e_subagent_work_card_child_bash_02",
+          "messageId": "msg_e2e_subagent_work_card_child_bash_02",
+          "name": "Bash",
+          "input": {
+            "command": "sleep 60",
+            "description": "E2E work card step 2"
+          }
+        }
+      }
+    }
+  ]
+}

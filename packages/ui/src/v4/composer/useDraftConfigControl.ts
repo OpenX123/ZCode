@@ -35,7 +35,10 @@ import { useSettings } from "@/hooks/useSettingService.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { parseModelPickerValue } from "@/lib/zcodeSessionProjection.js";
 import { resolveDraftInitialModelSelection } from "@/lib/composerRecent.js";
-import { initializeNewTaskDraft } from "@/v4/composer/newTaskDraft.js";
+import {
+  DEFAULT_NEW_SESSION_PERMISSION_MODE,
+  initializeNewTaskDraft,
+} from "@/v4/composer/newTaskDraft.js";
 import { useComposerClientNamespace } from "@/hooks/useServices.js";
 import { resolveComposerScope, composerScopeKey } from "@/v4/composer/composerDraftStore.js";
 import {
@@ -521,7 +524,9 @@ export function useDraftConfigControl(params: {
         mode: mode.success ? mode.data : current.mode,
         modelSelection: next.modelSelection,
         // 导入等待目录期间的显式选择也是有效选择，不能再被默认初始化覆盖。
-        ...(current.mode ? {} : { mode: mode.success ? mode.data : "build" }),
+        ...(current.mode
+          ? {}
+          : { mode: mode.success ? mode.data : DEFAULT_NEW_SESSION_PERMISSION_MODE }),
       }));
     },
     [updateComposerDraft],
@@ -751,7 +756,10 @@ export function useDraftConfigControl(params: {
       if (mode === "plan" || mode === "plan-off") {
         updateComposerDraft((current) => ({
           ...current,
-          mode: current.mode === "plan" ? "build" : (current.mode ?? "build"),
+          mode:
+            current.mode === "plan"
+              ? "build"
+              : (current.mode ?? DEFAULT_NEW_SESSION_PERMISSION_MODE),
           planEnabled: mode === "plan",
         }));
         return;

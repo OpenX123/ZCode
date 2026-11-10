@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import {
   TID_V4_SUBAGENT_SESSION_HEADER,
+  TID_V4_SUBAGENT_SESSION_MODEL,
   TID_V4_SUBAGENT_SESSION_STOP,
 } from "@zcode/shared/test-ids";
 import { formatBackgroundTaskElapsedLabel } from "@/BackgroundTaskElapsedLabel.js";
@@ -22,7 +23,11 @@ import type { SessionLease } from "@/v4/sessionDataLayer.js";
 import { useConversationProjection } from "@/v4/useConversationProjection.js";
 import { useV4Conversation } from "@/v4/V4ConversationContext.js";
 import type { SubagentDisplayStatus } from "./contract.js";
-import { buildSubagentSessionHeaderModel, isSubagentStatusActive } from "./model.js";
+import {
+  buildSubagentSessionHeaderModel,
+  formatSubagentDuration,
+  isSubagentStatusActive,
+} from "./model.js";
 import { SubagentFace } from "./SubagentFace.js";
 
 function useSessionProjection(sessionId: string) {
@@ -61,25 +66,6 @@ function HeaderStatusIcon({ status }: { status: SubagentDisplayStatus }) {
   }
 }
 
-function formatDuration(
-  durationMs: number,
-  formatMessage: ReturnType<typeof useZCodeIntl>["intl"]["formatMessage"],
-) {
-  const total = Math.max(1, Math.round(durationMs / 1000));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-  const parts: string[] = [];
-  if (hours > 0) parts.push(`${hours}${formatMessage({ id: "chat.summaryPanel.duration.hours" })}`);
-  if (minutes > 0) {
-    parts.push(`${minutes}${formatMessage({ id: "chat.summaryPanel.duration.minutes" })}`);
-  }
-  if (hours === 0 && (seconds > 0 || parts.length === 0)) {
-    parts.push(`${seconds}${formatMessage({ id: "chat.summaryPanel.duration.seconds" })}`);
-  }
-  return parts.join(" ");
-}
-
 /**
  * 右侧子智能体详情头部（docs/desktop/multi-agent-display-spec.md「右侧详情」）：头像、名称、
  * 状态、耗时与可停时的停止。只读父/子会话投影，适用于任意引擎的 childSessionId。
@@ -95,7 +81,11 @@ export function SubagentSessionHeader({ tab }: { tab: SubagentSessionSidePaneTab
         childSessionId: tab.childSessionId,
         subagentType: tab.subagentType,
         parent: parentSnapshot
-          ? { subagents: parentSnapshot.subagents, backgroundWorks: parentSnapshot.backgroundWorks }
+          ? {
+              subagents: parentSnapshot.subagents,
+              backgroundWorks: parentSnapshot.backgroundWorks,
+              rows: parentSnapshot.rows,
+            }
           : null,
         child: childSnapshot ? { control: childSnapshot.control, rows: childSnapshot.rows } : null,
       }),
@@ -133,6 +123,11 @@ export function SubagentSessionHeader({ tab }: { tab: SubagentSessionSidePaneTab
   }, [model.stopWorkId, sendCommand, tab.parentSessionId]);
 
   const name = tab.title?.trim() || intl.formatMessage({ id: "sidePane.subagent" });
+  const modelText = model.model
+    ? model.effort
+      ? `${model.model} ${model.effort}`
+      : model.model
+    : null;
   const elapsed =
     model.startedAt === undefined
       ? null
@@ -141,7 +136,12 @@ export function SubagentSessionHeader({ tab }: { tab: SubagentSessionSidePaneTab
         : model.endedAt !== undefined
           ? intl.formatMessage(
               { id: "subagentDisplay.header.took" },
-              { duration: formatDuration(model.endedAt - model.startedAt, intl.formatMessage) },
+              {
+                duration: formatSubagentDuration(
+                  model.endedAt - model.startedAt,
+                  intl.formatMessage,
+                ),
+              },
             )
           : null;
 
@@ -178,6 +178,19 @@ export function SubagentSessionHeader({ tab }: { tab: SubagentSessionSidePaneTab
           </p>
         ) : null}
       </div>
+      {modelText ? (
+        <span
+          data-testid={TID_V4_SUBAGENT_SESSION_MODEL}
+          aria-label={intl.formatMessage(
+            { id: "subagentDisplay.header.modelLabel" },
+            { model: modelText },
+          )}
+          title={modelText}
+          className="min-w-0 max-w-40 shrink truncate rounded-md border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtle"
+        >
+          {modelText}
+        </span>
+      ) : null}
       {model.stopWorkId ? (
         <Button
           type="button"

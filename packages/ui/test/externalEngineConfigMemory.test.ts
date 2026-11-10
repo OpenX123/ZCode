@@ -37,6 +37,7 @@ function catalog(
       options: [
         { value: "default", name: "Manual" },
         { value: "auto", name: "Auto" },
+        { value: "plan", name: "Plan" },
       ],
     },
     {
@@ -55,6 +56,7 @@ function catalog(
 }
 
 interface HookProps {
+  connectionProfileId?: string | null;
   engine?: SessionEngine;
   sessionId?: string | null;
   options?: EngineConfigOption[];
@@ -69,13 +71,20 @@ type ApplyOption = (sessionId: string, configId: string, value: string) => Promi
  * gpt-a 的深度目录没有 high，切到 gpt-b 后才出现（模型决定深度目录）。
  */
 function fakeEngine(model = "gpt-a", effort = "low") {
-  const state = { model, effort };
+  const state = { model, effort, mode: "default" };
   return vi.fn<ApplyOption>(async (_sessionId, configId, value) => {
     if (configId === "model") state.model = value;
+    else if (configId === "mode") state.mode = value;
     else state.effort = value;
     const efforts = state.model === "gpt-a" ? ["low", "medium"] : ["low", "medium", "high"];
-    return { confirmedOptions: catalog(state.model, state.effort, efforts) };
+    return { confirmedOptions: withMode(catalog(state.model, state.effort, efforts), state.mode) };
   });
+}
+
+function withMode(options: EngineConfigOption[], mode: string): EngineConfigOption[] {
+  return options.map((option) =>
+    option.id === "mode" ? { ...option, currentValue: mode } : option,
+  );
 }
 
 function deferredAck() {
@@ -91,6 +100,7 @@ function renderMemory(initial: HookProps, applyOption = fakeEngine()) {
     (props: HookProps) =>
       useEngineConfigMemory({
         engine: props.engine ?? "codex",
+        connectionProfileId: props.connectionProfileId,
         sessionId: props.sessionId === undefined ? "session-1" : props.sessionId,
         options: props.options,
         restoreEnabled: props.restoreEnabled ?? false,
@@ -108,7 +118,74 @@ async function flush() {
 }
 
 describe("按引擎记忆模型与思考深度", () => {
-  it("恢复顺序为模型优先；目录缺失、已是当前值与权限模式都跳过", () => {
+  it("同引擎两连接分别恢复模型与深度，已有连接记录不混入 legacy", async () => {
+    preferences.settings = {
+      externalEngineConfigPreferences: { codex: { model: "gpt-b", reasoning_effort: "high" } },
+      externalEngineConnectionConfigPreferences: {
+        codex: { alpha: { model: "gpt-b", reasoning_effort: "medium" }, beta: { model: "gpt-a" } },
+      },
+    } as AppSettings;
+    const { rerender, applyOption } = renderMemory({
+      connectionProfileId: "alpha",
+      options: catalog("gpt-a", "low"),
+      restoreEnabled: true,
+    });
+    await flush();
+    expect(applyOption.mock.calls).toEqual([
+      ["session-1", "model", "gpt-b"],
+      ["session-1", "reasoning_effort", "medium"],
+    ]);
+    applyOption.mockClear();
+    rerender({
+      sessionId: "session-2",
+      connectionProfileId: "beta",
+      options: catalog("gpt-b", "low"),
+      restoreEnabled: true,
+    });
+    await flush();
+    expect(applyOption.mock.calls).toEqual([["session-2", "model", "gpt-a"]]);
+  });
+
+  it("缺少连接记录可读 legacy，确认只写当前连接增量", async () => {
+    preferences.settings = {
+      externalEngineConfigPreferences: { codex: { model: "gpt-b" } },
+    } as AppSettings;
+    const { result } = renderMemory({
+      connectionProfileId: "new-profile",
+      options: catalog("gpt-a", "low"),
+      restoreEnabled: true,
+    });
+    await flush();
+    act(() => result.current.recordExplicitChange("reasoning_effort", "low"));
+    expect(preferences.update).toHaveBeenCalledExactlyOnceWith({
+      externalEngineConnectionConfigPreferences: {
+        codex: { "new-profile": { reasoning_effort: "low" } },
+      },
+    });
+  });
+
+  it("身份未就绪与跨连接迟到确认不写上一连接或新连接", async () => {
+    const { result, rerender } = renderMemory({
+      connectionProfileId: "alpha",
+      options: catalog("gpt-a", "low"),
+    });
+    act(() => result.current.recordExplicitChange("model", "gpt-b"));
+    rerender({ connectionProfileId: null, options: catalog("gpt-b", "low") });
+    act(() => result.current.recordExplicitChange("model", "gpt-b"));
+    rerender({
+      sessionId: "session-2",
+      connectionProfileId: "beta",
+      options: catalog("gpt-b", "low"),
+    });
+    act(() =>
+      result.current.recordExplicitChange("model", "gpt-b", {
+        sessionId: "session-1",
+        connectionProfileId: "alpha",
+      }),
+    );
+    expect(preferences.update).not.toHaveBeenCalled();
+  });
+  it("恢复顺序为模型 → 深度 → 模式；目录缺失、已是当前值与计划模式都跳过", () => {
     const remembered = { model: "gpt-b", reasoning_effort: "high", mode: "auto" };
     expect(nextEngineConfigRestoreStep(catalog("gpt-a", "low"), remembered)).toEqual({
       configId: "model",
@@ -117,6 +194,17 @@ describe("按引擎记忆模型与思考深度", () => {
     expect(
       nextEngineConfigRestoreStep(catalog("gpt-a", "low"), remembered, new Set(["model"])),
     ).toEqual({ configId: "reasoning_effort", value: "high" });
+    expect(
+      nextEngineConfigRestoreStep(
+        catalog("gpt-a", "low"),
+        remembered,
+        new Set(["model", "reasoning_effort"]),
+      ),
+    ).toEqual({ configId: "mode", value: "auto" });
+    // 旧版本或手工写入的计划类取值即使在目录内也不恢复。
+    expect(nextEngineConfigRestoreStep(catalog("gpt-a", "low"), { mode: "plan" })).toBeNull();
+    // 只有 configId 恰为 mode 的权限模式参与恢复；其它 other 类配置不恢复。
+    expect(nextEngineConfigRestoreStep(catalog("gpt-a", "low"), { fast: "on" })).toBeNull();
     // 记忆的模型已不在目录：只按当前目录恢复深度。
     expect(
       nextEngineConfigRestoreStep(catalog("gpt-a", "low"), { model: "retired", effort: "x" }),
@@ -133,40 +221,198 @@ describe("按引擎记忆模型与思考深度", () => {
         reasoning_effort: "xhigh",
       }),
     ).toBeNull();
-    expect(nextEngineConfigRestoreStep(catalog("gpt-b", "high"), remembered)).toBeNull();
+    expect(nextEngineConfigRestoreStep(catalog("gpt-b", "high"), remembered)).toEqual({
+      configId: "mode",
+      value: "auto",
+    });
+    expect(
+      nextEngineConfigRestoreStep(withMode(catalog("gpt-b", "high"), "auto"), remembered),
+    ).toBeNull();
     expect(nextEngineConfigRestoreStep(catalog("gpt-a", "low"), undefined)).toBeNull();
   });
 
-  it("显式修改在 snapshot 确认为所选值后才写入，拒绝、改值与权限模式不记忆", async () => {
+  it("显式修改在 snapshot 确认为所选值后才写入，拒绝、改值与计划模式不记忆", async () => {
     const { rerender, result } = renderMemory({ options: catalog("gpt-a", "low") });
     act(() => result.current.recordExplicitChange("model", "gpt-b"));
     expect(preferences.update).not.toHaveBeenCalled();
     rerender({ options: catalog("gpt-b", "low") });
     expect(preferences.update).toHaveBeenCalledExactlyOnceWith({
-      externalEngineConfigPreferences: { codex: { model: "gpt-b" } },
+      externalEngineConnectionConfigPreferences: { codex: { inherit: { model: "gpt-b" } } },
     });
     // 引擎改用其它档位：snapshot 不出现所选值，不写入。
     act(() => result.current.recordExplicitChange("reasoning_effort", "high"));
     rerender({ options: catalog("gpt-b", "medium") });
-    // 权限模式沿用引擎默认，即使确认也不记忆。
-    act(() => result.current.recordExplicitChange("mode", "auto"));
-    rerender({
-      options: catalog("gpt-b", "medium").map((option) =>
-        option.id === "mode" ? { ...option, currentValue: "auto" } : option,
-      ),
-    });
+    // 计划类模式即使确认也不记忆，新草稿不沿用 Plan。
+    act(() => result.current.recordExplicitChange("mode", "plan"));
+    rerender({ options: withMode(catalog("gpt-b", "medium"), "plan") });
     expect(preferences.update).toHaveBeenCalledTimes(1);
+    // 权限模式确认后按引擎 + 连接写入。
+    act(() => result.current.recordExplicitChange("mode", "auto"));
+    rerender({ options: withMode(catalog("gpt-b", "medium"), "auto") });
+    expect(preferences.update).toHaveBeenCalledTimes(2);
+    expect(preferences.update).toHaveBeenLastCalledWith({
+      externalEngineConnectionConfigPreferences: { codex: { inherit: { mode: "auto" } } },
+    });
+    preferences.update.mockClear();
     // snapshot 先于 ACK 确认时立即写入；已记住的值不重复写。
     act(() => result.current.recordExplicitChange("reasoning_effort", "medium"));
     expect(preferences.update).toHaveBeenLastCalledWith({
-      externalEngineConfigPreferences: { codex: { reasoning_effort: "medium" } },
+      externalEngineConnectionConfigPreferences: {
+        codex: { inherit: { reasoning_effort: "medium" } },
+      },
     });
     preferences.settings = {
-      externalEngineConfigPreferences: { codex: { model: "gpt-b" } },
+      externalEngineConnectionConfigPreferences: { codex: { inherit: { model: "gpt-b" } } },
     } as AppSettings;
     rerender({ options: catalog("gpt-b", "medium") });
     act(() => result.current.recordExplicitChange("model", "gpt-b"));
-    expect(preferences.update).toHaveBeenCalledTimes(2);
+    expect(preferences.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("恢复按模型 → 深度 → 模式依次下发；恢复期间显式选择 Plan 也视为接管但不记忆", async () => {
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: {
+        codex: { inherit: { model: "gpt-b", reasoning_effort: "high", mode: "auto" } },
+      },
+    } as AppSettings;
+    const { applyOption } = renderMemory({
+      sessionId: "draft-mode",
+      restoreEnabled: true,
+      options: catalog("gpt-a", "low", ["low", "medium"]),
+    });
+    await flush();
+    expect(applyOption.mock.calls).toEqual([
+      ["draft-mode", "model", "gpt-b"],
+      ["draft-mode", "reasoning_effort", "high"],
+      ["draft-mode", "mode", "auto"],
+    ]);
+    expect(preferences.update).not.toHaveBeenCalled();
+
+    const pendingAck = deferredAck();
+    const takeover = renderMemory(
+      { sessionId: "draft-plan", restoreEnabled: true, options: catalog("gpt-a", "low") },
+      vi.fn<ApplyOption>(() => pendingAck.promise),
+    );
+    await flush();
+    const wait = takeover.result.current.waitForRestore("draft-plan");
+    act(() => takeover.result.current.recordExplicitChange("mode", "plan"));
+    await expect(wait).resolves.toBeUndefined();
+    await act(async () => pendingAck.resolve({ confirmedOptions: catalog("gpt-b", "low") }));
+    await flush();
+    takeover.rerender({
+      sessionId: "draft-plan",
+      restoreEnabled: true,
+      options: withMode(catalog("gpt-b", "low"), "plan"),
+    });
+    expect(takeover.applyOption).toHaveBeenCalledTimes(1);
+    expect(preferences.update).not.toHaveBeenCalled();
+  });
+
+  it("没有记住深度时按项默认 high（与模型/模式记忆无关），只下发不写记忆；记住的深度优先、目录无 high 时不套用", async () => {
+    preferences.settings = {} as AppSettings;
+    const first = renderMemory({
+      sessionId: "draft-first",
+      connectionProfileId: "alpha",
+      restoreEnabled: true,
+      options: catalog("gpt-b", "low"),
+    });
+    await flush();
+    expect(first.applyOption.mock.calls).toEqual([["draft-first", "reasoning_effort", "high"]]);
+    await expect(first.result.current.waitForRestore("draft-first")).resolves.toBeUndefined();
+    expect(preferences.update).not.toHaveBeenCalled();
+    first.unmount();
+
+    // 目录没有 high：保持引擎默认，不改成其它档位。
+    const noHigh = renderMemory({
+      sessionId: "draft-no-high",
+      restoreEnabled: true,
+      options: catalog("gpt-a", "low", ["low", "medium"]),
+    });
+    await flush();
+    expect(noHigh.applyOption).not.toHaveBeenCalled();
+    noHigh.unmount();
+
+    // P11：只记住了模型（没有记住深度）时仍按项套用 high；先恢复模型，再按 ACK 确认的新目录
+    // （gpt-b 才有 high）下发 high，且不写入记忆。
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: { codex: { alpha: { model: "gpt-b" } } },
+    } as AppSettings;
+    const modelOnly = renderMemory({
+      sessionId: "draft-model-only",
+      connectionProfileId: "alpha",
+      restoreEnabled: true,
+      options: catalog("gpt-a", "low", ["low", "medium"]),
+    });
+    await flush();
+    expect(modelOnly.applyOption.mock.calls).toEqual([
+      ["draft-model-only", "model", "gpt-b"],
+      ["draft-model-only", "reasoning_effort", "high"],
+    ]);
+    await expect(
+      modelOnly.result.current.waitForRestore("draft-model-only"),
+    ).resolves.toBeUndefined();
+    expect(preferences.update).not.toHaveBeenCalled();
+    modelOnly.unmount();
+
+    // 只记住了权限模式：同样补 high，模式仍按记忆最后恢复。
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: { codex: { alpha: { mode: "auto" } } },
+    } as AppSettings;
+    const modeOnly = renderMemory(
+      {
+        sessionId: "draft-mode-only",
+        connectionProfileId: "alpha",
+        restoreEnabled: true,
+        options: catalog("gpt-b", "low"),
+      },
+      fakeEngine("gpt-b"),
+    );
+    await flush();
+    expect(modeOnly.applyOption.mock.calls).toEqual([
+      ["draft-mode-only", "reasoning_effort", "high"],
+      ["draft-mode-only", "mode", "auto"],
+    ]);
+    modeOnly.unmount();
+
+    // 用户显式记住的深度优先（即使是 low）：不套用 high。
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: {
+        codex: { alpha: { model: "gpt-b", reasoning_effort: "low" } },
+      },
+    } as AppSettings;
+    const explicitLow = renderMemory(
+      {
+        sessionId: "draft-explicit-low",
+        connectionProfileId: "alpha",
+        restoreEnabled: true,
+        options: catalog("gpt-a", "medium", ["low", "medium"]),
+      },
+      fakeEngine("gpt-a", "medium"),
+    );
+    await flush();
+    expect(explicitLow.applyOption.mock.calls).toEqual([
+      ["draft-explicit-low", "model", "gpt-b"],
+      ["draft-explicit-low", "reasoning_effort", "low"],
+    ]);
+    explicitLow.unmount();
+
+    // 记住的深度不在当前目录：跳过该项，不改用 high。
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: {
+        codex: { alpha: { reasoning_effort: "xhigh" } },
+      },
+    } as AppSettings;
+    const unknownEffort = renderMemory(
+      {
+        sessionId: "draft-unknown-effort",
+        connectionProfileId: "alpha",
+        restoreEnabled: true,
+        options: catalog("gpt-b", "low"),
+      },
+      fakeEngine("gpt-b"),
+    );
+    await flush();
+    expect(unknownEffort.applyOption).not.toHaveBeenCalled();
   });
 
   it("新草稿原生配置就绪后先恢复模型，再按 ACK 确认的新目录恢复深度，且不写回记忆", async () => {
@@ -221,7 +467,11 @@ describe("按引擎记忆模型与思考深度", () => {
     await flush();
     rerender({ sessionId: "draft-3", restoreEnabled: true, options: catalog("gpt-a", "low") });
     await flush();
-    expect(applyOption).toHaveBeenCalledExactlyOnceWith("draft-3", "model", "gpt-b");
+    // 模型被拒后不重试；记忆没有深度项，按当前目录补首次默认 high（P11 按项判定）。
+    expect(applyOption.mock.calls).toEqual([
+      ["draft-3", "model", "gpt-b"],
+      ["draft-3", "reasoning_effort", "high"],
+    ]);
   });
 
   // P08：creating/connecting 发送在屏障外等待本草稿记忆恢复收口，之后才把 sendText 排入屏障。
@@ -383,6 +633,93 @@ describe("按引擎记忆模型与思考深度", () => {
     await expect(wait).rejects.toThrow();
   });
 
+  it("恢复中断连且在途 ACK 失败后，同绑定重连的第二次首发仍能收口", async () => {
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: {
+        codex: { alpha: { model: "gpt-b", reasoning_effort: "high" } },
+      },
+    } as AppSettings;
+    const pendingAck = deferredAck();
+    const { rerender, result, applyOption } = renderMemory(
+      {
+        sessionId: "draft-reconnect",
+        connectionProfileId: "alpha",
+        restoreEnabled: true,
+        options: catalog("gpt-a", "low"),
+      },
+      vi.fn<ApplyOption>(() => pendingAck.promise),
+    );
+    const firstWait = result.current.waitForRestore("draft-reconnect");
+    rerender({
+      sessionId: "draft-reconnect",
+      connectionProfileId: null,
+      restoreEnabled: true,
+      options: undefined,
+    });
+    await expect(firstWait).rejects.toThrow("引擎连接已中断");
+    await act(async () => pendingAck.resolve(null));
+    await flush();
+    rerender({
+      sessionId: "draft-reconnect",
+      connectionProfileId: "alpha",
+      restoreEnabled: true,
+      options: catalog("gpt-a", "low"),
+    });
+    let secondWait = "pending";
+    void result.current.waitForRestore("draft-reconnect").then(
+      () => {
+        secondWait = "resolved";
+      },
+      () => {
+        secondWait = "rejected";
+      },
+    );
+    await flush();
+    expect(secondWait).toBe("resolved");
+    expect(applyOption).toHaveBeenCalledExactlyOnceWith("draft-reconnect", "model", "gpt-b");
+  });
+
+  it("切换绑定后旧恢复 ACK 不推进旧 effort，也不影响新绑定恢复收口", async () => {
+    preferences.settings = {
+      externalEngineConnectionConfigPreferences: {
+        codex: {
+          alpha: { model: "gpt-b", reasoning_effort: "high" },
+          beta: { model: "gpt-b", reasoning_effort: "medium" },
+        },
+      },
+    } as AppSettings;
+    const oldAck = deferredAck();
+    const newEngine = fakeEngine();
+    const applyOption = vi.fn<ApplyOption>((sessionId, configId, value) =>
+      sessionId === "draft-old" ? oldAck.promise : newEngine(sessionId, configId, value),
+    );
+    const { rerender, result } = renderMemory(
+      {
+        sessionId: "draft-old",
+        connectionProfileId: "alpha",
+        restoreEnabled: true,
+        options: catalog("gpt-a", "low"),
+      },
+      applyOption,
+    );
+    rerender({
+      sessionId: "draft-new",
+      connectionProfileId: "beta",
+      restoreEnabled: true,
+      options: catalog("gpt-a", "low"),
+    });
+    await flush();
+    await expect(result.current.waitForRestore("draft-new")).resolves.toBeUndefined();
+    await act(async () => oldAck.resolve({ confirmedOptions: catalog("gpt-b", "low") }));
+    await flush();
+    expect(applyOption.mock.calls).toEqual([
+      ["draft-old", "model", "gpt-b"],
+      ["draft-new", "model", "gpt-b"],
+      ["draft-new", "reasoning_effort", "medium"],
+    ]);
+    expect(preferences.update).not.toHaveBeenCalled();
+  });
+
   it("设置首次读取完成前等待，YCode 草稿不访问记忆", async () => {
     preferences.settings = null;
     preferences.loading = true;
@@ -399,7 +736,11 @@ describe("按引擎记忆模型与思考深度", () => {
     preferences.loading = false;
     rerender({ sessionId: "draft-4", restoreEnabled: true, options: catalog("gpt-a", "low") });
     await flush();
-    expect(applyOption).toHaveBeenCalledExactlyOnceWith("draft-4", "model", "gpt-b");
+    // 记忆只有模型：模型确认后按新目录（gpt-b 有 high）补首次默认深度 high。
+    expect(applyOption.mock.calls).toEqual([
+      ["draft-4", "model", "gpt-b"],
+      ["draft-4", "reasoning_effort", "high"],
+    ]);
     rerender({
       engine: "zcode",
       sessionId: "draft-5",
@@ -407,6 +748,6 @@ describe("按引擎记忆模型与思考深度", () => {
       options: catalog("gpt-a", "low"),
     });
     await flush();
-    expect(applyOption).toHaveBeenCalledTimes(1);
+    expect(applyOption).toHaveBeenCalledTimes(2);
   });
 });

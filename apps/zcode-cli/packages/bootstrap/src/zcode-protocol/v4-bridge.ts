@@ -1603,9 +1603,14 @@ export function createConversationV4Gateway(
       if (!record) return null;
       const selection =
         record.app.runtime.getSessionModelSelection() ?? record.restoredModelSelection;
+      // W4：投影用视图——新草稿 connecting 期间可能是缓存副本（source=cached）。
+      const engineConfigOptionsView = record.app.runtime.getEngineConfigOptionsView();
       return {
         engine: record.app.runtime.getSessionEngine(),
-        engineConfigOptions: record.app.runtime.getEngineConfigOptions(),
+        engineConfigOptions: engineConfigOptionsView.options,
+        ...(engineConfigOptionsView.source
+          ? { engineConfigOptionsSource: engineConfigOptionsView.source }
+          : {}),
         engineConfigState: record.app.runtime.getEngineConfigState(),
         engineConfigError: record.app.runtime.getEngineConfigError(),
         modelSelection: cloneModelSelection(selection),

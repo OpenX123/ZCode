@@ -21,7 +21,7 @@ function createTestProvider(params: {
 }
 
 describe("botsService config", () => {
-  it("Bot 主动选模型保存目标最高档位，不继承旧模型的 low", async () => {
+  it("Bot 主动选模型保存目标默认档位（有 high 用 high），不继承旧模型的 low", async () => {
     const repo = f.createMemoryRepo(
       {
         ...f.baseConfig,
@@ -78,7 +78,7 @@ describe("botsService config", () => {
       expect((await repo.readState()).bots["webhook-1"]?.draftOptions?.modelSelection).toEqual({
         providerId: "target",
         modelId: "new",
-        options: { reasoningLevel: "max" },
+        options: { reasoningLevel: "high" },
       });
     } finally {
       service.disposeAll();

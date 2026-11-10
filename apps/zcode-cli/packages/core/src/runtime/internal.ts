@@ -71,6 +71,10 @@ export interface AgentRuntimeInternal
   engineConnectionProfileId?: string;
   externalEnginePort?: ExternalEnginePort;
   engineConfigOptions: EngineConfigOption[];
+  /** W4：确认清单来自当前连接时为 live；恢复的已保存值不标记。 */
+  engineConfigOptionsSource?: "live";
+  /** W4：connecting 期间的缓存展示副本；不是真值，不用于恢复或配置校验，确认/失败即清空。 */
+  cachedEngineConfigOptions?: EngineConfigOption[];
   engineConfigState?: import("@zcode/shared").EngineConfigState;
   engineConfigError?: import("@zcode/shared").EngineConnectionFailure;
   permissionService: PermissionService;

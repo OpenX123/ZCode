@@ -8,6 +8,13 @@ import {
   sessionEngineSchema,
 } from "../external-engine/contract.js";
 
+/**
+ * W4（additive）：外部引擎选项清单来源。cached = CLI 进程内缓存的上次清单，仅在新草稿 connecting
+ * 期间作为展示副本；live = 当前原生连接确认的清单。缺省（旧快照、恢复的已保存值）视为未知。
+ */
+export const engineConfigOptionsSourceSchema = z.enum(["cached", "live"]);
+export type EngineConfigOptionsSource = z.infer<typeof engineConfigOptionsSourceSchema>;
+
 // ── config──
 export const sessionConfigStateSchema = z.object({
   /** Session 接受并持久化的稀疏选择意图；provider/model/thought 仅为 UI effective 投影。 */
@@ -37,6 +44,7 @@ export const sessionConfigStateSchema = z.object({
   engine: sessionEngineSchema.optional(),
   // 外部引擎会话的可选配置（mode / model / effort 等）；zcode 会话不下发。
   engineConfigOptions: z.array(engineConfigOptionSchema).optional(),
+  engineConfigOptionsSource: engineConfigOptionsSourceSchema.optional(),
   engineConfigState: engineConfigStateSchema.optional(),
   engineConfigError: engineConnectionFailureSchema.optional(),
   /** 外部引擎会话绑定的连接配置 ID；只读投影，不含密钥。 */

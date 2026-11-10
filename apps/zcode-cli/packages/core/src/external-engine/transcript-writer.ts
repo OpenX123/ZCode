@@ -118,6 +118,18 @@ export class ExternalTranscriptWriter {
     this.events?.push(event);
   }
 
+  /**
+   * 只通知实时 sinks、不落库的事件（与内置子智能体镜像同一语义，见 subagent.ts 的
+   * notifyEventSinks 镜像）：用于把子会话活动摘要告诉宿主会话，冷恢复不重放。
+   */
+  async notifyLive(
+    type: Parameters<AgentRuntimeInternal["createEvent"]>[0],
+    payload: Parameters<AgentRuntimeInternal["createEvent"]>[1],
+  ): Promise<void> {
+    const event = this.runtime.createEvent(type, payload, this.traceContext);
+    await this.runtime.notifyEventSinks(event, this.traceContext);
+  }
+
   /** ACP 只给 chunk；必须补齐既有分段事件，否则工具后的正文会继续写入工具前的投影行。 */
   async closeActiveText(): Promise<void> {
     const part = this.activeText;

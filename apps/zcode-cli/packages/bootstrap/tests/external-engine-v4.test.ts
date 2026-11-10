@@ -311,6 +311,68 @@ describe("外部引擎 V4 接线", () => {
     ).toBe(true);
   });
 
+  // W4（P17）：connecting 期间的缓存清单带 source=cached；确认后替换为 live，失败清空且不残留标记。
+  it("缓存选项清单在 connecting 时投影为 cached，ready 后替换为 live，种子同步来源", () => {
+    const projection = new ProductProjection("s1", "cached-catalog");
+    projection.seedConfig({ engine: "claude-code", engineConfigOptions: [] });
+    const cached = [{ ...options[0]!, currentValue: "sonnet" }];
+    projection.applyEvent(
+      event(
+        SessionEventType.ExternalEngineConfigUpdated,
+        {
+          engine: "claude-code",
+          engineConfigOptions: cached,
+          engineConfigOptionsSource: "cached",
+          engineConfigState: "connecting",
+        },
+        1,
+      ),
+    );
+    let config = projection.getSnapshot().config;
+    expect(config.engineConfigState).toBe("connecting");
+    expect(config.engineConfigOptionsSource).toBe("cached");
+    expect(config.engineConfigOptions).toEqual(cached);
+    projection.applyEvent(
+      event(
+        SessionEventType.ExternalEngineConfigUpdated,
+        {
+          engine: "claude-code",
+          engineConfigOptions: options,
+          engineConfigOptionsSource: "live",
+          engineConfigState: "ready",
+        },
+        2,
+      ),
+    );
+    config = projection.getSnapshot().config;
+    expect(config.engineConfigOptionsSource).toBe("live");
+    expect(config.engineConfigOptions).toEqual(options);
+    projection.applyEvent(
+      event(
+        SessionEventType.ExternalEngineConfigUpdated,
+        {
+          engine: "claude-code",
+          engineConfigOptions: [],
+          engineConfigState: "error",
+          engineConfigError: { code: "transport" },
+        },
+        3,
+      ),
+    );
+    expect(projection.getSnapshot().config.engineConfigOptionsSource).toBeUndefined();
+    // 新订阅者的种子来自 runtime 视图：带清单时同步来源，缺省来源则删除旧标记。
+    const seeded = new ProductProjection("s1", "cached-seed");
+    seeded.seedConfig({
+      engine: "claude-code",
+      engineConfigOptions: cached,
+      engineConfigOptionsSource: "cached",
+      engineConfigState: "connecting",
+    });
+    expect(seeded.getSnapshot().config.engineConfigOptionsSource).toBe("cached");
+    seeded.seedConfig({ engine: "claude-code", engineConfigOptions: options });
+    expect(seeded.getSnapshot().config.engineConfigOptionsSource).toBeUndefined();
+  });
+
   it("配置恢复失败保留已保存选择，重试仍走同一原生准备入口", async () => {
     const projection = new ProductProjection("s1", "restore");
     for (const [index, engineConfigState] of ["connecting", "error", "ready"].entries()) {

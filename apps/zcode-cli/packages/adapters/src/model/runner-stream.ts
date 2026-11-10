@@ -180,6 +180,8 @@ export async function* runStreamText(input: {
     let streamMaxIdleMs = 0;
     let streamStallCount = 0;
     let streamOutputCommitted = false;
+    // tokens/s 口径：隐藏推理（有 reasoningTokens 但无推理 delta）发生在首字之前，需要随完成事件标记。
+    let reasoningContentStreamed = false;
     const repairThinkingSignatureRejection = (error: unknown): boolean => {
       if (signatureRepairAttempted || resolved.providerKind !== "anthropic") {
         return false;
@@ -446,6 +448,7 @@ export async function* runStreamText(input: {
             const observation = observeVisibleStreamEvent(visibleEvent, Date.now() - startedAt);
             await publishVisibleMilestones(observation);
             streamOutputCommitted = streamOutputCommitted || observation.outputCommitted;
+            reasoningContentStreamed ||= observation.reasoningStreamed === true;
             yield visibleEvent;
           }
         }
@@ -469,6 +472,7 @@ export async function* runStreamText(input: {
           const observation = observeVisibleStreamEvent(visibleEvent, Date.now() - startedAt);
           await publishVisibleMilestones(observation);
           streamOutputCommitted = streamOutputCommitted || observation.outputCommitted;
+          reasoningContentStreamed ||= observation.reasoningStreamed === true;
           yield visibleEvent;
         }
       }
@@ -478,6 +482,7 @@ export async function* runStreamText(input: {
         const observation = observeVisibleStreamEvent(pendingEvent, Date.now() - startedAt);
         await publishVisibleMilestones(observation);
         streamOutputCommitted = streamOutputCommitted || observation.outputCommitted;
+        reasoningContentStreamed ||= observation.reasoningStreamed === true;
         yield pendingEvent;
       }
 
@@ -621,6 +626,7 @@ export async function* runStreamText(input: {
             streamMaxIdleMs: streamMaxIdleMs || undefined,
             streamStallCount,
             streamOutputCommitted,
+            reasoningContentStreamed,
             timestamp: new Date(completedAt).toISOString(),
             type: "model_request_completed",
           },
@@ -1576,7 +1582,7 @@ async function publishRetryScheduledStatus(
 function observeVisibleStreamEvent(
   event: ModelStreamEvent,
   elapsed: number,
-): { contentMs?: number; textMs?: number; outputCommitted: boolean } {
+): { contentMs?: number; textMs?: number; outputCommitted: boolean; reasoningStreamed?: boolean } {
   switch (event.type) {
     case "text_delta":
       return {
@@ -1585,6 +1591,7 @@ function observeVisibleStreamEvent(
         outputCommitted: true,
       };
     case "reasoning_delta":
+      return { contentMs: elapsed, outputCommitted: true, reasoningStreamed: event.text.length > 0 };
     case "tool_input_delta":
     case "tool_call":
       return { contentMs: elapsed, outputCommitted: true };

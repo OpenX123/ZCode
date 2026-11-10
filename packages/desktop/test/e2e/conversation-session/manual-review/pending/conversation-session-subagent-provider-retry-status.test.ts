@@ -28,7 +28,9 @@ describe("Main/Subagent provider retry 时间线状态 E2E", () => {
     await clearAppData();
   });
 
-  it("SAT25: 前两次 retry 保持 loading，第三次才显示计数并随进展消失", async function () {
+  // 2026-11-09 W5：普通 running 不再显示底部无字 loading；前两次 retry 只保留「工作中」，
+  // 第三次起显示计数。
+  it("SAT25: 前两次 retry 不显示计数与 loading，第三次才显示计数并随进展消失", async function () {
     this.timeout(240000);
     await prepareV4ConversationE2E();
 
@@ -37,15 +39,18 @@ describe("Main/Subagent provider retry 时间线状态 E2E", () => {
     );
     const mainEarlyRetryState = await waitForVisiblePane(
       MAIN_PANE_SELECTOR,
-      (state) => state.hasGenericLoading && !hasRetryText(state.liveTailText),
-      "Main 前两次 retry 没有按 loading 展示且隐藏重连文案",
+      (state) =>
+        !state.hasGenericLoading &&
+        /工作中|Working for/.test(state.liveTailText) &&
+        !hasRetryText(state.liveTailText),
+      "Main 前两次 retry 应只显示工作中且隐藏重连文案",
     );
-    expect(mainEarlyRetryState.hasGenericLoading).toBe(true);
+    expect(mainEarlyRetryState.hasGenericLoading).toBe(false);
 
     const mainRetryState = await waitForVisiblePane(
       MAIN_PANE_SELECTOR,
       (state) => hasRetryAttemptText(state.liveTailText, 3) && !state.hasGenericLoading,
-      "Main 第三次 retry 没有在当前 turn 用 3/10 状态替换通用 loading",
+      "Main 第三次 retry 没有在当前 turn 显示 3/10 状态",
     );
     expect(mainRetryState.hasGenericLoading).toBe(false);
 
@@ -64,10 +69,13 @@ describe("Main/Subagent provider retry 时间线状态 E2E", () => {
 
     const retryState = await waitForVisiblePane(
       CHILD_PANE_SELECTOR,
-      (state) => state.hasGenericLoading && !hasRetryText(state.liveTailText),
-      "child 前两次以内的 retry 没有按 loading 展示且隐藏重连文案",
+      (state) =>
+        !state.hasGenericLoading &&
+        /工作中|Working for/.test(state.liveTailText) &&
+        !hasRetryText(state.liveTailText),
+      "child 前两次以内的 retry 应只显示工作中且隐藏重连文案",
     );
-    expect(retryState.hasGenericLoading).toBe(true);
+    expect(retryState.hasGenericLoading).toBe(false);
 
     await waitForVisiblePane(
       CHILD_PANE_SELECTOR,

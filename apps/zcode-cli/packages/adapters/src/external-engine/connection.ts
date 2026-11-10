@@ -13,11 +13,12 @@ import {
   type EngineConnectionFailure,
   type ExternalSessionEngine,
 } from "@zcode/shared";
-import { closeAcpProcess } from "../exec/acp-process.js";
+import { closeAcpProcess, closeAcpProcessAndWait } from "../exec/acp-process.js";
 import {
   AIR_SESSION_FAILURE_CAPABILITY_META,
   readPromptResultFailure,
   readSessionInfoFailure,
+  readSessionNotice,
 } from "./failure.js";
 import { SUBAGENT_FRAME_KINDS, readSubagentFrame, type KnownSubagent } from "./subagent-frames.js";
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
@@ -161,7 +162,13 @@ export class AcpConnection {
       return;
     if (update.sessionUpdate === "config_option_update")
       await this.active.onConfigOptions(configOptions(update.configOptions));
-    else {
+    else if (update.sessionUpdate === "notice") {
+      // 非致命提示（ACP notice）只经 onNotice 交付，不进入 onUpdate/transcript，也不是失败通知；
+      // 规则见 docs/desktop/native-plan-errors-spec.md「能力声明」。
+      const notice = readSessionNotice(update);
+      if (notice) await this.active.onNotice?.(notice);
+      else this.diagnose("external_engine.notice.invalid", sessionId);
+    } else {
       if (update.sessionUpdate === "session_info_update") {
         // load/fork 回放的旧请求错误不是本轮重试；保留标题等历史事实，不恢复活动诊断。
         const notice = this.loadingHistory ? undefined : readSessionInfoFailure(update);
@@ -200,6 +207,7 @@ export class AcpConnection {
   constructor(
     child: ChildProcessWithoutNullStreams,
     private readonly setup?: (connection: AcpConnection) => Promise<void>,
+    private strictProcessExit = false,
   ) {
     this.child = child;
     child.stdout.setEncoding("utf8");
@@ -465,6 +473,8 @@ export class AcpConnection {
     parentExternalSessionId?: string,
   ): Promise<ExternalEngineTurnResult | undefined> {
     if (this.active) throw new Error("Concurrent ACP turn");
+    // 开始会话操作即已由 port 接管；严格退出只用于尚未交付的备用资源。
+    this.strictProcessExit = false;
     this.active = input;
     this.forking = Boolean(parentExternalSessionId);
     let cancellationTimer: ReturnType<typeof setTimeout> | undefined;
@@ -525,6 +535,10 @@ export class AcpConnection {
                 outputTokens: Number(usage.outputTokens ?? 0),
                 cachedReadTokens: Number(usage.cachedReadTokens ?? 0),
                 cachedWriteTokens: Number(usage.cachedWriteTokens ?? 0),
+                // Codex 单独报告思考 token；保留给轮次输出提示（「含思考 N」），缺省时不伪造 0。
+                ...(usage.thoughtTokens != null
+                  ? { reasoningTokens: Number(usage.thoughtTokens) }
+                  : {}),
               },
             }
           : {}),
@@ -742,8 +756,13 @@ export class AcpConnection {
     });
     return configOptions(result.configOptions);
   }
-  async close(): Promise<void> {
+  close(waitForProcessExit = this.strictProcessExit): Promise<void> {
     this.fail(new Error("ACP adapter closed"));
-    await closeAcpProcess(this.child);
+    const closing = waitForProcessExit
+      ? closeAcpProcessAndWait(this.child)
+      : closeAcpProcess(this.child);
+    // 内部协议失败也会 fire-and-forget close；保留 rejection 给 pool，避免未处理拒绝。
+    void closing.catch(() => {});
+    return closing;
   }
 }

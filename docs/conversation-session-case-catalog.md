@@ -1275,6 +1275,10 @@ tab 跨刷新恢复和 nested runtime 继续剪枝。
 | SAT27  | child 已完成，覆盖 warm、终态 grace 回收、父释放及 CLI 冷启动                                                                                                                                                                                                                                                    | 重新打开 child 详情                                                                | childTypeSurvivesColdResume                      | 转录可读，持久化/runtime/record 均为 subagent_child，V4 与 legacy 主列表不出现 child                                                                                                                                                                                                                                                                                                                              | accepted                  |
 | SAT28  | 子代理详情或旧污染主会话标签页                                                                                                                                                                                                                                                                                   | 用户发送、重试、编辑重跑或 goal 输入                                               | subagentUserInputRejectedBeforePersistence       | 已激活 child 返回 guard.subagentReadOnly，尚无 record 的 child 沿用 sessionNotFound 拒绝；无新增 session_input/input_history；普通 interactive、fork、父 Agent 派发正常                                                                                                                                                                                                                                           | accepted                  |
 | SAT29  | Host 主列表索引含历史泄漏 child，另有 fork、不同 identity 和失联远端记录                                                                                                                                                                                                                                         | workspace 权威基线到达                                                             | repairOnlyConfirmedSubagentIndex                 | 只隐藏 Agent 元数据确认为 child 的同 workspace 索引并清理排序引用；保留转录、fork、跨 identity 和查询失败记录                                                                                                                                                                                                                                                                                                     | accepted                  |
+| SAT31  | 父 session 同一轮相邻派发 1–3 个子智能体，至少一个已配对带 `childSessionId` 的 `subagent` 行；另有无子会话的旧会话                                                                                                                                                                                               | 观察对话时间线                                                                     | subagentWorkCardGrouping                         | 带子会话的组渲染为一张 Subagent 工作卡（头部、"N 个 Subagent · 已完成 M/N · 耗时"、主 Agent 节点与树形成员行）；成员行显示头像、名称、模型 + 档位（有数据才显示）、状态、每秒刷新的耗时、任务摘要与步骤数；无子会话的组保持旧 Agent 卡 / 派发行                                                                                                                                                                   | accepted                  |
+| SAT32  | SAT31 运行中，子智能体持续产生正文与工具调用                                                                                                                                                                                                                                                                     | 用户点击成员行或按 Enter/Space                                                     | subagentWorkCardOpensSideTab                     | 经既有 `onOpenSubagentSession` 打开/激活右侧只读子会话 tab，不自动打开；正文实时增长，头部显示模型标签，底部显示只读提示；卡片步骤数同步增长                                                                                                                                                                                                                                                                      | accepted                  |
+| SAT33  | 运行中成员同时有可停后台子智能体、不可停前台子智能体与 Codex 子智能体                                                                                                                                                                                                                                            | 点击成员"停止"或"停止全部"                                                         | subagentStopAllUsesBackgroundWorkCancel          | "停止"与"停止全部"只作用于 `backgroundWorks` 精确匹配且 `cancellable !== false` 的运行中成员，逐个发送既有 `cancelBackgroundWork(workId)`；无可停成员时不显示"停止全部"；不新增协议命令                                                                                                                                                                                                                           | accepted                  |
+| SAT34  | SAT31 全部成员结束（含失败/已停止），之后刷新 Renderer 或冷启动 CLI                                                                                                                                                                                                                                              | 观察并点击折叠行                                                                   | subagentWorkCardCollapse                         | 折叠为"N 个 Subagent 已完成 · 用时 Xm Ys"（有失败/停止时追加计数），点击展开回看；折叠态只存 Renderer 内存；冷启动后步骤数取 `SubagentStopped.totalToolUseCount`                                                                                                                                                                                                                                                  | accepted                  |
 
 剪枝（2026-08-17，沿用 2026-08-04 的 owner/delivery 裁决）：SAT25 的 Main/child、desktop continuous/mobile replayable 共用同一
 `SessionPane -> ConversationTimeline` 展示；单测覆盖共享渲染，单个 desktop fault-stream E2E
@@ -1291,16 +1295,18 @@ MA01–MA10 的完整定义在规范「验收场景」表中，这里登记自�
 
 | ID   | 场景摘要                                                   | 期望要点                                               | 状态     |
 | ---- | ---------------------------------------------------------- | ------------------------------------------------------ | -------- |
-| MA01 | 同一轮并行派发多个子智能体                                 | 合并为一行"A、B 和 C 开始工作"，头像按清单序号与类型 | accepted |
+| MA01 | 同一轮并行派发多个子智能体                                 | 一张工作卡（SAT31），头像按清单序号与类型              | accepted |
 | MA02 | 运行中智能体与 todo / Git 并存                             | 胶囊显示头像串与"N 个运行中"，工作流仍优先             | accepted |
 | MA03 | 7 个并行 child 运行中，点击胶囊                            | 最多 3 个头像；展开面板并打开"智能体"分区              | accepted |
-| MA04 | 点击派发行名称                                             | 右侧只读实时对话，头部显示同一头像、名称、状态与耗时 | accepted |
+| MA04 | 点击工作卡成员行                                           | 右侧只读实时对话，头部含头像与模型（SAT32）            | accepted |
 | MA05 | 外部引擎行内兜底（无子会话）                               | 点击名称展开本行与该卡行内详情，不打开右侧面板         | accepted |
 | MA06 | 派发之间夹其它可见项                                       | 不合并                                                 | accepted |
 | MA07 | 全部完成后刷新 Renderer 并冷启动 CLI                       | 头像颜色与轮廓不变，行尾显示完成计数                   | accepted |
 | MA08 | 后台可停与前台不可停的 child                               | 只有后台的详情头部显示停止，走父会话 cancel            | accepted |
 | MA09 | 减少动态效果                                               | 头像无空闲动作，表情仍按状态                           | accepted |
 | MA10 | 浅色/深色、390px/1200px、中文/英文                         | 文字不溢出胶囊，名称本地化连接                         | accepted |
+
+MA11–MA14（1.3 工作卡）的定义见规范验收表，产品语义登记为 SAT31–SAT34。
 
 剪枝：MA05、MA08、MA09 由 UI 单测覆盖组件分支与模型规则，不单独建 E2E；MA07 的冷恢复复用
 SAT22/SAT27 的 CLI 清单顺序保证，Renderer 侧只以单测证明同一清单得到同一序号；MA10 走视觉检查。
@@ -1717,6 +1723,8 @@ BG45 的 E2E 剪枝：只覆盖本地 desktop continuous、单个 foreground chi
 ## CHL. ChatLoading Lifecycle / 流式等待态
 
 `ChatLoading` 是 renderer 对当前主轮“仍在执行”的派生反馈，不是新的 protocol 状态。历史轮继续虚拟化；最后一个 running turn 作为 normal-flow live tail，消除绝对定位虚拟行先长高、下一帧才吸底造成的位置闪动。以下边界由用户确认：eligible running 立即显示，projection 更新不重置或延迟 loading；permission / AskUserQuestion / pendingApproval、compact、goal verifier 期间不得显示。
+
+> 2026-11-09（YCode 1.3 W5，见 `docs/desktop/native-plan-errors-spec.md`「断联后静默重连的连接阶段」）：普通 running 不再渲染底部无字 `ChatLoading`，也不再显示“正在等待模型…”，运行中进度只由「工作中 N 秒」表达。下表的 eligible 资格规则（最后一轮、running、阻塞交互与 compact/goal verifier 剪枝、terminal 压制）保持不变，但它现在只决定底部 slot 能否显示两种真实状态：外部引擎轮次中途重连的“正在启动引擎…”（带转圈）与重试中的 retry 行。表中“显示 ChatLoading”应读作“slot 具备显示资格”；CHL05/CHL07/CHL08 的滚动与吸底断言不变。
 
 | ID    | 前置状态                                                                                                                                                     | 用户/系统事件                                                                                           | 规则命中                                   | 期望结果                                                                                                                                                                                                                                 | Review   |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
@@ -4368,7 +4376,7 @@ R3A-UI-04 / RDUX-11-04 回归（2026-10-12 macOS 真实 SSH 1/1 PASS，仍 pendi
 
 | ID    | 前置状态                                                                             | 动作                   | 断言                                                                                                                         | 决策     |
 | ----- | ------------------------------------------------------------------------------------ | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------- |
-| CMP01 | 中文桌面空草稿，Plan 与 Computer Use 入口启用，已选有名称 provider 和多档 think 模型 | 真实窗口逐步缩窄再放宽 | 逐一观测 0–5 档：Computer / mode / Plan 收起，合并入口档位文字变绿条，模型名变图标且保留绿条；放宽恢复；单行、不截断、不重叠 | accepted |
+| CMP01 | 中文桌面空草稿，Computer Use 与后台工作入口均具备可用状态，已选有名称 provider 和多档 think 模型 | 真实窗口逐步缩窄再放宽 | Composer 左侧不显示 Computer Use 与后台工作入口；仅保留 mode / Plan 等配置控件，合并入口按既有档位收缩，模型名变图标且保留绿条；放宽恢复；单行、不截断、不重叠 | accepted |
 | CMP02 | 隔离 Personal Config 的 bigmodel-api 不含 providerName                               | 从菜单选中 GLM-5.3     | 选中投影正确，菜单显示 bigmodel-api，合并按钮只显示 GLM-5.3；不恢复已移除的 Provider 前缀                                    | accepted |
 
 本组不发送模型请求；手机远控、原生 Windows、深浅主题和 reduced-motion 的组合不由这两条桌面 E2E 冒充覆盖。
@@ -4851,3 +4859,18 @@ E18：同一候选内使用原生 `plan` / `plan_update` / `plan-review` 权限�
 ### SFA01–03 会话菜单链接与分叉（2026-11-06，accepted，候选保持 pending）
 
 候选 `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-session-actions.test.ts`：SFA01 从标题菜单复制稳定会话链接；SFA02 当前目录 Fork 打开不同 child，继承完整历史且没有自动输入或发送；SFA03 新工作树 Fork 保留源 HEAD 祖先和未提交字节、新建分支及目录，源文件/index 不变，child 导航到新工作区且无自动发送。供应商使用 case-local 合成回放，文件使用隔离 HOME 内真实 Git 仓库；不宣称真实供应商或 Windows 整机覆盖。
+
+## AX01–AX07 ACP 连接与参考图布局（2026-11-09，accepted）
+
+用户已确认优化方案，并指定 Composer 参考紧凑引擎分段与内联配置、Fast 移到更多选项，引擎管理参考左侧引擎列表/右侧详情。实施合同见 `docs/desktop/external-agent-engines-spec.md` 顶部 ACP体验改造。AX01 左列表选择与逐引擎诊断；AX02 配置来源/认证隔离、Dialog保存、旧绑定不变和显式测试；AX03 草稿切换、已有身份固定及Fast非驻留；AX04 按连接模型/深度偏好；AX05 warming备用独占/取消；AX06 窗口备用预算和活动项目准备；AX07 深浅主题、窄屏、键盘和SSH门禁。
+
+AX01–03、AX07 扩展现有 `conversation-session-external-engine-connections.test.ts` / `external-engine-prewarm.test.ts`，使用隔离ACP夹具，保持manual-review/pending。AX04–06以hook、Host与CLI真实stdio定向测试证明状态和进程归属。尚未执行的桌面/性能验证不得由UT替代宣称通过。
+
+2026-11-09 已执行真实 Electron/Host/CLI/stdio 的四份候选聚焦 9 场景：run5 7 passed / 2 failed；修正隐藏 pane 布局查询与旧原生子智能体候选缺少权限批准后，run6 3 passed / 0 failed（含 settings 重拍），9 个不同场景均有最终通过记录。设置涵盖主从切换、查看不改默认、Dialog 取消/保存、编辑新 ID 与密钥不回显；Composer 涵盖分段、更多键盘/焦点、Fast 拒绝原值与既有只读绑定。1280/640 内容宽、深浅主题及固定绑定共 9 张干净截图；旧首发屏障、计划/502、停止/冷恢复与 not-ready 回归均保留并实际通过。认证隔离与编辑后旧绑定继续可用由 service/CLI UT 单独证明，未声称在同一个桌面会话中完成编辑绑定回归。候选未转正、未准入 CI；真实供应商性能与真实 SSH 未执行。完整范围见 [验证记录](testing/2026-11-09-acp-experience-verification.md)。
+
+
+### Task5 最新 Composer 验收（2026-11-09，accepted/manual-review/pending）
+
+AX03/AX07 按最新 Codex 反馈：输入区不显示草稿或已有会话的任何连接入口；三引擎分段保留；项目、真实位置和真实 Git 分支在编辑器上方同一行。底部附件/权限在左，模型/深度合并触发器在发送左侧，Fast 在合并弹层更多中。复用 prewarm 候选，验证 Escape/Enter/焦点、18 项模型可达、配置拒绝、P11 首发屏障；1280/640 × 深浅主题使用本轮隔离 Git 夹具重新截图。Task4 截图只作为历史，不能证明 Task5 布局。
+
+Task5 最终 run6 AX03/07 为 exit0、1/1通过，6张新图与4份矩形JSON确认上述布局及真实 `composer-layout` 分支；P11/两家18项模型和深度pending/拒绝分别有Task5 run2/run4通过证据，不改写成单次全绿。空深度目录伴随有效模型/Fast的两项UT先红后绿，最终picker22/22；仅禁用深度滑块，打开零写入，选择回传原值。完整日志、历史失败和截图路径见验证记录Task5段，仍保持pending。
