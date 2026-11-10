@@ -267,7 +267,11 @@ export function EngineModelPopover({
       data-testid="engine-fast-toggle"
       className={cn(
         "size-7 shrink-0 p-0 focus-visible:bg-hover",
-        fast.toggle.enabled ? "text-icon-blue" : "text-foreground-subtle",
+        // ghost 变体的 hover 文字色会盖掉点亮色：点击后指针仍停在按钮上时闪电显示为前景黑，
+        // 看不出已开启（E2E 截图 w1-fast-lightning-on-popover 证据）。点亮态的 hover/focus 同样保持强调色。
+        fast.toggle.enabled
+          ? "text-icon-blue hover:text-icon-blue focus-visible:text-icon-blue"
+          : "text-foreground-subtle",
       )}
       onClick={() =>
         void onConfigChange(
