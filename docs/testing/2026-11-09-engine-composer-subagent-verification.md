@@ -140,3 +140,32 @@ run7 W4 计时（`external-engine-w4-switch-timing.json`）：warm Codex visible
 ### 静态检查
 
 `pnpm typecheck` exit 0；`pnpm lint` exit 0（92 warnings / 0 errors，本轮文件无新增告警）；`pnpm architecture:check --changed` OK（violations/baseline/new 均 0）；`tsc -p packages/desktop/tsconfig.e2e.json --noEmit` exit 0；adapters `tsc --noEmit` exit 0。
+
+### 第二轮（P11 / SAT31 产品修复后，run11–run13）
+
+日期 2026-11-09（UTC 23:39–00:00），同一 runner 与隔离配方；HEAD 为 P11 / SAT31 修复提交之后的工作区（E2E 夹具改动随本轮一起提交）。
+
+产品修复（均先改 spec、先红后绿单测）：
+
+- P11（W3 按项首次默认）：`useEngineConfigMemory` 不再要求“该引擎 + 连接没有任何记忆”，有效记忆里没有思考深度项时，按恢复到该步时的目录（含模型 ACK 确认后的新目录）补 `high`，仍只下发不写记忆；记住的深度（含 low）优先，Plan 类模式排除不变。spec `external-agent-engines-spec.md`「按引擎与连接记忆」、`packages/ui/src/external-engine/CONTRACT.md`；UT `packages/ui/test/externalEngineConfigMemory.test.ts` 17 passed（新增只记模型 / 只记模式 / 记住 low / 记住的深度不在目录 4 种情形，更新 2 例旧期望）。
+- SAT31（运行中工作卡豁免轮次折叠）：`ConversationTurnGroup` 的历史容器在收起时把有活跃成员的工作卡渲染在 `CollapsibleContent` 之外（折叠摘要之下），其余工作项照常折叠；展开回原位，全部结束后随轮次折叠。判定 `isActiveSubagentWorkCard` 复用成员行状态。spec `multi-agent-display-spec.md`「折叠」+ 验收 MA15；UT `packages/ui/test/v4ConversationTurnSubagentCardCollapse.test.ts` 2 passed（先红后绿）。`subagentWorkCard.test.ts` 首例冷启动 5s 超时为基线既有问题（stash 后同样失败），加 `beforeAll` 预热动态 import 后 7 passed。
+
+测试夹具（harness）：
+
+- prewarm 新增「W1 Fast 闪电」用例：夹具 Fast 取值参数化（默认三值含 reject 保持不变；`twoValue` 只有 off/on，与真实 Claude `fast` / Codex `fast-mode` 一致），adapter 记录 fast 当前值；断言弹层显示 `engine-fast-toggle`、「更多选项」里没有 Fast 行，点击下发相反原值 `on`，在 1.5s 受控确认延迟内 `aria-pressed` 仍为 false、snapshot 确认后才点亮，再点下发 `off` 并熄灭。
+- prewarm P11 / P11b 增加人工 review 截图。
+- work card：成员“停止”计数前缀 `v4-subagent-work-card-stop-` 同时匹配“停止全部” `…-stop-all-`，计数恒多 1（run12 失败原因），改为排除 stop-all；SAT31 增加“父轮折叠摘要已收起而工作卡仍运行中可见”断言；SAT34 改为按 MA15：全部结束后卡片离开收起的时间线，展开「已工作」后为已结束的折叠卡。
+
+| 轮次  | 用例      | 结果              | 产物目录（`C:/github/ZCode/packages/desktop/.e2e-artifacts/`） | 说明                                                 |
+| ----- | --------- | ----------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
+| run11 | prewarm   | **12 passed / 0** | `desktop-e2e-20261109233948320-p37008-fe7c0f3d121937fe`        | P11 通过；新增 W1 Fast 闪电通过；其余 10 例保持通过  |
+| run12 | work card | 0 / 1             | `desktop-e2e-20261109235314578-p44172-8606e7aa1956600d`        | 工作卡已在折叠摘要下可见；失败为成员停止计数夹具缺陷 |
+| run13 | work card | **1 passed / 0**  | `desktop-e2e-20261109235842992-p49416-679221a5879a21cd`        | SAT31–SAT34 全部通过                                 |
+
+截图（人工 review）：
+
+- 首发即时布局（握手延迟中）：`desktop-e2e-20261109233948320-p37008-fe7c0f3d121937fe/p11-first-send-instant-layout.png`；首发失败回填：同目录 `p11b-first-send-failure-refill.png`。
+- Fast 闪电点亮的弹层：同目录 `w1-fast-lightning-on-popover.png`。
+- 工作卡运行中 + 右栏只读子会话：`desktop-e2e-20261109235842992-p49416-679221a5879a21cd/subagent-work-card-running-side-pane.png`（父轮「已工作 2 秒」已收起，工作卡在其下运行中，胶囊“1 个运行中”）。
+
+静态检查：`pnpm typecheck` exit 0；`pnpm lint` 0 errors / 91 warnings（本轮文件 0 warnings）；`pnpm architecture:check --changed` OK（violations 0）；`tsc -p packages/desktop/tsconfig.e2e.json --noEmit` exit 0。候选用例仍留在 `manual-review/pending`，不据此声明真实供应商或跨平台验收完成。

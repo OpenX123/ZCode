@@ -55,7 +55,11 @@ async function readWorkCardState(): Promise<WorkCardState> {
         memberCount: Number(card?.dataset.memberCount ?? "0"),
         openActions: card?.querySelectorAll(`[data-testid^="${openPrefix}-"]`).length ?? 0,
         stopAll: card?.querySelectorAll(`[data-testid^="${stopAllPrefix}-"]`).length ?? 0,
-        memberStops: card?.querySelectorAll(`[data-testid^="${stopPrefix}-"]`).length ?? 0,
+        // 修复原因：成员“停止”前缀 `…-stop-` 同时匹配“停止全部” `…-stop-all-`，旧计数恒多 1。
+        memberStops:
+          card?.querySelectorAll(
+            `[data-testid^="${stopPrefix}-"]:not([data-testid^="${stopAllPrefix}-"])`,
+          ).length ?? 0,
         text: card?.textContent ?? "",
       };
     },
@@ -63,6 +67,16 @@ async function readWorkCardState(): Promise<WorkCardState> {
     TID_V4_SUBAGENT_OPEN_SIDE_PANE,
     TID_V4_SUBAGENT_WORK_CARD_STOP_ALL,
     TID_V4_SUBAGENT_WORK_CARD_STOP,
+  );
+}
+
+/** 首个「已工作 N 秒」摘要的展开态；没有摘要（轮次未结束）时为空串。 */
+async function readHistoryOpen(): Promise<string> {
+  return browser.execute(
+    () =>
+      document
+        .querySelector<HTMLElement>('[data-testid^="chat-assistant-history-trigger-"]')
+        ?.getAttribute("data-history-open") ?? "",
   );
 }
 
@@ -129,6 +143,12 @@ describe("Subagent 工作卡 manual review", () => {
       throw new Error(`SAT31 没有出现运行中的工作卡：${JSON.stringify(state)}`, { cause: error });
     }
     expect((await readWorkCardState()).text).toContain("Explore");
+    // MA15：父轮结束后「已工作 N 秒」收起其它工作项，运行中的工作卡仍在折叠摘要之下可见。
+    await browser.waitUntil(async () => (await readHistoryOpen()) === "false", {
+      timeout: 30000,
+      timeoutMsg: "SAT31 父轮结束后应出现收起的「已工作」摘要",
+    });
+    expect((await readWorkCardState()).state).toBe("running");
 
     // SAT32：点击成员行打开右侧只读子会话；不自动打开。
     const member = await $(`[data-testid^="${TID_V4_SUBAGENT_OPEN_SIDE_PANE}-"]`);
@@ -168,6 +188,10 @@ describe("Subagent 工作卡 manual review", () => {
         timeoutMsg: "SAT31 工作卡没有显示步骤数",
       },
     );
+    const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
+    if (artifactDir) {
+      await browser.saveScreenshot(join(artifactDir, "subagent-work-card-running-side-pane.png"));
+    }
 
     // SAT33：单个"停止"经父会话 cancelBackgroundWork；停止后卡片与详情头部收口。
     const stop = await $(`[data-testid="${TID_V4_SUBAGENT_WORK_CARD_STOP}-${childSessionId}"]`);
@@ -179,6 +203,12 @@ describe("Subagent 工作卡 manual review", () => {
         timeoutMsg: "SAT33 详情头部没有变为已停止",
       },
     );
+    // MA15：全部结束后工作卡回到完成轮次的折叠内；展开「已工作」摘要后为折叠的已结束卡。
+    await browser.waitUntil(async () => (await readWorkCardState()).cards === 0, {
+      timeout: 30000,
+      timeoutMsg: "SAT34 全部结束后工作卡应随完成轮次折叠",
+    });
+    await (await $('[data-testid^="chat-assistant-history-trigger-"]')).click();
     await browser.waitUntil(async () => (await readWorkCardState()).state === "ended", {
       timeout: 30000,
       timeoutMsg: "SAT34 工作卡没有在全部结束后折叠",

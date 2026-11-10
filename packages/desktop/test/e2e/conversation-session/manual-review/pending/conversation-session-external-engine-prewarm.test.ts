@@ -43,11 +43,11 @@ const configRequestsPath=path.join(__dirname,'config-requests.jsonl');
 const planDecisionPath=path.join(__dirname,'plan-decisions.json');
 const retryReleasePath=path.join(__dirname,'retry-release.json');
 const send=f=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...f})+'\n');
-let mode='ENGINE_ID'==='claude-code'?'default':'safe', model='fixture-0', effort='low', turns=0, pendingPrompt, pendingPlan, planRequestId, typedFailures=false, failSent=false; const sid='fixture-session';
+let mode='ENGINE_ID'==='claude-code'?'default':'safe', model='fixture-0', effort='low', fast='off', turns=0, pendingPrompt, pendingPlan, planRequestId, typedFailures=false, failSent=false; const sid='fixture-session';
 // 帧形状取自 codex-acp 2.2.2 / claude-agent-acp 0.95.0：声明 AIR sessionFailure 时用 typed 失败，否则回退原生形态。
 const failureDetails='unexpected status 502 Bad Gateway: Bad gateway, url: https://fixture.invalid/responses?api_key=fixture-secret, request id: fixture-request';
 const airFailure=(id,revision,severity,title)=>({jetbrains:{air:{version:1,sessionFailure:{id,revision,category:'connection',severity,title,actions:severity==='error'?['retry','new_session']:[]}}}});
-const options=()=>[{id:'FAST_ID',name:'Fast mode',currentValue:'off',options:[{value:'off',name:'Off'},{value:'on',name:'On'},{value:'reject',name:'Rejected fast'}]},...('ENGINE_ID'==='codex'?[{id:'collaboration_mode',name:'Collaboration mode',currentValue:'default',options:[{value:'default',name:'Default'},{value:'plan',name:'Plan'}]}]:[]),{id:'mode',name:'Mode',currentValue:mode,options:[{value:'default',name:'Manual'},{value:'auto',name:'Auto'},{value:'plan',name:'Plan'},{value:'safe',name:'Safe'},{value:'full',name:'Full'}]},{id:'model',name:'Model',currentValue:model,options:Array.from({length:18},(_,i)=>({value:'fixture-'+i,name:'Fixture model '+i}))},{id:'EFFORT_ID',name:'Effort',currentValue:effort,options:[{value:'low',name:'Low'},{value:'medium',name:'Medium'},{value:'high',name:'High'}]}];
+const options=()=>[{id:'FAST_ID',name:'Fast mode',currentValue:fast,options:FAST_VALUES},...('ENGINE_ID'==='codex'?[{id:'collaboration_mode',name:'Collaboration mode',currentValue:'default',options:[{value:'default',name:'Default'},{value:'plan',name:'Plan'}]}]:[]),{id:'mode',name:'Mode',currentValue:mode,options:[{value:'default',name:'Manual'},{value:'auto',name:'Auto'},{value:'plan',name:'Plan'},{value:'safe',name:'Safe'},{value:'full',name:'Full'}]},{id:'model',name:'Model',currentValue:model,options:Array.from({length:18},(_,i)=>({value:'fixture-'+i,name:'Fixture model '+i}))},{id:'EFFORT_ID',name:'Effort',currentValue:effort,options:[{value:'low',name:'Low'},{value:'medium',name:'Medium'},{value:'high',name:'High'}]}];
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const f=JSON.parse(line), result=value=>send({id:f.id,result:value});
  if(!f.method && f.id===planRequestId && pendingPlan){
@@ -76,7 +76,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   const control=fs.existsSync(configControlPath)?JSON.parse(fs.readFileSync(configControlPath,'utf8')):{};
   const apply=()=>{
   if(f.params.value==='reject'||f.params.value===control.rejectValue){send({id:f.id,error:{code:-32602,message:'unsupported'}});return;}
-if(f.params.configId==='mode')mode=f.params.value;else if(f.params.configId==='model')model=f.params.value;else if(f.params.configId==='EFFORT_ID')effort=f.params.value;result({configOptions:options()});
+if(f.params.configId==='mode')mode=f.params.value;else if(f.params.configId==='FAST_ID')fast=f.params.value;else if(f.params.configId==='model')model=f.params.value;else if(f.params.configId==='EFFORT_ID')effort=f.params.value;result({configOptions:options()});
   if(pendingPrompt && effort==='medium'){
    send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'E2E_RUNNING_FINAL_'+mode+'_'+model+'_'+effort}}}});
    send({id:pendingPrompt.id,result:{stopReason:'end_turn'}});pendingPrompt=undefined;
@@ -200,7 +200,23 @@ async function writeIfChanged(path: string, content: string) {
   await writeFile(path, content);
 }
 
-async function installExternalEngineFixtures() {
+/**
+ * Fast 选项的原生取值。默认三值（含 reject）落在「更多选项」，覆盖拒绝路径；`twoValue` 与真实 Claude
+ * `fast` / Codex `fast-mode` 一样只有 off/on，UI 应渲染为闪电开关（W1/R2-1）。
+ */
+const FAST_VALUES = {
+  default: [
+    { value: "off", name: "Off" },
+    { value: "on", name: "On" },
+    { value: "reject", name: "Rejected fast" },
+  ],
+  twoValue: [
+    { value: "off", name: "Off" },
+    { value: "on", name: "On" },
+  ],
+} as const;
+
+async function installExternalEngineFixtures(fastValues: keyof typeof FAST_VALUES = "default") {
   const bin = process.env.ZCODE_E2E_EXTERNAL_ENGINE_FIXTURE_BIN;
   if (!bin || !process.env.PATH?.split(process.platform === "win32" ? ";" : ":").includes(bin))
     throw new Error("需要隔离的官方 CLI 状态夹具 PATH");
@@ -216,6 +232,7 @@ async function installExternalEngineFixtures() {
       entry,
       adapter
         .replaceAll("ENGINE_ID", engine)
+        .replaceAll("FAST_VALUES", JSON.stringify(FAST_VALUES[fastValues]))
         .replaceAll("FAST_ID", engine === "codex" ? "fast-mode" : "fast")
         .replaceAll("fixture-child-bash", `${engine}-fixture-child-bash`)
         .replaceAll("fixture-bash", `${engine}-fixture-bash`)
@@ -1002,6 +1019,10 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         timeoutMsg: "点击发送后必须立即显示用户气泡与工作中",
       },
     );
+    const instantArtifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
+    if (!instantArtifactDir) throw new Error("缺少 E2E 截图目录");
+    // 人工 review：握手仍在延迟中时的首发即时会话布局（气泡 + 工作中，无发送卡片与问候语）。
+    await browser.saveScreenshot(join(instantArtifactDir, "p11-first-send-instant-layout.png"));
     expect(await promptCount()).toBe(before);
     await waitForV4AssistantMessageContaining("E2E_ENGINE_REPLY_safe_fixture-3_high_1");
     // promotion 后真实行接替 overlay：同一条用户消息只出现一次。
@@ -1061,6 +1082,10 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       ).toBe(false);
       await waitForV4ComposerText("E2E_FIRST_SEND_FAILS", "首发失败后正文必须回填输入框");
       expect(await promptCount()).toBe(before);
+      const failureArtifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
+      if (!failureArtifactDir) throw new Error("缺少 E2E 截图目录");
+      // 人工 review：首发失败后 overlay 气泡下的错误与重新发送，正文回填输入框。
+      await browser.saveScreenshot(join(failureArtifactDir, "p11b-first-send-failure-refill.png"));
 
       await writeFile(initializeControlPath, JSON.stringify({ delayMs: 0 }));
       await (await failureRow.$('[data-testid="turn-failure-resend"]')).click();
@@ -1742,5 +1767,88 @@ describe("外部引擎首发前配置与同会话续聊", () => {
       expect(await trigger.getAttribute("title")).toContain(` · ${EFFORT_LABEL.low}`);
       await browser.keys("Escape");
     }
+  });
+
+  it("W1 Fast 闪电：两值 Fast 显示为闪电开关，点击发送相反原值，确认后才点亮", async () => {
+    // 夹具改为两值 Fast（与真实 Claude `fast` / Codex `fast-mode` 一致）；入口内容变化会作废旧备用，
+    // 新草稿用新目录。三值拒绝路径仍由 AX03 与「两家引擎」用例覆盖。
+    await installExternalEngineFixtures("twoValue");
+    const descriptor = EXTERNAL_ENGINE_RUNTIMES.codex;
+    const fixtureDir = dirname(
+      join(
+        resolveE2EStorageRoot(),
+        "engines",
+        managedAdapterInstallDirName(descriptor),
+        ...managedAdapterEntrySegments(descriptor),
+      ),
+    );
+    const controlPath = join(fixtureDir, "config-control.json");
+    const requestsPath = join(fixtureDir, "config-requests.jsonl");
+    const readRequests = async () =>
+      (await readFile(requestsPath, "utf8").catch(() => ""))
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { configId: string; value: string });
+    await writeFile(controlPath, "{}");
+    await setCurrentElectronRendererContentSize(1280, 800);
+    await browser.execute(() => {
+      const actions = (
+        window as typeof window & { __testActions?: { setTheme?: (value: string) => void } }
+      ).__testActions;
+      if (!actions?.setTheme) throw new Error("缺少主题测试入口");
+      actions.setTheme("light");
+    });
+    await startNewV4Draft();
+    await selectDraftEngine("codex");
+    await waitForEngineConfigReady("codex");
+    await (await displayed('[data-testid="engine-config-model-effort"]')).click();
+    await displayed('[data-testid="engine-model-popover"]');
+    const toggle = await displayed('[data-testid="engine-fast-toggle"]');
+    expect(await toggle.getAttribute("aria-pressed")).toBe("false");
+    // 两值 Fast 只以闪电出现，「更多选项」里不再有 Fast 行。
+    if (await $('[data-testid="engine-more-options"]').isExisting()) {
+      await expandMoreOptions();
+      await expect($('[data-testid="engine-config-fast-mode"]')).not.toExist();
+    }
+    const requestsBefore = (await readRequests()).length;
+    // 受控延迟制造确认窗口：命令已下发但 snapshot 未确认前，闪电不能乐观点亮。
+    await writeFile(controlPath, JSON.stringify({ delayMs: 1500 }));
+    await toggle.click();
+    await browser.waitUntil(async () => (await readRequests()).length > requestsBefore, {
+      timeout: 10000,
+      timeoutMsg: "点击闪电后必须下发 Fast 配置命令",
+    });
+    expect((await readRequests()).at(-1)).toMatchObject({ configId: "fast-mode", value: "on" });
+    expect(
+      await (await displayed('[data-testid="engine-fast-toggle"]')).getAttribute("aria-pressed"),
+    ).toBe("false");
+    await browser.waitUntil(
+      async () =>
+        (await (
+          await displayed('[data-testid="engine-fast-toggle"]')
+        ).getAttribute("aria-pressed")) === "true",
+      { timeout: 15000, timeoutMsg: "snapshot 确认 on 后闪电必须点亮" },
+    );
+    const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
+    if (!artifactDir) throw new Error("缺少 E2E 截图目录");
+    await browser.saveScreenshot(join(artifactDir, "w1-fast-lightning-on-popover.png"));
+    // 再次点击发送相反原值 off，确认后熄灭。
+    const requestsOn = (await readRequests()).length;
+    await (await displayed('[data-testid="engine-fast-toggle"]')).click();
+    await browser.waitUntil(async () => (await readRequests()).length > requestsOn, {
+      timeout: 10000,
+      timeoutMsg: "再次点击闪电必须下发 off",
+    });
+    expect((await readRequests()).at(-1)).toMatchObject({ configId: "fast-mode", value: "off" });
+    await browser.waitUntil(
+      async () =>
+        (await (
+          await displayed('[data-testid="engine-fast-toggle"]')
+        ).getAttribute("aria-pressed")) === "false",
+      { timeout: 15000, timeoutMsg: "snapshot 确认 off 后闪电必须熄灭" },
+    );
+    await writeFile(controlPath, "{}");
+    await browser.keys("Escape");
   });
 });
