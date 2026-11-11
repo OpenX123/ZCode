@@ -4,7 +4,7 @@ export type GitHeadRefType = "branch" | "detached";
 
 export type GitChangeKind = "modified" | "added" | "deleted" | "renamed";
 
-export type GitChangeSourceId = "unstaged" | "staged" | "branch" | "last-turn";
+export type GitChangeSourceId = "unstaged" | "staged" | "branch" | "last-turn" | "worktree";
 
 export type GitRepositoryChangeSourceId = Extract<
   GitChangeSourceId,
@@ -73,7 +73,8 @@ export interface GitFileChange {
 export interface GitDiffRequest {
   path: string;
   staged?: boolean;
-  sourceId?: GitChangeSourceId;
+  // worktree 仅为展示组合，读取 diff 时必须解析为实际来源。
+  sourceId?: Exclude<GitChangeSourceId, "worktree">;
 }
 
 export interface GitDiffResult {

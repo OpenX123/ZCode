@@ -770,3 +770,12 @@ describe("通用模式 Git 投影", () => {
     expect(JSON.stringify(input)).toBe(original);
   });
 });
+
+it("二进制或权限变更即使没有行数也保留Git入口", () => {
+  const model = buildConversationStatusPanelModel({
+    gitSummary: gitSummary(),
+    gitDirtyFileCount: 1,
+    gitWorktreeChangeSummary: { added: 0, removed: 0 },
+  });
+  expect(model.git).not.toBeNull();
+});

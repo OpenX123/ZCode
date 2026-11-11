@@ -1,4 +1,5 @@
 import type {
+  SubagentActivityButtonProps,
   SubagentFaceProps,
   SubagentSessionHeaderModel,
   SubagentWorkLiveIndex,
@@ -26,3 +27,9 @@ export const subagentSessionHeaderExample = {
 export const subagentWorkLiveIndexExample: SubagentWorkLiveIndex = new Map([
   ["child-b", { liveStatus: "waiting", cancellableWorkId: "work-b" }],
 ]);
+
+/** 常驻入口直接消费父 manifest，全部结束时仍可查看目录。 */
+export const subagentActivityExample = {
+  subagents: { revision: 1, childSessionIds: ["child-a"], running: [], endedTotal: 1 },
+  onOpen: () => {},
+} satisfies SubagentActivityButtonProps;

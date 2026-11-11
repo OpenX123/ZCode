@@ -518,11 +518,11 @@ describe("ConversationTurnGroup assistant preview cards", () => {
     ).not.toContain(label);
   });
 
-  // 2026-11-09 W5：所有引擎都不再显示“正在等待模型…”行或无字转圈，只保留「工作中 N 秒」。
+  // 2026-11-11：运行等待恢复轻量转圈，仍不显示重复等待文案。
   it.each([
     ["外部引擎 ready", "ready"],
     ["YCode 原生引擎", undefined],
-  ] as const)("%s 运行中不显示等待模型行与底部转圈", (_label, phase) => {
+  ] as const)("%s 运行中显示轻量转圈，不增加等待文案", (_label, phase) => {
     const context = { ...rowContext, externalEngineWaitPhase: phase };
     for (const unit of [
       { ...baseUnit([]), isRunning: true },
@@ -530,8 +530,8 @@ describe("ConversationTurnGroup assistant preview cards", () => {
     ]) {
       const html = renderTurnWithContext(unit, context);
       expect(html).not.toContain("正在等待模型");
-      expect(html).not.toContain('data-testid="chat-loading"');
-      expect(html).not.toContain("data-zcode-chat-loading-slot");
+      expect(html).toContain('data-testid="chat-loading"');
+      expect(html).toContain("data-zcode-chat-loading-slot");
     }
   });
   it("renders preview cards once below the latest assistant text row", () => {

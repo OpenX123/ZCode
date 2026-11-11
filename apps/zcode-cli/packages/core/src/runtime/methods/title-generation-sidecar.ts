@@ -16,6 +16,7 @@ import type { AgentRuntimeInternal } from "../internal.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-headers.js";
 import { recordModelUsageFact } from "./usage-observability.js";
 import { createRuntimeModel } from "./runtime-model.js";
+import { readableTitleInput } from "../helpers/project.js";
 import { cloneModelSelection } from "../model-selection.js";
 import { auxiliaryModelOptions } from "../../model/auxiliary-model-options.js";
 
@@ -193,7 +194,7 @@ export async function generateTitleCandidate(
 }
 
 export function normalizeTitleInput(input: string): string {
-  const normalized = input.trim().replace(/\s+/g, " ");
+  const normalized = readableTitleInput(input);
   return normalized.length > MAX_TITLE_INPUT_CHARS
     ? normalized.slice(0, MAX_TITLE_INPUT_CHARS)
     : normalized;

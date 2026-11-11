@@ -448,37 +448,8 @@ export function App({
       }
     >;
   }, [gitState.datasets, gitState.sourceOptions]);
-  const gitWorktreeChangeSummary = useMemo(() => {
-    const unstaged = gitChangeSummaryBySourceId.unstaged ?? {
-      added: 0,
-      removed: 0,
-    };
-    const staged = gitChangeSummaryBySourceId.staged ?? {
-      added: 0,
-      removed: 0,
-    };
-    return {
-      added: unstaged.added + staged.added,
-      removed: unstaged.removed + staged.removed,
-    };
-  }, [gitChangeSummaryBySourceId]);
-  const gitWorktreeReviewSourceId = useMemo<GitChangeSourceId | null>(() => {
-    const unstaged = gitChangeSummaryBySourceId.unstaged ?? {
-      added: 0,
-      removed: 0,
-    };
-    const staged = gitChangeSummaryBySourceId.staged ?? {
-      added: 0,
-      removed: 0,
-    };
-    if (unstaged.added + unstaged.removed > 0) {
-      return "unstaged";
-    }
-    if (staged.added + staged.removed > 0) {
-      return "staged";
-    }
-    return null;
-  }, [gitChangeSummaryBySourceId]);
+  const gitWorktreeChangeSummary = gitChangeSummaryBySourceId.worktree;
+  const gitWorktreeReviewSourceId: GitChangeSourceId = "worktree";
   const handleOpenGitReview = useCallback(
     (sourceId?: GitChangeSourceId) => {
       if (workspaceReadOnlyReason) {

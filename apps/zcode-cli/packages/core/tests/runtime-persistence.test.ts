@@ -929,6 +929,10 @@ describe("AgentRuntime session persistence", () => {
     ],
     ["[文档](https://example.com) 阅读", "[文档](https://example.com) 阅读"],
     ["[$review](/skills/review", "[$review](/skills/review"],
+    ["[$review](/tmp/review/SKILL.mdx，检查", "[$review](/tmp/review/SKILL.mdx，检查"],
+    ["[$audit](/skills/team-a/audit/SKILL.md) [$audit](/skills/team-b/audit/SKILL.md)", "$audit $audit"],
+    ["[$ask-matt](/Users/example/.zcode/skills/ask-matt/SKILL.md，还有标题问题", "$ask-matt，还有标题问题"],
+    ["[$review](/skills/review/SKILL.md) [$review](/skills/review/SKILL.md) 检查", "$review 检查"],
     [
       `[$review](/skills/review/SKILL.md) ${"检查".repeat(40)}`,
       `$review ${"检查".repeat(24)}检...`,
@@ -1091,6 +1095,24 @@ describe("AgentRuntime session persistence", () => {
         workspaceID: workspaceIdentity,
       }),
     ]);
+  });
+
+
+  it.each(["first_input", "generated", "custom"] as const)("恢复旧Skill标题只修正可证明的首条输入来源：%s", async (source) => {
+    const sessionId = createSessionId(`old-skill-${source}`);
+    const store = createRecordingSessionStore();
+    const eventStore = createTestSessionEventStore();
+    const input = "[$ask-matt](/Users/example/.zcode/skills/ask-matt/SKILL.md，还有标题问题";
+    const oldTitle = `${input.slice(0, 57)}...`;
+    await store.createSession({ id: sessionId, projectID: createProjectId("old-skill"), slug: "old-skill", directory: "/tmp/old-skill", title: oldTitle, titleSource: source, version: "test" });
+    const messageID = createMessageId("old-skill-user");
+    await store.saveMessage({ id: messageID, role: "user", sessionID: sessionId, time: { created: 1 }, agent: "agent", model: { modelID: "model", providerID: "provider" }, tools: {} });
+    await store.savePart({ id: createPartId("old-skill-text"), messageID, sessionID: sessionId, type: "text", text: input });
+    const runtime = createTestAgentRuntime(sessionId, { mode: "build", workingDirectory: "/tmp/old-skill" }, { sessionStore: store, eventStore });
+    await runtime.resumeFromStore();
+    const session = await store.getSession(sessionId);
+    expect(session?.title).toBe(source === "first_input" ? "$ask-matt，还有标题问题" : oldTitle);
+    expect((await store.messages({ sessionID: sessionId }))[0]?.parts[0]).toMatchObject({ text: input });
   });
 
   // Bugfix: fork child 的 title 已经写进 sessionStore，但 resume 事件流以前只发

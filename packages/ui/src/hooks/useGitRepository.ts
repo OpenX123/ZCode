@@ -21,6 +21,7 @@ import { useResolvedRemoteWorkspaceSessionId } from "@/hooks/useResolvedRemoteWo
 type GitRepositorySourceId = Extract<GitChangeSourceId, "unstaged" | "staged" | "branch">;
 
 interface RepositoryDatasets {
+  worktree: GitPaneDataset;
   unstaged: GitPaneDataset;
   staged: GitPaneDataset;
   branch: GitPaneDataset;
@@ -154,6 +155,7 @@ function createEmptyDataset(id: GitChangeSourceId, readonly: boolean): GitPaneDa
 
 function createEmptyDatasets(): Record<GitChangeSourceId, GitPaneDataset> {
   return {
+    worktree: createEmptyDataset("worktree", false),
     unstaged: createEmptyDataset("unstaged", false),
     staged: createEmptyDataset("staged", false),
     branch: createEmptyDataset("branch", true),
@@ -165,6 +167,16 @@ function buildSourceOptions(
   datasets: Record<GitChangeSourceId, GitPaneDataset>,
 ): GitPaneSourceOption[] {
   return [
+    {
+      id: "worktree",
+      count: new Set(
+        datasets.worktree.sections.flatMap((section) =>
+          section.changes.map((change) => change.path),
+        ),
+      ).size,
+      readonly: false,
+      disabled: false,
+    },
     {
       id: "unstaged",
       count: sumSectionCount(datasets.unstaged.sections),
@@ -258,21 +270,29 @@ function buildSectionsForSource(
     .filter((section): section is GitPaneSection => Boolean(section));
 }
 
-function buildRepositoryDatasets(options: {
+export function buildRepositoryDatasets(options: {
   unstagedChanges: GitFileChange[];
   stagedChanges: GitFileChange[];
   branchComparison: GitBranchComparison;
 }): RepositoryDatasets {
+  const unstagedSections = buildSectionsForSource("unstaged", options.unstagedChanges);
+  const stagedSections = buildSectionsForSource("staged", options.stagedChanges);
   return {
+    // 同一刷新事务派生全部更改，保留每行来源，不能拿累计数字打开单一来源。
+    worktree: {
+      id: "worktree",
+      readonly: false,
+      sections: [...unstagedSections, ...stagedSections],
+    },
     unstaged: {
       id: "unstaged",
       readonly: false,
-      sections: buildSectionsForSource("unstaged", options.unstagedChanges),
+      sections: unstagedSections,
     },
     staged: {
       id: "staged",
       readonly: false,
-      sections: buildSectionsForSource("staged", options.stagedChanges),
+      sections: stagedSections,
     },
     branch: {
       id: "branch",

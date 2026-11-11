@@ -1,3 +1,4 @@
+import { readableTitleInput, titleFromInput } from "../helpers/project.js";
 import { isExternalSessionEngine } from "@zcode/shared";
 import {
   prepareExternalEngineSession,
@@ -244,6 +245,7 @@ export async function resumeFromStore(
   ).length;
   this.sessionPersisted = true;
   await syncPersistedSessionTitleForResume.call(this, {
+    messages,
     restoredEvents,
     session,
     traceContext,
@@ -360,14 +362,28 @@ export async function resumeFromStore(
 async function syncPersistedSessionTitleForResume(
   this: AgentRuntimeInternal,
   input: {
+    messages: MessageWithParts[];
     restoredEvents: SessionEvent[];
     session: SessionInfo;
     traceContext: TraceContext;
   },
 ): Promise<void> {
-  const title = input.session.title.trim();
+  let title = input.session.title.trim();
   if (!title) return;
   const source = input.session.titleSource ?? "generated";
+  if (source === "first_input") {
+    const firstUser = input.messages.find((message) => message.info.role === "user" && !message.info.summary);
+    const raw = firstUser?.parts.filter((part) => part.type === "text").map((part) => part.text).join("") ?? "";
+    const compact = raw.trim().replace(/\s+/g, " ");
+    const legacyTitle = compact.length <= 60 ? compact : `${compact.slice(0, 57)}...`;
+    // 仅修复能从原始输入逐字证明的旧自动标题；CAS 保护并发手动命名。
+    if (title === legacyTitle && readableTitleInput(raw) !== compact) {
+      const normalized = titleFromInput(raw);
+      const updated = await this.sessionStore?.updateSession({ id: this.sessionId, title: normalized, titleSource: "first_input", expectedTitleSources: ["first_input"] });
+      if (updated?.title !== normalized || updated.titleSource !== "first_input") return;
+      title = normalized;
+    }
+  }
   if (hasRestoredTitleEvent(input.restoredEvents, title, source)) return;
 
   // fork child 创建时 title 已写进 sessionStore，但复制历史不会复制父会话的

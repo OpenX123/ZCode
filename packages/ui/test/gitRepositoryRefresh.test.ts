@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { shouldRefreshLiveGitData } from "../src/hooks/useGitRepository.js";
+import {
+  buildRepositoryDatasets,
+  shouldRefreshLiveGitData,
+} from "../src/hooks/useGitRepository.js";
 
 describe("shouldRefreshLiveGitData", () => {
   it("refreshes on initial load and workspace changes", () => {
@@ -164,4 +167,37 @@ describe("shouldRefreshLiveGitData", () => {
       ),
     ).toBe(true);
   });
+});
+
+it("全部更改保留同文件的两个来源，文件数去重但行数累计", async () => {
+  const { getGitDirtyFileCount } = await import("@/git-branch-switcher/display.js");
+  const base = {
+    path: "/repo/a.ts",
+    repoRelativePath: "a.ts",
+    workspaceRelativePath: "a.ts",
+    kind: "modified" as const,
+    isUntracked: false,
+    isConflicted: false,
+  };
+  const datasets = buildRepositoryDatasets({
+    unstagedChanges: [{ ...base, section: "unstaged", isStaged: false, added: 2, removed: 1 }],
+    stagedChanges: [{ ...base, section: "staged", isStaged: true, added: 3, removed: 4 }],
+    branchComparison: { baseRef: null, headRef: null, comparisonLabel: null, changes: [] },
+  });
+  expect(datasets.worktree.sections.map((s) => s.id)).toEqual(["unstaged", "staged"]);
+  expect(getGitDirtyFileCount(datasets)).toBe(1);
+  expect(
+    datasets.worktree.sections.flatMap((s) => s.changes).map((f) => [f.added, f.removed]),
+  ).toEqual([
+    [2, 1],
+    [3, 4],
+  ]);
+});
+
+it("组合审阅对同路径暂存与未暂存请求分别读取真实来源", async () => {
+  const { getGitPaneChangeSource, getDiffCacheKey } = await import("@/GitPane/helpers.js");
+  expect(getGitPaneChangeSource("worktree", "staged")).toBe("staged");
+  expect(getGitPaneChangeSource("worktree", "unstaged")).toBe("unstaged");
+  expect(getGitPaneChangeSource("worktree", "untracked")).toBe("unstaged");
+  expect(getDiffCacheKey("staged", "a.ts")).not.toBe(getDiffCacheKey("unstaged", "a.ts"));
 });

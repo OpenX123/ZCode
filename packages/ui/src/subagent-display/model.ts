@@ -88,7 +88,9 @@ export function subagentDisplayName({
   subagentType?: string | null;
   fallbackName: string;
 }): string {
-  return title?.trim() || subagentType?.trim() || fallbackName;
+  // 通用引擎占位不是任务名；各展示面统一使用任务描述优先的规则。
+  const type = subagentType?.trim();
+  return title?.trim() || (type?.toLowerCase() !== "subagent" ? type : "") || fallbackName;
 }
 
 export type SubagentNameListPart =
@@ -359,23 +361,8 @@ export function formatSubagentDuration(durationMs: number, formatMessage: Format
   return parts.join(" ");
 }
 
-/** 外部引擎统一使用的通用类型占位值；它不是可读名称。 */
-const GENERIC_SUBAGENT_TYPE = "subagent";
-
-/** 工作卡名称：类型（通用占位除外）→ 可见标题 → 本地化"智能体 N"。 */
-export function subagentWorkCardName({
-  title,
-  subagentType,
-  fallbackName,
-}: {
-  title?: string | null;
-  subagentType?: string | null;
-  fallbackName: string;
-}): string {
-  const type = subagentType?.trim();
-  if (type && type.toLowerCase() !== GENERIC_SUBAGENT_TYPE) return type;
-  return title?.trim() || fallbackName;
-}
+/** 工作卡与目录、标签页共用同一名称规则。 */
+export const subagentWorkCardName = subagentDisplayName;
 
 export interface SubagentWorkCardMemberInput {
   key: string;

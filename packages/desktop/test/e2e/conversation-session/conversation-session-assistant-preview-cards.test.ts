@@ -618,9 +618,18 @@ async function waitForPreviewRenderer(
     async () => {
       latest = await browser.execute(
         (previewTestId, expectedFilename, expectedRenderer) => {
-          const pane = document.querySelector<HTMLElement>(`[data-testid="${previewTestId}"]`);
-          const text = (pane?.innerText ?? "").replace(/\u00a0/g, " ");
+          const pane = Array.from(
+            document.querySelectorAll<HTMLElement>(`[data-testid="${previewTestId}"]`),
+          ).find((node) => {
+            const rect = node.getBoundingClientRect();
+            return rect.width > 0 && rect.left < window.innerWidth && rect.right > 0;
+          });
+          const text = (
+            (pane?.closest<HTMLElement>("[data-file-manager-pane]") ?? pane)?.innerText ?? ""
+          ).replace(/\u00a0/g, " ");
           const hasError = Boolean(pane?.querySelector('[role="alert"]'));
+          const rect = pane?.getBoundingClientRect();
+          const visible = Boolean(rect && rect.width > 160 && rect.height > 80);
           let ready = false;
           if (expectedRenderer === "docx" || expectedRenderer === "excel") {
             ready = Boolean(
@@ -640,7 +649,7 @@ async function waitForPreviewRenderer(
           return {
             hasError,
             header: text.split("\n")[0] ?? "",
-            ready,
+            ready: ready && visible,
             text,
           };
         },

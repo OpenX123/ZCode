@@ -391,6 +391,8 @@ export interface ConversationComposerProps {
   snapshot: ConversationSnapshot | null;
   externalEngine?: boolean;
   engineControls?: ReactNode;
+  /** 子任务常驻入口，由父会话投影和既有目录动作构建。 */
+  subagentActivity?: ReactNode;
   /** 同一外部配置 owner 的模型/深度展示，位于发送入口左侧。 */
   engineModelControls?: ReactNode;
   /** W2：引擎切换行，挂在 YCode 模型弹层顶部（外部引擎由 EngineControls 弹层自行承载）。 */
@@ -535,6 +537,7 @@ function ConversationComposerImpl({
   snapshot,
   externalEngine = false,
   engineControls,
+  subagentActivity,
   engineModelControls,
   engineSwitchRow,
   engineNotReadyContent,
@@ -2260,6 +2263,7 @@ function ConversationComposerImpl({
   const submitControlNode = useMemo(
     () => (
       <div className="flex min-w-0 items-center gap-1">
+        {subagentActivity}
         {!remoteAvailable ? (
           <span
             data-testid="remote-send-unavailable"
@@ -2349,6 +2353,7 @@ function ConversationComposerImpl({
     [
       externalEngine,
       engineModelControls,
+      subagentActivity,
       engineSwitchRow,
       canSend,
       activeConfigPicker,

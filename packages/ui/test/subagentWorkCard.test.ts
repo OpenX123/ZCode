@@ -107,6 +107,58 @@ const reviewer = agentCall(2, "复核修复", "code-reviewer");
 const tester = agentCall(3, "跑回归", "tester");
 
 describe("SubagentWorkCard", () => {
+  it("运行中手动展开不影响全部结束后的默认折叠，结束后仍可展开回看", async () => {
+    const parent = agentCall(701, "检查结束态折叠");
+    const running = await renderCard([parent, subagent(702, parent, "child-a")]);
+    act(() => running.getByTestId("v4-subagent-work-card-toggle-701").click());
+    act(() => running.getByTestId("v4-subagent-work-card-toggle-701").click());
+    running.unmount();
+    const ended = await renderCard([
+      parent,
+      subagent(702, parent, "child-a", { status: "success" }),
+    ]);
+    expect(
+      ended.getByTestId("v4-subagent-work-card-toggle-701").getAttribute("aria-expanded"),
+    ).toBe("false");
+    act(() => ended.getByTestId("v4-subagent-work-card-toggle-701").click());
+    expect(
+      ended.getByTestId("v4-subagent-work-card-toggle-701").getAttribute("aria-expanded"),
+    ).toBe("true");
+  });
+  it("运行中折叠仍展示失败和完成计数", async () => {
+    const a = agentCall(501, "调查预览");
+    const b = agentCall(502, "核对Git");
+    const view = await renderCard([
+      a,
+      b,
+      subagent(503, a, "child-a"),
+      subagent(504, b, "child-b", { status: "failed" }),
+    ]);
+    act(() => view.getByTestId("v4-subagent-work-card-toggle-501").click());
+    expect(view.getByTestId("v4-subagent-work-card-toggle-501").textContent).toContain("失败");
+  });
+
+  it("运行时可折叠且等待计数仍可见，不显示成功图标", async () => {
+    const call = agentCall(91, "检查流式状态");
+    const view = await renderCard([call, subagent(92, call, "child-a")], {
+      subagentWorkLiveIndex: new Map([["child-a", { liveStatus: "waiting" }]]),
+    });
+    act(() => view.getByTestId("v4-subagent-work-card-toggle-91").click());
+    const toggle = view.getByTestId("v4-subagent-work-card-toggle-91");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.textContent).toContain("等待确认");
+    expect(toggle.querySelector(".lucide-circle-check")).toBeNull();
+    act(() => toggle.click());
+    expect(view.getByTestId("v4-subagent-open-side-pane-child-a")).toBeTruthy();
+  });
+  it("任务描述优先于 Explore 类型，名称和打开详情的标题一致", async () => {
+    const call = agentCall(81, "排查文件预览空白", "Explore");
+    const view = await renderCard([call, subagent(82, call, "child-a")]);
+    const row = view.getByTestId("v4-subagent-open-side-pane-child-a");
+    expect(row.querySelector("[title='排查文件预览空白']")?.textContent).toBe("排查文件预览空白");
+    expect(row.textContent).not.toContain("Explore");
+  });
+
   it("运行中：头部计数与耗时、主 Agent 节点、成员行的模型、状态、摘要与步骤数", async () => {
     const view = await renderCard([
       explorer,
@@ -128,19 +180,21 @@ describe("SubagentWorkCard", () => {
     const card = view.getByTestId("v4-subagent-work-card-1");
     expect(card.dataset.state).toBe("running");
     expect(card.textContent).toContain("Subagent 正在工作");
-    expect(card.textContent).toContain("2 个 Subagent · 已完成 1/2 · 1分");
+    expect(card.textContent).toContain("2 个 Subagent · 已结束 1/2 · 1分");
     expect(card.textContent).toContain("主 Agent");
     expect(card.textContent).toContain("正在协调 2 个委派任务");
 
     const first = view.getByTestId("v4-subagent-open-side-pane-child-a");
     expect(first.tagName).toBe("BUTTON");
-    expect(first.textContent).toContain("explorer");
+    expect(first.querySelector("[title=核对排班报错请求契约]")?.textContent).toBe(
+      "核对排班报错请求契约",
+    );
     expect(first.textContent).toContain("gpt-6.1-sol 高");
     expect(first.textContent).toContain("运行中 · 58秒");
     expect(first.textContent).toContain("核对排班报错请求契约");
     expect(first.textContent).toContain("16 个步骤");
     const second = view.getByTestId("v4-subagent-open-side-pane-child-b");
-    expect(second.textContent).toContain("code-reviewer");
+    expect(second.textContent).toContain("复核修复");
     expect(second.textContent).toContain("已完成 · 32秒");
     expect(second.textContent).toContain("9 个步骤");
     // 没有 model 的成员不显示模型标签。
@@ -259,7 +313,7 @@ describe("SubagentWorkCard", () => {
     ]);
     const card = view.getByTestId("v4-subagent-work-card-1");
     expect(card.dataset.state).toBe("ended");
-    expect(card.textContent).toContain("2 个 Subagent 已完成 · 用时 1分 12秒 · 1 个失败");
+    expect(card.textContent).toContain("2 个 Subagent 已结束 · 用时 1分 12秒 · 1 个失败");
     expect(view.queryByTestId("v4-subagent-open-side-pane-child-a")).toBeNull();
     expect(view.queryByTestId("v4-subagent-work-card-stop-all-1")).toBeNull();
 
@@ -285,5 +339,34 @@ describe("SubagentWorkCard", () => {
     const pending = view.getByTestId("v4-subagent-work-card-member-call-2");
     expect(pending.textContent).toContain("等待启动");
     expect((pending as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("SubagentActivityButton", () => {
+  it("常驻入口区分运行和等待，全部结束后仍可打开目录且无动画", async () => {
+    const { SubagentActivityButton } = await import("@/subagent-display/index.js");
+    const onOpen = vi.fn();
+    const manifest = {
+      revision: 1,
+      childSessionIds: ["a", "b"],
+      endedTotal: 0,
+      running: [
+        { childSessionId: "a", subagentType: "Explore", title: "A", status: "running" as const },
+        { childSessionId: "b", subagentType: "Explore", title: "B", status: "waiting" as const },
+      ],
+    };
+    const view = render(createElement(SubagentActivityButton, { subagents: manifest, onOpen }));
+    expect(view.getByRole("button").textContent).toContain("运行中 1");
+    expect(view.getByRole("button").textContent).toContain("等待确认 1");
+    act(() => view.getByRole("button").click());
+    expect(onOpen).toHaveBeenCalledOnce();
+    view.rerender(
+      createElement(SubagentActivityButton, {
+        subagents: { ...manifest, running: [], endedTotal: 2 },
+        onOpen,
+      }),
+    );
+    expect(view.getByRole("button").textContent).toContain("2");
+    expect(view.container.querySelector(".animate-spin")).toBeNull();
   });
 });

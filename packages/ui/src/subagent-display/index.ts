@@ -16,3 +16,5 @@ export { ConversationAgentCard, ConversationAgentSpawnRow } from "./Conversation
 export { SubagentSessionHeader } from "./SubagentSessionHeader.js";
 export { SubagentWorkCard } from "./SubagentWorkCard.js";
 export { useSubagentWorkLiveIndex } from "./useSubagentWorkLiveIndex.js";
+
+export { SubagentActivityButton } from "./SubagentActivityButton.js";

@@ -24,6 +24,8 @@ export type GitPaneDiffPreviewPlan =
 
 export function getSourceMessageId(sourceId: GitChangeSourceId): string {
   switch (sourceId) {
+    case "worktree":
+      return "git.source.worktree";
     case "unstaged":
       return "git.source.unstaged";
     case "staged":
@@ -37,9 +39,7 @@ export function getSourceMessageId(sourceId: GitChangeSourceId): string {
   }
 }
 
-export function getDiffFallbackMessageId(
-  availability: GitDiffResult["availability"],
-): string {
+export function getDiffFallbackMessageId(availability: GitDiffResult["availability"]): string {
   switch (availability) {
     case "binary":
       return "git.diff.binaryTitle";
@@ -126,8 +126,7 @@ export function shouldRenderPatchOnlyGitDiffPreview(diff: GitDiffResult): boolea
     return true;
   }
 
-  const fullContentCharCount =
-    (diff.beforeContent?.length ?? 0) + (diff.afterContent?.length ?? 0);
+  const fullContentCharCount = (diff.beforeContent?.length ?? 0) + (diff.afterContent?.length ?? 0);
   if (fullContentCharCount > MAX_RICH_DIFF_FULL_CONTENT_CHAR_COUNT) {
     return true;
   }
@@ -193,9 +192,7 @@ export function shouldRenderPlainTextDiffPreview(patch: string): string[] | null
   // review 面板只该把纯文本新增/删除文件降级成轻量 preview。
   // 底层通用 fallback 为了避免文件变更展开空白，会覆盖 JSON 等结构化文件；
   // 这里重新按文件类型收口，避免结构化文件绕过 PatchDiff 的语义化渲染路径。
-  return getFiletypeFromFileName(patchFileName) === "text"
-    ? fallbackLines
-    : null;
+  return getFiletypeFromFileName(patchFileName) === "text" ? fallbackLines : null;
 }
 
 function getPatchContentFileName(lines: readonly string[]): string | null {
@@ -213,4 +210,12 @@ function getPatchContentFileName(lines: readonly string[]): string | null {
   }
 
   return null;
+}
+
+/** 组合视图每行仍读取原来的 index/worktree diff，不引入新的 Git 比较语义。 */
+export function getGitPaneChangeSource(
+  sourceId: GitChangeSourceId,
+  section: import("@zcode/shared").GitChangeSectionId,
+): Exclude<GitChangeSourceId, "worktree"> {
+  return sourceId === "worktree" ? (section === "staged" ? "staged" : "unstaged") : sourceId;
 }

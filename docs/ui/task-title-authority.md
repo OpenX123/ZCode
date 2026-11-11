@@ -30,3 +30,7 @@ Task title can come from several places during a session lifecycle. Renderer cod
 
 - Workspace-scoped title lookup uses `workspaceIdentity?.trim() || workspacePath`, matching remote workspace isolation. The active read also belongs to its scoped service/attachment and task ID; late responses cannot overwrite a newer target or request.
 - The rule applies to desktop `desktop-continuous` restore and web remote `web-remote-replayable` restore. Replayable recovery can use snapshots to refill runtime fields, but it must not bypass the same title authority merge.
+
+## 2026-11-11 Skill 标题精简
+
+首条输入标题和标题生成 sidecar 共用 Skill 引用清理：完整 Markdown Skill 链接只保留 `$skill`；同名重复引用只保留一次；能精确识别到 `SKILL.md` 的未闭合文件链接也可去掉路径，保留随后的中文需求。普通链接、代码片段及不能确定边界的残缺链接保持原文。先清理再做各自长度限制。原始消息、模型业务输入、Skill 加载与手动命名优先级不变。

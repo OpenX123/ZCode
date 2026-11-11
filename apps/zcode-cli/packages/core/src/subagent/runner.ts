@@ -1543,35 +1543,45 @@ async function finalizeBackgroundCompletion(
       totalTokens: completed.output.totalTokens,
     },
   }));
-  enqueueBackgroundNotification(
-    options,
-    registry,
-    lifecycle.agentId,
-    notification,
-    lifecycle.runTraceContext,
-  );
-  if (task) {
-    await emitBackgroundTaskCompletedEvent(options, request, lifecycle.runTraceContext, task);
+  // 先落终态再唤醒父会话，避免通知触发的 resume 被旧 SubagentStopped 覆盖。
+  // 事件持久化失败仍交付已完成结果，保留原异常供现有日志记录。
+  try {
+    try {
+      if (task) {
+        await emitBackgroundTaskCompletedEvent(options, request, lifecycle.runTraceContext, task);
+      }
+    } finally {
+      // 两个终态投影独立尝试：后台事件失败不能阻止子任务停止事件。
+      await emitSubagentEvent(
+      options,
+      SessionEventType.SubagentStopped,
+      request,
+      lifecycle.runTraceContext,
+      {
+        agentId: lifecycle.agentId,
+        agentType: request.agentType,
+        background: true,
+        childSessionId: lifecycle.childSessionId,
+        parentToolCallId: request.parentToolCallId,
+        status: "completed",
+        outputFile: lifecycle.outputFile,
+        totalDurationMs: completed.output.totalDurationMs,
+        totalToolUseCount: completed.output.totalToolUseCount,
+        totalTokens: completed.output.totalTokens,
+      },
+      );
+    }
+  } catch (eventError) {
+    options.logger?.error("Subagent terminal event publication failed", eventError instanceof Error ? eventError : new Error(String(eventError)), { agentId: lifecycle.agentId });
+  } finally {
+    enqueueBackgroundNotification(
+      options,
+      registry,
+      lifecycle.agentId,
+      notification,
+      lifecycle.runTraceContext,
+    );
   }
-
-  await emitSubagentEvent(
-    options,
-    SessionEventType.SubagentStopped,
-    request,
-    lifecycle.runTraceContext,
-    {
-      agentId: lifecycle.agentId,
-      agentType: request.agentType,
-      background: true,
-      childSessionId: lifecycle.childSessionId,
-      parentToolCallId: request.parentToolCallId,
-      status: "completed",
-      outputFile: lifecycle.outputFile,
-      totalDurationMs: completed.output.totalDurationMs,
-      totalToolUseCount: completed.output.totalToolUseCount,
-      totalTokens: completed.output.totalTokens,
-    },
-  );
 
   options.logger?.info("Subagent background task completed", {
     ...traceContextToLogContext(lifecycle.runTraceContext),
@@ -1621,34 +1631,44 @@ async function finalizeBackgroundFailure(
       durationMs: totalDurationMs,
     },
   }));
-  enqueueBackgroundNotification(
-    options,
-    registry,
-    lifecycle.agentId,
-    notification,
-    lifecycle.runTraceContext,
-  );
-  if (task) {
-    await emitBackgroundTaskCompletedEvent(options, request, lifecycle.runTraceContext, task);
+  // 先落终态再唤醒父会话，避免通知触发的 resume 被旧 SubagentStopped 覆盖。
+  // 事件持久化失败仍交付已完成结果，保留原异常供现有日志记录。
+  try {
+    try {
+      if (task) {
+        await emitBackgroundTaskCompletedEvent(options, request, lifecycle.runTraceContext, task);
+      }
+    } finally {
+      // 两个终态投影独立尝试：后台事件失败不能阻止子任务停止事件。
+      await emitSubagentEvent(
+      options,
+      SessionEventType.SubagentStopped,
+      request,
+      lifecycle.runTraceContext,
+      {
+        agentId: lifecycle.agentId,
+        agentType: request.agentType,
+        background: true,
+        childSessionId: lifecycle.childSessionId,
+        parentToolCallId: request.parentToolCallId,
+        status: "failed",
+        outputFile: lifecycle.outputFile,
+        totalDurationMs,
+        error: errorMessage,
+      },
+      );
+    }
+  } catch (eventError) {
+    options.logger?.error("Subagent terminal event publication failed", eventError instanceof Error ? eventError : new Error(String(eventError)), { agentId: lifecycle.agentId });
+  } finally {
+    enqueueBackgroundNotification(
+      options,
+      registry,
+      lifecycle.agentId,
+      notification,
+      lifecycle.runTraceContext,
+    );
   }
-
-  await emitSubagentEvent(
-    options,
-    SessionEventType.SubagentStopped,
-    request,
-    lifecycle.runTraceContext,
-    {
-      agentId: lifecycle.agentId,
-      agentType: request.agentType,
-      background: true,
-      childSessionId: lifecycle.childSessionId,
-      parentToolCallId: request.parentToolCallId,
-      status: "failed",
-      outputFile: lifecycle.outputFile,
-      totalDurationMs,
-      error: errorMessage,
-    },
-  );
 
   options.logger?.warn("Subagent background task failed", {
     ...traceContextToLogContext(lifecycle.runTraceContext),

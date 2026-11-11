@@ -1362,7 +1362,7 @@ describe("subagent background notifications", () => {
     );
   });
 
-  it("queues parent notification before emitting background completion", async () => {
+  it("publishes terminal state before waking the parent notification queue", async () => {
     const sessionId = createSessionId("subagent-notification-before-completion-event");
     const turnId = createTurnId("subagent-notification-before-completion-event-turn");
     const childGate = createDeferred<void>();
@@ -1406,14 +1406,38 @@ describe("subagent background notifications", () => {
     await completionEventStarted.promise;
 
     const completedIndex = observed.indexOf(`event:${SessionEventType.BackgroundTaskCompleted}`);
-    const notificationIndex = observed.indexOf("notification");
-    expect(notificationIndex).toBeGreaterThan(-1);
-    expect(notificationIndex).toBeLessThan(completedIndex);
+    expect(observed).not.toContain("notification");
     completionEventMayFinish.resolve();
-    await waitForCondition(() => observed.includes(`event:${SessionEventType.SubagentStopped}`));
+    await waitForCondition(() => observed.includes("notification"));
     const stoppedIndex = observed.indexOf(`event:${SessionEventType.SubagentStopped}`);
     expect(completedIndex).toBeGreaterThan(-1);
     expect(stoppedIndex).toBeGreaterThan(completedIndex);
+    expect(observed.indexOf("notification")).toBeGreaterThan(stoppedIndex);
+  });
+
+
+  it.each(["completed", "failed"])("交付%s结果前即使后台事件失败也尝试发布子任务终态", async (status) => {
+    const gate = createDeferred<void>();
+    const observed: string[] = [];
+    const port = createExploreSubagentPort({
+      createAgentId: () => `agent_terminal_${status}`,
+      emitParentEvent: async (event) => {
+        observed.push(event.type);
+        if (event.type === SessionEventType.BackgroundTaskCompleted) throw new Error("event write failed");
+      },
+      enqueueParentTaskNotification: () => { observed.push("notification"); },
+      runExploreAgent: async (request) => {
+        await request.onSessionReady?.();
+        await gate.promise;
+        if (status === "failed") throw new Error("child failed");
+        return { events: [], response: "child completed", traceId: "trace_terminal" };
+      },
+    });
+    await port.start?.(createSubagentRunRequest({ sessionId: createSessionId(`terminal-${status}`), turnId: createTurnId(`turn-${status}`) }));
+    gate.resolve();
+    await waitForCondition(() => observed.includes("notification"));
+    expect(observed).toContain(SessionEventType.SubagentStopped);
+    expect(observed.indexOf(SessionEventType.SubagentStopped)).toBeLessThan(observed.indexOf("notification"));
   });
 
   it("auto-backgrounds with a referenced timeout and publishes the child result", async () => {

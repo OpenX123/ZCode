@@ -21,6 +21,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { joinFilePath, isAbsoluteFilePath } from "@/lib/path.js";
 import {
   getDiffCacheKey,
+  getGitPaneChangeSource,
   getErrorMessage,
   getGitPaneDiffFindContent,
   getSourceMessageId,
@@ -167,20 +168,27 @@ export function GitPane({
     diffGenerationRef.current += 1;
     pendingDiffKeysRef.current.clear();
     setDiffStateByKey({});
-  }, [gitState.revision, workspacePath]);
+  }, [
+    gitState.revision,
+    gitState.workspaceKey,
+    gitService,
+    workspacePath,
+    workspaceRemoteSessionId,
+  ]);
 
   useEffect(() => {
     if (!expandedPath) {
       return;
     }
 
-    if (!currentChanges.some((change) => change.path === expandedPath)) {
+    if (!currentChanges.some((change) => `${change.section}:${change.path}` === expandedPath)) {
       setExpandedPath(null);
     }
   }, [currentChanges, expandedPath]);
 
   const loadDiffForChange = useCallback(
     (change: GitPaneFileChange, sourceId: GitChangeSourceId) => {
+      sourceId = getGitPaneChangeSource(sourceId, change.section);
       if (sourceId === "last-turn" || change.diff) {
         return;
       }
@@ -204,7 +212,7 @@ export function GitPane({
         .getDiff({
           workspacePath,
           path: change.path,
-          sourceId,
+          sourceId: getGitPaneChangeSource(sourceId, change.section),
         })
         .then((diff) => {
           if (diffGenerationRef.current !== generation) {
@@ -260,7 +268,7 @@ export function GitPane({
           }));
         })
         .finally(() => {
-          pendingDiffKeysRef.current.delete(cacheKey);
+          if (diffGenerationRef.current === generation) pendingDiffKeysRef.current.delete(cacheKey);
         });
     },
     [diffStateByKey, gitService, workspacePath],
@@ -271,7 +279,9 @@ export function GitPane({
       return;
     }
 
-    const expandedChange = currentChanges.find((change) => change.path === expandedPath);
+    const expandedChange = currentChanges.find(
+      (change) => `${change.section}:${change.path}` === expandedPath,
+    );
     if (!expandedChange) {
       return;
     }
@@ -284,10 +294,12 @@ export function GitPane({
       currentChanges.map((change) => {
         const diffState =
           change.diff ??
-          diffStateByKey[getDiffCacheKey(currentDataset.id, change.path)]?.diff ??
+          diffStateByKey[
+            getDiffCacheKey(getGitPaneChangeSource(currentDataset.id, change.section), change.path)
+          ]?.diff ??
           null;
         return {
-          path: change.path,
+          path: `${change.section}:${change.path}`,
           content: getGitPaneDiffFindContent(diffState),
         };
       }),
@@ -303,7 +315,9 @@ export function GitPane({
     count: currentChanges.length,
     getItemKey: (index) => {
       const change = currentChanges[index];
-      return change ? `${currentDataset.id}:${change.path}` : `${currentDataset.id}:${index}`;
+      return change
+        ? `${currentDataset.id}:${change.section}:${change.path}`
+        : `${currentDataset.id}:${index}`;
     },
     getScrollElement: () => changeListScrollRef.current,
     estimateSize: () => GIT_PANE_CHANGE_ROW_ESTIMATE_PX,
@@ -340,7 +354,7 @@ export function GitPane({
     }
 
     const activeChange = currentChanges.find(
-      (change) => change.path === activeFileChangeFindMatch.path,
+      (change) => `${change.section}:${change.path}` === activeFileChangeFindMatch.path,
     );
     if (!activeChange) {
       return;
@@ -367,7 +381,7 @@ export function GitPane({
     }
 
     const activeMatchIndex = currentChanges.findIndex(
-      (change) => change.path === activeFileChangeFindMatch.path,
+      (change) => `${change.section}:${change.path}` === activeFileChangeFindMatch.path,
     );
     if (activeMatchIndex < 0) {
       return;
@@ -391,7 +405,7 @@ export function GitPane({
     logger.info(
       `[GitPane] 切换文件展开 workspace=${workspacePath} source=${currentSourceOption.id} path=${change.path} expanded=${nextOpen}`,
     );
-    setExpandedPath(nextOpen ? change.path : null);
+    setExpandedPath(nextOpen ? `${change.section}:${change.path}` : null);
     if (nextOpen) {
       loadDiffForChange(change, currentDataset.id);
     }
@@ -477,6 +491,11 @@ export function GitPane({
         </div>
       </div>
 
+      {currentDataset.id === "worktree" ? (
+        <p className="px-3 pb-2 text-ui-sm text-foreground-subtle">
+          {intl.formatMessage({ id: "git.source.worktreeDescription" })}
+        </p>
+      ) : null}
       <div className="min-h-0 flex-1">
         {currentChanges.length > 0 ? (
           <div ref={changeListScrollRef} className="h-full min-h-0 w-full overflow-auto">
@@ -490,8 +509,11 @@ export function GitPane({
                   return null;
                 }
 
-                const isExpanded = expandedPath === change.path;
-                const diffCacheKey = getDiffCacheKey(currentDataset.id, change.path);
+                const isExpanded = expandedPath === `${change.section}:${change.path}`;
+                const diffCacheKey = getDiffCacheKey(
+                  getGitPaneChangeSource(currentDataset.id, change.section),
+                  change.path,
+                );
                 const cachedDiffState = diffStateByKey[diffCacheKey];
                 const diffState = change.diff ?? cachedDiffState?.diff ?? null;
                 const isDiffLoading =
@@ -508,6 +530,40 @@ export function GitPane({
                     // 改用 top 偏移保留虚拟滚动布局，同时让 sticky 继续以滚动容器为参照。
                     style={{ top: `${virtualRow.start}px` }}
                   >
+                    {currentDataset.id === "worktree" &&
+                    (virtualRow.index === 0 ||
+                      currentChanges[virtualRow.index - 1]?.section !== change.section) ? (
+                      <div
+                        className="px-3 py-2 text-ui-sm font-medium text-foreground-subtle"
+                        data-git-change-section={change.section}
+                      >
+                        {intl.formatMessage({
+                          id: getSourceMessageId(
+                            getGitPaneChangeSource(currentDataset.id, change.section),
+                          ),
+                        })}
+                        {" · "}
+                        {intl.formatMessage(
+                          { id: "git.source.sectionSummary" },
+                          {
+                            count: String(
+                              currentChanges.filter((entry) => entry.section === change.section)
+                                .length,
+                            ),
+                            added: String(
+                              currentChanges
+                                .filter((entry) => entry.section === change.section)
+                                .reduce((sum, entry) => sum + (entry.added ?? 0), 0),
+                            ),
+                            removed: String(
+                              currentChanges
+                                .filter((entry) => entry.section === change.section)
+                                .reduce((sum, entry) => sum + (entry.removed ?? 0), 0),
+                            ),
+                          },
+                        )}
+                      </div>
+                    ) : null}
                     <GitPaneChangeCard
                       change={change}
                       contextMenuLabels={contextMenuLabels}

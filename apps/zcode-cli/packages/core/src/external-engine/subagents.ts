@@ -244,6 +244,7 @@ export function bindExternalSubagentTurn(
     if (entry.cancellable)
       await emitOn(host, SessionEventType.BackgroundTaskStarted, {
         taskId: entry.childSessionId,
+        toolCallId: callID,
         toolName: AGENT_TOOL_NAME,
         taskKind: "subagent",
         description: entry.name,
@@ -332,6 +333,7 @@ export function bindExternalSubagentTurn(
     if (entry.cancellable)
       await emitOn(run.host, SessionEventType.BackgroundTaskCompleted, {
         taskId: entry.childSessionId,
+        toolCallId: run.hostCallId,
         toolName: AGENT_TOOL_NAME,
         taskKind: "subagent",
         status: end,

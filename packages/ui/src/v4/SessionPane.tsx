@@ -149,7 +149,11 @@ import {
 } from "@/v4/conversationLayout.js";
 import { buildConversationStatusPanelModel } from "@/v4/conversationStatusPanelModel.js";
 import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversationStatusPanelModel.js";
-import { buildSubagentAvatarIndex, useSubagentWorkLiveIndex } from "@/subagent-display/index.js";
+import {
+  SubagentActivityButton,
+  buildSubagentAvatarIndex,
+  useSubagentWorkLiveIndex,
+} from "@/subagent-display/index.js";
 import {
   buildWorkflowRunByRunId,
   buildWorkflowRunByToolCallId,
@@ -4120,6 +4124,19 @@ export function SessionPane({
         engineSwitchRow={externalEngine ? undefined : engineSwitchRow}
         engineControls={leadingActions}
         engineModelControls={modelControls}
+        subagentActivity={
+          sessionId && onOpenSubagentDirectory && !compactForRemoteControl ? (
+            <SubagentActivityButton
+              subagents={subagents}
+              onOpen={() =>
+                handleOpenSubagentDirectory({
+                  rootSessionId: rootSessionId ?? sessionId,
+                  parentSessionId: sessionId,
+                })
+              }
+            />
+          ) : undefined
+        }
         engineNotReadyContent={
           engineNotReady ? (
             <div

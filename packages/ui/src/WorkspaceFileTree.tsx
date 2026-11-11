@@ -57,14 +57,14 @@ export function FileManagerPane({
   const setNavigationPreferenceOpen = useZCodeStore((state) => state.setFileManagerNavigationOpen);
   const [compactNavigationOpenOverride, setCompactNavigationOpenOverride] = useState<
     boolean | null
-  >(mobileOverlay ? !source : null);
+  >(source ? false : null);
   const compactLayout = mobileOverlay || isNarrow;
+  // 直接打开带 source 的新标签也要优先正文；窄桌面栏曾默认目录独占，把预览压到零宽。
+
   // Bug 原因：显隐原本由每个 FileManagerPane 的 useState 持有，新文件 Tab 或 App 重启会再次默认展开。
   // workspace store 现在独占用户偏好；紧凑布局选中文件后的自动收起只保留在当前面板。
   const navigationOpen = compactLayout
-    ? (compactNavigationOpenOverride ??
-      storedNavigationPreferenceOpen ??
-      (!mobileOverlay || !source))
+    ? (compactNavigationOpenOverride ?? storedNavigationPreferenceOpen ?? !source)
     : (storedNavigationPreferenceOpen ?? true);
   const canNavigate = Boolean(target.workspacePath && (!source || source.path));
   const showNavigation = canNavigate && navigationOpen;

@@ -539,6 +539,8 @@ export class ProductProjection {
   private openForegroundToolCallIds = new Set<string>();
   private fileToolInputPreviewByCallId = new Map<string, FileToolInputPreviewState>();
   private subagentRowIdByAgentId = new Map<string, number>();
+  // 行锚点保留首次 Agent call；执行身份单独由 Spawn 重放派生，防止旧 Stop 覆盖 resume。
+  private subagentRunCallByRowId = new Map<number, string>();
   private hookRowIdByInvocationId = new Map<string, number>();
   // resume SessionStart 没有 turnId；先保留在 CLI projection，下一条真实 user-intent
   // TurnStarted 到达后再分配 rowId/turnId。不得构造 session-hooks:* synthetic turn。
@@ -1265,6 +1267,7 @@ export class ProductProjection {
       ]),
     );
     clone.subagentRowIdByAgentId = new Map(this.subagentRowIdByAgentId);
+    clone.subagentRunCallByRowId = new Map(this.subagentRunCallByRowId);
     clone.hookRowIdByInvocationId = new Map(this.hookRowIdByInvocationId);
     clone.pendingSessionHookInvocations = new Map(
       [...this.pendingSessionHookInvocations].map(([invocationId, pending]) => [
@@ -1331,6 +1334,7 @@ export class ProductProjection {
     this.openForegroundToolCallIds = candidate.openForegroundToolCallIds;
     this.fileToolInputPreviewByCallId = candidate.fileToolInputPreviewByCallId;
     this.subagentRowIdByAgentId = candidate.subagentRowIdByAgentId;
+    this.subagentRunCallByRowId = candidate.subagentRunCallByRowId;
     this.hookRowIdByInvocationId = candidate.hookRowIdByInvocationId;
     this.pendingSessionHookInvocations = candidate.pendingSessionHookInvocations;
     this.rewoundHookInvocationIds = candidate.rewoundHookInvocationIds;
@@ -3237,6 +3241,7 @@ export class ProductProjection {
       // materialization 枚举。仅在 row.removed 已应用后按权威 snapshot 清理一次，
       // 避免长会话随已删除历史持续增长；普通事件不会扫描该索引。
       this.subagentRowIdByAgentId.delete(agentId);
+      this.subagentRunCallByRowId.delete(rowId);
     }
   }
 
@@ -4732,6 +4737,8 @@ export class ProductProjection {
     if (existing) this.subagentRowIdByAgentId.set(agentId, existing.rowId);
     const childSessionId = this.stringPayload(payload, "childSessionId");
     const parentToolCallId = this.stringPayload(payload, "parentToolCallId");
+    const previousRunCall = existing && this.subagentRunCallByRowId.get(existing.rowId);
+    if (existing && parentToolCallId) this.subagentRunCallByRowId.set(existing.rowId, parentToolCallId);
     const resumedBackgroundWork = this.resumedSubagentBackgroundWorkDelta(
       event,
       payload,
@@ -4741,7 +4748,7 @@ export class ProductProjection {
     if (
       existing?.status === "running" &&
       (!childSessionId || childSessionId === existing.childSessionId) &&
-      (!parentToolCallId || parentToolCallId === existing.parentToolCallId) &&
+      (!parentToolCallId || parentToolCallId === (previousRunCall ?? existing.parentToolCallId)) &&
       (payload.background !== true || existing.backgrounded === true)
     ) {
       return resumedBackgroundWork ? [resumedBackgroundWork] : [];
@@ -4793,6 +4800,7 @@ export class ProductProjection {
       startedAt: this.ms(event),
     };
     this.subagentRowIdByAgentId.set(agentId, row.rowId);
+    if (parentToolCallId) this.subagentRunCallByRowId.set(row.rowId, parentToolCallId);
     return [{ op: "row.appended", row }, ...(resumedBackgroundWork ? [resumedBackgroundWork] : [])];
   }
 
@@ -4857,6 +4865,10 @@ export class ProductProjection {
     const agentId = this.subagentAgentId(payload, event);
     const existing = this.findSubagentLifecycleRow(agentId, payload, event);
     const parentToolCallId = this.stringPayload(payload, "parentToolCallId");
+    const currentCall = existing && this.subagentRunCallByRowId.get(existing.rowId);
+    if (currentCall && parentToolCallId && currentCall !== parentToolCallId) return [];
+    const childSessionId = this.stringPayload(payload, "childSessionId");
+    if (existing?.childSessionId && childSessionId && existing.childSessionId !== childSessionId) return [];
     const status = this.mapSubagentStatus(this.stringPayload(payload, "status"));
     const totalToolUseCount = payload.totalToolUseCount;
     // 终态以运行时汇总的工具调用数为准（镜像事件不落库，冷启动后实时计数可能不全）。
@@ -4915,6 +4927,7 @@ export class ProductProjection {
   private onBackgroundTaskLifecycle(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as {
       taskId?: string;
+      toolCallId?: string;
       toolName?: string;
       taskKind?: string;
       command?: string;
@@ -4926,6 +4939,11 @@ export class ProductProjection {
     };
     const workId = payload.taskId;
     if (!workId) return [];
+    const subagentRow = this.findSubagentRow(workId) ?? (payload.childSessionId
+      ? this.snapshot.rows.window.find((row): row is SubagentRow => row.kind === "subagent" && row.childSessionId === payload.childSessionId)
+      : undefined);
+    const currentCall = subagentRow && this.subagentRunCallByRowId.get(subagentRow.rowId);
+    if (currentCall && payload.toolCallId && currentCall !== payload.toolCallId) return [];
     const prev = this.snapshot.backgroundWorks;
     const existing = prev.find((work) => work.workId === workId);
     const legacyKind = resolveZCodeBackgroundTaskControlKind(payload);

@@ -142,7 +142,16 @@ describe("Subagent 工作卡 manual review", () => {
       // 修复原因：timeoutMsg 在 waitUntil 调用时就已求值，旧写法永远报告 null；超时后用最新状态报错。
       throw new Error(`SAT31 没有出现运行中的工作卡：${JSON.stringify(state)}`, { cause: error });
     }
-    expect((await readWorkCardState()).text).toContain("Explore");
+    expect((await readWorkCardState()).text).toContain("E2E work card child");
+    const activity = $('[data-testid="subagent-activity-trigger"]');
+    await activity.waitForDisplayed();
+    expect(await activity.getAttribute("aria-label")).toContain("运行中");
+    const toggle = $('[data-testid^="v4-subagent-work-card-toggle-"]');
+    await toggle.click();
+    expect(await toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(await toggle.getText()).toContain("运行中");
+    await activity.waitForDisplayed();
+    await toggle.click();
     // MA15：父轮结束后「已工作 N 秒」收起其它工作项，运行中的工作卡仍在折叠摘要之下可见。
     await browser.waitUntil(async () => (await readHistoryOpen()) === "false", {
       timeout: 30000,
@@ -216,5 +225,8 @@ describe("Subagent 工作卡 manual review", () => {
     const ended = await readWorkCardState();
     expect(ended.stopAll).toBe(0);
     expect(ended.openActions).toBe(0);
+    await activity.waitForDisplayed();
+    expect(await activity.getAttribute("aria-label")).toContain("已结束");
+    expect(await activity.$(".animate-spin").isExisting()).toBe(false);
   });
 });

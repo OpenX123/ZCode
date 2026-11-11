@@ -93,3 +93,9 @@ export interface AgentSpawnGroupRenderItem {
 export type ConversationAssistantWorkDisplayItem =
   | ConversationAssistantWorkRenderItem
   | AgentSpawnGroupRenderItem;
+
+/** 常驻入口只消费父会话权威投影；打开仍由 SessionPane 提供现有目录动作。 */
+export interface SubagentActivityButtonProps {
+  subagents: import("@zcode/shared/zcode-protocol-v4").SubagentProjectionState;
+  onOpen: () => void;
+}

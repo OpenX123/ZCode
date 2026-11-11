@@ -223,6 +223,38 @@ describe("W8 subagent work card projection fields", () => {
     expect(subagentRow(projection).toolCallCount).toBe(1);
   });
 
+
+  it("旧执行迟到的停止事件不能关闭同一子任务的新执行", () => {
+    const log = new EventLog();
+    startParentAgent(log);
+    const projection = project(log);
+    const stop = (call: string) => log.push(SessionEventType.SubagentStopped, {
+      agentId: "agent-1", childSessionId: "child-1", parentToolCallId: call, status: "completed",
+    }, { turnId: TURN });
+    projection.applyEvent(stop(PARENT_CALL));
+    projection.applyEvent(log.push(SessionEventType.SubagentSpawned, {
+      agentId: "agent-1", childSessionId: "child-1", parentToolCallId: "call-resume", resumed: true, status: "running",
+    }, { turnId: TURN }));
+    projection.applyEventAtomically(stop(PARENT_CALL), () => true);
+    expect(subagentRow(projection).status).toBe("running");
+    expect(subagentRow(projection)).not.toHaveProperty("endedAt");
+    projection.applyEventAtomically(stop("call-resume"), () => true);
+    expect(subagentRow(projection).status).toBe("success");
+    expect(subagentRow(project(log)).status).toBe("success");
+  });
+
+
+  it.each(["agent-1", "child-1"])("旧后台终态不能关闭新执行的可停工作：%s", (workId) => {
+    const log = new EventLog(); startParentAgent(log);
+    const projection = project(log);
+    projection.applyEvent(log.push(SessionEventType.SubagentSpawned, {
+      agentId: "agent-1", childSessionId: "child-1", parentToolCallId: "call-resume", resumed: true, background: true, status: "running",
+    }, { turnId: TURN }));
+    projection.applyEvent(log.push(SessionEventType.BackgroundTaskStarted, { taskId: workId, toolCallId: "call-resume", childSessionId: "child-1", taskKind: "subagent", status: "running", cancellable: true }, { turnId: TURN }));
+    projection.applyEventAtomically(log.push(SessionEventType.BackgroundTaskCompleted, { taskId: workId, toolCallId: PARENT_CALL, childSessionId: "child-1", taskKind: "subagent", status: "completed", cancellable: false }, { turnId: TURN }), () => true);
+    expect(projection.getSnapshot().backgroundWorks.find((work) => work.workId === workId)).toMatchObject({ status: "running", cancellable: true });
+  });
+
   it("ignores mirrored tools for unknown subagents", () => {
     const log = new EventLog();
     startParentAgent(log);

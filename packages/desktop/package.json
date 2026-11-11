@@ -1,7 +1,7 @@
 {
   "name": "@zcode/desktop",
   "private": true,
-  "description": "ZCode Desktop App",
+  "description": "YCode Desktop App",
   "author": "ZCode",
   "type": "module",
   "main": "out/main/index.js",
@@ -113,5 +113,5 @@
     "wdio-electron-service": "^9.2.1",
     "webdriverio": "^9.27.0"
   },
-  "productName": "ZCode"
+  "productName": "YCode"
 }

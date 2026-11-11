@@ -553,6 +553,28 @@ describeIfGit("gitService", () => {
     );
   });
 
+  it("同文件部分暂存与工作树变更分别符合Git numstat来源", async () => {
+    const { repoPath, workspacePath } = await createRepo();
+    const service = createGitService();
+    const path = join(workspacePath, "tracked.txt");
+    writeFileSync(path, "line 1 staged\nline 2\n");
+    runGit(repoPath, ["add", "packages/app/tracked.txt"]);
+    writeFileSync(path, "line 1 staged\nline 2 worktree\nline 3\n");
+    const staged = await service.getChanges({ workspacePath, sourceId: "staged" });
+    const unstaged = await service.getChanges({ workspacePath, sourceId: "unstaged" });
+    const oracle = (args: string[]) =>
+      runGit(repoPath, ["diff", ...args, "--numstat", "--", "packages/app/tracked.txt"])
+        .split(/\s+/)
+        .slice(0, 2)
+        .map(Number);
+    const index = staged.find((item) => item.workspaceRelativePath === "tracked.txt")!;
+    const working = unstaged.find((item) => item.workspaceRelativePath === "tracked.txt")!;
+    expect([index.added, index.removed]).toEqual(oracle(["--cached"]));
+    expect([working.added, working.removed]).toEqual(oracle([]));
+    expect(index.section).toBe("staged");
+    expect(working.section).toBe("unstaged");
+  });
+
   it("filters changes to the current workspace scope and exposes summary plus identity", async () => {
     const { repoPath, workspacePath } = await createRepo();
     const service = createGitService();

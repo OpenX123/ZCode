@@ -1849,3 +1849,7 @@ MCP app-only report_view 增加可选 viewId，release_view 释放指定窗口�
 ## 外部引擎原生子智能体投影（2026-11，1.1.0）
 
 ACP 原生子智能体帧 → adapter 归一（AIR 草案 / RFD）→ 父 Runtime 唯一 owner → 子会话记录与子正文（既有 message/part）→ 父会话合成 `Agent` 工具行（metadata/output 携带 childSessionId、agentId、agentType）+ SubagentSpawned/Stopped → 既有 V4 subagent row、`snapshot.subagents`、冷恢复 `subagentInfoFromToolPart` 与 `session/subagents` 查询。不新增 tool、schema 或 V4 字段；Agent 行不进模型上下文（外部引擎不经 YCode 模型）。子会话权限沿既有 PermissionBroker（origin=subagent）与原生 optionId 回执；停止沿 BackgroundTask* 与 cancelBackgroundWork。旧 adapter 的 Codex camelCase `spawnAgent` 工具行在 UI 工具身份层识别为 Agent 行。细则见根 `docs/desktop/external-agent-engines-spec.md`「外部引擎原生子智能体」。
+
+## 2026-11-11 子任务完成与父通知顺序
+
+子执行完成 → 任务 registry 终态 → 父事件存储与 V4 终态投影 → 既有通知队列 admission → 父模型消费结果。完成/失败事件发布异常时仍尝试交付结果并保留原错误诊断；停止的既有通知准入/回滚规则不变。UI 不能以主轮结束或后台工具 ACK 假定子任务结束。

@@ -505,3 +505,7 @@ Child finish    -> no parent MCP cleanup
   需要覆盖 child runner/model promise 永不 settle 时，外层 `Agent` 仍能停止等待，静默超时
   需要覆盖 child 没有任何 session event 且 promise 永不 settle 的场景。
 - 所有 spawn、tool call、hook、MCP、task state、notification、resume 事件都携带同一个 `traceId`，并记录 parent session/turn/toolCall/span 关系。
+
+## 2026-11-11 完成投影先于父通知
+
+后台子任务完成/失败时先发布 BackgroundTaskCompleted 与 SubagentStopped，再经既有 CommandInbox 交付结果通知。避免父会话从通知启动下一次子执行后，旧终态覆盖新运行。事件持久化异常仍在 finally 尝试交付结果，不能因为展示投影失败丢失已完成结果；正常路径必须保证终态已可观察。停止保留现有 notification admission/rollback 合同，不改成第二条通知路径。

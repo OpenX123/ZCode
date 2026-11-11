@@ -29,7 +29,7 @@ export function ChatLoading({ loading, size = "default", className, ...props }: 
       className={cn("flex items-center", className)}
     >
       {/* SVG 旋转会持续触发主线程样式更新；旋转现有 HTML 容器，让动画走合成。 */}
-      <div className="flex size-4 animate-spin items-center justify-center">
+      <div className="flex size-4 animate-spin motion-reduce:animate-none items-center justify-center">
         <LoaderIcon aria-hidden="true" className={cn("text-foreground-subtle", sizeClasses)} />
       </div>
     </div>

@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BotIcon, ChevronRightIcon, CircleCheckIcon, SquareIcon } from "lucide-react";
+import {
+  BotIcon,
+  ChevronRightIcon,
+  CircleCheckIcon,
+  CircleXIcon,
+  ClockIcon,
+  LoaderIcon,
+  SquareIcon,
+} from "lucide-react";
 import {
   TID_V4_SUBAGENT_OPEN_SIDE_PANE,
   TID_V4_SUBAGENT_WORK_CARD,
@@ -248,12 +256,14 @@ export function SubagentWorkCard({
   }, [context.subagentAvatarIndex, context.subagentWorkLiveIndex, intl, item.members]);
 
   const firstToolCallId = model.members[0]?.toolCallId ?? "";
-  const openStateKey = `${item.turnId}\0${firstToolCallId}`;
-  const [open, setOpenState] = useState(() => workCardOpenState.get(openStateKey) ?? false);
+  // 运行阶段的手动展开不能带到结束阶段，否则虚拟列表重挂后不会默认折叠。
+  const openStateKey = `${item.turnId}\0${firstToolCallId}\0${model.active ? "active" : "ended"}`;
+  const [, updateOpenState] = useState(0);
+  const open = workCardOpenState.get(openStateKey) ?? null;
   const setOpen = useCallback(
     (next: boolean) => {
       workCardOpenState.set(openStateKey, next);
-      setOpenState(next);
+      updateOpenState((version) => version + 1);
     },
     [openStateKey],
   );
@@ -285,12 +295,12 @@ export function SubagentWorkCard({
   }, [cancel, model.stopAllWorkIds]);
 
   const total = model.members.length;
-  const collapsed = !model.active && !open;
+  const collapsed = !(open ?? model.active);
   const elapsedMs = elapsedOf(model.startedAt, model.endedAt, model.active, now);
   const elapsed = elapsedMs === undefined ? null : formatSubagentDuration(elapsedMs, formatMessage);
   const canOpenAny = Boolean(context.sessionId && context.onOpenSubagentSession);
   const toggleLabel = formatMessage({
-    id: open ? "subagentDisplay.workCard.collapse" : "subagentDisplay.workCard.expand",
+    id: collapsed ? "subagentDisplay.workCard.expand" : "subagentDisplay.workCard.collapse",
   });
   const toggleTestId = testId(TID_V4_SUBAGENT_WORK_CARD_TOGGLE, String(item.rowId));
 
@@ -302,7 +312,7 @@ export function SubagentWorkCard({
         { count: String(model.counts[status]) },
       ),
     );
-  const summaryText = [
+  const endedSummaryText = [
     formatMessage(
       { id: pluralId("subagentDisplay.workCard.summary", total) },
       {
@@ -312,6 +322,23 @@ export function SubagentWorkCard({
     ),
     ...endedCounts,
   ].join(" · ");
+
+  const activeStates = (
+    ["pending", "running", "waiting", "blocked", "done", "failed", "cancelled"] as const
+  ).flatMap((status) => {
+    const count = model.members.filter((member) => member.status === status).length;
+    return count > 0
+      ? [`${formatMessage({ id: `subagentDisplay.status.${status}` })} ${count}`]
+      : [];
+  });
+  const summaryText = model.active
+    ? [formatMessage({ id: "subagentDisplay.workCard.title" }), ...activeStates, elapsed]
+        .filter(Boolean)
+        .join(" · ")
+    : endedSummaryText;
+  const hasRunning = model.members.some(
+    (member) => member.status === "running" || member.status === "pending",
+  );
 
   return (
     <div
@@ -331,7 +358,22 @@ export function SubagentWorkCard({
           onClick={() => setOpen(true)}
           className="flex min-w-0 items-center gap-2 rounded-xl px-3 py-2 text-left text-foreground-subtle transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
         >
-          <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
+          {model.active ? (
+            hasRunning ? (
+              <LoaderIcon
+                aria-hidden
+                className="size-4 shrink-0 animate-spin motion-reduce:animate-none"
+              />
+            ) : (
+              <ClockIcon aria-hidden className="size-4 shrink-0" />
+            )
+          ) : model.counts.failed > 0 ? (
+            <CircleXIcon aria-hidden className="size-4 shrink-0 text-destructive" />
+          ) : model.counts.cancelled > 0 ? (
+            <SquareIcon aria-hidden className="size-4 shrink-0" />
+          ) : (
+            <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
+          )}
           <span className="min-w-0 flex-1 truncate">{summaryText}</span>
           <ChevronRightIcon aria-hidden className="size-4 shrink-0" />
         </button>
@@ -370,7 +412,7 @@ export function SubagentWorkCard({
                 onClick={stopAll}
               />
             ) : null}
-            {!model.active ? (
+            {
               <button
                 type="button"
                 data-testid={toggleTestId}
@@ -382,7 +424,7 @@ export function SubagentWorkCard({
               >
                 <ChevronRightIcon aria-hidden className="size-4 rotate-90" />
               </button>
-            ) : null}
+            }
           </div>
           <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border px-2.5 py-1.5">
             <BotIcon aria-hidden className="size-4 shrink-0 text-foreground-subtle" />
