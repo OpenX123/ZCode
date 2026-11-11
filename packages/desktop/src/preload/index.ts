@@ -582,6 +582,18 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.DesktopZoomLevelChanged, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.DesktopZoomLevelChanged, handler);
   },
+  /** 手机远控：设置页读取与修改 Main 网关状态 */
+  getMobileRemoteStatus: () => ipcRenderer.invoke(PlatformChannels.GetMobileRemoteStatus),
+  setMobileRemoteConfig: (input: unknown) =>
+    ipcRenderer.invoke(PlatformChannels.SetMobileRemoteConfig, input),
+  createMobileRemotePairing: () => ipcRenderer.invoke(PlatformChannels.CreateMobileRemotePairing),
+  revokeMobileRemoteDevice: (deviceId: string) =>
+    ipcRenderer.invoke(PlatformChannels.RevokeMobileRemoteDevice, deviceId),
+  onMobileRemoteStatusChanged: (callback: (status: unknown) => void): (() => void) => {
+    const handler = (_event: unknown, status: unknown) => callback(status);
+    ipcRenderer.on(PlatformChannels.MobileRemoteStatusChanged, handler);
+    return () => ipcRenderer.removeListener(PlatformChannels.MobileRemoteStatusChanged, handler);
+  },
   /** 注册用户点击系统通知后跳转到对应任务的回调，返回 disposer */
   onTaskNotificationClick: (callback: (taskId: string) => void): (() => void) => {
     const handler = (_event: unknown, taskId: string) => callback(taskId);

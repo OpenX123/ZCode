@@ -1,0 +1,41 @@
+{
+  "name": "@zcode/relay",
+  "private": true,
+  "type": "module",
+  "description": "手机远控自托管中继：只转发端到端加密后的字节，并托管手机网页。",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsup",
+    "start": "node dist/main.js",
+    "lint": "oxlint src test"
+  },
+  "dependencies": {
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/ws": "^8.18.1",
+    "@zcode/shared": "workspace:*",
+    "tsup": "^8.4.0",
+    "typescript": "^6.0.2"
+  },
+  "tsup": {
+    "entry": {
+      "main": "src/main.ts"
+    },
+    "format": [
+      "esm"
+    ],
+    "platform": "node",
+    "target": "node22",
+    "noExternal": [
+      "ws"
+    ],
+    "clean": true,
+    "banner": {
+      "js": "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+    }
+  }
+}

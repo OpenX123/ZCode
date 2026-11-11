@@ -7,6 +7,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { pdfJsCMapsPlugin } from "../ui/vite/pdfJsCMapsPlugin.js";
 import { thirdPartyNoticesVitePlugin } from "../../scripts/third-party-notices.mjs";
 import { resolveRemoteFrontendVersion } from "./vite/remoteFrontendVersion.mjs";
+import { mobileAppPlugin } from "./vite/mobileAppPlugin.mjs";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");
 const { version, zcodeCompatibility } = JSON.parse(
@@ -26,7 +27,13 @@ export default defineConfig(({ mode }) => {
   const zcodeEnv = resolveZCodeEnv(env.ZCODE_ENV);
 
   return {
-    plugins: [pdfJsCMapsPlugin(), react(), tailwindcss(), thirdPartyNoticesVitePlugin()],
+    plugins: [
+      pdfJsCMapsPlugin(),
+      react(),
+      tailwindcss(),
+      thirdPartyNoticesVitePlugin(),
+      mobileAppPlugin(),
+    ],
     resolve: {
       alias: {
         // 修复 UI 组件库中的 @ 别名解析失败。

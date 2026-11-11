@@ -1001,6 +1001,23 @@ export interface IPlatformService {
   /** 注册当前桌面窗口页面缩放档位变化回调，返回 disposer */
   onDesktopZoomLevelChanged?(handler: (state: DesktopZoomState) => void): () => void;
 
+  /** 手机远控（仅桌面端）：读取状态 */
+  getMobileRemoteStatus?(): Promise<import("./mobile-remote/contract.js").MobileRemoteStatus>;
+  /** 手机远控：保存开关与中继配置，relayToken 省略表示保留原值 */
+  setMobileRemoteConfig?(
+    input: import("./mobile-remote/contract.js").MobileRemoteConfigInput,
+  ): Promise<import("./mobile-remote/contract.js").MobileRemoteStatus>;
+  /** 手机远控：生成一次性配对链接（作废上一张） */
+  createMobileRemotePairing?(): Promise<import("./mobile-remote/contract.js").MobileRemotePairingTicket>;
+  /** 手机远控：移除设备并断开其连接 */
+  revokeMobileRemoteDevice?(
+    deviceId: string,
+  ): Promise<import("./mobile-remote/contract.js").MobileRemoteStatus>;
+  /** 手机远控：订阅状态变化，返回 disposer */
+  onMobileRemoteStatusChanged?(
+    handler: (status: import("./mobile-remote/contract.js").MobileRemoteStatus) => void,
+  ): () => void;
+
   /** 注册用户点击系统通知后跳转到对应任务的回调，返回 disposer */
   onTaskNotificationClick(handler: (taskId: string) => void): () => void;
 

@@ -1,4 +1,5 @@
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
+import { getIsMobileCompactViewport } from "@/lib/mobileTextInput.js";
 import {
   openFileManagerSidePane,
   navigateFileManagerSidePane,
@@ -213,7 +214,8 @@ export function useAppPanels(options: {
   // 交互说明：侧栏显隐按钮放在 App 外层，而不是 Sidebar 内部。
   // 这样即使侧栏被隐藏，入口也仍然留在左上角，不会出现"收起后没有地方再展开"的问题；
   // 同时这里统一处理 macOS 红绿灯安全区，避免按钮和系统窗口控件重叠。
-  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  // 手机窄屏（≤767px）侧栏是覆盖式抽屉，首屏默认收起，让会话占满屏幕；该状态只在本 renderer 内存。
+  const [isSidebarVisible, setIsSidebarVisible] = useState(() => !getIsMobileCompactViewport());
   const [browserNavigationRequest, setBrowserNavigationRequest] =
     useState<BrowserNavigationRequest | null>(null);
   const [allRecentClosedSidePaneTabs, setAllRecentClosedSidePaneTabs] = useState<

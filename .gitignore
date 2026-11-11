@@ -4,6 +4,8 @@ dist/
 dist-release/
 # Bugfix: macOS CI 按架构隔离 electron-builder 输出目录，这些仍是构建产物。
 packages/desktop/dist-*/
+# 手机远控网页构建产物（build:mobile），由中继托管，不入库。
+packages/web/dist-mobile/
 out/
 prebuilds/
 bundled-resources/

@@ -61,6 +61,7 @@ import { HooksSection } from "@/settings/HooksSection.js";
 import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSection.js";
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
 import { BrowserSettingsSection } from "@/settings/BrowserSettingsSection.js";
+import { MobileRemoteSection } from "@/mobile-remote-settings/index.js";
 import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
 import { ShortcutSettingsSection } from "@/settings/ShortcutSettingsSection.js";
 import { MigrationSection } from "@/settings/MigrationSection.js";
@@ -1381,6 +1382,8 @@ export function SettingsPage({
                                 handleEmbeddedBrowserAllowInsecureCertificatesChange
                               }
                             />
+                          ) : activeSection === "mobileRemote" ? (
+                            <MobileRemoteSection />
                           ) : activeSection === "computerUse" ? (
                             <ComputerUseSection
                               isDesktop={Boolean(isDesktop)}

@@ -21,6 +21,7 @@ import {
   Keyboard,
   FileSearch,
   Cpu,
+  Smartphone,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -153,6 +154,13 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     titleId: "settings.computerUse.title",
     groupId: "basics",
   },
+  // 手机远控只在桌面端可用：网关在 Electron Main，Web 端没有宿主进程。
+  {
+    id: "mobileRemote",
+    icon: Smartphone,
+    titleId: "settings.mobileRemote.title",
+    groupId: "basics",
+  },
   // 键盘快捷键紧跟「电脑控制」：同属本机操控/效率配置，收纳在基础设置尾部。
   {
     id: "shortcuts",
@@ -190,7 +198,10 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
 // 兼容既有只读消费者：默认配置代表不带桌面平台能力的 Web 视图；
 // macOS/Windows/Linux 必须继续通过 createSettingsPageConfig 动态加入 Computer Use。
 export const SETTINGS_SECTIONS = BASE_SETTINGS_SECTIONS.filter(
-  (section) => section.id !== "computerUse" && isSettingsSectionEnabled(section.id),
+  (section) =>
+    section.id !== "computerUse" &&
+    section.id !== "mobileRemote" &&
+    isSettingsSectionEnabled(section.id),
 );
 
 export interface SettingsPageConfigOptions {
@@ -210,6 +221,7 @@ export function createSettingsPageConfig({
   const settingsSections = BASE_SETTINGS_SECTIONS.filter((section) => {
     if (section.id === "agentEngines" && !externalEnginesAvailable) return false;
     if (section.id === "computerUse" && !showComputerUse) return false;
+    if (section.id === "mobileRemote" && !showComputerUse) return false;
     return isSettingsSectionEnabled(section.id);
   });
   const settingsSectionGroups = BASE_SETTINGS_SECTION_GROUPS.map((group) => ({

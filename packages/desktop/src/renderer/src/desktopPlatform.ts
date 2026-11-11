@@ -132,6 +132,21 @@ export function createDesktopPlatform(options: {
       window.zcode.getDesktopZoomLevel?.() ?? Promise.resolve({ zoomLevel: 0 }),
     onDesktopZoomLevelChanged: (handler) =>
       window.zcode.onDesktopZoomLevelChanged?.(handler) ?? (() => {}),
+    getMobileRemoteStatus: window.zcode.getMobileRemoteStatus
+      ? () => window.zcode.getMobileRemoteStatus!()
+      : undefined,
+    setMobileRemoteConfig: window.zcode.setMobileRemoteConfig
+      ? (input) => window.zcode.setMobileRemoteConfig!(input)
+      : undefined,
+    createMobileRemotePairing: window.zcode.createMobileRemotePairing
+      ? () => window.zcode.createMobileRemotePairing!()
+      : undefined,
+    revokeMobileRemoteDevice: window.zcode.revokeMobileRemoteDevice
+      ? (deviceId) => window.zcode.revokeMobileRemoteDevice!(deviceId)
+      : undefined,
+    onMobileRemoteStatusChanged: window.zcode.onMobileRemoteStatusChanged
+      ? (handler) => window.zcode.onMobileRemoteStatusChanged!(handler)
+      : undefined,
     onTaskNotificationClick: (handler) => window.zcode.onTaskNotificationClick(handler),
     exportLogs: () => window.zcode.exportLogs(),
     // 复用既有 renderer → main 日志通道（zcode:log），生产包同样写入本机日志文件，不经网络。

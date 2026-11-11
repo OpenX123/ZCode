@@ -31,6 +31,7 @@
     "./gen-ui": "./src/gen-ui/index.ts",
     "./external-engine": "./src/external-engine/index.ts",
     "./session-navigation": "./src/session-navigation/index.ts",
+    "./mobile-remote": "./src/mobile-remote/index.ts",
     "./testing/fake-relay-v2": "./test/fixtures/fake-relay-v2.ts"
   },
   "scripts": {
@@ -38,6 +39,9 @@
     "lint:fix": "oxlint --fix"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.4.0",
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
     "@zcode/model-option-map": "workspace:*",
     "zod": "4.6.5"
   },

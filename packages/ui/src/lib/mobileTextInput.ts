@@ -36,7 +36,7 @@ function getIsMobileTextInputViewport(): boolean {
   return getMediaQueryMatches(MOBILE_TEXT_INPUT_QUERY);
 }
 
-function getIsMobileCompactViewport(): boolean {
+export function getIsMobileCompactViewport(): boolean {
   return getMediaQueryMatches(MOBILE_COMPACT_VIEWPORT_QUERY);
 }
 

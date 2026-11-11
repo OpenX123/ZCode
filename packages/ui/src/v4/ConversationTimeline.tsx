@@ -1994,6 +1994,7 @@ function ConversationTimelineImpl({
         )}
       >
         <div
+          data-v4-centered-draft={responsiveCenteredEmptyLayout || undefined}
           className={cn(
             // 固定高度断点会在窗口跨过临界值时让问候语与 composer 整组跳动。
             // 顶部留白按视口高度伸缩，输入框的位置不再受下方推荐列表高度影响；
@@ -2013,6 +2014,7 @@ function ConversationTimelineImpl({
         >
           {renderUnits.length === 0 && !headerSlot ? (
             <div
+              data-v4-draft-greeting={centeredEmptyLayout || undefined}
               className={cn(
                 centeredEmptyLayout
                   ? "flex w-full max-w-2xl shrink-0 items-center justify-center"
