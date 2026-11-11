@@ -8,6 +8,7 @@ import type {
   TraceContext,
 } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { readableTitleInput } from "../helpers/project.js";
 import {
   persistFallbackGoalSummaryTitle,
   persistGeneratedGoalSummaryTitle,
@@ -309,15 +310,18 @@ export async function persistGeneratedSessionTitle(
     return;
   }
 
+  // 外部引擎的 session_info_update 不经过标题 sidecar，必须在唯一落盘入口清理技能路径。
+  const title = readableTitleInput(input.title);
+  if (!title) return;
   const previousTitle = session.title;
   const updated = await this.sessionStore?.updateSession({
     expectedTitleSources: GENERATED_TITLE_EXPECTED_SOURCES,
     id: this.sessionId,
-    title: input.title,
+    title,
     ...(input.messageID ? { titleMessageID: input.messageID } : {}),
     titleSource: "generated",
   });
-  if (!updated || updated.title !== input.title || updated.titleSource !== "generated") {
+  if (!updated || updated.title !== title || updated.titleSource !== "generated") {
     this.logger?.debug("Session title generation skipped", {
       ...traceContextToLogContext(input.traceContext),
       event: "session_title_generation.skipped",
@@ -335,7 +339,7 @@ export async function persistGeneratedSessionTitle(
         ...(input.messageID ? { messageID: input.messageID } : {}),
         previousTitle,
         source: "generated",
-        title: input.title,
+        title,
       },
       input.traceContext,
     ),

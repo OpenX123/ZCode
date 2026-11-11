@@ -384,6 +384,20 @@ async function syncPersistedSessionTitleForResume(
       title = normalized;
     }
   }
+  if (source === "generated") {
+    // Codex 原生自动标题曾绕过清理；只修复自动来源，CAS 防止覆盖恢复期间的手动改名。
+    const normalized = readableTitleInput(title);
+    if (normalized && normalized !== title) {
+      const updated = await this.sessionStore?.updateSession({
+        id: this.sessionId,
+        title: normalized,
+        titleSource: "generated",
+        expectedTitleSources: ["generated"],
+      });
+      if (updated?.title !== normalized || updated.titleSource !== "generated") return;
+      title = normalized;
+    }
+  }
   if (hasRestoredTitleEvent(input.restoredEvents, title, source)) return;
 
   // fork child 创建时 title 已写进 sessionStore，但复制历史不会复制父会话的
@@ -407,11 +421,10 @@ function hasRestoredTitleEvent(
   title: string,
   source: SessionTitleSource,
 ): boolean {
-  return events.some((event) => {
-    if (event.type !== SessionEventType.SessionTitleUpdated) return false;
-    const payload = event.payload as { source?: unknown; title?: unknown };
-    return payload.title === title && payload.source === source;
-  });
+  // Host 投影消费最后一次标题事实；历史曾出现同名标题不代表当前镜像已经同步。
+  const event = events.findLast((item) => item.type === SessionEventType.SessionTitleUpdated);
+  const payload = event?.payload as { source?: unknown; title?: unknown } | undefined;
+  return payload?.title === title && payload?.source === source;
 }
 
 function extractPersistedEnvInfo(messages: MessageWithParts[]): EnvInfo | undefined {

@@ -4,6 +4,13 @@
 
 桌面和宽屏 Web 保持侧栏，将原本共用外框的会话与 Side Pane 拆成独立面板；窗口根背景、侧栏保持原语义。
 
+## 分栏布局持久化有效性（2026-11-12）
+
+- `ResizablePanelGroup` 是布局持久化的唯一接入点，继续复用 `useDefaultLayout` 的 key、恢复和防抖写入。
+- 隐藏标签页或首帧测量可能产生所有面板均为零的临时布局，不得保存为下一次打开的默认值。已有全零布局恢复时应忽略，交由分栏库按默认尺寸重新计算。
+- 可用布局中的尺寸必须有限、非负，且至少一个面板大于零。单个面板为零是合法的显式收起状态，必须保留，例如会话/终端的 `100/0`。
+- 文件预览验收需加载真实现场的 `preview: 0 / directory: 0` 旧布局，验证文件树与消息文件卡片打开后正文文本有可见矩形且没有被裁剪；缩小窗口自动收起侧栏后，显式展开再验证。
+
 Workspace layout 的平台圆角：Windows 为 `rounded-md`（默认 6px），macOS Sequoia 及更早版本为 6px，Tahoe 26+ 为 12px，未知 macOS 版本暂用 6px；Linux 和 Web 为 `xl`（12px）。Windows 设置页同步使用 6px。
 
 SPT-E2E-000 的圆角 token 验收区分 Side Pane 状态：展开时仅检查 Side Pane 外框的 `rounded-md` / `rounded-l-md`，会话外框通过 `--workspace-panel-radius` 保持独立面板圆角；收起后再检查会话外框的 chrome token。两种状态均检查实际计算圆角，避免把展开状态的动态变量误判为缺少 token。

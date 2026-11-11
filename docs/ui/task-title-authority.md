@@ -34,3 +34,10 @@ Task title can come from several places during a session lifecycle. Renderer cod
 ## 2026-11-11 Skill 标题精简
 
 首条输入标题和标题生成 sidecar 共用 Skill 引用清理：完整 Markdown Skill 链接只保留 `$skill`；同名重复引用只保留一次；能精确识别到 `SKILL.md` 的未闭合文件链接也可去掉路径，保留随后的中文需求。普通链接、代码片段及不能确定边界的残缺链接保持原文。先清理再做各自长度限制。原始消息、模型业务输入、Skill 加载与手动命名优先级不变。
+
+## 2026-11-12 外部引擎自动标题回写
+
+- Codex / Claude Code 的 `session_info_update` 和内置 sidecar 生成结果在 CLI 既有自动标题持久化入口统一清理 Skill 引用；不能仅清理首条输入或标题模型的请求素材。事件中的标题与实际落盘结果一致。
+- sidecar 在截断生成结果前清理引用，避免较长路径把后面的任务含义挤掉。外部引擎原始 prompt 和历史消息保持原文。
+- 恢复历史 `generated` 标题时，清理标题本身能够完整识别的 Skill 引用，通过 CLI 的标题事件同步 Host 镜像。`custom` 标题保持不变；已有 `first_input` 标题继续只修复能由原始首条输入证明的历史标题。
+- 回归覆盖两种外部引擎的标题事件、重复引用、长路径、恢复旧自动标题，以及自动回写和恢复期间对手动标题的保护。

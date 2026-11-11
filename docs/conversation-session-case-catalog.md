@@ -4878,4 +4878,8 @@ Task5 最终 run6 AX03/07 为 exit0、1/1通过，6张新图与4份矩形JSON确
 
 YD-PREVIEW-01 accepted：桌面窄栏打开 Markdown/Python 后正文面板必须有实际可见宽高；打开目录再选中文件后恢复正文。加载失败、空文件、超限由现有 PreviewPane focused tests 保持。APC05 的打开断言同时校验预览实际尺寸，避免隐藏 DOM 文本误判通过。
 
+2026-11-12 回归补充：正文已在 DOM 中但窗口空白仍判失败。对正文标记建立文本 Range，核对其矩形位于预览和窗口内，并以 `elementFromPoint` 确认正文没有被裁剪或遮挡；不能仅检查预览外壳尺寸和 `textContent`。
+
+复现种子采用真实现场的分栏缓存 `preview: 0 / directory: 0`，覆盖文件树打开 Markdown/Python、缩小窗口后重新展开侧栏，以及消息文件卡片打开新的预览标签。旧实现同场景两项均失败，修复后两项通过；仍保留 manual-review 候选状态，不自动晋升 CI。
+
 YD-SUBAGENT-01 accepted：运行中折叠保留各状态计数；滚动离开工作卡后输入工具栏仍有目录入口；全部结束后停止动画且保留历史入口。沿 SAT31/SAT32 manual-review 路径验收，不自动晋升 CI。

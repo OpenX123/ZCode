@@ -212,7 +212,8 @@ function cleanGeneratedTitle(raw: string): string | null {
   const parsed = parseTitleJson(withoutThinking);
   const candidate = parsed ?? firstNonEmptyLine(withoutThinking);
   if (!candidate) return null;
-  const cleaned = candidate
+  // 模型也可能照抄 Skill 链接；先清理再截断，避免长路径挤掉真正的任务含义。
+  const cleaned = readableTitleInput(candidate)
     .replace(/^#+\s*/, "")
     .replace(/^[\s"'`“”‘’]+|[\s"'`“”‘’]+$/g, "")
     .replace(/[.。!！?？:：,，;；]+$/g, "")

@@ -1115,6 +1115,45 @@ describe("AgentRuntime session persistence", () => {
     expect((await store.messages({ sessionID: sessionId }))[0]?.parts[0]).toMatchObject({ text: input });
   });
 
+  it.each(["generated", "custom", "generated-history"] as const)("恢复完整 Skill 标题时保护手动来源：%s", async (scenario) => {
+    const source = scenario === "custom" ? "custom" : "generated";
+    const sessionId = createSessionId(`native-skill-${source}`);
+    const store = createRecordingSessionStore();
+    const eventStore = createTestSessionEventStore();
+    const title = "[$ask-matt](/skills/ask-matt/SKILL.md) 排查预览空白";
+    await store.createSession({ id: sessionId, projectID: createProjectId("native-skill"), slug: "native-skill", directory: "/tmp/native-skill", title, titleSource: source, version: "test" });
+    if (scenario === "generated-history") {
+      for (const previousTitle of ["$ask-matt 排查预览空白", title]) {
+        await eventStore.append(createSessionEvent(SessionEventType.SessionTitleUpdated, sessionId, { title: previousTitle, source: "generated", previousTitle: "" }));
+      }
+    }
+    const runtime = createTestAgentRuntime(sessionId, { mode: "build", workingDirectory: "/tmp/native-skill" }, { sessionStore: store, eventStore });
+    await runtime.resumeFromStore();
+    const expectedTitle = source === "generated" ? "$ask-matt 排查预览空白" : title;
+    expect(await store.getSession(sessionId)).toMatchObject({ title: expectedTitle, titleSource: source });
+    expect((await eventStore.getEvents(sessionId)).filter((event) => event.type === SessionEventType.SessionTitleUpdated).at(-1)?.payload).toMatchObject({ title: expectedTitle, source });
+    await runtime.resumeFromStore();
+    expect((await eventStore.getEvents(sessionId)).filter((event) => event.type === SessionEventType.SessionTitleUpdated)).toHaveLength(scenario === "generated-history" ? 3 : 1);
+  });
+
+  it("恢复 Skill 自动标题时不会覆盖 CAS 之前的手动改名或发布过期事件", async () => {
+    const sessionId = createSessionId("native-skill-race");
+    const store = createRecordingSessionStore();
+    const eventStore = createTestSessionEventStore();
+    await store.createSession({ id: sessionId, projectID: createProjectId("native-skill"), slug: "native-skill", directory: "/tmp/native-skill", title: "[$ask-matt](/skills/ask-matt/SKILL.md) 排查预览空白", titleSource: "generated", version: "test" });
+    const updateSession = store.updateSession.bind(store);
+    vi.spyOn(store, "updateSession").mockImplementation(async (input) => {
+      if (input.expectedTitleSources?.includes("generated")) {
+        await updateSession({ id: sessionId, title: "用户的新标题", titleSource: "custom" });
+      }
+      return updateSession(input);
+    });
+    const runtime = createTestAgentRuntime(sessionId, { mode: "build", workingDirectory: "/tmp/native-skill" }, { sessionStore: store, eventStore });
+    await runtime.resumeFromStore();
+    expect(await store.getSession(sessionId)).toMatchObject({ title: "用户的新标题", titleSource: "custom" });
+    expect((await eventStore.getEvents(sessionId)).filter((event) => event.type === SessionEventType.SessionTitleUpdated)).toHaveLength(0);
+  });
+
   // Bugfix: fork child 的 title 已经写进 sessionStore，但 resume 事件流以前只发
   // SessionResumed，v4 live 投影没有看到 SessionTitleUpdated 就把列表标题降级成"新任务"。
   it("emits persisted generated title before SessionResumed when resuming a forked session", async () => {
@@ -3730,7 +3769,10 @@ describe("AgentRuntime session persistence", () => {
     expect(capturedTimeouts).toContain(60_000);
   });
 
-  it("parses generated session title from fenced json response", async () => {
+  it.each([
+    ['```json\n{"title":"验证移除transform后吸底逻辑"}\n```', "验证移除transform后吸底逻辑"],
+    [JSON.stringify({ title: `[$ask-matt](/skills/${"long-path/".repeat(20)}SKILL.md) 排查预览空白` }), "$ask-matt 排查预览空白"],
+  ])("parses generated session title and removes Skill paths before truncation: %s", async (response, expectedTitle) => {
     const sessionId = createSessionId("runtime-persistence-fenced-title-json");
     const store = createRecordingSessionStore();
     const defaultModel = createTestModelSelection("test-provider/default-model", {});
@@ -3751,7 +3793,7 @@ describe("AgentRuntime session persistence", () => {
             if (isTitleGenerationObservation(observation)) {
               return {
                 finishReason: "stop",
-                text: '```json\n{"title":"验证移除transform后吸底逻辑"}\n```',
+                text: response,
                 usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
               };
             }
@@ -3769,11 +3811,12 @@ describe("AgentRuntime session persistence", () => {
     await runtime.executeTurn("验证移除 transform 后吸底逻辑是否正常");
     await waitFor(async () => {
       const session = await store.getSession(sessionId);
-      return session?.title === "验证移除transform后吸底逻辑";
+      return session?.titleSource === "generated";
     });
 
     const session = await store.getSession(sessionId);
     expect(session?.titleSource).toBe("generated");
+    expect(session?.title).toBe(expectedTitle);
   });
 
   it("keeps short first-input titles without starting generated title sidecar", async () => {

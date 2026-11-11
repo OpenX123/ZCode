@@ -10,6 +10,53 @@ import { createTestSessionEventStore } from "./test-event-store.js";
 import { createRecordingSubagentSessionStore } from "./subagent-test-store.js";
 
 describe("外部引擎使用既有 turn 生命周期", () => {
+  test.each(["codex", "claude-code"] as const)(
+    "%s 原生自动标题回写清理 Skill 路径并保留原始输入",
+    async (engine) => {
+      const sessionId = createSessionId();
+      const eventStore = createTestSessionEventStore();
+      const store = createRecordingSubagentSessionStore();
+      const prompt = "[$ask-matt](/skills/ask-matt/SKILL.md) 排查预览空白";
+      const runTurn = vi.fn<ExternalEnginePort["runTurn"]>(async (input) => {
+        await input.onUpdate({ sessionUpdate: "session_info_update", title: `${prompt} ${prompt}` });
+        return { stopReason: "end_turn" };
+      });
+      const runtime = new AgentRuntime(
+        sessionId,
+        { engine, workingDirectory: "/workspace" },
+        {
+          eventStore,
+          sessionStore: store,
+          externalEnginePort: {
+            async prepareSession() {},
+            runTurn,
+            setConfigOption: vi.fn(),
+            closeSession: vi.fn(),
+          },
+        },
+      );
+      await runtime.executeTurn(prompt);
+      const expectedTitle = "$ask-matt 排查预览空白 排查预览空白";
+      expect(await store.getSession(sessionId)).toMatchObject({
+        title: expectedTitle,
+        titleSource: "generated",
+      });
+      expect(runTurn.mock.calls[0]?.[0].prompt).toContainEqual({ type: "text", text: prompt });
+      expect(await eventStore.getEvents(sessionId)).toContainEqual(
+        expect.objectContaining({
+          type: SessionEventType.SessionTitleUpdated,
+          payload: expect.objectContaining({ title: expectedTitle, source: "generated" }),
+        }),
+      );
+      await store.updateSession({ id: sessionId, title: "[$ask-matt](/skills/ask-matt/SKILL.md) 手动标题", titleSource: "custom" });
+      await runtime.executeTurn("继续排查");
+      expect(await store.getSession(sessionId)).toMatchObject({
+        title: "[$ask-matt](/skills/ask-matt/SKILL.md) 手动标题",
+        titleSource: "custom",
+      });
+    },
+  );
+
   test.each(["claude-code", "codex"] as const)(
     "%s 连续轮不会调用Provider、Context、Hook或MCP",
     async (engine) => {

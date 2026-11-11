@@ -18,6 +18,16 @@ export const WORKSPACE_VERTICAL_RESIZE_HANDLE_CLASS_NAME = cn(
   "hover:after:opacity-100 data-[separator=hover]:after:opacity-100 data-[separator=active]:after:opacity-100 focus-visible:after:opacity-100",
 );
 
+function isUsableLayout(
+  layout: Record<string, number> | undefined,
+): layout is Record<string, number> {
+  if (!layout) return false;
+  const sizes = Object.values(layout);
+  return (
+    sizes.every((size) => Number.isFinite(size) && size >= 0) && sizes.some((size) => size > 0)
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  ResizablePanelGroup                                                */
 /* ------------------------------------------------------------------ */
@@ -46,11 +56,15 @@ function ResizablePanelGroup({
   return (
     <Group
       className={cn("flex h-full w-full", className)}
-      defaultLayout={defaultLayout}
+      // 隐藏标签页曾保存全零布局，导致文件已读入但正文与目录同时零宽；忽略后由库重新分配。
+      defaultLayout={isUsableLayout(defaultLayout) ? defaultLayout : undefined}
       // onLayoutChanged 会在每次布局变化后立刻写 localStorage。
       // 窗口 resize 时 PanelGroup 会连续产生成百上千次 layout 更新，必须走库内置
       // debounce 的 onLayoutChange，避免同步持久化放大主线程压力。
-      onLayoutChange={onLayoutChange}
+      onLayoutChange={(layout) => {
+        // 首帧或隐藏态的零尺寸不是用户选择，不得覆盖上次可用布局；单面板收起仍正常保存。
+        if (isUsableLayout(layout)) onLayoutChange(layout);
+      }}
       {...props}
     />
   );
