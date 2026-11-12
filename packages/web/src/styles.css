@@ -2,3 +2,52 @@
 
 /* 共享样式只扫描 UI 包；Web 独立入口的状态类也必须参与 Tailwind 生成。 */
 @source "./**/*.{ts,tsx}";
+
+/* 修复依据：软键盘开合时 dvh 不一定改变；只有手机入口根据可见视口更新根尺寸。
+ * safe-area 由根容器承接一次，内部页面只负责自己的滚动，避免输入时整页上下跳动。 */
+html[data-zcode-mobile-remote] body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+html[data-zcode-mobile-remote] #root {
+  container: mobile-viewport / size;
+  position: fixed;
+  top: var(--mobile-viewport-top, 0px);
+  left: 0;
+  height: var(--mobile-viewport-height, 100dvh);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+/* 新建会话原来的 29dvh 留白不会随键盘缩小，实测会把发送按钮挤出根容器。 */
+html[data-zcode-mobile-remote] [data-v4-centered-draft] {
+  height: 100%;
+}
+
+html[data-zcode-mobile-remote] [data-v4-centered-draft]::before {
+  flex-basis: calc(var(--mobile-viewport-height, 100dvh) * 0.29);
+  min-height: 12px;
+}
+
+/* 横屏软键盘上方可能只剩两百多像素；长草稿应在编辑区内滚动，不能继续推走发送按钮。 */
+html[data-zcode-mobile-remote] [data-lexical-editor="true"] {
+  max-height: min(10rem, calc(var(--mobile-viewport-height, 100dvh) * 0.25));
+}
+
+@container mobile-viewport (max-height: 500px) {
+  [data-v4-centered-draft]::before {
+    flex: 1 1 0;
+  }
+
+  [data-v4-draft-greeting] {
+    display: none;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  /* 完整 Root 不再启用旧紧凑布局开关，防聚焦缩放必须覆盖该入口的全部编辑区，包括横屏。 */
+  html[data-zcode-mobile-remote] :is(input, textarea, [contenteditable="true"]) {
+    font-size: var(--text-mobile-input-safe);
+  }
+}

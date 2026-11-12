@@ -214,6 +214,20 @@ declare global {
       getDesktopZoomLevel?(): Promise<DesktopZoomState>;
       /** 订阅当前桌面窗口页面缩放档位变化 */
       onDesktopZoomLevelChanged?(handler: (state: DesktopZoomState) => void): () => void;
+      /** 手机远控（Main 网关） */
+      getMobileRemoteStatus?(): Promise<import("@zcode/shared/mobile-remote").MobileRemoteStatus>;
+      setMobileRemoteConfig?(
+        input: import("@zcode/shared/mobile-remote").MobileRemoteConfigInput,
+      ): Promise<import("@zcode/shared/mobile-remote").MobileRemoteStatus>;
+      createMobileRemotePairing?(): Promise<
+        import("@zcode/shared/mobile-remote").MobileRemotePairingTicket
+      >;
+      revokeMobileRemoteDevice?(
+        deviceId: string,
+      ): Promise<import("@zcode/shared/mobile-remote").MobileRemoteStatus>;
+      onMobileRemoteStatusChanged?(
+        handler: (status: import("@zcode/shared/mobile-remote").MobileRemoteStatus) => void,
+      ): () => void;
       /** 注册用户点击系统通知后跳转到对应任务的回调，返回 disposer */
       onTaskNotificationClick(handler: (taskId: string) => void): () => void;
       /** 打开外部 URL */

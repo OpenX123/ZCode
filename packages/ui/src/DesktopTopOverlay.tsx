@@ -1,3 +1,4 @@
+import { useIsMobileCompactViewport } from "@/lib/mobileTextInput.js";
 import { SidebarTooltipProvider } from "@/ControlHintTooltip.js";
 import type { IPlatformService } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
@@ -73,6 +74,8 @@ export function DesktopTopOverlay({
 }: DesktopTopOverlayProps) {
   const { intl } = useZCodeIntl();
   const SidebarToggleIcon = isSidebarVisible ? PanelLeftClose : PanelLeftOpen;
+  // 手机窄屏没有系统标题栏：侧栏抽屉需要显式开关，前进/后退让位给它。
+  const isCompactViewport = useIsMobileCompactViewport();
   const isLinuxDesktop = Boolean(isDesktop && !isMacDesktop && !isWindowsDesktop);
   const usesCustomCaptionArea = isWindowsDesktop || isLinuxDesktop;
   const toggleSidebarTitle = intl.formatMessage({
@@ -150,7 +153,7 @@ export function DesktopTopOverlay({
               </DesktopTopOverlayActionButton>
             )}
 
-            {isMacDesktop && (
+            {(isMacDesktop || (isCompactViewport && !usesCustomCaptionArea)) && (
               <DesktopTopOverlayActionButton
                 title={toggleSidebarTitle}
                 shortcut={toggleSidebarShortcutLabel}
@@ -162,7 +165,7 @@ export function DesktopTopOverlay({
             )}
 
             {/* 远程控制移动端左上角空间有限，任务前进/后退在这里会与主操作拥挤重叠。*/}
-            {hideTaskNavigationButtons ? null : (
+            {hideTaskNavigationButtons || isCompactViewport ? null : (
               <>
                 <DesktopTopOverlayActionButton
                   title={taskBackTitle}

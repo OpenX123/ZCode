@@ -370,8 +370,9 @@ export function useRootPlatformEffects({
   const activeTab =
     activeTabCandidate && isWorkspaceTab(activeTabCandidate) ? activeTabCandidate : undefined;
   const lastSyncedSessionIdRef = useRef<string | null | undefined>(undefined);
+  // 桌面用于 PiP focus；手机远控外壳用它记住当前会话，重连重建 Root 时回到同一会话。
+  // 普通 Web 平台的实现为空，不受影响。
   useEffect(() => {
-    if (!isDesktop) return;
     const workspacePath = activeTab?.workspacePath;
     const workspaceIdentity = activeTab?.workspaceIdentity;
     const syncActiveSession = (): void => {
@@ -385,5 +386,5 @@ export function useRootPlatformEffects({
     };
     syncActiveSession();
     return useZCodeSessionStore.subscribe(syncActiveSession);
-  }, [activeTab, activeTabId, isDesktop, platform]);
+  }, [activeTab, activeTabId, platform]);
 }

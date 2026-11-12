@@ -817,6 +817,94 @@ modules:
       - apps/zcode-cli/packages/bootstrap/src/app/official-plugin-digest/contract.ts
     layers: { adapters: . }
     owner: plugin
+  # mobile-remote-link：由 architecture:adopt 登记
+  - id: mobile-remote-link
+    roots:
+      - packages/shared/src/mobile-remote
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/shared/src/mobile-remote/index.ts
+      - packages/shared/src/mobile-remote/contract.ts
+    layers:
+      domain: .
+    owner: mobile-remote
+  # mobile-remote-client：由 architecture:adopt 登记
+  - id: mobile-remote-client
+    roots:
+      - packages/client/src/mobile-remote
+    managed: true
+    requires:
+      - client
+      - mobile-remote-link
+      - rpc
+      - services
+    publicEntrypoints:
+      - packages/client/src/mobile-remote/index.ts
+      - packages/client/src/mobile-remote/contract.ts
+    layers:
+      adapters: .
+    owner: mobile-remote
+  # mobile-remote-gateway：由 architecture:adopt 登记
+  - id: mobile-remote-gateway
+    roots:
+      - packages/desktop/src/main/mobile-remote
+    managed: true
+    requires:
+      - mobile-remote-link
+      - shared
+    publicEntrypoints:
+      - packages/desktop/src/main/mobile-remote/index.ts
+      - packages/desktop/src/main/mobile-remote/contract.ts
+    layers:
+      adapters: .
+    owner: mobile-remote
+  # mobile-remote-relay：由 architecture:adopt 登记
+  - id: mobile-remote-relay
+    roots:
+      - packages/relay/src
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/relay/src/index.ts
+      - packages/relay/src/contract.ts
+    layers:
+      adapters: .
+    owner: mobile-remote
+  # mobile-remote-settings：由 architecture:adopt 登记
+  - id: mobile-remote-settings
+    roots:
+      - packages/ui/src/mobile-remote-settings
+    managed: true
+    requires:
+      - mobile-remote-link
+      - ui
+    publicEntrypoints:
+      - packages/ui/src/mobile-remote-settings/index.ts
+      - packages/ui/src/mobile-remote-settings/contract.ts
+    layers:
+      ui: .
+    owner: mobile-remote
+  # mobile-remote-web：由 architecture:adopt 登记
+  - id: mobile-remote-web
+    roots:
+      - packages/web/src/mobile
+      - packages/web/src/platform
+      - packages/web/vite/mobileAppPlugin.mjs
+    managed: true
+    requires:
+      - client
+      - mobile-remote-link
+      - shared
+      - ui
+    publicEntrypoints:
+      - packages/web/src/mobile/index.ts
+      - packages/web/src/mobile/contract.ts
+      - packages/web/src/platform/webPlatform.ts
+    layers:
+      adapters: ../../vite/mobileAppPlugin.mjs
+      ui: .
+    owner: mobile-remote
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。

@@ -21,6 +21,7 @@ export type SettingsSectionId =
   | "hooks"
   | "workspaceFileSearch"
   | "computerUse"
+  | "mobileRemote"
   | "automations"
   | "shortcuts";
 
@@ -70,6 +71,7 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "modelProvider" ||
     value === "agentEngines" ||
     value === "remoteDevices" ||
+    value === "mobileRemote" ||
     value === "memory" ||
     value === "plugin" ||
     value === "mcp" ||

@@ -62,7 +62,7 @@ affected 使用 Vitest 官方选择，只运行选中的根 UT；选中整个套
 - Desktop app 通过 stdio 与 Agent 通信。协议改动同步更新 `packages/shared/src/zcode-protocol/index.ts`，提供严格类型与运行时校验。
 - Main 负责窗口、原生操作、进程调度和消息转发，不承载 task/session 业务状态。
 - 每个窗口使用一个 window-scoped Local Host；本地 workspace 共享该 Host。远程 workspace 由窗口内的连接注册表管理，不另建 Desktop Remote Host。
-- 当前产品边界见 `docs/desktop/standalone-coding-harness-spec.md`。官方手机远控和 relay 已退役；历史 `web-remote-replayable` 字段仅供兼容读取，不据此恢复产品入口。
+- 当前产品边界见 `docs/desktop/standalone-coding-harness-spec.md`。原厂手机远控和官方 relay 已退役；手机远控只走用户自托管中继与端到端加密配对（`docs/desktop/mobile-remote-spec.md`），手机以 `web-remote-replayable` attachment 接入窗口 Host，不另建 runtime。
 - Desktop 保留 `desktop-continuous` 实时链路；修改 stream、snapshot、queue 或重连时，验证本地与 SSH 的现有语义及旧历史投影。
 - 已接受的 busy/running 输入由 CLI/runtime `CommandInbox` 串行 admission；Renderer 只保留未提交草稿与 pending optimistic overlay，Host owner/lease 负责路由。
 - 保留 owner/lease、跨 Host 路由和 stale run 防护，不能仅根据单一路径删除边界判断。

@@ -2,6 +2,7 @@ export { App } from "./App.js";
 export { AppErrorBoundary, ScopedErrorBoundary } from "./ErrorBoundary.js";
 export type { ScopedErrorBoundaryVariant } from "./ErrorBoundary.js";
 export { Button, buttonVariants } from "./components/ui/button.js";
+export { Input } from "./components/ui/input.js";
 export { DesktopWindowFrame } from "./DesktopWindowFrame.js";
 
 export {

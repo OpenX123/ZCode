@@ -110,6 +110,8 @@ describe("settingsPageConfig", () => {
     const { settingsSections } = createSettingsPageConfig(options);
 
     expect(settingsSections.some((section) => section.id === "computerUse")).toBe(expected);
+    // 手机远控网关在 Electron Main，只有桌面端提供该入口。
+    expect(settingsSections.some((section) => section.id === "mobileRemote")).toBe(expected);
   });
 
   it("桌面平台的电脑控制排在基础设置的浏览器之后", async () => {
@@ -124,6 +126,7 @@ describe("settingsPageConfig", () => {
       "browser",
       "remoteDevices",
       "computerUse",
+      "mobileRemote",
       "shortcuts",
     ]);
     expect(

@@ -56,6 +56,7 @@ import { AutomationsMainBreadcrumbFrame } from "@/settings/AutomationsMainBreadc
 import { PluginStorePage } from "@/settings/PluginStorePage.js";
 import { TaskFindDialog } from "@/quickpick/TaskFindDialog.js";
 import { resolveTopOverlayLeadingPaddingClass, WorkspaceHeader } from "@/WorkspaceHeader.js";
+import { useIsMobileCompactViewport } from "@/lib/mobileTextInput.js";
 import { WorkspaceSidebar, type SidebarFileTreeOpenRequest } from "@/WorkspaceSidebar.js";
 import { AnimatedSidePanePanel } from "@/app-shell/AnimatedSidePanePanel.js";
 import {
@@ -475,6 +476,12 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
     activeTaskTitle?.trim() || intl.formatMessage({ id: "taskList.untitled" });
   // 完整视图保留左侧任务列表与左上角按钮组，侧栏显隐只由用户开关决定。
   const isSidebarPanelVisible = isSidebarVisible;
+  // 手机窄屏：侧栏改为覆盖在会话上的抽屉，不再与会话列并排挤压宽度。
+  const isCompactViewport = useIsMobileCompactViewport();
+  const isSidebarDrawer = isCompactViewport;
+  const closeSidebarDrawer = useCallback(() => {
+    if (isSidebarDrawer && isSidebarVisible) handleToggleSidebar();
+  }, [handleToggleSidebar, isSidebarDrawer, isSidebarVisible]);
   const {
     panelRef: terminalPanelRef,
     panelElementRef: terminalPanelElementRef,
@@ -1559,12 +1566,22 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       workspaceIdentity={workspaceIdentity}
       workspaceRemoteSessionId={workspaceRemoteSessionId}
       onOpenFileManager={handleOpenSidebarFiles}
-      onSelectTask={handleSelectTaskInChat}
-      onStartDraftInWorkspace={handleStartDraftInWorkspaceInChat}
+      onSelectTask={(...args: Parameters<typeof handleSelectTaskInChat>) => {
+        // 抽屉模式下选中任务即收起，直接看到会话。
+        closeSidebarDrawer();
+        return handleSelectTaskInChat(...args);
+      }}
+      onStartDraftInWorkspace={(...args: Parameters<typeof handleStartDraftInWorkspaceInChat>) => {
+        closeSidebarDrawer();
+        return handleStartDraftInWorkspaceInChat(...args);
+      }}
       onOpenCodeViewer={handleOpenCodeViewer}
       onOpenBrowserUrl={handleOpenBrowserUrl}
       fileTreeOpenRequest={fileTreeOpenRequest}
-      onCreateTask={handleCreateTaskInChat}
+      onCreateTask={(...args: Parameters<typeof handleCreateTaskInChat>) => {
+        closeSidebarDrawer();
+        return handleCreateTaskInChat(...args);
+      }}
       onCreateConversationTask={onCreateConversationTask ?? handleCreateTaskInChat}
       onCreateConversationTaskOnSource={onCreateConversationTaskOnSource}
       onOpenFolderFromWorkspaceMenu={onOpenFolderFromWorkspaceMenu}
@@ -1618,8 +1635,16 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
           data-workspace-sidebar-panel="true"
           id="sidebar"
           className={cn(
-            "w-[var(--workspace-sidebar-panel-width)] max-w-[50%] flex-none overflow-hidden duration-200 ease-out transition-[width,opacity] data-[workspace-sidebar-resizing=true]:transition-opacity",
-            isSidebarPanelVisible ? "opacity-100" : "pointer-events-none opacity-0",
+            isSidebarDrawer
+              ? "absolute inset-y-0 left-0 z-40 w-[min(85vw,360px)] overflow-hidden bg-background shadow-lg duration-200 ease-out transition-transform"
+              : "w-[var(--workspace-sidebar-panel-width)] max-w-[50%] flex-none overflow-hidden duration-200 ease-out transition-[width,opacity] data-[workspace-sidebar-resizing=true]:transition-opacity",
+            isSidebarDrawer
+              ? isSidebarPanelVisible
+                ? "translate-x-0"
+                : "pointer-events-none -translate-x-full"
+              : isSidebarPanelVisible
+                ? "opacity-100"
+                : "pointer-events-none opacity-0",
           )}
         >
           {/* 折叠侧边栏时保持组件挂载，避免展开后重新加载列表。 */}
@@ -1643,7 +1668,15 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
           </aside>
         </div>
 
-        {isSidebarPanelVisible ? (
+        {isSidebarDrawer && isSidebarPanelVisible ? (
+          <div
+            aria-hidden="true"
+            data-testid="workspace-sidebar-drawer-backdrop"
+            className="absolute inset-0 z-30 bg-black/40"
+            onClick={handleToggleSidebar}
+          />
+        ) : null}
+        {isSidebarPanelVisible && !isSidebarDrawer ? (
           <div
             role="separator"
             tabIndex={0}
@@ -1666,7 +1699,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
             )}
           />
         ) : null}
-        {isSidebarPanelVisible ? (
+        {isSidebarPanelVisible && !isSidebarDrawer ? (
           // 原因：侧栏 overflow 裁掉横线末端；延伸装饰放在共同布局容器，不改变拖拽命中区。
           <span
             aria-hidden="true"
@@ -1681,7 +1714,8 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
           data-panel=""
           id="content"
           className={cn(
-            "flex min-w-[320px] flex-1 flex-col",
+            "flex flex-1 flex-col",
+            isSidebarDrawer ? "min-w-0" : "min-w-[320px]",
             hasDesktopPanelInset ? (isWindowsDesktop ? "pr-1.5 pb-1.5" : "pr-1 pb-1") : "p-0",
           )}
         >

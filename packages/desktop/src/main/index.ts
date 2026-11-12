@@ -153,6 +153,7 @@ import { createRemoteWorkspaceSessionManager } from "./desktopRemoteSessions.js"
 import { resolveCanonicalWslTarget } from "./desktopWslTargetResolver.js";
 import { setBrowserUseGuestWebContentsIdsProvider } from "./resourceManagerWindow.js";
 import { registerPlatformIpcHandlers } from "./desktopMainIpcPlatform.js";
+import { startMobileRemote } from "./mobile-remote/index.js";
 import { registerRemoteIpcHandlers } from "./desktopMainIpcRemote.js";
 import { applyDesktopChromiumNetworkPolicies } from "./desktopNetworkPolicy.js";
 import { applyEmbeddedBrowserPermissionPolicy } from "./embeddedBrowserPermissionPolicy.js";
@@ -1453,6 +1454,9 @@ app.whenReady().then(async () => {
       logger.warn("[desktop-tray] linux tray capability probe failed", error);
     });
   }
+
+  // 手机远控网关：默认关闭，开启后经自托管中继接入窗口 Host（docs/desktop/mobile-remote-spec.md）。
+  startMobileRemote({ windowHostProcessMap, windowWorkspaceMap, logger });
 
   registerPlatformIpcHandlers({
     logger,

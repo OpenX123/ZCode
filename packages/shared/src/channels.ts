@@ -389,6 +389,16 @@ export const PlatformChannels = {
   GetDesktopZoomLevel: "zcode:get-desktop-zoom-level",
   /** Main → Renderer：当前窗口页面缩放档位变化 */
   DesktopZoomLevelChanged: "zcode:desktop-zoom-level-changed",
+  /** Renderer → Main：读取手机远控状态 */
+  GetMobileRemoteStatus: "zcode:get-mobile-remote-status",
+  /** Renderer → Main：保存手机远控开关与中继配置 */
+  SetMobileRemoteConfig: "zcode:set-mobile-remote-config",
+  /** Renderer → Main：生成一次性配对二维码链接 */
+  CreateMobileRemotePairing: "zcode:create-mobile-remote-pairing",
+  /** Renderer → Main：移除已配对设备 */
+  RevokeMobileRemoteDevice: "zcode:revoke-mobile-remote-device",
+  /** Main → Renderer：手机远控状态变化 */
+  MobileRemoteStatusChanged: "zcode:mobile-remote-status-changed",
   /** Renderer → Main：读取开发态 stdio tap proxy 开关状态 */
   GetZCodeStdioTapDevState: "zcode:get-zcode-stdio-tap-dev-state",
   /** Main → Renderer：本地 setting.json 已由 main 进程更新 */
@@ -1045,6 +1055,26 @@ export interface PlatformChannelMap {
   };
   [PlatformChannels.DesktopZoomLevelChanged]: {
     request: DesktopZoomState;
+    response: void;
+  };
+  [PlatformChannels.GetMobileRemoteStatus]: {
+    request: void;
+    response: import("./mobile-remote/contract.js").MobileRemoteStatus;
+  };
+  [PlatformChannels.SetMobileRemoteConfig]: {
+    request: import("./mobile-remote/contract.js").MobileRemoteConfigInput;
+    response: import("./mobile-remote/contract.js").MobileRemoteStatus;
+  };
+  [PlatformChannels.CreateMobileRemotePairing]: {
+    request: void;
+    response: import("./mobile-remote/contract.js").MobileRemotePairingTicket;
+  };
+  [PlatformChannels.RevokeMobileRemoteDevice]: {
+    request: string;
+    response: import("./mobile-remote/contract.js").MobileRemoteStatus;
+  };
+  [PlatformChannels.MobileRemoteStatusChanged]: {
+    request: import("./mobile-remote/contract.js").MobileRemoteStatus;
     response: void;
   };
   [PlatformChannels.GetInstalledEditors]: {
