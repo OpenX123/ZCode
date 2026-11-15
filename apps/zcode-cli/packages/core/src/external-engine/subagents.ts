@@ -219,7 +219,13 @@ export function bindExternalSubagentTurn(
   ): Promise<void> => {
     entry.runs += 1;
     const callID = hostCallId(entry, entry.runs);
-    entry.run = { index: entry.runs, host, hostCallId: callID, promptPending, startedAt: Date.now() };
+    entry.run = {
+      index: entry.runs,
+      host,
+      hostCallId: callID,
+      promptPending,
+      startedAt: Date.now(),
+    };
     if (!promptPending) await ensureChildTurn(entry);
     const metadata = agentMetadata(entry);
     await host.startSyntheticTool({
@@ -227,7 +233,7 @@ export function bindExternalSubagentTurn(
       tool: AGENT_TOOL_NAME,
       input: {
         description: entry.name,
-        ...(entry.prompt ?? entry.task ? { prompt: entry.prompt ?? entry.task } : {}),
+        ...((entry.prompt ?? entry.task) ? { prompt: entry.prompt ?? entry.task } : {}),
         subagent_type: DEFAULT_SUBAGENT_TYPE,
       },
       metadata,
@@ -237,7 +243,7 @@ export function bindExternalSubagentTurn(
       agentType: DEFAULT_SUBAGENT_TYPE,
       childSessionId: entry.childSessionId,
       description: entry.name,
-      ...(entry.prompt ?? entry.task ? { prompt: entry.prompt ?? entry.task } : {}),
+      ...((entry.prompt ?? entry.task) ? { prompt: entry.prompt ?? entry.task } : {}),
       parentToolCallId: callID,
       status: "running",
     });
@@ -274,6 +280,7 @@ export function bindExternalSubagentTurn(
     const writer = started.writer!;
     const traceContext = started.traceContext!;
     const errorText = end === "completed" ? undefined : (error ?? ENDED_ERROR_TEXT[end]);
+    if (run.reply?.trim()) await writer.settleFinalReply(run.reply);
     await writer.finish({
       aborted: end === "cancelled",
       ...(end === "failed" || end === "lost"
@@ -306,7 +313,7 @@ export function bindExternalSubagentTurn(
       traceContext,
     );
     child.turnNumber += 1;
-    const summary = run.reply ?? (writer.response.trim() || undefined);
+    const summary = run.reply?.trim() ? run.reply : writer.response.trim() || undefined;
     const metadata = agentMetadata(entry);
     await run.host.settleSyntheticTool(run.hostCallId, {
       success: end === "completed",
@@ -318,7 +325,11 @@ export function bindExternalSubagentTurn(
               ...(summary ? { result: summary } : {}),
             })
           : errorText!,
-      metadata,
+      metadata: {
+        ...metadata,
+        subagentStatus: end === "lost" ? "failed" : end,
+        ...(summary || errorText ? { summaryText: summary ?? errorText } : {}),
+      },
     });
     await emitOn(run.host, SessionEventType.SubagentStopped, {
       agentId: entry.nativeSessionId,
@@ -354,7 +365,8 @@ export function bindExternalSubagentTurn(
     const parent = event.parentNativeSessionId
       ? state.children.get(event.parentNativeSessionId)
       : undefined;
-    if (event.parentNativeSessionId && !parent) return drop("unknown_parent", event.nativeSessionId);
+    if (event.parentNativeSessionId && !parent)
+      return drop("unknown_parent", event.nativeSessionId);
     const childSessionId = externalSubagentSessionId(runtime.sessionId, event.nativeSessionId);
     const parentSessionId = parent?.childSessionId ?? runtime.sessionId;
     const child = runtime.createExternalSubagentRuntime({
@@ -365,7 +377,9 @@ export function bindExternalSubagentTurn(
     const entry: ChildEntry = {
       nativeSessionId: event.nativeSessionId,
       childSessionId,
-      ...(event.parentNativeSessionId ? { parentNativeSessionId: event.parentNativeSessionId } : {}),
+      ...(event.parentNativeSessionId
+        ? { parentNativeSessionId: event.parentNativeSessionId }
+        : {}),
       parentSessionId,
       name: event.name,
       ...(event.task ? { task: event.task } : {}),
@@ -489,4 +503,3 @@ export async function cancelExternalSubagentWork(
   // 真实结束以原生后续 state 为准；这里只表示已投递停止请求。
   return { cancelled: true, status: "running", taskId: workId };
 }
-

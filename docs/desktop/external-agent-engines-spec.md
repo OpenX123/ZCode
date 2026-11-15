@@ -1185,6 +1185,9 @@ sequenceDiagram
   R->>C: 同普通外部轮的 message/part 持久化与 ModelStreaming/ToolCall* 事件
   C->>V: 实时推送
   A->>R: onSubagent(state=completed|failed|cancelled|lost)
+  opt 已收到非空最终 reply
+    R->>C: writer.settleFinalReply(reply) → 最终正文 part 与流事件先落库
+  end
   R->>C: 收尾子轮（TurnComplete / TurnError）
   R->>P: Agent 行终态 + SubagentStopped（+ BackgroundTaskCompleted）
   P->>P: running → ended，endedTotal+1
@@ -1194,7 +1197,10 @@ sequenceDiagram
 - 子会话记录保存父会话的 engine，不保存 externalSessionId（原生上下文属于父原生会话）。
 - 父会话 Agent 行由 Runtime 合成：工具名 `Agent`，toolCallId 为 `native-subagent:<原生ID>:<序号>`，input `{description, prompt, subagent_type}`，metadata `{childSessionId, agentId, agentType, description, nativeSessionId}`；结束时 output 为 JSON `{agentId, childSessionId, agentType, description, status, result}`，失败/取消/失联写 error。冷恢复、`session/subagents` 查询与 live 共用这条既有 Agent 工具链，不新增 V4 字段。`snapshot.subagents.running[].toolCallId` 即该行，界面据此下钻。
 - running 子会话等待权限时投影为 waiting（既有 origin 规则）；RFD 的 requires_action 不另发事件。
-- RFD 的回答（`<launch>:reply`）在子会话结束前到达时作为 Agent 行摘要；结束后到达的回答与子会话最终正文重复，不再改写已结束的 Agent 行（摘要取子会话最终正文）。
+- RFD 的回答（`<launch>:reply`）在子会话结束前到达时，由子会话唯一 `ExternalTranscriptWriter.settleFinalReply(reply)` 在 `finish` 之前写入既有 message/part 与 ModelStreaming 事件，再由 `TurnComplete.response` 读取同一 `writer.response`。response 沿用本轮所有 text 正文按写入顺序拼接的累积语义，不丢弃先前正文；父 Agent 行与 SubagentStopped 的摘要优先取非空 reply，否则取已写正文。失败/失联仍保留原 error payload，取消仍保留 cancelled 语义。
+- 最终正文去重优先使用可用的原生 message/part 身份；当前归一 reply 只有文本，没有可匹配身份，因此只在 reply 与最后一段完整 text 正文（不是最后一个流式 chunk）逐字完全相同时去重。不同 reply（包括仅部分包含、与前面过程正文相同）作为独立最终 text part 写入；空白 reply 不建空正文、不覆盖已有摘要。重复终态、终态后 reply 与子更新不再追加或改写已结束的 child/Agent 行。
+- 失败/取消/失联的 Agent part 保留原 error 状态与 errorText；其既有 settlement `state.metadata.summaryText` 保存同一派生摘要（包括有 reply 时的最终正文摘要）。冷投影成功路径优先既有 output.result，其他路径只接纳 metadata 中有效非空字符串；旧记录缺此字段沿原 description/prompt 回退。不新增正文副本或持久化通道。
+- 终态同时在同一 settlement metadata 保存受限 `subagentStatus: completed|failed|cancelled`（lost 归 failed），使 error Agent 能在冷恢复区分取消与失败；只在 error part 且值为 cancelled 时还原取消，非法值或旧记录缺字段沿原状态规则回退，不能把 error 改成成功。子 writer 的 `finish({aborted:true})` 在无显式错误时保存既有 `AbortError` / `resultType:cancelled` 标记，使 child 冷详情同样恢复已停止；显式失败 error payload 优先并完整保留。
 - 子会话生命周期绑定父轮：Codex 的 prompt 等待子会话结束后才返回；父轮结束（成功、失败、停止或断联）时仍 running 的子会话按 lost 收尾并保留正文。RFD 形态的后台子会话在父轮结束后继续运行的部分 YCode 不再观察，记为已知缺口。
 - 嵌套：spawned 的父 ID 是已知子会话时，子会话记录的 parentID 为该直接父子会话，Agent 行与 SubagentSpawned 写入直接父子会话的正文与事件流；根会话 `snapshot.subagents` 只列直属子会话。
 
@@ -1223,4 +1229,5 @@ sequenceDiagram
 - 真实形状帧：Codex AIR 形态与 Claude RFD 形态各一组——spawn → 子会话记录与首条消息先于 SubagentSpawned → 子正文/工具/usage 写入子会话并可按 childSessionId 读取 → state 结束后 running 变 ended。
 - 嵌套子会话挂在直接父子会话；`:generation:N` 建新记录；RFD 同 ID 再运行沿用记录；`session/load` 回放不新增子会话行。
 - 子会话权限进入父会话待处理交互并带来源，应答回原生 optionId；可取消/不可取消两种 Stop；未知子 ID 丢弃；父 + 子冷恢复后 `snapshot.subagents`、Agent 行与子正文一致；界面识别 camelCase `spawnAgent`。
+- reply-only、最终正文逐字相同/不同/仅部分包含、空白 reply、重复终态、取消/失败和嵌套回归须同时检查持久化 part、writer.response 对应的 TurnComplete.response、父摘要与冷恢复投影；最终正文必须先于 assistant 终态和 TurnComplete/TurnError 落库。
 - 夹具通过不等于真实供应商验收：真实 Claude/Codex 子智能体、Windows 整机需另行验证。

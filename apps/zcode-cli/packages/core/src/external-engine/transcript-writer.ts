@@ -13,6 +13,8 @@ import {
 } from "@zcode/contracts";
 import type { AgentRuntimeInternal } from "../runtime/internal.js";
 
+const EXTERNAL_TURN_CANCELLED_MESSAGE = "External engine turn cancelled";
+
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -259,7 +261,9 @@ export class ExternalTranscriptWriter {
         callID: id,
         declarationIndex: this.tools.size,
         ...(parentToolCallId ? { metadata: { parentToolCallId } } : {}),
-        tool: String(meta.toolName ?? update.name ?? update.title ?? update.kind ?? "External tool"),
+        tool: String(
+          meta.toolName ?? update.name ?? update.title ?? update.kind ?? "External tool",
+        ),
         state: { status: "running", input: record(update.rawInput), time: { start: Date.now() } },
       };
       await this.schedule(tool, parentToolCallId);
@@ -338,9 +342,7 @@ export class ExternalTranscriptWriter {
       result: {
         success: result.success,
         content: result.output,
-        ...(!result.success
-          ? { error: { type: "external_tool_failed", message: error } }
-          : {}),
+        ...(!result.success ? { error: { type: "external_tool_failed", message: error } } : {}),
         ...(result.display ? { display: result.display } : {}),
       },
       duration: Date.now() - start,
@@ -386,8 +388,21 @@ export class ExternalTranscriptWriter {
     await this.runtime.persistPart(tool, this.traceContext);
   }
 
+  /** 原生 reply 也必须成为 child 正文，不能只停留在父工具摘要中。 */
+  async settleFinalReply(reply: string): Promise<void> {
+    if (!reply.trim()) return;
+    const finalPart = this.parts.at(-1);
+    // 当前归一 reply 没有原生正文身份：只对最后完整 text 逐字去重，部分包含不能吞掉不同结果。
+    if (finalPart?.type === "text" && finalPart.text === reply) return;
+    await this.closeActiveText();
+    await this.chunk({ content: { type: "text", text: reply } }, "agent_message_chunk");
+  }
+
   /** 收尾：关闭分段、未结束工具记失败，并持久化 assistant message 终态。 */
-  async finish(options: { aborted: boolean; error?: { name: string; data: Record<string, unknown> } }): Promise<void> {
+  async finish(options: {
+    aborted: boolean;
+    error?: { name: string; data: Record<string, unknown> };
+  }): Promise<void> {
     await this.closeActiveText();
     for (const part of this.parts) {
       if (
@@ -416,7 +431,20 @@ export class ExternalTranscriptWriter {
       this.messageId,
       this.userMessageId,
       this.created,
-      { completed: Date.now(), ...(options.error ? { error: options.error } : {}) },
+      {
+        completed: Date.now(),
+        // aborted 先前只关闭工具，assistant 未保存取消事实，冷详情会被误还原为成功。
+        ...(options.error
+          ? { error: options.error }
+          : options.aborted
+            ? {
+                error: {
+                  name: "AbortError",
+                  data: { message: EXTERNAL_TURN_CANCELLED_MESSAGE, resultType: "cancelled" },
+                },
+              }
+            : {}),
+      },
       this.traceContext,
     );
   }

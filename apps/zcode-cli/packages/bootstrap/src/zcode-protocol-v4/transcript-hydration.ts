@@ -503,6 +503,7 @@ function subagentInfoFromToolPart(
       : {};
   const output = part.state.status === "completed" ? parseJsonObject(part.state.output) : null;
   const metadata = part.metadata && typeof part.metadata === "object" ? part.metadata : {};
+  const settlementSummary = "metadata" in part.state ? part.state.metadata?.summaryText : undefined;
   const explicitAgentId =
     stringField(output, "agentId") ??
     stringField(metadata, "agentId") ??
@@ -532,6 +533,10 @@ function subagentInfoFromToolPart(
       contentBlocksToText(output?.content) ??
       stringField(output, "result") ??
       stringField(output, "summary") ??
+      // 原生子任务失败/取消仍是 error 工具；最终摘要已由唯一 writer 随同一 part 落库。
+      (typeof settlementSummary === "string" && settlementSummary.trim()
+        ? settlementSummary
+        : undefined) ??
       stringField(input, "description") ??
       stringField(input, "prompt"),
   };
@@ -549,7 +554,8 @@ function subagentStatusFromToolPart(
     case "completed":
       return "completed";
     case "error":
-      return "failed";
+      // 取消仍保留工具 error 与原 errorText；只认 writer 持久化的受限终态，不从文案猜测。
+      return part.state.metadata?.subagentStatus === "cancelled" ? "cancelled" : "failed";
     default:
       return "cancelled";
   }

@@ -19,6 +19,9 @@
         "**/apps/zcode-cli/packages/bootstrap/src/app/create-app.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/app/session-facade.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts",
+        // 原文件约 1893 有效行；本次只补既有子任务冷恢复字段，不为行数机械重构。
+        "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts",
+        "src/zcode-protocol-v4/transcript-hydration.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol/session-mapper.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts",

@@ -6,6 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import type { SubagentRow, ToolCallRow } from "@zcode/shared/zcode-protocol-v4";
 import zhCN from "@/i18n/locales/zh-CN.js";
 import type { SubagentWorkLiveIndex } from "@/subagent-display/contract.js";
+import { buildSubagentWorkCardModel } from "@/subagent-display/model.js";
 import { buildAssistantWorkRenderItems } from "@/v4/conversationAssistantWorkItems.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 
@@ -107,6 +108,34 @@ const reviewer = agentCall(2, "复核修复", "code-reviewer");
 const tester = agentCall(3, "跑回归", "tester");
 
 describe("SubagentWorkCard", () => {
+  it.each(["done", "failed", "cancelled"] as const)(
+    "%s 成员从父投影派生最终摘要，空白和同名摘要不重复",
+    (status) => {
+      const input = {
+        key: "result",
+        toolCallId: "call-result",
+        childSessionId: "child-result",
+        title: "检查契约",
+        subagentType: "explorer",
+        status,
+        avatarIndex: 0,
+        fallbackName: "智能体 1",
+      };
+      expect(
+        buildSubagentWorkCardModel([{ ...input, summaryText: " 最终核查通过 " }], undefined)
+          .members[0]?.resultSummary,
+      ).toBe("最终核查通过");
+      expect(
+        buildSubagentWorkCardModel([{ ...input, summaryText: "检查契约" }], undefined).members[0]
+          ?.resultSummary,
+      ).toBeUndefined();
+      expect(
+        buildSubagentWorkCardModel([{ ...input, summaryText: " \n " }], undefined).members[0]
+          ?.resultSummary,
+      ).toBeUndefined();
+    },
+  );
+
   it("运行中手动展开不影响全部结束后的默认折叠，结束后仍可展开回看", async () => {
     const parent = agentCall(701, "检查结束态折叠");
     const running = await renderCard([parent, subagent(702, parent, "child-a")]);

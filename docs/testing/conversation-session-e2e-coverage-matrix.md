@@ -4377,6 +4377,10 @@ E01–E11 产品规则已获用户确认，详见 [规格](../desktop/external-a
 
 既有 `conversation-session-external-engine-prewarm.test.ts` 增补：Claude Code/Codex 健康空用量停止、停止中协议故障及进程退出后自动恢复原会话，保留配置且不重发 prompt；HTML 文件链接的静态显示、阻止脚本/meta refresh 登录跳转、源码切换。状态 accepted/manual-review/pending，隔离供应商，不自动转正或准入 CI。
 
+### UX03 子任务最终结果可回放（2026-11-15）
+
+UX03（2026-11-15，accepted/manual-review/pending）：原生子任务候选新增 reply-only → child text part 唯一落库 → 父摘要 → 点击只读详情。CLI adapter/Runtime/SQLite/V4 对照 live/cold 的最终正文及父摘要，覆盖相同/不同/部分包含、空白、取消/失败、嵌套与重复终态。Electron 只使用受控原生帧，实际执行证据另记；不以此宣称真实账号或 SSH 覆盖。
+
 ### E18/E19 原生计划与502恢复（2026-11-06）
 
 扩展同一 pending 候选的受控 ACP 分支：E18 断言原生清单/文档、等待不转圈、双击只答一次原生允许选项且无额外 prompt、拒绝实施后保留 Plan 并恢复输入焦点；E19 断言首次 HTTP 502 和 request id 可见、正文恢复后清重试。核心/投影/UI 定向测试提供已运行证据，Electron 场景的实际执行结果另行记录；不宣称真实 Windows 或上游网关已验收。

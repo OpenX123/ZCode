@@ -4852,6 +4852,10 @@ E01–E11 产品规则已获用户确认，详见 [规格](desktop/external-agen
 
 扩展现有 `conversation-session-external-engine-prewarm.test.ts` 候选：两家引擎分别覆盖 usage:null 的健康停止、非法 session/update 和进程退出后的自动恢复，无须点击重连，原生会话 ID、已确认深度和 prompt 次数保持不变。HTML 文件链接打开静态预览，脚本与 meta refresh 不得跳转 /login，样式可见，源码/预览可切换。供应商使用隔离 ACP 夹具，候选保持 pending。
 
+### UX03 子任务最终结果可回放（2026-11-15，accepted）
+
+UX03（2026-11-15，accepted，候选保持 pending）：`conversation-session-external-engine-native-subagents.test.ts` 的 reply-only 场景使用受控 Claude RFD 帧，原生只返回最终 reply 而不发 child chunk；断言 child 的最终 text part 只落库一次，展开父工作摘要可见结果，点击成员打开只读子任务详情后能读到同一最终正文。CLI 真实 SQLite/V4 回归另覆盖正文相同/不同/部分包含、空白、失败/取消、嵌套与重复终态。夹具不代表真实供应商、SSH 或跨平台验收，不自动转正。
+
 ### E18/E19 原生计划与502恢复（2026-11-06，accepted，候选保持 pending）
 
 E18：同一候选内使用原生 `plan` / `plan_update` / `plan-review` 权限请求。pending 清单显示为静态审批卡且停止聊天转圈；双击“开始执行”只返回一次原生允许选项，不额外提交 prompt；“继续修改”返回原生拒绝选项并保留 Plan 模式、恢复输入焦点。E19：首个流中 HTTP 502 重试显示状态和安全 request id，受控释放后正文继续且活动重试消失。协议与模型由隔离 ACP 夹具替代；真实 Windows/网关验收另记。

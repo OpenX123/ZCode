@@ -1,5 +1,7 @@
 # subagent-display
 
+UX03：正常完成与失败/停止一样，从父行 `summaryText` 纯派生 `resultSummary`（空白或等于任务标题时省略）。子任务详情只读 child 自身可回放 message/part，不从父摘要拼出第二份结果。
+
 多智能体展示：头像（瓦片脸 + 类型轮廓）、胶囊头像串、对话行内 Subagent 工作卡（无子会话时为旧派发行 / Agent 卡）、右侧详情头部与只读提示。完整规则见 [多智能体展示规范](../../../../docs/desktop/multi-agent-display-spec.md)。
 
 - 只读投影：父会话 `snapshot.subagents` / `backgroundWorks` / 时间线行，子会话 `control` / 行窗口。不保存运行态、不按引擎分支；W8 只读取协议新增的可选 `model` / `effort` / `toolCallCount`。

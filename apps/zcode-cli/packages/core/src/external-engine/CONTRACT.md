@@ -1,5 +1,11 @@
 # 外部引擎 Runtime
 
+取消冷恢复：同一 settlement metadata 附受限 subagentStatus（completed/failed/cancelled，lost 归 failed），Bootstrap 只将带 cancelled 的 error part 恢复为取消；缺失/非法值保留旧规则，不允许 error 被改成成功。writer.finish 在 aborted 且无显式 error 时持久化既有 AbortError/resultType:cancelled 标记；显式失败错误、正文及其他 metadata 不变。
+
+终态摘要随既有 synthetic settlement 的 `state.metadata.summaryText` 持久化；不覆盖 Agent part 的其他 metadata，也不改失败/取消/失联的原 error 状态和 errorText。Bootstrap 冷投影成功仍优先 output.result，其后只读取有效非空 summaryText；旧历史保留原回退。该字段是父摘要派生事实，不承载 child 详情缓存。
+
+子任务最终结果（UX03）：`ExternalTranscriptWriter.settleFinalReply(reply: string): Promise<void>` 只经既有 writer 写 text part，先于 finish 和 TurnComplete/TurnError 完成。当前 reply 无原生 message/part 身份，仅与最后一段完整 text 逐字相等时去重；不同或部分包含的 reply 单独写最终正文，空白 reply 忽略。`response` 继续累积本轮所有 text，不替换前文；父摘要优先非空 reply，否则已写 response。失败/取消/嵌套/重复终态沿原生命周期，UI 不建正文缓存。
+
 在普通 turn 的持久化与事件生命周期内执行 ACP 端口，不创建 ZCode Model。文本、思考、工具与 diff 使用既有 SessionEvent 和 transcript part。权限复用 broker，allow_once/allow_always/reject_once 根据原 options 映射；不存在对应选项即取消。外部会话 id 在 prompt 前落库，失败恢复不可创建新上下文。配置事件由 runtime 单一 owner 发出。排队、TurnStarted/Complete/Error 与 usage 由上层普通 turn 生命周期收口。
 
 草稿 createSession 经 `startExternalEngineSessionPreparation` 在 connecting 写入后即 ACK（1.1），同一个 ACP 连接的初始化在后台完成并投影模型/模式/命令与 ready/error，不提交 prompt、不创建 turn；关闭后迟到的配置与错误丢弃。externalSessionId 先保存在 runtime，首发提升时随会话写入；只有已持久化会话才更新 store。

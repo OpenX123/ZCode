@@ -56,6 +56,12 @@ sequenceDiagram
 
 ## 原生子智能体（2026-11，1.1.0）
 
+取消可回放：finish(aborted) 在无显式 error 时保存既有 AbortError/resultType:cancelled；父 Agent 的同一 settlement metadata 保存受限 subagentStatus（completed/failed/cancelled）。Hydration 只允许 error+cancelled 还原已停止，非法或旧缺字段仍按原规则，显式 error 不被取消标记覆盖，lost 仍为失败。正文、errorText 与其他 metadata 保留。
+
+冷恢复摘要：正常结束仍从 Agent output.result 读取；失败/取消/失联保留原 error 状态与文本，同时将派生摘要写入既有 settlement 的 state.metadata.summaryText。Bootstrap hydration 在 output 之后读取有效非空字符串，旧历史缺值按原 description/prompt 回退；只存父摘要，不另存 child 正文。
+
+UX03 最终结果：子 writer 在 finish 前经 `settleFinalReply(reply)` 将非空 reply 写入既有 message/part 与流事件。当前归一 reply 无原生正文身份，只与最后一段完整 text 逐字相等去重，禁止部分包含去重；不同 reply 单独写最终正文。TurnComplete.response 保留全部 text 按写入顺序累积的语义，父摘要优先非空 reply，否则已写正文。取消/失败的原终态与错误信息、嵌套先子后父与重复终态幂等不变，冷恢复复用同一持久化事实。
+
 产品规则、事件顺序与验收见根仓 `docs/desktop/external-agent-engines-spec.md`「外部引擎原生子智能体」。CLI 侧要点：
 
 - adapter：initialize 两家都声明 `clientCapabilities.subagents: {}`（Codex 另保留 AIR sessionFailure 与 terminal_output_delta）。`subagent-frames.ts` 把 AIR 草案（`subagent_spawned` / `subagent_state_update`）与 RFD（`subagent_update` / `session_message`）归一为 `onSubagent` 事件；已宣告子 sessionId 的更新经 `onChildUpdate`，其权限请求带 `childNativeSessionId` 进入同一 `requestPermission`；未知非主 ID 丢弃（权限回 cancelled）并经 `onDiagnostic` 记 debug。load/fork 回放期间丢弃全部子智能体帧。`cancelSubagent` 只对原生声明可取消的子会话发送 `session/cancel`。

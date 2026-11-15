@@ -391,7 +391,7 @@ export interface SubagentWorkCardMember {
   name: string;
   /** 名称已是标题时为空，避免重复。 */
   taskSummary?: string;
-  /** 失败 / 已停止的终态摘要。 */
+  /** 已完成 / 失败 / 已停止的终态摘要。 */
   resultSummary?: string;
   status: SubagentDisplayStatus;
   avatarIndex: number;
@@ -447,7 +447,7 @@ export function buildSubagentWorkCardModel(
       subagentType: input.subagentType,
       name,
       ...(title && title !== name ? { taskSummary: title } : {}),
-      ...((status === "failed" || status === "cancelled") && summary && summary !== title
+      ...(!isSubagentStatusActive(status) && summary && summary !== title
         ? { resultSummary: summary }
         : {}),
       status,

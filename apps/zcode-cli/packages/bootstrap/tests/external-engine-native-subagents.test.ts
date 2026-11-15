@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,7 +37,7 @@ afterEach(async () => {
 
 type Engine = "codex" | "claude-code";
 
-async function setup(engine: Engine, frames: string) {
+async function setup(engine: Engine, frames: string | Record<string, unknown>) {
   const root = await mkdtemp(join(tmpdir(), "zcode-native-subagents-"));
   roots.push(root);
   const runtimeInfo = EXTERNAL_ENGINE_RUNTIMES[engine];
@@ -49,12 +49,15 @@ async function setup(engine: Engine, frames: string) {
   await mkdir(dirname(entry), { recursive: true });
   await copyFile(join(fixtures, "acp-fixture.cjs"), entry);
   const log = join(root, "client-messages.jsonl");
+  const framesPath =
+    typeof frames === "string" ? join(fixtures, frames) : join(root, "frames.json");
+  if (typeof frames !== "string") await writeFile(framesPath, JSON.stringify(frames));
   const env = {
     ...process.env,
     [EXTERNAL_ENGINES_DIR_ENV]: root,
     [EXTERNAL_ENGINE_USER_HOME_ENV]: root,
     ZCODE_DATA_BASE_DIR: root,
-    FIXTURE_FRAMES: join(fixtures, frames),
+    FIXTURE_FRAMES: framesPath,
     FIXTURE_LOG: log,
   };
   const sessionStore = await createSqliteSessionStore({ dbPath: join(root, "sessions.sqlite") });
@@ -111,7 +114,8 @@ function createRuntime(
 
 function projectionOf(sessionId: string, events: readonly SessionEvent[]) {
   const projection = new ProductProjection(sessionId, `test-${sessionId}`);
-  for (const event of events) if (String(event.sessionId) === sessionId) projection.applyEvent(event);
+  for (const event of events)
+    if (String(event.sessionId) === sessionId) projection.applyEvent(event);
   return projection;
 }
 
@@ -125,6 +129,275 @@ function childIdOf(events: readonly SessionEvent[], agentId: string): string {
 }
 
 describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
+  it("UX03：原生最终 reply 经真实 writer 与 SQLite 后，子正文、response、父摘要及冷投影一致", async () => {
+    const cases = [
+      {
+        id: "cancelled",
+        chunks: ["停止前过程"],
+        reply: "停止前最终结果",
+        texts: ["停止前过程", "停止前最终结果"],
+        end: "cancelled",
+      },
+      {
+        id: "reply-only",
+        chunks: [],
+        reply: "独立最终结果",
+        texts: ["独立最终结果"],
+        end: "end_turn",
+      },
+      {
+        id: "same",
+        chunks: ["完整", "最终正文"],
+        reply: "完整最终正文",
+        texts: ["完整最终正文"],
+        end: "end_turn",
+      },
+      {
+        id: "different",
+        chunks: ["过程说明"],
+        reply: "最终结论",
+        texts: ["过程说明", "最终结论"],
+        end: "end_turn",
+      },
+      {
+        id: "substring",
+        chunks: ["包含最终结论的过程"],
+        reply: "最终结论",
+        texts: ["包含最终结论的过程", "最终结论"],
+        end: "end_turn",
+      },
+      { id: "empty", chunks: ["保留正文"], reply: " \n ", texts: ["保留正文"], end: "end_turn" },
+      {
+        id: "failed",
+        chunks: [],
+        reply: "失败前最终结果",
+        texts: ["失败前最终结果"],
+        end: "error",
+      },
+      { id: "parent", chunks: [], reply: "直属最终结果", texts: ["直属最终结果"], end: "end_turn" },
+      {
+        id: "nested",
+        chunks: [],
+        reply: "嵌套最终结果",
+        texts: ["嵌套最终结果"],
+        end: "end_turn",
+        parent: "parent",
+      },
+    ];
+    const mainSessionId = "ux03-native-root";
+    const steps: Array<{ sessionId?: string; update: Record<string, unknown> }> = [];
+    const spawn = (item: (typeof cases)[number]) =>
+      steps.push({
+        ...(item.parent ? { sessionId: item.parent } : {}),
+        update: {
+          sessionUpdate: "subagent_update",
+          sessionId: item.id,
+          title: `核对 ${item.id}`,
+          state: { state: "running" },
+        },
+      });
+    for (const item of cases) {
+      if (item.id !== "nested") spawn(item);
+      for (const text of item.chunks)
+        steps.push({
+          sessionId: item.id,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+        });
+      steps.push({
+        update: {
+          sessionUpdate: "session_message",
+          messageId: `${item.id}:reply`,
+          senderSessionId: item.id,
+          recipientSessionId: item.parent ?? mainSessionId,
+          content: [{ type: "text", text: item.reply }],
+        },
+      });
+      if (item.id === "parent") {
+        spawn(cases.at(-1)!);
+        continue;
+      }
+      const state = {
+        sessionUpdate: "subagent_update",
+        sessionId: item.id,
+        state: {
+          state: "idle",
+          stopReason: item.end,
+          ...(item.end === "error" ? { error: { message: "原生失败原因" } } : {}),
+        },
+      };
+      steps.push({ update: state }, { update: state });
+      // 已结束 child 的迟到 reply 不得覆盖持久化最终正文或摘要。
+      steps.push({
+        update: {
+          sessionUpdate: "session_message",
+          messageId: `${item.id}:late:reply`,
+          senderSessionId: item.id,
+          recipientSessionId: item.parent ?? mainSessionId,
+          content: [{ type: "text", text: "迟到结果" }],
+        },
+      });
+    }
+    steps.push({
+      update: {
+        sessionUpdate: "subagent_update",
+        sessionId: "parent",
+        state: { state: "idle", stopReason: "end_turn" },
+      },
+    });
+    const context = await setup("claude-code", { mainSessionId, prompt: steps });
+    const sessionId = createSessionId();
+    const { runtime, events } = createRuntime(context, "claude-code", sessionId);
+    await runtime.executeTurn("验证最终结果");
+    for (const item of cases) {
+      const childId = childIdOf(events, item.id);
+      const hostId = item.parent ? childIdOf(events, item.parent) : sessionId;
+      const messages = await context.sessionStore.messages({ sessionID: childId as SessionId });
+      const texts = messages
+        .filter((message) => message.info.role === "assistant")
+        .flatMap((message) => message.parts)
+        .flatMap((part) => (part.type === "text" ? [part.text] : []));
+      expect(texts, item.id).toEqual(item.texts);
+      const summary = item.reply.trim() ? item.reply : item.texts.join("");
+      const stopped = events.filter(
+        (event) =>
+          event.type === SessionEventType.SubagentStopped &&
+          (event.payload as { agentId?: string }).agentId === item.id,
+      );
+      expect(stopped, item.id).toHaveLength(1);
+      expect(stopped[0]?.payload).toMatchObject({ summaryText: summary });
+      const completed = events.find(
+        (event) => event.sessionId === childId && event.type === SessionEventType.TurnComplete,
+      );
+      if (item.end === "error") {
+        expect(completed).toBeUndefined();
+        expect(
+          events.find(
+            (event) => event.sessionId === childId && event.type === SessionEventType.TurnError,
+          )?.payload,
+        ).toMatchObject({ error: { type: "ExternalSubagentError", message: "原生失败原因" } });
+        expect(messages.find((message) => message.info.role === "assistant")?.info).toMatchObject({
+          error: { name: "ExternalSubagentError", data: { message: "原生失败原因" } },
+        });
+      } else
+        expect(completed?.payload, item.id).toMatchObject({
+          response: item.texts.join(""),
+          resultType: item.end === "cancelled" ? "cancelled" : "success",
+        });
+      const coldChild = projectionOf(
+        childId,
+        synthesizeEventsFromMessages(messages, { sessionId: childId }),
+      );
+      const terminalStatus =
+        item.end === "cancelled" ? "cancelled" : item.end === "error" ? "failed" : "success";
+      const expectedPhase =
+        item.end === "cancelled"
+          ? "completedInterrupted"
+          : item.end === "error"
+            ? "error"
+            : "completedSuccess";
+      expect(coldChild.getSnapshot().control.phase, item.id).toBe(expectedPhase);
+      expect(projectionOf(childId, events).getSnapshot().control.phase, item.id).toBe(
+        expectedPhase,
+      );
+      const liveTexts = projectionOf(childId, events)
+        .getSnapshot()
+        .rows.window.filter((row) => row.kind === "assistantText")
+        .map((row) => row.text);
+      expect(liveTexts, item.id).toEqual(item.texts);
+      expect(
+        coldChild
+          .getSnapshot()
+          .rows.window.filter((row) => row.kind === "assistantText")
+          .map((row) => row.text),
+        item.id,
+      ).toEqual(item.texts);
+      const parentMessages = await context.sessionStore.messages({
+        sessionID: hostId as SessionId,
+      });
+      const coldHost = projectionOf(
+        hostId,
+        synthesizeEventsFromMessages(parentMessages, { sessionId: hostId }),
+      );
+      const resultRow = (projection: ProductProjection) =>
+        projection
+          .getSnapshot()
+          .rows.window.find((row) => row.kind === "subagent" && row.childSessionId === childId);
+      expect(resultRow(projectionOf(hostId, events)), item.id).toMatchObject({
+        summaryText: summary,
+        status: terminalStatus,
+      });
+      expect(resultRow(coldHost), item.id).toMatchObject({
+        summaryText: summary,
+        status: terminalStatus,
+      });
+      const agent = parentMessages
+        .flatMap((message) => message.parts)
+        .find((part) => part.type === "tool" && part.metadata?.childSessionId === childId);
+      expect(agent).toMatchObject({
+        metadata: { childSessionId: childId, agentId: item.id },
+        state: {
+          metadata: {
+            schemaVersion: 1,
+            childSessionId: childId,
+            nativeSessionId: item.id,
+            summaryText: summary,
+            subagentStatus:
+              item.end === "end_turn" ? "completed" : item.end === "error" ? "failed" : "cancelled",
+          },
+        },
+      });
+      if (item.end !== "end_turn")
+        expect(agent).toMatchObject({
+          state: {
+            status: "error",
+            error: item.end === "error" ? "原生失败原因" : "Subagent cancelled",
+          },
+        });
+      if (item.end === "cancelled") {
+        expect(messages.find((message) => message.info.role === "assistant")?.info).toMatchObject({
+          error: { name: "AbortError", data: { resultType: "cancelled" } },
+        });
+        // 从真实 settlement 产物派生旧记录/坏字段，不能让外来 metadata 把 error 伪装成成功。
+        for (const invalid of [undefined, "", " \n ", "running", "completed", 7, {}]) {
+          const legacy = structuredClone(parentMessages);
+          for (const part of legacy.flatMap((message) => message.parts)) {
+            if (
+              part.type !== "tool" ||
+              part.metadata?.childSessionId !== childId ||
+              part.state.status !== "error"
+            )
+              continue;
+            part.state.metadata = {
+              ...part.state.metadata,
+              summaryText: invalid,
+              subagentStatus: invalid,
+            };
+          }
+          expect(
+            resultRow(
+              projectionOf(hostId, synthesizeEventsFromMessages(legacy, { sessionId: hostId })),
+            ),
+          ).toMatchObject({
+            status: "failed",
+            summaryText:
+              typeof invalid === "string" && invalid.trim() ? invalid : `核对 ${item.id}`,
+          });
+        }
+      }
+    }
+    const nestedStopped = events.findIndex(
+      (event) =>
+        event.type === SessionEventType.SubagentStopped &&
+        (event.payload as { agentId?: string }).agentId === "nested",
+    );
+    const parentCompleted = events.findIndex(
+      (event) =>
+        event.sessionId === childIdOf(events, "parent") &&
+        event.type === SessionEventType.TurnComplete,
+    );
+    expect(nestedStopped).toBeLessThan(parentCompleted);
+  });
+
   it("Codex AIR 形态：子会话先落库再进入 snapshot.subagents，正文、嵌套、重开、权限与冷恢复一致", async () => {
     const context = await setup("codex", "codex-air.json");
     const sessionId = createSessionId();
@@ -264,7 +537,10 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
       .getSnapshot()
       .rows.window.find((row) => row.kind === "subagent" && row.childSessionId === childId);
     // 运行中标题为原生名称，结束后摘要为子会话最终正文。
-    expect(agentRow).toMatchObject({ status: "success", summaryText: "鉴权耗时集中在 checkAuth。" });
+    expect(agentRow).toMatchObject({
+      status: "success",
+      summaryText: "鉴权耗时集中在 checkAuth。",
+    });
     expect(
       live
         .getSnapshot()
@@ -288,7 +564,9 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
     const coldChild = new ProductProjection(childId, "cold-child");
     for (const event of synthesizeEventsFromMessages(childMessages, { sessionId: childId }))
       coldChild.applyEvent(event);
-    expect(JSON.stringify(coldChild.getSnapshot().rows.window)).toContain("鉴权耗时集中在 checkAuth。");
+    expect(JSON.stringify(coldChild.getSnapshot().rows.window)).toContain(
+      "鉴权耗时集中在 checkAuth。",
+    );
 
     // 已结束分页查询沿用同一 Agent 行。
     const parentSession = (await context.sessionStore.getSession(sessionId))!;
@@ -323,9 +601,9 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
     expect(
       (await context.clientMessages()).some((message) => message.method === "session/load"),
     ).toBe(true);
-    expect(
-      (await context.sessionStore.messages({ sessionID: childId as SessionId })).length,
-    ).toBe(childMessageCount);
+    expect((await context.sessionStore.messages({ sessionID: childId as SessionId })).length).toBe(
+      childMessageCount,
+    );
     expect(restarted.events.some((event) => event.type === SessionEventType.SubagentSpawned)).toBe(
       false,
     );
@@ -377,9 +655,9 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
     ]);
     // 父会话自己的发送视图不写入任何正文；提示只出现一次。
     expect(
-      explorerMessages.flatMap((message) => message.parts).filter(
-        (part) => part.type === "text" && part.text === "找出鉴权检查的位置",
-      ),
+      explorerMessages
+        .flatMap((message) => message.parts)
+        .filter((part) => part.type === "text" && part.text === "找出鉴权检查的位置"),
     ).toHaveLength(1);
 
     const stopped = events
@@ -404,7 +682,9 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
     expect(snapshot.subagents).toMatchObject({ running: [], endedTotal: 3 });
     expect(snapshot.backgroundWorks.filter((work) => work.status === "running")).toEqual([]);
     expect(
-      snapshot.rows.window.find((row) => row.kind === "subagent" && row.childSessionId === runnerId),
+      snapshot.rows.window.find(
+        (row) => row.kind === "subagent" && row.childSessionId === runnerId,
+      ),
     ).toMatchObject({ status: "cancelled" });
     // 结束后停止：不可再取消。
     expect(await runtime.cancelBackgroundTask(runnerId)).toMatchObject({ cancelled: false });

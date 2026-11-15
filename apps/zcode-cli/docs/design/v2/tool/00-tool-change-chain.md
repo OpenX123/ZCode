@@ -1848,6 +1848,12 @@ MCP app-only report_view 增加可选 viewId，release_view 释放指定窗口�
 
 ## 外部引擎原生子智能体投影（2026-11，1.1.0）
 
+取消终态在同一 Agent settlement metadata 写受限 subagentStatus，并在 child assistant 保存既有 AbortError/resultType:cancelled 标记；冷投影只将 error+cancelled 还原取消，缺失/非法值不改变旧规则，不覆盖显式失败错误、既有正文或其他 metadata。
+
+失败/取消/失联保持 Agent error 终态及原错误文本，父摘要追加进既有 settlement state.metadata.summaryText；hydration 成功仍优先 output.result，其次只读有效非空 metadata 字符串，旧记录保留原回退，确保最终结果和错误都可冷回放。
+
+UX03：原生最终 reply → child 唯一 transcript writer 的 `settleFinalReply` → 最终 text part/流事件持久化 → finish → TurnComplete/TurnError → 父 Agent 工具结果与 SubagentStopped 摘要。无正文身份时仅对最后完整 text 逐字相等去重；不同 reply 独立落正文，response 继续累积全部 text。正常完成 UI 读取同一父摘要，详情只读 child 正文；不新增工具 schema、V4 字段或结果缓存。
+
 ACP 原生子智能体帧 → adapter 归一（AIR 草案 / RFD）→ 父 Runtime 唯一 owner → 子会话记录与子正文（既有 message/part）→ 父会话合成 `Agent` 工具行（metadata/output 携带 childSessionId、agentId、agentType）+ SubagentSpawned/Stopped → 既有 V4 subagent row、`snapshot.subagents`、冷恢复 `subagentInfoFromToolPart` 与 `session/subagents` 查询。不新增 tool、schema 或 V4 字段；Agent 行不进模型上下文（外部引擎不经 YCode 模型）。子会话权限沿既有 PermissionBroker（origin=subagent）与原生 optionId 回执；停止沿 BackgroundTask* 与 cancelBackgroundWork。旧 adapter 的 Codex camelCase `spawnAgent` 工具行在 UI 工具身份层识别为 Agent 行。细则见根 `docs/desktop/external-agent-engines-spec.md`「外部引擎原生子智能体」。
 
 ## 2026-11-11 子任务完成与父通知顺序
