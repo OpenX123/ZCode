@@ -47,6 +47,9 @@ before(async () => {
   });
   await server.listen();
   origin = server.resolvedUrls.local[0];
+  // 先完成 fixture 静态依赖编译，避免首个用例把 Vite 冷启动耗时算作导航失败。
+  await server.environments.client.warmupRequest(entry);
+  await server.environments.client.waitForRequestsIdle();
   browser = await chromium.launch(
     process.env.CHROME_EXECUTABLE_PATH
       ? { executablePath: process.env.CHROME_EXECUTABLE_PATH }
@@ -63,6 +66,53 @@ const artifacts = join(tmpdir(), "zcode-provider-settings-batch");
 registerProviderPresentationCases(() => ({ browser, origin, artifacts }));
 registerProviderModelEditorCases(() => ({ browser, origin, artifacts }));
 registerProgressiveModelEditorCases(() => ({ browser, origin, artifacts }));
+for (const [width, locale, theme] of [
+  [390, "zh-CN", "light"],
+  [1200, "en-US", "dark"],
+]) {
+  for (const inputMethod of ["pointer", "keyboard"]) {
+    test(`provider rename retains focus after menu exit ${width}/${theme}/${inputMethod}`, async () => {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      const mutations = [];
+      await page.route("**/mutation", async (route) => {
+        mutations.push(route.request().postDataJSON());
+        await route.fulfill({ status: 200, body: "{}" });
+      });
+      try {
+        await page.goto(
+          `${origin}fixture?${new URLSearchParams({ locale, theme, access: "manual" })}`,
+        );
+        const rename = async () => {
+          const menu = page.getByTestId("model-provider-actions-button");
+          if (inputMethod === "keyboard") {
+            await menu.focus();
+            await menu.press("Enter");
+            await page.getByTestId("model-provider-name-edit-button").press("Enter");
+          } else {
+            await menu.click();
+            await page.getByTestId("model-provider-name-edit-button").click();
+          }
+          await page.getByRole("menu").waitFor({ state: "detached" });
+          const input = page.getByTestId("model-provider-name-input");
+          await input.waitFor({ state: "visible" });
+          assert.equal(await input.evaluate((node) => node === document.activeElement), true);
+          return input;
+        };
+        const input = await rename();
+        await input.fill("Provider Renamed");
+        assert.equal(await input.inputValue(), "Provider Renamed");
+        assert.equal(await input.evaluate((node) => node === document.activeElement), true);
+        await input.press("Enter");
+        await page.getByTestId("model-provider-header").getByText("Provider Renamed").waitFor();
+        assert.equal(mutations.length, 1);
+        assert.equal(mutations[0].payload.providerNameUpdate, "Provider Renamed");
+        assert.equal(mutations[0].payload.providerId, "fixture");
+      } finally {
+        await page.close();
+      }
+    });
+  }
+}
 for (const [width, locale, theme] of [
   [390, "zh-CN", "light"],
   [1200, "en-US", "dark"],

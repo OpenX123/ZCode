@@ -716,6 +716,7 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(onSave).not.toHaveBeenCalled();
     fireEvent.compositionEnd(input);
     fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.blur(input);
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave.mock.calls[0]?.[0]).toMatchObject({
@@ -723,6 +724,30 @@ describe("ProviderModelsSection compact model rows", () => {
       enabled: true,
     });
     expect(onSave.mock.calls[0]?.[0]).not.toHaveProperty("enabledUpdate");
+  });
+
+  it("同一 Provider 刷新保留名称编辑和焦点，确认仍提交原身份", async () => {
+    const provider = createProvider();
+    const onSave = vi.fn(async () => undefined);
+    const view = render(createElement(InlineEditableProviderCard, { provider, onSave }));
+    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), { key: "Enter" });
+    fireEvent.click(screen.getByTestId(TID_MODEL_PROVIDER_NAME_EDIT_BUTTON));
+    const input = screen.getByTestId(TID_MODEL_PROVIDER_NAME_INPUT) as HTMLInputElement;
+    input.focus();
+    fireEvent.change(input, { target: { value: "Kept draft" } });
+
+    view.rerender(createElement(InlineEditableProviderCard, { provider: { ...provider }, onSave }));
+
+    expect(screen.getByTestId(TID_MODEL_PROVIDER_NAME_INPUT)).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("Kept draft");
+    expect(onSave).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0]?.[0]).toMatchObject({
+      providerId: provider.providerId,
+      providerNameUpdate: "Kept draft",
+    });
   });
 
   it.each([false, true])("菜单删除仍走既有确认，confirmed=%s", async (confirmed) => {

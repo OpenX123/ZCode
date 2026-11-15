@@ -83,7 +83,7 @@ function createProvider(templateId: string): ProviderSettingsFormProvider {
   };
 }
 function Fixture() {
-  const [provider, setProvider] = useState(() => createProvider("bigmodel-api"));
+  const [provider, setProvider] = useState(() => createProvider("bigmodel-standard-api"));
   const [picker, setPicker] = useState(!params.has("access"));
   const [opened, setOpened] = useState("");
   const [order, setOrder] = useState(["fixture", "second"]);
