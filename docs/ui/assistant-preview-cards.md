@@ -121,7 +121,8 @@ gates, file validation, limits, or the Markdown/HTML fileChanges gate.
 
 Each reference retains its source row, exact half-open source range, and complete
 surrounding paragraph; a standalone URL also retains the immediately preceding
-explanation paragraph. Full targets are deduplicated in source order. Targets
+explanation paragraph. Extraction retains every valid source reference; complete
+source-context target groups are formed before cross-source deduplication. Targets
 already present in the visible final body produce no extra standalone excerpt. A
 paragraph containing several references is rendered once. If only some targets
 are in the final body, the complete source paragraph remains intact for the new
@@ -135,8 +136,15 @@ rows never merge. Coverage is evaluated over all merged targets; every uncovered
 text-fence target retains a separate native open action keyed by its complete
 target. An already covered target gets no additional standalone open action.
 
-Source/range keys are stable across prepend, streaming-to-terminal transitions,
-and manual history expansion. Mounted excerpts additionally use
+The source/range key describes the actual selected reference. Prepending an older
+duplicate may select that source and truthfully change its source key/range.
+React identity is separate: it uses the sorted, complete original target group,
+fixed before cross-source deduplication or final-body coverage. A duplicate-A
+prepend therefore preserves both single-A identity and an existing A/B excerpt's
+identity; it cannot silently re-anchor the A/B group to B. Fully covered source
+groups are omitted in source order, while partial coverage preserves their full
+original text and target-group identity. Neither a mutable representative cache
+nor persisted presentation state is introduced. Mounted excerpts additionally use
 `workspaceIdentity?.trim() || workspacePath`, remote session, session, log epoch,
 and turn scope; file opening reuses the same row context and Host accessor.
 The public module entrypoint remains pure so shared readonly timelines cannot

@@ -190,14 +190,12 @@ function extractRow(row: AssistantTextRow): readonly ConversationDeliverable[] {
 export function extractConversationDeliverables(
   rows: readonly AssistantTextRow[],
 ): readonly ConversationDeliverable[] {
-  const seen = new Set<string>();
-  return rows.flatMap((row) =>
-    extractRow(row).filter((reference) => {
-      if (seen.has(reference.target)) return false;
-      seen.add(reference.target);
-      return true;
-    }),
-  );
+  // 必须先保留原段的所有引用再分组，过早跨来源去重会把仍在的 A/B 段错误改锚到 B。
+  return rows.flatMap(extractRow);
+}
+
+export function resolveConversationDeliverableIdentity(reference: ConversationDeliverable): string {
+  return JSON.stringify([...new Set(reference.identityTargets ?? [reference.target])].sort());
 }
 
 export function resolveConversationDeliverableKey(
@@ -211,6 +209,7 @@ export function resolveConversationDeliverableKey(
     scope.sessionId ?? "",
     scope.logEpoch ?? "",
     turnId,
-    reference.key,
+    // 来源 key 只负责溯源；前插相同目标时代表来源会变，但逻辑片段不能因此重新挂载。
+    resolveConversationDeliverableIdentity(reference),
   ]);
 }

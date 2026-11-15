@@ -7,6 +7,7 @@ import type {
 import type { ConversationCuaGroupRenderItem } from "@/v4/conversationCuaGroups.js";
 import {
   extractConversationDeliverables,
+  resolveConversationDeliverableIdentity,
   type ConversationDeliverable,
 } from "@/v4/conversation-presentation/index.js";
 
@@ -113,14 +114,16 @@ export function buildConversationFlowItems(options: {
     }
   }
   // 先合并来源区间再判最终覆盖，首引用锚点不因部分覆盖而跳到另一目标。
-  const deliverables = contexts
-    .filter((context) => [...context.targets].some((target) => !visibleTargets.has(target)))
-    .map((context) => ({
-      ...context.reference,
-      textFenceTargets: [...context.textFenceTargets].filter(
-        (target) => !visibleTargets.has(target),
-      ),
-    }));
+  const representedTargets = new Set(visibleTargets);
+  const deliverables = contexts.flatMap((context) => {
+    const identityTargets = [...context.targets];
+    const hasNewTarget = identityTargets.some((target) => !representedTargets.has(target));
+    const textFenceTargets = [...context.textFenceTargets].filter(
+      (target) => !representedTargets.has(target),
+    );
+    for (const target of identityTargets) representedTargets.add(target);
+    return hasNewTarget ? [{ ...context.reference, identityTargets, textFenceTargets }] : [];
+  });
   let appendedDeliverables = false;
   const appendDeliverables = () => {
     if (appendedDeliverables) return;
@@ -188,7 +191,7 @@ export function resolveConversationFlowItemKey(
   firstAssistantFlowItemIndex: number,
 ): string {
   if (item.kind === "assistantText" && item.deliverable)
-    return `deliverable:${item.deliverable.key}`;
+    return `deliverable:${resolveConversationDeliverableIdentity(item.deliverable)}`;
   if (item.kind === "userInput" || item.kind === "assistantText") {
     return `${item.kind}:${item.row.rowId}`;
   }

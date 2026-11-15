@@ -93,6 +93,30 @@ const buildArtifactRow = (rowId: number, artifactVersionId: string) => ({
 });
 
 describe("ConversationShareReadonlyTimeline", () => {
+  it("UX04 共享页前插早A后保留A/B原段首来源锚，既不裁剪原文也不重复整个目标组", () => {
+    const source = {
+      ...rows[2]!,
+      rowId: 20,
+      text: "当前说明：[A](https://example.invalid/a) [B](https://example.invalid/b)",
+    };
+    const earlier = { ...source, rowId: 10, text: "更早说明：[A](https://example.invalid/a)" };
+    const html = renderToStaticMarkup(
+      createElement(ConversationShareReadonlyTimeline, {
+        rows: [
+          ...rows.slice(0, 2),
+          earlier,
+          source,
+          { ...rows[3]!, rowId: 30 },
+          { ...source, rowId: 40, text: "完成" },
+        ],
+        locale: "zh-CN",
+      }),
+    );
+    expect(html).toContain('data-conversation-deliverable="20:5:');
+    expect(html.match(/data-conversation-deliverable=/g)).toHaveLength(2);
+    expect(html).toContain("当前说明");
+    expect(html).toContain("更早说明");
+  });
   it("UX04 合并 Markdown与两个fence来源，只渲染一次原段并保留每个未覆盖完整打开目标", () => {
     const a = "https://example.invalid/a";
     const b = "https://example.invalid/b(step)?next=(done)&label=%20path";

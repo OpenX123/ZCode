@@ -192,7 +192,8 @@ pnpm --dir apps/zcode-cli/packages/core exec vitest run tests/external-engine-su
 
 - 新增：受管 `packages/ui/src/v4/conversation-presentation` 五件套与公开 `index.ts`；`conversationTurnDeliverables.ts` 负责纯提取与来源引用。
 - 新增测试：`packages/ui/test/conversationTurnDeliverables.test.ts`。
-- 修改：`packages/ui/src/v4/conversationTurnWorkSegments.ts`、`conversationTurnFlowItems.ts`、`ConversationTurnRow.tsx`（接入常显片段）。
+- 修改：`packages/ui/src/v4/conversationTurnFlowItems.ts`、`ConversationTurnRow.tsx`（接入常显片段）。
+- 复用/读取：`packages/ui/src/v4/conversationTurnWorkSegments.ts` 已有 `buildConversationFlowItems` 委托，无需修改该文件。
 - 复用：`packages/ui/src/v4/assistantPreviewCards.ts`、`packages/ui/src/lib/assistantPreviewCards.ts`。
 - 现有测试：`packages/ui/test/v4ConversationTurnRenderUnits.test.ts`、`v4AssistantPreviewCards.test.ts`。
 - 规范：`docs/ui/assistant-preview-cards.md`；设计说明第 5.1 节补入既有折叠合同所在位置。
@@ -210,6 +211,7 @@ export interface ConversationDeliverable {
   readonly kind: "link" | "image" | "file";
   readonly sourceFormat: "markdown" | "standaloneUrl" | "textFence";
   readonly target: string;
+  readonly identityTargets?: readonly string[];
   readonly textFenceTargets?: readonly string[];
   readonly contextStart: number;
   readonly contextEnd: number;
@@ -221,7 +223,7 @@ export function extractConversationDeliverables(
 ): readonly ConversationDeliverable[];
 ```
 
-`start/end` 为来源正文的半开区间；key 根据来源行/区间/类型稳定生成，挂载时附完整会话 scope。已加载正文不变时提取结果复用，不按每次秒表刷新扫描全历史。
+`start/end` 为实际来源正文的半开区间，来源 key 随实际来源正确更新；提取保留全部引用，先定原段完整目标组再跨来源去重。React 挂载身份由去重/最终覆盖前的完整目标组排序生成，并附完整会话 scope，与被选中来源位置分离。已加载正文不变时提取结果复用，不按每次秒表刷新扫描全历史。
 
 - [ ] 先写解析测试；以下例子不依赖真实授权地址：
 

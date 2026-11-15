@@ -393,6 +393,71 @@ describe("buildConversationTurnRenderUnits", () => {
     }
   });
 
+  it("UX04 同目标来源前插只更新真实代表来源，不重建单A片段的挂载身份", () => {
+    const source = assistantText(20, "当前说明：[入口](https://example.invalid/a)");
+    const earlier = assistantText(10, "更早说明：[入口](https://example.invalid/a)");
+    const select = (sources: AssistantTextRow[]) =>
+      buildConversationTurnRenderUnits([
+        turnHeader(1),
+        ...sources,
+        toolCall(30),
+        assistantText(40, "完成"),
+      ])[0]!.flowItems.filter((item) => item.kind === "assistantText" && item.deliverable);
+    const before = select([source]);
+    const after = select([earlier, source]);
+    expect(before).toHaveLength(1);
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ deliverable: { sourceRowId: 10, contextText: earlier.text } });
+    expect(resolveConversationFlowItemKey(after[0]!, 1, 0)).toBe(
+      resolveConversationFlowItemKey(before[0]!, 1, 0),
+    );
+  });
+
+  it("UX04 A/B原段在跨来源A去重前固定首锚与完整目标组，前插及部分最终覆盖不跳key", () => {
+    const source = assistantText(
+      20,
+      "当前说明：[A](https://example.invalid/a) [B](https://example.invalid/b)",
+    );
+    const earlier = assistantText(10, "更早说明：[A](https://example.invalid/a)");
+    const select = (sources: AssistantTextRow[], finalText = "完成") =>
+      buildConversationTurnRenderUnits([
+        turnHeader(1),
+        ...sources,
+        toolCall(30),
+        assistantText(40, finalText),
+      ])[0]!.flowItems.filter((item) => item.kind === "assistantText" && item.deliverable);
+    const before = select([source]);
+    const originalKey = resolveConversationFlowItemKey(before[0]!, 1, 0);
+    for (const items of [
+      select([earlier, source]),
+      select([earlier, source], "[A](https://example.invalid/a)"),
+      select([source], "[B](https://example.invalid/b)"),
+    ]) {
+      const retained = items.find(
+        (item) => item.kind === "assistantText" && item.deliverable?.sourceRowId === 20,
+      )!;
+      expect(retained).toMatchObject({
+        deliverable: {
+          key: before[0]!.kind === "assistantText" ? before[0]!.deliverable!.key : "",
+          target: "https://example.invalid/a",
+          contextText: source.text,
+          identityTargets: ["https://example.invalid/a", "https://example.invalid/b"],
+        },
+      });
+      expect(resolveConversationFlowItemKey(retained, 7, 0)).toBe(originalKey);
+      const keys = items.map((item, index) => resolveConversationFlowItemKey(item, index, 0));
+      expect(new Set(keys).size).toBe(keys.length);
+    }
+    expect(
+      select([earlier, source], "[A](https://example.invalid/a) [B](https://example.invalid/b)"),
+    ).toEqual([]);
+    const duplicateGroup = assistantText(10, source.text);
+    const deduped = select([duplicateGroup, source]);
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0]).toMatchObject({ deliverable: { sourceRowId: 10 } });
+    expect(resolveConversationFlowItemKey(deduped[0]!, 1, 0)).toBe(originalKey);
+  });
+
   it("尾轮 token 不访问历史行并保留历史派生；历史修订和新轮仍与全窗构建相等", () => {
     const select = createConversationTurnRenderUnitsSelector();
     const history = [turnHeader(1), userInput(2, "问题"), assistantText(3, "旧回答")];

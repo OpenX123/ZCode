@@ -129,7 +129,7 @@ describe("UX04 source deliverables", () => {
     ).toEqual([]);
   });
 
-  it("按原文顺序按完整目标去重，保留第一个来源和说明", () => {
+  it("提取保留原文顺序的全部真实来源，跨来源去重必须晚于完整原段分组", () => {
     const references = extractConversationDeliverables([
       row("[首](https://example.invalid/a) [次](https://example.invalid/b)"),
       row("[重复](https://example.invalid/a)", "complete", 14),
@@ -137,8 +137,68 @@ describe("UX04 source deliverables", () => {
     expect(references.map((reference) => reference.target)).toEqual([
       "https://example.invalid/a",
       "https://example.invalid/b",
+      "https://example.invalid/a",
     ]);
     expect(references[0]?.sourceRowId).toBe(12);
+    expect(references[2]?.sourceRowId).toBe(14);
+  });
+
+  it("前插同目标允许真实来源更新，但同 scope/turn 的逻辑挂载身份不变", () => {
+    const current = row("当前说明：[入口](https://example.invalid/a)", "complete", 20);
+    const earlier = row("更早说明：[入口](https://example.invalid/a)", "complete", 10);
+    const before = extractConversationDeliverables([current])[0]!;
+    const after = extractConversationDeliverables([earlier, current])[0]!;
+    expect(after.sourceRowId).toBe(10);
+    expect(after.key).not.toBe(before.key);
+    expect(after.contextText).toBe(earlier.text);
+    expect(
+      resolveConversationDeliverableKey(after, { workspacePath: "/same", sessionId: "s" }, "t"),
+    ).toBe(
+      resolveConversationDeliverableKey(before, { workspacePath: "/same", sessionId: "s" }, "t"),
+    );
+  });
+
+  it("完整原始目标组的顺序、重复和来源代表不参与挂载身份，目标集合与scope仍隔离", () => {
+    const reference = extractConversationDeliverables([row("[A](https://example.invalid/a)")])[0]!;
+    const group = {
+      ...reference,
+      identityTargets: ["https://example.invalid/a", "https://example.invalid/b"],
+    };
+    const scope = {
+      workspacePath: "/same",
+      workspaceIdentity: "ssh:a",
+      workspaceRemoteSessionId: "r",
+      sessionId: "s",
+      logEpoch: "e",
+    };
+    const key = resolveConversationDeliverableKey(group, scope, "t");
+    expect(
+      resolveConversationDeliverableKey(
+        {
+          ...group,
+          key: "other-source",
+          sourceRowId: 8,
+          target: "https://example.invalid/b",
+          identityTargets: [
+            "https://example.invalid/b",
+            "https://example.invalid/a",
+            "https://example.invalid/a",
+          ],
+        },
+        scope,
+        "t",
+      ),
+    ).toBe(key);
+    expect(
+      resolveConversationDeliverableKey(
+        { ...group, identityTargets: ["https://example.invalid/a", "https://example.invalid/c"] },
+        scope,
+        "t",
+      ),
+    ).not.toBe(key);
+    expect(
+      resolveConversationDeliverableKey(group, { ...scope, workspaceIdentity: "ssh:b" }, "t"),
+    ).not.toBe(key);
   });
 
   it("秒表刷新和相同内容重建行不会重复解析，前插历史与状态终止不改来源 key", () => {

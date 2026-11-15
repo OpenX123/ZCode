@@ -20,6 +20,7 @@ describe("conversation-presentation contract", () => {
       kind: "link",
       sourceFormat: "markdown",
       target: "https://example.invalid",
+      identityTargets: ["https://example.invalid"],
       contextStart: 0,
       contextEnd: 1,
       contextText: "打开入口",
