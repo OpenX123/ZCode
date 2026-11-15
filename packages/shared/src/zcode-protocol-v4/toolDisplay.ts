@@ -127,6 +127,8 @@ export const toolResultDisplaySchema = z.discriminatedUnion("kind", [
       .min(1)
       .max(4 * 1024)
       .optional(),
+    /** 原始 MCP in-band 失败，仅 true；与 CLI contracts 镜像同步。 */
+    isError: z.literal(true).optional(),
     // 仅为历史持久化结果保留，新请求不再生成套餐可用性标记。
     unavailable: z
       .object({ code: z.enum(["quota_exceeded", "coding_plan_required"]) })
@@ -260,6 +262,8 @@ const toolCallMcpDisplaySchema = z
       .min(1)
       .max(4 * 1024)
       .optional(),
+    /** 原始 MCP in-band 失败，仅展示，不改变执行 success。 */
+    isError: z.literal(true).optional(),
     /** 仅兼容历史持久化展示；不参与新执行或商业动作。 */
     unavailable: z
       .object({ code: z.enum(["quota_exceeded", "coding_plan_required"]) })

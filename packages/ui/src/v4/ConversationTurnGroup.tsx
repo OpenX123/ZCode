@@ -1,3 +1,12 @@
+import {
+  isConversationMcpRowFailure,
+  resolveConversationDisclosureKeys,
+} from "@/v4/conversation-presentation/index.js";
+import {
+  ConversationDisclosureProvider,
+  getConversationDisclosureOverride,
+  useConversationDisclosureVersion,
+} from "@/v4/conversation-presentation/disclosure.js";
 import { BotTopicPreparation } from "@/v4/BotTopicPreparation.js";
 import { useBotTopicInterruption } from "@/v4/botGroupDeliveryContext.js";
 import { ConnectedBotGroupDeliveryAction } from "@/v4/BotGroupDeliveryAction.js";
@@ -278,7 +287,7 @@ function ConversationToolGroupRow({
 }: {
   item: Extract<
     ConversationAssistantWorkRenderItem,
-    { kind: "cuaGroup" | "executeGroup" | "changesGroup" }
+    { kind: "cuaGroup" | "executeGroup" | "changesGroup" | "mcpGroup" }
   >;
   context: ConversationRowRenderContext;
 }) {
@@ -409,6 +418,7 @@ function ConversationAssistantWorkItems({
     open: boolean;
   };
 }) {
+  useConversationDisclosureVersion();
   const showReasoning = context.messageStreamShowReasoning === true;
   const firstReasoningRowId = context.messageStreamFirstReasoningRowId;
   const items = useMemo(
@@ -458,34 +468,55 @@ function ConversationAssistantWorkItems({
   // “1 个运行中”。依据：有活跃成员的工作卡豁免折叠——历史收起时把它渲染在 CollapsibleContent
   // 之外（摘要之下），其余工作项照常折叠；展开时回到原位，全部成员结束后随轮次正常折叠。
   const pinnedItems =
-    historyContainer && !historyContainer.open ? items.filter(isActiveSubagentWorkCard) : [];
+    historyContainer && !historyContainer.open
+      ? items.filter((item) => {
+          if (isActiveSubagentWorkCard(item)) return true;
+          if (item.kind !== "mcpGroup") return false;
+          const ids = item.rows.map((row) => row.toolCallId);
+          const turnId = item.rows[0]!.turnId;
+          const groupOpen = getConversationDisclosureOverride(
+            resolveConversationDisclosureKeys(context, turnId, "mcpGroup", ids),
+          );
+          const childOpen = resolveConversationDisclosureKeys(context, turnId, "mcpTool", ids).some(
+            (key) => getConversationDisclosureOverride([key]) === true,
+          );
+          // 终态外壳只提升相关 MCP，不能把正在查看的内容或失败摘要一起吞入“已工作”。
+          return (
+            item.rows.some(isConversationMcpRowFailure) ||
+            groupOpen === true ||
+            (groupOpen !== false && childOpen)
+          );
+        })
+      : [];
   const foldedItems =
     pinnedItems.length > 0 ? items.filter((item) => !pinnedItems.includes(item)) : items;
 
   // 连续工作项的间距由单一容器提供，摘要高度由 ToolSummaryRow 约束，
   // 避免长命令与状态更新造成忽大忽小的留白。
   const renderItems = (list: readonly ConversationAssistantWorkDisplayItem[]) => (
-    <div className="flex flex-col gap-3">
-      {list.map((item) =>
-        item.kind === "row" ? (
-          <ConversationTurnRow
-            key={item.key}
-            row={item.row}
-            context={context}
-            hideAssistantActions={item.row.kind === "assistantText"}
-            assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
-          />
-        ) : item.kind === "agentToolCall" ? (
-          <ConversationAgentCard key={item.key} item={item} context={context} />
-        ) : item.kind === "agentSpawnGroup" ? (
-          <ConversationAgentSpawnRow key={item.key} item={item} context={context} />
-        ) : item.kind === "exploreGroup" ? (
-          <ConversationExploreGroupRow key={item.key} item={item} context={context} />
-        ) : (
-          <ConversationToolGroupRow key={item.key} item={item} context={context} />
-        ),
-      )}
-    </div>
+    <ConversationDisclosureProvider value={context}>
+      <div className="flex flex-col gap-3">
+        {list.map((item) =>
+          item.kind === "row" ? (
+            <ConversationTurnRow
+              key={item.key}
+              row={item.row}
+              context={context}
+              hideAssistantActions={item.row.kind === "assistantText"}
+              assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
+            />
+          ) : item.kind === "agentToolCall" ? (
+            <ConversationAgentCard key={item.key} item={item} context={context} />
+          ) : item.kind === "agentSpawnGroup" ? (
+            <ConversationAgentSpawnRow key={item.key} item={item} context={context} />
+          ) : item.kind === "exploreGroup" ? (
+            <ConversationExploreGroupRow key={item.key} item={item} context={context} />
+          ) : (
+            <ConversationToolGroupRow key={item.key} item={item} context={context} />
+          ),
+        )}
+      </div>
+    </ConversationDisclosureProvider>
   );
 
   if (!historyContainer) {

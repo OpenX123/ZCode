@@ -137,6 +137,51 @@ function reduce(messages: MessageWithParts[]) {
 }
 
 describe("transcript→event 合成", () => {
+  it.each([true, undefined])(
+    "UX06 cold MCP metadata JSON保留 in-band=%s 且不改执行 success",
+    (isError) => {
+      const display = {
+        kind: "mcp_tool",
+        serverName: "alpha",
+        toolName: "call",
+        ...(isError ? { isError: true } : {}),
+      };
+      const messages = [
+        userMessage("u-ux06", "inspect", 1000),
+        assistantMessageWithParts(
+          "a-ux06",
+          "u-ux06",
+          [
+            {
+              id: "part-ux06" as never,
+              sessionID: "s1" as never,
+              messageID: "a-ux06" as never,
+              type: "tool",
+              callID: "call-ux06",
+              tool: "mcp__alpha__call",
+              state: {
+                status: "completed",
+                input: {},
+                output: "opaque failure",
+                title: "call",
+                metadata: JSON.parse(JSON.stringify({ schemaVersion: 1, display })),
+                time: { start: 1001, end: 1002 },
+              },
+            },
+          ],
+          1001,
+        ),
+      ];
+      const { projection } = reduce(messages);
+      expect(
+        projection.getSnapshot().rows.window.find((row) => row.kind === "toolCall"),
+      ).toMatchObject({
+        toolCallId: "call-ux06",
+        status: "success",
+        output: { text: "opaque failure", display },
+      });
+    },
+  );
   it("冷恢复把缺少完成时间的 orphan assistant 收口为 completedInterrupted", () => {
     const user = userMessage("u-orphan", "执行任务", 1000);
     const orphan = assistantMessage("a-orphan", "u-orphan", "未完成的部分结果", 1001);

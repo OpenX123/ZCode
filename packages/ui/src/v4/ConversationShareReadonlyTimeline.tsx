@@ -620,7 +620,7 @@ function renderReadonlyRow(
 
 type GroupedToolItem = Extract<
   ConversationAssistantWorkRenderItem,
-  { kind: "cuaGroup" | "exploreGroup" | "executeGroup" | "changesGroup" }
+  { kind: "cuaGroup" | "exploreGroup" | "executeGroup" | "changesGroup" | "mcpGroup" }
 >;
 
 function GroupedToolPresentation({

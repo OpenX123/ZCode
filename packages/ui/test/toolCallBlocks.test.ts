@@ -12,6 +12,8 @@ import { ToolCallBody } from "../src/ToolCallBlocks/ToolCallBody.js";
 import { readRawToolCallFileSummaries } from "../src/ToolCallBlocks/shared.js";
 import { isExploreToolCall } from "../src/lib/exploreToolCall.js";
 import { buildToolDisplayModel } from "../src/lib/toolDisplay.js";
+import { buildAssistantWorkRenderItems } from "@/v4/conversationAssistantWorkItems.js";
+import { ConversationDisclosureProvider } from "@/v4/conversation-presentation/disclosure.js";
 import { toolCallRowToLegacyNode } from "../src/v4/toolCallRowAdapter.js";
 
 vi.mock("@/ToolCallBlocks/renderers/switch-mode.js", () => ({
@@ -1392,5 +1394,151 @@ describe("readRawToolCallFileSummaries", () => {
 
     expect(html).toContain("mock-agent-panel");
     expect(html).toContain("agent:tool-agent:Explore project structure:think");
+  });
+});
+
+describe("完整 scope 的 MCP 服务树", () => {
+  const row = (
+    id: number,
+    status: ToolCallRow["status"] = "success",
+    extra: Partial<ToolCallRow> = {},
+  ): ToolCallRow => ({
+    kind: "toolCall",
+    rowId: id,
+    turnId: "mcp-tree-turn",
+    createdAt: id,
+    createdAtSeq: id,
+    toolCallId: `mcp-tree-${id}`,
+    toolName: "mcp__alpha__lookup",
+    status,
+    inputText: "{}",
+    input: {},
+    output: { text: `RESULT_${id}` },
+    display: { kind: "mcp_tool", serverName: "alpha", toolName: "lookup" },
+    ...extra,
+  });
+  const tree = (rows: ToolCallRow[], sessionId: string, locale: "zh-CN" | "en-US" = "zh-CN") => {
+    const item = buildAssistantWorkRenderItems(rows, { messageStreamShowReasoning: false })[0]!;
+    if (item.kind !== "mcpGroup") throw new Error("Expected real MCP group");
+    return createElement(
+      ZCodeIntlProvider,
+      { initialLocale: locale },
+      createElement(
+        ConversationDisclosureProvider,
+        {
+          value: {
+            workspacePath: "/workspace",
+            workspaceIdentity: "remote-alpha",
+            workspaceRemoteSessionId: "remote-session",
+            sessionId,
+            logEpoch: "epoch",
+          },
+        },
+        createElement(ToolCallBlock, { toolCallNode: item.node, workspacePath: "/workspace" }),
+      ),
+    );
+  };
+  it.each([
+    [1, "1 call"],
+    [2, "2 calls"],
+  ] as const)("英文 %s 次调用使用实际翻译器插值", (count, label) => {
+    render(
+      tree(
+        Array.from({ length: count }, (_, index) => row(401 + index)),
+        `count-${count}`,
+        "en-US",
+      ),
+    );
+    expect(screen.getByTestId("tool-summary-trigger-mcp-group:mcp-tree-401").textContent).toContain(
+      label,
+    );
+    expect(
+      screen.getByTestId("tool-summary-trigger-mcp-group:mcp-tree-401").textContent,
+    ).not.toContain("plural");
+  });
+  it("组/子项独立；一个子项手动关不会吞掉另一个正在查看的结果", () => {
+    const view = render(tree([row(101), row(102, "running")], "manual-independent"));
+    const group = screen.getByTestId("tool-summary-trigger-mcp-group:mcp-tree-101");
+    const first = screen.getByTestId("tool-summary-trigger-mcp-tree-101");
+    const second = screen.getByTestId("tool-summary-trigger-mcp-tree-102");
+    expect(group.getAttribute("aria-expanded")).toBe("true");
+    expect(first.getAttribute("aria-expanded")).toBe("false");
+    expect(second.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(first);
+    fireEvent.click(second);
+    view.rerender(tree([row(101), row(102)], "manual-independent"));
+    expect(group.getAttribute("aria-expanded")).toBe("true");
+    expect(first.getAttribute("aria-expanded")).toBe("true");
+    expect(second.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(group);
+    expect(group.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(group);
+    expect(
+      screen.getByTestId("tool-summary-trigger-mcp-tree-101").getAttribute("aria-expanded"),
+    ).toBe("true");
+  });
+  it.each(["execution", "in-band"])(
+    "%s 混合结果失败在冷历史组与子项收起后仍可读，不靠文案猜失败",
+    (mode) => {
+      render(
+        tree(
+          [
+            row(201),
+            mode === "execution"
+              ? row(202, "error", {
+                  output: { text: "partial" },
+                  error: { code: "mcp.failed", message: "explicit failure" },
+                })
+              : row(202, "success", {
+                  output: {
+                    text: "explicit failure",
+                    display: {
+                      kind: "mcp_tool",
+                      serverName: "alpha",
+                      toolName: "call",
+                      isError: true,
+                    },
+                  },
+                }),
+          ],
+          `mixed-failure-${mode}`,
+        ),
+      );
+      const group = screen.getByTestId("tool-summary-trigger-mcp-group:mcp-tree-201");
+      expect(group.getAttribute("aria-expanded")).toBe("false");
+      expect(screen.getByTestId("mcp-group-error-summary").textContent).toContain(
+        "explicit failure",
+      );
+      fireEvent.click(group);
+      expect(
+        screen.getByTestId("tool-summary-trigger-mcp-tree-202").getAttribute("aria-expanded"),
+      ).toBe("false");
+      expect(screen.getByTestId("mcp-error-summary").textContent).toContain("explicit failure");
+      expect(screen.queryByTestId("mcp-error-surface")).toBeNull();
+    },
+  );
+  it("组前插与重挂保留 override，同 ID 的另一完整 session scope 保持冷默认", () => {
+    const view = render(tree([row(302), row(303)], "scope-a"));
+    fireEvent.click(screen.getByTestId("tool-summary-trigger-mcp-group:mcp-tree-302"));
+    view.rerender(tree([row(301), row(302), row(303), row(304)], "scope-a"));
+    expect(
+      screen
+        .getByTestId("tool-summary-trigger-mcp-group:mcp-tree-301")
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+    view.unmount();
+    render(tree([row(301), row(302), row(303), row(304)], "scope-a"));
+    expect(
+      screen
+        .getByTestId("tool-summary-trigger-mcp-group:mcp-tree-301")
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+    cleanup();
+    render(tree([row(301), row(302), row(303), row(304)], "scope-b"));
+    expect(
+      screen
+        .getByTestId("tool-summary-trigger-mcp-group:mcp-tree-301")
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
   });
 });

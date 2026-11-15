@@ -1,5 +1,6 @@
 import {
   parseToolResultDisplayPayload,
+  parseCompletedToolPartMetadata,
   ZCODE_MCP_NODE_REPL_CUA_APP_META_KEY,
 } from "@zcode/contracts";
 import { toolCallGetWorkflowRunDisplaySchema } from "@zcode/shared/zcode-protocol-v4";
@@ -8,8 +9,36 @@ import {
   createMcpToolDisplay,
   createToolResultDisplay,
 } from "../src/tool/executor/result-display.js";
+import { completedToolPartMetadata } from "../src/runtime/methods/tool-part-metadata.js";
 
 describe("tool result display", () => {
+  it("UX06 原始 MCP in-band 失败沿 display 与 completed metadata JSON 保留，正文不推断", () => {
+    const metadata = { serverName: "alpha", toolName: "call" };
+    const output = { content: [{ type: "text", text: "opaque failure" }], isError: true };
+    const display = createMcpToolDisplay(metadata, output);
+    expect(display).toEqual({ kind: "mcp_tool", ...metadata, isError: true });
+    const persisted = completedToolPartMetadata({
+      toolCallId: "mcp-in-band",
+      toolName: "mcp__alpha__call",
+      success: true,
+      output,
+      display,
+      durationMs: 1,
+      startedAt: new Date(0),
+      completedAt: new Date(1),
+    });
+    expect(parseCompletedToolPartMetadata(JSON.parse(JSON.stringify(persisted)))?.display).toEqual(
+      display,
+    );
+    for (const value of [
+      {},
+      { isError: false },
+      { isError: "true" },
+      { content: [{ type: "text", text: "MCP tool returned an error: boom" }] },
+    ]) {
+      expect(createMcpToolDisplay(metadata, value)).not.toHaveProperty("isError");
+    }
+  });
   it("creates trusted MCP presentation before a tool result exists", () => {
     expect(
       createMcpToolDisplay({
@@ -57,7 +86,12 @@ describe("tool result display", () => {
       { mcp: { serverName: "evil", toolName: "whatever" } },
     );
 
-    expect(display).toEqual({ kind: "mcp_tool", serverName: "evil", toolName: "whatever" });
+    expect(display).toEqual({
+      kind: "mcp_tool",
+      serverName: "evil",
+      toolName: "whatever",
+      isError: true,
+    });
   });
 
   it("ignores unknown codes, non-JSON text and successful results", () => {

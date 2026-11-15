@@ -1,3 +1,7 @@
+import {
+  buildConversationMcpGroups,
+  isConversationMcpRowFailure,
+} from "@/v4/conversation-presentation/index.js";
 import type { SubagentRow, ToolCallRow } from "@zcode/shared/zcode-protocol-v4";
 import {
   isExecuteToolCall,
@@ -26,6 +30,13 @@ export type ConversationAssistantWorkRenderItem =
     }
   | {
       kind: "exploreGroup";
+      key: string;
+      rowId: number;
+      rows: ToolCallRow[];
+      node: TaskChatToolCallTreeNode;
+    }
+  | {
+      kind: "mcpGroup";
       key: string;
       rowId: number;
       rows: ToolCallRow[];
@@ -329,6 +340,11 @@ export function buildAssistantWorkRenderItems(
     enableCuaGrouping,
     options?.stageTailIsRunning === true,
   );
+  const mcpGroups = new Map(
+    buildConversationMcpGroups(rootRows).flatMap((item) =>
+      item.kind === "mcpGroup" ? [[item.rows[0]!.rowId, item] as const] : [],
+    ),
+  );
   let index = 0;
 
   while (index < preparedRows.length) {
@@ -341,6 +357,45 @@ export function buildAssistantWorkRenderItems(
     if (row.kind === "cuaGroup") {
       items.push(row);
       index += 1;
+      continue;
+    }
+
+    const mcpGroup = mcpGroups.get(row.rowId);
+    if (mcpGroup) {
+      const groupRows = [...mcpGroup.rows];
+      const first = groupRows[0]!;
+      const running = groupRows.some(
+        (child) =>
+          child.status === "running" ||
+          child.status === "inputStreaming" ||
+          child.status === "pendingApproval",
+      );
+      const failed = groupRows.some(isConversationMcpRowFailure);
+      // 取消是明确终态；组摘要必须保留它，不能把已停止的真实子调用显示成全部完成。
+      const stopped = groupRows.some((child) => child.status === "cancelled");
+      items.push({
+        kind: "mcpGroup",
+        key: `mcp:${first.toolCallId}`,
+        rowId: first.rowId,
+        rows: groupRows,
+        node: {
+          toolCall: {
+            toolId: `mcp-group:${first.toolCallId}`,
+            toolName: "McpGroup",
+            kind: "mcpGroup",
+            title: mcpGroup.serverName,
+            input: {},
+            status: running ? "in_progress" : failed ? "failed" : stopped ? "stopped" : "completed",
+            raw: {
+              turnId: first.turnId,
+              mcpServerName: mcpGroup.serverName,
+              mcpGroupIds: groupRows.map((child) => child.toolCallId),
+            },
+          },
+          childToolCalls: groupRows.map(toolCallRowToLegacyNode),
+        },
+      });
+      index += groupRows.length;
       continue;
     }
 

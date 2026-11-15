@@ -7,12 +7,94 @@
     "./test/e2e/fixtures/upstream/conversation-session/conversation-session-tool-groups-history-restore.json"
   ],
   "fileFixtures": [
-    { "path": ".zcode-e2e/conversation-session-tool-groups-history-restore", "source": "created-by-spec", "description": "TGE05 Read/Write 的 case-owned fixture。" }
+    {
+      "path": ".zcode-e2e/conversation-session-tool-groups-history-restore",
+      "source": "created-by-spec",
+      "description": "TGE05 Read/Write 的 case-owned fixture。"
+    },
+    {
+      "path": ".zcode-e2e/conversation-session-tool-groups-history-restore/ux06-gates",
+      "source": "created-by-spec",
+      "description": "UX06真实MCP gate；由交互步骤显式释放，非计时器。"
+    }
   ],
   "requests": [
-    { "id": "tge05-read", "kind": "main", "source": "synthetic", "timingPolicy": "tool-use", "syntheticReason": "固定三类 group 的最小历史，验证 cold restore。" },
-    { "id": "tge05-execute", "kind": "main", "source": "synthetic", "timingPolicy": "tool-use", "syntheticReason": "固定单命令 Terminal，比较 live 与 cold summary。" },
-    { "id": "tge05-write", "kind": "main", "source": "synthetic", "timingPolicy": "tool-use", "syntheticReason": "固定单文件 Changes，比较 live 与 cold summary。" },
-    { "id": "tge05-final", "kind": "main", "source": "synthetic", "timingPolicy": "fast-text", "syntheticReason": "固定 assistant 终态，确保 cold restore 比较同一完整轮。" }
+    {
+      "id": "ux06-mcp-title",
+      "kind": "common",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "限定 UX06 标题旁路，避免与 MCP 业务回放冲突。"
+    },
+    {
+      "id": "tge05-read",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "tool-use",
+      "syntheticReason": "固定三类 group 的最小历史，验证 cold restore。"
+    },
+    {
+      "id": "tge05-execute",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "tool-use",
+      "syntheticReason": "固定单命令 Terminal，比较 live 与 cold summary。"
+    },
+    {
+      "id": "tge05-write",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "tool-use",
+      "syntheticReason": "固定单文件 Changes，比较 live 与 cold summary。"
+    },
+    {
+      "id": "tge05-final",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "固定 assistant 终态，确保 cold restore 比较同一完整轮。"
+    },
+    {
+      "id": "ux06-mcp-a1",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "tool-use",
+      "syntheticReason": "固定连续服务顺序，真实MCP返回结果；验证展示折叠与cold restore。"
+    },
+    {
+      "id": "ux06-mcp-a2",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "tool-use",
+      "syntheticReason": "固定连续服务顺序，真实MCP返回结果；验证展示折叠与cold restore。"
+    },
+    {
+      "id": "ux06-mcp-b",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "tool-use",
+      "syntheticReason": "固定连续服务顺序，真实MCP返回结果；验证展示折叠与cold restore。"
+    },
+    {
+      "id": "ux06-mcp-mixed",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "tool-use",
+      "syntheticReason": "固定连续服务顺序，真实MCP返回结果；验证展示折叠与cold restore。"
+    },
+    {
+      "id": "ux06-mcp-done",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "固定连续服务顺序，真实MCP返回结果；验证展示折叠与cold restore。"
+    },
+    {
+      "id": "ux06-mcp-history",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "13个独立模型回放轮次制造真实timeline虚拟卸载，验证手动MCP状态重挂；不注入DOM或缓存。"
+    }
   ]
 }

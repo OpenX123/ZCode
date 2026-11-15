@@ -13,6 +13,14 @@ import {
 import { ToolSummaryRow, type ToolSummaryAction } from "@/ToolCallBlocks/ToolSummaryRow.js";
 import { uiMemoryDiagnosticsRegistry } from "@/lib/memoryDiagnostics.js";
 
+import type { ConversationDisclosure } from "@/v4/conversation-presentation/index.js";
+import {
+  getConversationDisclosureOverride,
+  setConversationDisclosureOverride,
+  useConversationDisclosureVersion,
+  visibleDisclosureOpen,
+} from "@/v4/conversation-presentation/disclosure.js";
+
 const toolLayoutOpenState = new Map<string, boolean>();
 // 内存诊断计数器：该表按 toolId 只增不减，先落日志。
 uiMemoryDiagnosticsRegistry.register("toolLayout", () => ({ openState: toolLayoutOpenState.size }));
@@ -29,6 +37,7 @@ const TOOL_CONTENT_SPACING_CLASSNAME = "pt-2";
 
 interface ToolLayoutProps {
   toolId: string;
+  disclosure?: ConversationDisclosure;
   persistOpenKey?: string;
   icon: ReactNode;
   showIcon?: boolean;
@@ -69,11 +78,13 @@ interface ToolLayoutProps {
   content?: ReactNode;
   renderContent?: () => ReactNode;
   summaryAction?: ToolSummaryAction;
+  collapsedSummary?: ReactNode;
 }
 
 function ToolLayoutComponent({
   toolId,
   persistOpenKey,
+  disclosure,
   icon,
   showIcon = true,
   canToggle = true,
@@ -109,14 +120,22 @@ function ToolLayoutComponent({
   content,
   renderContent,
   summaryAction,
+  collapsedSummary,
 }: ToolLayoutProps) {
   const { intl } = useZCodeIntl();
   const resolvedPersistOpenKey = persistOpenKey ?? toolId;
   const [isOpen, setIsOpen] = useState(
     () => toolLayoutOpenState.get(resolvedPersistOpenKey) ?? false,
   );
+  useConversationDisclosureVersion(disclosure !== undefined);
+  const visibleOpen = disclosure
+    ? visibleDisclosureOpen({
+        defaultOpen: disclosure.defaultOpen,
+        userOverride: getConversationDisclosureOverride(disclosure.keys),
+      })
+    : isOpen;
   const hasSummaryAction = summaryAction !== undefined;
-  const isExpanded = !hasSummaryAction && (forceOpen || (canToggle && isOpen));
+  const isExpanded = !hasSummaryAction && (forceOpen || (canToggle && visibleOpen));
   const [shouldRenderContent, setShouldRenderContent] = useState(isExpanded);
   const [isFailureTooltipCopied, setIsFailureTooltipCopied] = useState(false);
   const failureTooltipCopyResetRef = useRef<number | null>(null);
@@ -163,7 +182,7 @@ function ToolLayoutComponent({
     // edit/read 这类工具有“完成后默认自动展开”的需求，
     // 但 forceOpen 会把卡片彻底锁死成不可收起。
     // 这里改成一次性的 autoOpen：首次满足条件时自动展开一次，之后仍允许用户手动关闭。
-    if (!autoOpen || hasAutoOpenedRef.current) {
+    if (disclosure || !autoOpen || hasAutoOpenedRef.current) {
       return;
     }
 
@@ -171,7 +190,7 @@ function ToolLayoutComponent({
     setShouldRenderContent(true);
     setIsOpen(true);
     hasAutoOpenedRef.current = true;
-  }, [autoOpen, resolvedPersistOpenKey]);
+  }, [autoOpen, disclosure, resolvedPersistOpenKey]);
 
   useEffect(() => {
     const wasRunning = previousIsRunningRef.current;
@@ -180,11 +199,11 @@ function ToolLayoutComponent({
     // 子智能体在执行完成后，如果继续保持展开，会把一长串子工具明细永久摊开，
     // 聊天流里会迅速变得很长，也和“运行中自动展开、完成后回到摘要”这套交互不一致。
     // 这里只在 running -> completed 的边沿自动收起一次，不影响用户后续手动再次展开查看细节。
-    if (autoCollapseOnComplete && !isRunning && wasRunning) {
+    if (!disclosure && autoCollapseOnComplete && !isRunning && wasRunning) {
       toolLayoutOpenState.set(resolvedPersistOpenKey, false);
       setIsOpen(false);
     }
-  }, [autoCollapseOnComplete, isRunning, resolvedPersistOpenKey]);
+  }, [autoCollapseOnComplete, disclosure, isRunning, resolvedPersistOpenKey]);
 
   useEffect(() => {
     if (isExpanded) {
@@ -311,16 +330,17 @@ function ToolLayoutComponent({
 
   return (
     <Collapsible
-      open={!hasSummaryAction && (forceOpen || (canToggle && isOpen))}
+      open={!hasSummaryAction && (forceOpen || (canToggle && visibleOpen))}
       onOpenChange={(open) => {
         if (hasSummaryAction || forceOpen) {
           return;
         }
-        toolLayoutOpenState.set(resolvedPersistOpenKey, open);
+        if (disclosure) setConversationDisclosureOverride(disclosure.keys, open);
+        else toolLayoutOpenState.set(resolvedPersistOpenKey, open);
         if (open) {
           setShouldRenderContent(true);
         }
-        setIsOpen(open);
+        if (!disclosure) setIsOpen(open);
       }}
       className="w-full flex flex-col"
     >
@@ -351,6 +371,7 @@ function ToolLayoutComponent({
         })}
         toolId={toolId}
       />
+      {!isExpanded ? collapsedSummary : null}
       {!hasSummaryAction && canToggle ? (
         <CollapsibleContent className={TOOL_CONTENT_SHELL_CLASSNAME}>
           {/* padding 直接挂在高度动画节点上时，主体归零后仍会停在 8px，

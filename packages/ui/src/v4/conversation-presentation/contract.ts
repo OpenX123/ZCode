@@ -1,4 +1,9 @@
-import type { AssistantMediaRef, AssistantTextRow } from "@zcode/shared/zcode-protocol-v4";
+import type {
+  AssistantMediaRef,
+  AssistantTextRow,
+  ConversationRow,
+  ToolCallRow,
+} from "@zcode/shared/zcode-protocol-v4";
 
 /** 显式 MIME 优先，其次共享扩展名；不探测网络、不读取文件。 */
 export type ClassifyAssistantMedia = (
@@ -44,3 +49,32 @@ export interface ConversationDeliverableScope {
 export type ExtractConversationDeliverables = (
   rows: readonly AssistantTextRow[],
 ) => readonly ConversationDeliverable[];
+
+/** 按原始行序的展示投影，绝不改写执行或原生父子身份。 */
+export type ConversationMcpGroupItem =
+  | { readonly kind: "row"; readonly row: ConversationRow }
+  | {
+      readonly kind: "mcpGroup";
+      readonly serverName: string;
+      readonly rows: readonly ToolCallRow[];
+    };
+export type BuildConversationMcpGroups = (
+  rows: readonly ConversationRow[],
+) => readonly ConversationMcpGroupItem[];
+export interface ConversationDisclosureScope extends ConversationDeliverableScope {}
+export interface DisclosureState {
+  readonly defaultOpen: boolean;
+  readonly userOverride?: boolean;
+}
+export interface ConversationDisclosure {
+  readonly keys: readonly string[];
+  readonly defaultOpen: boolean;
+}
+
+/** discovery 与显式历史 envelope 的机械展示元数据；不参与执行/权限。 */
+export interface McpToolPresentation {
+  readonly kind: "mcp_tool";
+  readonly serverName?: string;
+  readonly toolName: string;
+  readonly description?: string;
+}

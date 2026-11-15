@@ -14,3 +14,10 @@ export function exampleConversationPresentation(
 ): readonly string[] {
   return extract(rows).map((reference) => reference.contextText);
 }
+
+/** 无 React/Host 的连续服务投影消费方。 */
+export function exampleConversationMcpGroups(
+  build: import("./contract.js").BuildConversationMcpGroups,
+): number {
+  return build([]).length;
+}

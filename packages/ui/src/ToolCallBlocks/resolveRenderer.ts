@@ -37,7 +37,11 @@ import { CuaToolCallBlock, isCuaToolCall } from "@/ToolCallBlocks/renderers/cua.
 import { CuaGroupToolCallBlock } from "@/ToolCallBlocks/renderers/cua-group.js";
 import { GoalToolCallBlock } from "@/ToolCallBlocks/renderers/goal.js";
 import { NodeReplToolCallBlock } from "@/ToolCallBlocks/renderers/node-repl.js";
-import { McpToolCallBlock, readMcpToolPresentation } from "@/ToolCallBlocks/renderers/mcp.js";
+import {
+  McpGroupToolCallBlock,
+  McpToolCallBlock,
+  readMcpToolPresentation,
+} from "@/ToolCallBlocks/renderers/mcp.js";
 import { PlanGuidanceToolCallBlock } from "@/ToolCallBlocks/renderers/plan-guidance.js";
 import { ReadToolCallBlock } from "@/ToolCallBlocks/renderers/read.js";
 import { ReadSessionContextToolCallBlock } from "@/ToolCallBlocks/renderers/read-session-context.js";
@@ -56,6 +60,7 @@ import { resolveToolCallIdentity } from "@/lib/toolIdentity.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
 
 export function resolveToolCallRenderer(context: ToolCallBlockRenderContext) {
+  if (context.toolCallNode.toolCall.kind === "mcpGroup") return McpGroupToolCallBlock;
   if (context.toolCallNode.toolCall.kind === "changesGroup") {
     return ChangesGroupToolCallBlock;
   }

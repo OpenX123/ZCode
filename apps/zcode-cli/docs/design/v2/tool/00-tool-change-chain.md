@@ -1,5 +1,24 @@
 # Tool Change Chain Spec
 
+## MCP in-band 失败的展示事实（UX06）
+
+MCP adapter 返回的原始 `output.isError === true` 仍由既有执行结果 owner 解释；
+执行 `success` 不变，模型的 `tool_result.is_error` 不变。普通 MCP 与有 UI 资源的 MCP
+均将该事实投影为受限可选的 `mcp_tool.display.isError?: true`，contracts 与 shared V4
+两个镜像同时校验。未提供或 false 时不生成字段，不读取错误正文猜测。
+
+```text
+MCP result.isError（唯一原始事实）→ createMcpToolDisplay.isError
+  → 既有 ToolCallResult.display / completedToolPartMetadata.display
+  → live ProductProjection / cold transcript hydration → output.display
+  → Renderer 派生失败摘要、组状态与已工作提升（原 V4 execution success 不改）
+```
+
+不新增事件通道、存储 owner、权限或执行分支。旧普通 MCP 历史没有该字段时不能追溯
+恢复 in-band 失败；继续按既有明确 status/tag 语义回退，旧 `display.ui.isError` 保持兼容。
+验收覆盖原始 true/false/缺省、正文不推断、双侧 strict schema、metadata JSON、live/cold
+投影一致，以及真实 stdio 混合成功/`isError:true` 后折叠摘要常显。
+
 ## 外部原生计划与错误投影
 
 ACP plan/plan_update → Runtime 校验与唯一发布 → V4 plan 投影 → 原生清单与计划审批卡。

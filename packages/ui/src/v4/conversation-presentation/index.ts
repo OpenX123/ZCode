@@ -12,3 +12,19 @@ export type {
   ConversationDeliverableScope,
   ExtractConversationDeliverables,
 } from "./contract.js";
+
+export {
+  buildConversationMcpGroups,
+  readLegacyMcpToolPresentation,
+  readConversationMcpServer,
+  resolveConversationDisclosureKeys,
+  isConversationMcpRowFailure,
+} from "./conversationMcpGroups.js";
+export type {
+  ConversationMcpGroupItem,
+  BuildConversationMcpGroups,
+  ConversationDisclosureScope,
+  DisclosureState,
+  ConversationDisclosure,
+  McpToolPresentation,
+} from "./contract.js";

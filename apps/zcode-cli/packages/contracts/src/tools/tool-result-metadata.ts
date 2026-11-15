@@ -236,6 +236,8 @@ export const mcpToolResultDisplayPayloadSchema = z
     serverName: z.string().min(1).max(MCP_TOOL_DISPLAY_MAX_NAME_CHARS),
     toolName: z.string().min(1).max(MCP_TOOL_DISPLAY_MAX_NAME_CHARS),
     description: z.string().min(1).max(MCP_TOOL_DISPLAY_MAX_DESCRIPTION_CHARS).optional(),
+    /** 原始 MCP 结果报错；仅展示事实，不改变工具执行 success。 */
+    isError: z.literal(true).optional(),
     // 与 `@zcode/shared` v4 toolDisplay 的 mcp_tool.ui 同步；两侧都是 strict，缺一处会被 zod 静默 strip。
     ui: mcpToolDisplayUiPayloadSchema.optional(),
   })

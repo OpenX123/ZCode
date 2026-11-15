@@ -72,6 +72,8 @@ export function createMcpToolDisplay(
     serverName,
     toolName,
     ...(description ? { description } : {}),
+    // 普通 MCP 没有 UI 资源也会 in-band 失败；必须沿原结果持久化事实，不能让客户端猜正文。
+    ...(isRecord(output) && output.isError === true ? { isError: true as const } : {}),
     ...(ui ? { ui } : {}),
   };
 }

@@ -14,6 +14,19 @@ import {
 import { describe, expect, it } from "vitest";
 
 describe("tool result display metadata", () => {
+  it("UX06 MCP in-band 标记仅接受 true，metadata JSON roundtrip 不丢失", () => {
+    const display = { kind: "mcp_tool", serverName: "alpha", toolName: "call", isError: true };
+    expect(toolResultDisplayPayloadSchema.safeParse(display).success).toBe(true);
+    expect(
+      parseCompletedToolPartMetadata(JSON.parse(JSON.stringify({ schemaVersion: 1, display })))
+        ?.display,
+    ).toEqual(display);
+    for (const isError of [false, "true", 1])
+      expect(toolResultDisplayPayloadSchema.safeParse({ ...display, isError }).success).toBe(false);
+    expect(toolResultDisplayPayloadSchema.safeParse({ ...display, extra: true }).success).toBe(
+      false,
+    );
+  });
   it.each(["quota_exceeded", "coding_plan_required"])(
     "只读恢复旧 MCP 标记 %s 并保留工具显示，不接受新写入",
     (code) => {

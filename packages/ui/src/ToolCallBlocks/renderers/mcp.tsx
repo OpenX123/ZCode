@@ -1,5 +1,16 @@
+import {
+  resolveConversationDisclosureKeys,
+  readLegacyMcpToolPresentation,
+  type McpToolPresentation,
+} from "@/v4/conversation-presentation/index.js";
+import {
+  getConversationDisclosureOverride,
+  useConversationDisclosureScope,
+  useConversationDisclosureVersion,
+} from "@/v4/conversation-presentation/disclosure.js";
+import { getToolCallErrorText } from "@/lib/toolError.js";
 import { ChevronRightIcon, PlugIcon } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useId } from "react";
 import {
   CodeBlock,
   CodeBlockActions,
@@ -22,13 +33,6 @@ import {
 import { ToolLayout } from "@/ToolCallBlocks/ToolLayout.js";
 import { ToolSnapshotFieldNotice } from "@/ToolCallBlocks/ToolSnapshotFieldNotice.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
-
-interface McpToolPresentation {
-  kind: "mcp_tool";
-  serverName?: string;
-  toolName: string;
-  description?: string;
-}
 
 const MCP_TOOL_ICON = <PlugIcon className="size-4 shrink-0 text-foreground-subtle" />;
 const COMPACT_RESULT_MAX_LENGTH = 160;
@@ -80,44 +84,6 @@ function isMcpToolPresentation(value: unknown): value is McpToolPresentation {
   );
 }
 
-function readLegacyMcpToolPresentation(toolName: string | undefined): McpToolPresentation | null {
-  if (!toolName) return null;
-  const segments = toolName.split("__");
-  if (segments.length !== 3 || segments[0] !== "mcp" || !segments[1] || !segments[2]) return null;
-
-  const encodedServerName = segments[1];
-  const encodedToolName = segments[2];
-  const serverTokens = encodedServerName.split("_").filter(Boolean);
-  const toolTokens = encodedToolName.split("_").filter(Boolean);
-  let sharedTokenCount = 0;
-  const maximumSharedTokens = Math.min(serverTokens.length, toolTokens.length);
-  for (let tokenCount = maximumSharedTokens; tokenCount > 0; tokenCount -= 1) {
-    if (
-      serverTokens.slice(-tokenCount).join("_").toLocaleLowerCase() ===
-      toolTokens.slice(0, tokenCount).join("_").toLocaleLowerCase()
-    ) {
-      sharedTokenCount = tokenCount;
-      break;
-    }
-  }
-  const pluginScoped = serverTokens[0]?.toLocaleLowerCase() === "plugin";
-  const serverName =
-    sharedTokenCount > 0
-      ? serverTokens.slice(-sharedTokenCount).join("_")
-      : pluginScoped
-        ? serverTokens.at(-1)!
-        : encodedServerName;
-  const actionName =
-    sharedTokenCount > 0 && sharedTokenCount < toolTokens.length
-      ? toolTokens.slice(sharedTokenCount).join("_")
-      : encodedToolName;
-
-  // display 持久化上线前的 MCP 历史记录只剩协议执行名，通用 renderer
-  // 会把内部 raw JSON 整块暴露出来。这里只按协议 envelope 和编码 token 做机械拆分；
-  // 新记录仍以 tools/list 的 discovery display 为权威，不让 legacy 规则覆盖它。
-  return { kind: "mcp_tool", serverName, toolName: actionName };
-}
-
 export function readMcpToolPresentation(
   context: Pick<ToolCallBlockRenderContext, "toolCallNode">,
 ): McpToolPresentation | null {
@@ -161,6 +127,17 @@ export function formatMcpToolLabel(toolName: string, serverLabel: string): strin
 
 export function McpToolCallBlock(context: ToolCallBlockRenderContext) {
   const { intl } = useZCodeIntl();
+  const scope = useConversationDisclosureScope();
+  const raw = context.toolCallNode.toolCall.raw as Record<string, unknown> | undefined;
+  const disclosure =
+    scope && typeof raw?.turnId === "string"
+      ? {
+          keys: resolveConversationDisclosureKeys(scope, raw.turnId, "mcpTool", [
+            context.toolCallNode.toolCall.toolId,
+          ]),
+          defaultOpen: context.isRunning,
+        }
+      : undefined;
   const presentation = readMcpToolPresentation(context);
   const { toolCall } = context.toolCallNode;
   const serverLabel = presentation?.serverName
@@ -177,7 +154,10 @@ export function McpToolCallBlock(context: ToolCallBlockRenderContext) {
   const parametersLabel = intl.formatMessage({ id: "chat.toolCall.mcp.parameters" });
   const hasCallDetails = Boolean(presentation?.description || toolCall.input !== undefined);
   const resultText = stringifyMcpResult(toolCall.output);
-  const visibleError = toolCall.status === "failed" ? (toolCall.error ?? context.errorText) : undefined;
+  const visibleError =
+    toolCall.status === "failed" || context.errorText
+      ? (toolCall.error ?? context.errorText)
+      : undefined;
   const hasPrimaryResult = Boolean(resultText || visibleError);
   const isSummaryOnlyLifecycle = toolCall.status === "pending" || toolCall.status === "stopped";
   // R7：运行中且 agent 投影了 MCP 进度时，摘要行显示细进度条 + message；终态由投影清除。
@@ -337,6 +317,17 @@ export function McpToolCallBlock(context: ToolCallBlockRenderContext) {
   return (
     <ToolLayout
       toolId={toolCall.toolId}
+      disclosure={disclosure}
+      collapsedSummary={
+        visibleError ? (
+          <p
+            className="mt-1 line-clamp-2 break-words text-ui-sm text-destructive"
+            data-testid="mcp-error-summary"
+          >
+            {visibleError}
+          </p>
+        ) : undefined
+      }
       icon={MCP_TOOL_ICON}
       showIcon={context.showIcon !== false}
       // Pending / stopped 没有可消费结果，展开只会重复状态或暴露诊断参数。
@@ -345,9 +336,7 @@ export function McpToolCallBlock(context: ToolCallBlockRenderContext) {
       forceOpen={!isSummaryOnlyLifecycle && (context.forceOpen ?? false)}
       kindLabel="MCP"
       kindDetail={
-        serverLabel ? (
-          <span className="text-foreground-subtle">{serverLabel}</span>
-        ) : undefined
+        serverLabel ? <span className="text-foreground-subtle">{serverLabel}</span> : undefined
       }
       primaryText={toolLabel}
       summaryContentSeparator="·"
@@ -360,6 +349,69 @@ export function McpToolCallBlock(context: ToolCallBlockRenderContext) {
       isRunning={context.isRunning}
       title={presentation.description ?? presentation.toolName}
       renderContent={renderContent}
+    />
+  );
+}
+
+/** 仅是展示父节点；真实子调用和权限身份仍由 childToolList 保留。 */
+export function McpGroupToolCallBlock(context: ToolCallBlockRenderContext) {
+  const { intl } = useZCodeIntl();
+  const scope = useConversationDisclosureScope();
+  const localKey = useId();
+  useConversationDisclosureVersion();
+  const { toolCall, childToolCalls } = context.toolCallNode;
+  const raw = toolCall.raw as { turnId: string; mcpServerName: string; mcpGroupIds: string[] };
+  const groupKeys = scope
+    ? resolveConversationDisclosureKeys(scope, raw.turnId, "mcpGroup", raw.mcpGroupIds)
+    : [`mcpGroup:local:${localKey}`];
+  const childKeys = scope
+    ? resolveConversationDisclosureKeys(scope, raw.turnId, "mcpTool", raw.mcpGroupIds)
+    : [];
+  const failures = childToolCalls.flatMap((child) => {
+    const error = getToolCallErrorText(child.toolCall);
+    return error || child.toolCall.status === "failed"
+      ? [
+          {
+            id: child.toolCall.toolId,
+            error: error ?? intl.formatMessage({ id: "chat.toolCall.status.failed" }),
+          },
+        ]
+      : [];
+  });
+  return (
+    <ToolLayout
+      toolId={toolCall.toolId}
+      icon={MCP_TOOL_ICON}
+      kindLabel={formatMcpServerLabel(raw.mcpServerName)}
+      primaryText={intl.formatMessage(
+        // 当前翻译器只支持 {key} 插值，不能把 ICU plural 模板直接显示给用户。
+        { id: childToolCalls.length === 1 ? "chat.toolCall.mcp.call" : "chat.toolCall.mcp.calls" },
+        { count: childToolCalls.length },
+      )}
+      statusLabel={context.statusLabel}
+      showStatusLabel
+      isRunning={context.isRunning}
+      disclosure={{
+        keys: groupKeys,
+        defaultOpen:
+          context.isRunning ||
+          childKeys.some((key) => getConversationDisclosureOverride([key]) === true),
+      }}
+      collapsedSummary={
+        failures.length ? (
+          <div
+            data-testid="mcp-group-error-summary"
+            className="mt-1 space-y-1 text-ui-sm text-destructive"
+          >
+            {failures.map((failure) => (
+              <p key={failure.id} className="line-clamp-2 break-words">
+                {failure.error}
+              </p>
+            ))}
+          </div>
+        ) : undefined
+      }
+      renderContent={() => <div data-testid="mcp-group-content">{context.childToolList}</div>}
     />
   );
 }

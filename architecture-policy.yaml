@@ -915,6 +915,7 @@ modules:
     publicEntrypoints:
       - packages/ui/src/v4/conversation-presentation/index.ts
       - packages/ui/src/v4/conversation-presentation/contract.ts
+      - packages/ui/src/v4/conversation-presentation/disclosure.tsx
     layers:
       ui: .
     owner: conversation

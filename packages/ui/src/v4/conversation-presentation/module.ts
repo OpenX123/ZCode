@@ -6,5 +6,5 @@ export const conversationPresentationModule = {
   id: "conversation-presentation",
   requires: ["shared"],
   provides: ["conversation-presentation"],
-  publicEntrypoints: ["index.ts", "contract.ts"],
+  publicEntrypoints: ["index.ts", "contract.ts", "disclosure.tsx"],
 } as const;

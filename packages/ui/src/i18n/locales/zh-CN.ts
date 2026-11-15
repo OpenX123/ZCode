@@ -4918,6 +4918,8 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.loading": "正在加载...",
   "chat.toolCall.planFile": "计划文件",
   "chat.toolCall.result": "结果",
+  "chat.toolCall.mcp.call": "{count} 次调用",
+  "chat.toolCall.mcp.calls": "{count} 次调用",
   "chat.toolCall.mcp.callDetails": "查看调用详情",
   "chat.toolCall.mcp.result": "结果",
   "chat.toolCall.mcp.copyResult": "复制结果",

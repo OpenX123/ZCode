@@ -85,13 +85,13 @@ identifier and is only shown as a technical fallback.
 
 ### Lifecycle matrix
 
-| Row state | Summary | Primary detail | Secondary call detail |
-| --- | --- | --- | --- |
-| input streaming / pending approval | MCP source + action; omit pending status | not expandable | not expandable |
-| running | MCP source + action; omit running status | current status until output exists | description + normalized input |
-| success | MCP source + action; omit completed status | result | description + normalized input |
-| error | MCP source + action + failed status | error/result | description + normalized input |
-| cancelled / stopped | MCP source + action + stopped status | not expandable | not expandable |
+| Row state                          | Summary                                    | Primary detail                     | Secondary call detail          |
+| ---------------------------------- | ------------------------------------------ | ---------------------------------- | ------------------------------ |
+| input streaming / pending approval | MCP source + action; omit pending status   | not expandable                     | not expandable                 |
+| running                            | MCP source + action; omit running status   | current status until output exists | description + normalized input |
+| success                            | MCP source + action; omit completed status | result                             | description + normalized input |
+| error                              | MCP source + action + failed status        | error/result                       | description + normalized input |
+| cancelled / stopped                | MCP source + action + stopped status       | not expandable                     | not expandable                 |
 
 ## Compatibility and boundaries
 
@@ -103,10 +103,28 @@ identifier and is only shown as a technical fallback.
   change does not introduce a separate stream, queue, snapshot or recovery state.
 - Pending and running tool-part persistence carries the bounded MCP display metadata. Cold
   hydration must reuse it when an unfinished call is closed as stopped, so `MCP server · tool ·
-  stopped` never regresses to the generic `Tool call · Stopped` summary.
+stopped` never regresses to the generic `Tool call · Stopped` summary.
 - Streaming-early tool execution is a first durable writer rather than a later optimization: its
   pending and running part writes must carry the same bounded MCP display metadata before tool
   scheduling/execution. A turn Stop or process loss may happen before end-of-stream drain, so no
   later model-step write may be required to make cold/replayable recovery presentation-complete.
 - Labels must use existing semantic color and `text-ui-*` tokens and remain usable on desktop and
   mobile Web, in both themes and locales.
+
+## UX06 连续服务树与手动优先折叠
+
+- `conversation-presentation/index.ts` 公开纯 `buildConversationMcpGroups`：仅按原行序把连续、同 turn、同原生 parentToolCallId 的同服务普通 MCP 行投影为组。正文（包括空 text + typed media）、其他工具、其他服务均截断；不重排、不写回 ID/parent/状态。缺 discovery 的历史只按显式 MCP envelope 回退。Node REPL、CUA 与插件交互保留专用 renderer。
+- 服务组摘要使用 SVG 插头图标、服务名称、调用数和真实子调用聚合状态；仍有活动调用时为运行中，否则按失败、停止、完成的优先级汇总，取消调用不能显示为全部完成。子卡沿用 MCP 结果优先与二级参数。组、子调用分别折叠，执行与权限身份仍为真实 toolCallId。
+- 仅 MCP（以及后续明确接入的子任务）使用 `defaultOpen` 与用户 override：运行默认开、终态/冷历史默认关；手动开关优先于后续进度和终态。read/edit 规则不变。
+- Renderer override 的唯一所有者是独立 `disclosure.tsx` 公开入口；只存手动布尔值与更新顺序，不存执行事实、不持久化。键包含 workspace identity/path fallback、remote session、session、epoch、turn、类型和真实调用 ID；组把一次手动意图关联到当前成员，增量和前插后按最新共同成员意图恢复，虚拟重挂复用。
+- 错误以工具模型的 failed/output-error 语义判定。错误摘要在组/子卡折叠外常显；外层“已工作”收起时只提升失败组和正在手动查看的相关 MCP 项，其他历史照常折叠。手动关组可关闭正文，但不隐藏错误摘要。
+- 普通 MCP 的 in-band 失败以原始 `output.isError === true` 生成受限 `display.isError?: true`，沿原 display/metadata/live/cold 链投影。Renderer 优先读取 canonical `output.display` 派生失败展示，原 V4 execution success 与 raw.v4Status 不变。旧无字段普通历史不解析文案追溯；已有 UI 资源 `ui.isError` 保持兼容。
+
+```text
+V4 rows（执行事实唯一来源）→ 纯连续组 → MCP renderer
+                                      ↑ defaultOpen（由当前状态派生）
+完整 scope + 调用身份 → renderer override owner → 组/子卡及外层已工作边界订阅
+原 MCP result.isError → 既有 display/metadata → live/cold output.display → 失败展示（不改执行 success）
+```
+
+验收：A→A 合组、A→正文/媒体→A 拆组、A→B→A 三组；原生父子及专用 renderer 不变；运行开/成功关、手动优先、组子独立；混合失败摘要、父轮终态后手动查看、刷新冷历史、历史前插/虚拟重挂与跨 scope 隔离；主题/中英/窄屏/键盘。

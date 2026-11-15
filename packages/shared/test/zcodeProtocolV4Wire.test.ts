@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  toolCallDisplaySchema,
+  toolResultDisplaySchema,
+} from "../src/zcode-protocol-v4/toolDisplay.js";
+
+it("UX06 两个 V4 MCP mirror 保留 true，拒绝伪布尔；既有外壳容错不变", () => {
+  const display = { kind: "mcp_tool", serverName: "alpha", toolName: "call", isError: true };
+  for (const schema of [toolCallDisplaySchema, toolResultDisplaySchema]) {
+    expect(schema.parse(display)).toEqual(display);
+    for (const isError of [false, "true", 1])
+      expect(schema.safeParse({ ...display, isError }).success).toBe(false);
+  }
+  expect(toolCallDisplaySchema.safeParse({ ...display, extra: true }).success).toBe(false);
+  expect(toolResultDisplaySchema.parse({ ...display, extra: true })).toEqual(display);
+});
+import {
   PROTOCOL_V4_LIMITS,
   V4_NOTIFICATIONS,
   V4_WIRE_PROTOCOL_VERSION,

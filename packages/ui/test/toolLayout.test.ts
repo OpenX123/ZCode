@@ -1,6 +1,8 @@
+// @vitest-environment jsdom
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ToolLayout } from "../src/ToolCallBlocks/ToolLayout.js";
 import { handleToolSummaryActionKeyDown } from "../src/ToolCallBlocks/ToolSummaryRow.js";
@@ -153,5 +155,63 @@ describe("ToolLayout", () => {
     );
     expect(onActivate).toHaveBeenCalledTimes(2);
     expect(preventDefault).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("MCP 手动优先折叠", () => {
+  afterEach(cleanup);
+  const card = (defaultOpen: boolean, keys = ["test-mcp-scope-1"]) =>
+    createElement(
+      ZCodeIntlProvider,
+      { initialLocale: "zh-CN" },
+      createElement(ToolLayout, {
+        toolId: "manual-mcp",
+        icon: null,
+        kindLabel: "MCP",
+        primaryText: "alpha",
+        disclosure: { keys, defaultOpen },
+        renderContent: () => createElement("p", null, "result"),
+      }),
+    );
+  it("运行默认打开，未手动切换的成功默认收起", () => {
+    const view = render(card(true, ["test-mcp-default"]));
+    expect(
+      screen.getByTestId("tool-summary-trigger-manual-mcp").getAttribute("aria-expanded"),
+    ).toBe("true");
+    view.rerender(card(false, ["test-mcp-default"]));
+    expect(
+      screen.getByTestId("tool-summary-trigger-manual-mcp").getAttribute("aria-expanded"),
+    ).toBe("false");
+  });
+  it("手动收起在进度更新与重挂后保留，不串到其他 scope", () => {
+    const view = render(card(true));
+    fireEvent.click(screen.getByTestId("tool-summary-trigger-manual-mcp"));
+    view.rerender(card(true));
+    expect(
+      screen.getByTestId("tool-summary-trigger-manual-mcp").getAttribute("aria-expanded"),
+    ).toBe("false");
+    view.unmount();
+    render(card(true));
+    expect(
+      screen.getByTestId("tool-summary-trigger-manual-mcp").getAttribute("aria-expanded"),
+    ).toBe("false");
+    cleanup();
+    render(card(true, ["test-mcp-scope-2"]));
+    expect(
+      screen.getByTestId("tool-summary-trigger-manual-mcp").getAttribute("aria-expanded"),
+    ).toBe("true");
+  });
+  it("手动打开不被成功收起，前插/追加成员后沿共同调用恢复", () => {
+    const view = render(card(false, ["group:one", "group:two"]));
+    fireEvent.click(screen.getByTestId("tool-summary-trigger-manual-mcp"));
+    view.rerender(card(false, ["group:zero", "group:one", "group:two", "group:three"]));
+    expect(
+      screen.getByTestId("tool-summary-trigger-manual-mcp").getAttribute("aria-expanded"),
+    ).toBe("true");
+    view.unmount();
+    render(card(false, ["group:zero", "group:one", "group:two", "group:three"]));
+    expect(
+      screen.getByTestId("tool-summary-trigger-manual-mcp").getAttribute("aria-expanded"),
+    ).toBe("true");
   });
 });

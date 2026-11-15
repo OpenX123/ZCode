@@ -21,6 +21,34 @@ function makeRow(overrides: Partial<ToolCallRow> = {}): ToolCallRow {
 }
 
 describe("toolCallRowToLegacyNode", () => {
+  it("UX06 canonical MCP 结果失败只派生展示，保留原 V4 success 和执行身份", () => {
+    const display = {
+      kind: "mcp_tool" as const,
+      serverName: "alpha",
+      toolName: "call",
+      isError: true as const,
+    };
+    const row = makeRow({
+      toolName: "mcp__alpha__call",
+      status: "success",
+      parentToolCallId: "native-parent",
+      output: { text: "opaque failure", display },
+    });
+    const node = toolCallRowToLegacyNode(row);
+    expect(node.toolCall).toMatchObject({
+      toolId: "call-abc",
+      parentToolUseId: "native-parent",
+      status: "failed",
+      error: "opaque failure",
+      raw: { v4Status: "success", display },
+    });
+    expect(row.status).toBe("success");
+    expect(
+      toolCallRowToLegacyNode(
+        makeRow({ status: "success", output: { text: "MCP tool returned an error: boom" } }),
+      ).toolCall.status,
+    ).toBe("completed");
+  });
   it("字段映射：toolId/toolName/kind/input/startedAt，无子树", () => {
     const node = toolCallRowToLegacyNode(makeRow({ startedAt: 1234 }));
     expect(node.toolCall.toolId).toBe("call-abc");
@@ -267,4 +295,10 @@ it("外部 Agent 同时保留活动与最终结果并允许就地展开", () => 
   expect(toolCallRowToLegacyNode(makeRow({ toolName: "Agent" })).toolCall.raw).not.toHaveProperty(
     "inlineAgentDetails",
   );
+});
+
+it("MCP 展示适配保留原生 parentToolCallId 与 turn scope", () => {
+  const node = toolCallRowToLegacyNode(makeRow({ parentToolCallId: "native-parent" }));
+  expect(node.toolCall.parentToolUseId).toBe("native-parent");
+  expect(node.toolCall.raw).toMatchObject({ turnId: "turn-1", parentToolCallId: "native-parent" });
 });

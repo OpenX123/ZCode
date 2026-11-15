@@ -5266,6 +5266,8 @@ const enUS: Record<string, string> = {
   "chat.toolCall.loading": "Loading...",
   "chat.toolCall.planFile": "Plan file",
   "chat.toolCall.result": "Result",
+  "chat.toolCall.mcp.call": "{count} call",
+  "chat.toolCall.mcp.calls": "{count} calls",
   "chat.toolCall.mcp.callDetails": "View call details",
   "chat.toolCall.mcp.result": "Result",
   "chat.toolCall.mcp.copyResult": "Copy result",

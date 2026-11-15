@@ -4,36 +4,298 @@
   "spec": "./test/e2e/conversation-session/conversation-session-tool-groups-history-restore.test.ts",
   "fixtures": [
     {
+      "id": "ux06-mcp-title",
+      "description": "UX06 标题旁路与业务回放严格分离。",
+      "metadata": {
+        "kind": "common",
+        "source": "synthetic",
+        "timingPolicy": "fast-text",
+        "syntheticReason": "标题不是 MCP 展示语义，限定本场景以避免未匹配的旁路重试。"
+      },
+      "maxMatches": 2,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["Generate a concise title", "E2E_UX06_MCP_GROUPS"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": "UX06 MCP disclosure"
+      }
+    },
+    {
       "id": "tge05-read",
       "description": "TGE05 creates persisted Explore history.",
-      "metadata": { "kind": "main", "source": "synthetic", "timingPolicy": "tool-use", "syntheticReason": "固定三类 group 的最小历史，验证 cold restore。" },
+      "metadata": {
+        "kind": "main",
+        "source": "synthetic",
+        "timingPolicy": "tool-use",
+        "syntheticReason": "固定三类 group 的最小历史，验证 cold restore。"
+      },
       "maxMatches": 1,
-      "match": { "method": "POST", "pathIncludes": "/messages", "bodyIncludes": ["E2E_TOOL_GROUPS_HISTORY_RESTORE"], "bodyExcludes": ["Generate a concise title", "toolu_tge05_read"] },
-      "response": { "statusCode": 200, "toolUse": { "id": "toolu_tge05_read", "name": "Read", "input": { "file_path": "{{e2eRuntimeRoot}}/conversation-session-tool-groups-history-restore/read.txt" } } }
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_TOOL_GROUPS_HISTORY_RESTORE"],
+        "bodyExcludes": ["Generate a concise title", "toolu_tge05_read"]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_tge05_read",
+          "name": "Read",
+          "input": {
+            "file_path": "{{e2eRuntimeRoot}}/conversation-session-tool-groups-history-restore/read.txt"
+          }
+        }
+      }
     },
     {
       "id": "tge05-execute",
       "description": "TGE05 creates persisted Terminal history.",
-      "metadata": { "kind": "main", "source": "synthetic", "timingPolicy": "tool-use", "syntheticReason": "固定单命令 Terminal，比较 live 与 cold summary。" },
+      "metadata": {
+        "kind": "main",
+        "source": "synthetic",
+        "timingPolicy": "tool-use",
+        "syntheticReason": "固定单命令 Terminal，比较 live 与 cold summary。"
+      },
       "maxMatches": 1,
-      "match": { "method": "POST", "pathIncludes": "/messages", "bodyIncludes": ["E2E_TOOL_GROUPS_HISTORY_RESTORE", "toolu_tge05_read"], "bodyExcludes": ["Generate a concise title", "toolu_tge05_execute"] },
-      "response": { "statusCode": 200, "toolUse": { "id": "toolu_tge05_execute", "name": "Bash", "input": { "command": "node -e \"console.log('TGE05_EXEC')\"" } } }
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_TOOL_GROUPS_HISTORY_RESTORE", "toolu_tge05_read"],
+        "bodyExcludes": ["Generate a concise title", "toolu_tge05_execute"]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_tge05_execute",
+          "name": "Bash",
+          "input": {
+            "command": "node -e \"console.log('TGE05_EXEC')\""
+          }
+        }
+      }
     },
     {
       "id": "tge05-write",
       "description": "TGE05 creates persisted Changes history.",
-      "metadata": { "kind": "main", "source": "synthetic", "timingPolicy": "tool-use", "syntheticReason": "固定单文件 Changes，比较 live 与 cold summary。" },
+      "metadata": {
+        "kind": "main",
+        "source": "synthetic",
+        "timingPolicy": "tool-use",
+        "syntheticReason": "固定单文件 Changes，比较 live 与 cold summary。"
+      },
       "maxMatches": 1,
-      "match": { "method": "POST", "pathIncludes": "/messages", "bodyIncludes": ["E2E_TOOL_GROUPS_HISTORY_RESTORE", "toolu_tge05_execute"], "bodyExcludes": ["Generate a concise title", "toolu_tge05_write"] },
-      "response": { "statusCode": 200, "toolUse": { "id": "toolu_tge05_write", "name": "Write", "input": { "file_path": "{{e2eRuntimeRoot}}/conversation-session-tool-groups-history-restore/write.ts", "content": "export const restored = true;\n" } } }
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_TOOL_GROUPS_HISTORY_RESTORE", "toolu_tge05_execute"],
+        "bodyExcludes": ["Generate a concise title", "toolu_tge05_write"]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_tge05_write",
+          "name": "Write",
+          "input": {
+            "file_path": "{{e2eRuntimeRoot}}/conversation-session-tool-groups-history-restore/write.ts",
+            "content": "export const restored = true;\n"
+          }
+        }
+      }
     },
     {
       "id": "tge05-final",
       "description": "TGE05 completes the persisted history turn.",
-      "metadata": { "kind": "main", "source": "synthetic", "timingPolicy": "fast-text", "syntheticReason": "固定 assistant 终态，确保 cold restore 比较同一完整轮。" },
+      "metadata": {
+        "kind": "main",
+        "source": "synthetic",
+        "timingPolicy": "fast-text",
+        "syntheticReason": "固定 assistant 终态，确保 cold restore 比较同一完整轮。"
+      },
       "maxMatches": 1,
-      "match": { "method": "POST", "pathIncludes": "/messages", "bodyIncludes": ["E2E_TOOL_GROUPS_HISTORY_RESTORE", "toolu_tge05_write"], "bodyExcludes": ["Generate a concise title"] },
-      "response": { "statusCode": 200, "text": "upstream-e2e-ok" }
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_TOOL_GROUPS_HISTORY_RESTORE", "toolu_tge05_write"],
+        "bodyExcludes": ["Generate a concise title"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": "upstream-e2e-ok"
+      }
+    },
+    {
+      "id": "ux06-mcp-a1",
+      "description": "UX06 真实 MCP 服务连续/混合调用与显式交互 gate。",
+      "metadata": {
+        "kind": "main",
+        "source": "synthetic",
+        "timingPolicy": "tool-use",
+        "syntheticReason": "固定模型调用顺序，工具在真实 stdio server 执行；gate由用户交互断言释放。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_UX06_MCP_GROUPS"],
+        "bodyExcludes": ["Generate a concise title", "toolu_ux06_a1"]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUses": [
+          {
+            "id": "toolu_ux06_a1",
+            "name": "mcp__ux06_alpha__call",
+            "input": {
+              "value": "first",
+              "gate": "a1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "ux06-mcp-a2",
+      "description": "UX06 真实 MCP 服务连续/混合调用与显式交互 gate。",
+      "metadata": {
+        "kind": "main",
+        "source": "synthetic",
+        "timingPolicy": "tool-use",
+        "syntheticReason": "固定模型调用顺序，工具在真实 stdio server 执行；gate由用户交互断言释放。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_UX06_MCP_GROUPS", "toolu_ux06_a1"],
+        "bodyExcludes": ["Generate a concise title", "toolu_ux06_a2"]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUses": [
+          {
+            "id": "toolu_ux06_a2",
+            "name": "mcp__ux06_alpha__call",
+            "input": {
+              "value": "second",
+              "gate": "a2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "ux06-mcp-b",
+      "description": "UX06 真实 MCP 服务连续/混合调用与显式交互 gate。",
+      "metadata": {
+        "kind": "main",
+        "source": "synthetic",
+        "timingPolicy": "tool-use",
+        "syntheticReason": "固定模型调用顺序，工具在真实 stdio server 执行；gate由用户交互断言释放。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_UX06_MCP_GROUPS", "toolu_ux06_a2"],
+        "bodyExcludes": ["Generate a concise title", "toolu_ux06_b"]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUses": [
+          {
+            "id": "toolu_ux06_b",
+            "name": "mcp__ux06_beta__call",
+            "input": {
+              "value": "beta",
+              "gate": "b"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "ux06-mcp-mixed",
+      "description": "UX06 真实 MCP 服务连续/混合调用与显式交互 gate。",
+      "metadata": {
+        "kind": "main",
+        "source": "synthetic",
+        "timingPolicy": "tool-use",
+        "syntheticReason": "固定模型调用顺序，工具在真实 stdio server 执行；gate由用户交互断言释放。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_UX06_MCP_GROUPS", "toolu_ux06_b"],
+        "bodyExcludes": ["Generate a concise title", "toolu_ux06_a3"]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUses": [
+          {
+            "id": "toolu_ux06_a3",
+            "name": "mcp__ux06_alpha__call",
+            "input": {
+              "value": "third",
+              "gate": "a3"
+            }
+          },
+          {
+            "id": "toolu_ux06_a4",
+            "name": "mcp__ux06_alpha__call",
+            "input": {
+              "value": "failed",
+              "gate": "a4",
+              "fail": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "ux06-mcp-done",
+      "description": "UX06 真实 MCP 服务连续/混合调用与显式交互 gate。",
+      "metadata": {
+        "kind": "main",
+        "source": "synthetic",
+        "timingPolicy": "fast-text",
+        "syntheticReason": "固定模型调用顺序，工具在真实 stdio server 执行；gate由用户交互断言释放。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_UX06_MCP_GROUPS", "toolu_ux06_a4"],
+        "bodyExcludes": ["Generate a concise title", "E2E_UX06_HISTORY_"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": "UX06_MCP_DONE"
+      }
+    },
+    {
+      "id": "ux06-mcp-history",
+      "description": "UX06真实续轮制造足够的虚拟滚动历史。",
+      "metadata": {
+        "kind": "main",
+        "source": "synthetic",
+        "timingPolicy": "fast-text",
+        "syntheticReason": "13个独立模型回放轮次制造真实timeline虚拟卸载，验证手动MCP状态重挂；不注入DOM或缓存。"
+      },
+      "maxMatches": 13,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_UX06_HISTORY_"],
+        "bodyExcludes": ["Generate a concise title"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": "UX06 virtual history paragraph 1: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 2: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 3: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 4: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 5: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 6: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 7: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 8: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 9: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 10: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 11: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 12: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 13: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 14: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 15: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 16: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 17: deterministic conversation content for the mounted timeline window.\n\nUX06 virtual history paragraph 18: deterministic conversation content for the mounted timeline window.\n\nUX06_HISTORY_DONE"
+      }
     }
   ]
 }

@@ -80,12 +80,16 @@ function resolveV4ToolErrorText(row: ToolCallRow): string | undefined {
 }
 
 export function toolCallRowToLegacyNode(row: ToolCallRow): TaskChatToolCallTreeNode {
-  const legacyStatus = STATUS_MAP[row.status];
-  const errorText = resolveV4ToolErrorText(row);
   const inputPreview = resolveToolInputPreview(row);
   // CUA 等结构化展示事实位于 output.display；顶层 display 仅是旧 Node REPL 图片通道。
   // 优先读取 canonical output，同时保留旧快照和 Browser 轮尾截图的兼容路径。
   const display = row.output?.display ?? row.display;
+  // MCP isError 是结果失败而非执行失败；只派生旧 renderer 的展示，保留原 row/raw.v4Status。
+  const mcpResultError = display?.kind === "mcp_tool" && display.isError === true;
+  const legacyStatus = mcpResultError ? "failed" : STATUS_MAP[row.status];
+  const errorText =
+    resolveV4ToolErrorText(row) ??
+    (mcpResultError && row.output?.text ? normalizeWrappedErrorText(row.output.text) : undefined);
   // CUA v1 历史 display 会重复保存 input；工具调用行已经持有唯一输入，桥接时丢弃旧副本。
   const legacyDisplay =
     display?.kind === "cua" ? (({ input: _legacyInput, ...rest }) => rest)(display) : display;
@@ -93,6 +97,7 @@ export function toolCallRowToLegacyNode(row: ToolCallRow): TaskChatToolCallTreeN
     toolCall: {
       toolId: row.toolCallId,
       toolName: row.toolName,
+      parentToolUseId: row.parentToolCallId,
       // kind 兼容旧聚合分类：v4 下没有旧 ZCode Agent 快照形态，直接用固定工具名。
       kind: row.toolName,
       input: inputPreview.input,
@@ -116,6 +121,8 @@ export function toolCallRowToLegacyNode(row: ToolCallRow): TaskChatToolCallTreeN
         outputTruncated: row.output?.truncated,
         status: legacyStatus,
         toolCallId: row.toolCallId,
+        turnId: row.turnId,
+        parentToolCallId: row.parentToolCallId,
         toolName: row.toolName,
         v4Status: row.status,
         ...(row.cuaApp ? { cuaApp: row.cuaApp } : {}),

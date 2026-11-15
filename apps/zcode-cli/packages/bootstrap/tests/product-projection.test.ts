@@ -1981,6 +1981,47 @@ describe("ProductProjection 黄金测试（L1）", () => {
     ).toEqual([]);
   });
 
+  it("UX06 live MCP in-band 失败保留 canonical display 标记与执行 success", () => {
+    const display = {
+      kind: "mcp_tool",
+      serverName: "alpha",
+      toolName: "call",
+      isError: true,
+    } as const;
+    const log = new EventLog();
+    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 1000 });
+    log.push(
+      SessionEventType.TurnStarted,
+      { turnNumber: 1, input: "inspect" },
+      { turnId: "turn-ux06" },
+    );
+    log.push(
+      SessionEventType.ToolCallScheduled,
+      {
+        toolCallId: "ux06-in-band",
+        toolName: "mcp__alpha__call",
+        input: {},
+        schedule: { parallelGroups: [["ux06-in-band"]], executionOrder: ["ux06-in-band"] },
+      },
+      { turnId: "turn-ux06" },
+    );
+    log.push(
+      SessionEventType.ToolCallResult,
+      {
+        toolCallId: "ux06-in-band",
+        result: { success: true, content: "opaque failure", display },
+        duration: 1,
+      },
+      { turnId: "turn-ux06" },
+    );
+    const snapshot = conversationSnapshotSchema.parse(runAll(log.events).projection.getSnapshot());
+    expect(snapshot.rows.window.find((row) => row.kind === "toolCall")).toMatchObject({
+      toolCallId: "ux06-in-band",
+      status: "success",
+      output: { text: "opaque failure", display },
+    });
+  });
+
   it("MCP discovery 展示元数据进入 live tool row，不依赖合成工具名解析", () => {
     const turnId = "turn-mcp-presentation";
     const toolCallId = "tool-mcp-presentation";
