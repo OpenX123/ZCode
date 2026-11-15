@@ -1394,7 +1394,7 @@ artifact 后人工观察”的软通过口径。
 
 ### Conversation Share Candidate 覆盖
 
-UX05（2026-11-15）在既有 APC spec 增加展示与原生媒体两个独立用例。Windows local replay 两项通过（`desktop-e2e-20261115211627162-p50860-23884f50b0a18eb3`）：展示批次14.904s，原生批次18.210s；后者验证 terminal 折叠外成果、真实 artifact/Host 读取、来源上下文、草稿切换重挂、刷新和完整冷启动。纯投影测试覆盖空正文、多媒体逐项覆盖、同 URL 网页与 MIME 媒体区别、来源/id/scope 与匿名分享隐私。详细结果见本次 T05 报告和 `.e2e-artifacts`；真实引擎账号、SSH、实体手机、长历史虚拟滚动及 Docker admission 未覆盖，不将其标成 formal gate 通过。
+UX05（2026-11-15）在既有 APC spec 增加展示与原生媒体两个独立用例。Windows local replay 两项通过（`desktop-e2e-20261115211627162-p50860-23884f50b0a18eb3`）：展示批次14.904s，原生批次18.210s；后者验证 terminal 折叠外成果、真实 artifact/Host 读取、来源上下文、草稿切换重挂、刷新和完整冷启动。追加 focused 原生场景通过（`desktop-e2e-20261115212917704-p49648-992db7ff9792dfdd`，35.960s）：同一原生 fixture 真实生成 14 个 completed turns / 98 raw rows，底部仅挂载9轮；首轮旧 DOM 断开，回顶后新节点与3个 artifact Blob URL 重新生成，图片解码、3个音视频 readyState=4、controls/paused/无 autoplay 均通过。纯投影测试覆盖空正文、多媒体逐项覆盖、同 URL 网页与 MIME 媒体区别、来源/id/scope 与匿名分享隐私。详细结果见本次 T05 报告和 `.e2e-artifacts`；真实引擎账号、SSH、实体手机及 Docker admission 未覆盖，不将其标成 formal gate 通过。
 
 | Catalog ID           | 覆盖状态 | 自动化                      | 备注                                                                                               |
 | -------------------- | -------- | --------------------------- | -------------------------------------------------------------------------------------------------- |

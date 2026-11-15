@@ -35,7 +35,7 @@
     {
       "path": "engines/*/frames.json",
       "source": "created-by-spec",
-      "description": "UX05 原生批次在隔离 profile 的受管 adapter 中发送 ACP image/audio/resource_blob/resource_link；真实 writer、store、Host、renderer 和 cold resume，不使用账号。"
+      "description": "UX05 原生批次在隔离 profile 的受管 adapter 中发送 ACP image/audio/resource_blob/resource_link；真实 writer、store、Host、renderer 和 cold resume；同一 fixture 经真实 prompt 建立 14 个 completed turns，验证首轮 DOM 卸载、虚拟滚动重挂后的新 Blob URL 与媒体解码，不使用账号。"
     }
   ],
   "requests": [

@@ -19,6 +19,7 @@ import {
   managedAdapterInstallDirName,
 } from "@zcode/shared/external-engine";
 import { resolveE2EStorageRoot } from "../helpers/e2e-runtime-paths.js";
+import { skipOccupationOnboardingIfPresent } from "../helpers/occupation-onboarding.js";
 import {
   TID_BROWSER_ADDRESS_INPUT,
   TID_BROWSER_WEBVIEW,
@@ -34,8 +35,11 @@ import { restartIntoWorkspacePreservingProfile } from "../helpers/model-provider
 import { restartIntoWorkspacePreservingProfile as restartCurrentWorkspacePreservingProfile } from "../helpers/model-provider-restart-runtime.js";
 import {
   clickV4Stop,
+  clickV4TimelineBackToBottom,
   getV4FocusedPaneId,
+  getV4TimelineScrollState,
   prepareV4ConversationE2E,
+  scrollV4TimelineToTop,
   selectV4TaskById,
   sendV4Prompt,
   sendV4PromptInPane,
@@ -72,6 +76,16 @@ interface PreviewCardSnapshot {
   text: string;
   title: string;
 }
+
+type NativeMediaProbeWindow = Window & {
+  __ux05VirtualizationProbe?: {
+    turn: HTMLElement;
+    image: HTMLImageElement;
+    media: HTMLMediaElement[];
+    imageSource: string;
+    sources: string[];
+  };
+};
 
 let fixtureServer: Server | null = null;
 let fixtureRootUrl = "";
@@ -171,7 +185,8 @@ describe("Assistant Preview Cards E2E", () => {
     await assertNarrowMediaLayout();
   }).timeout(240_000);
 
-  it("UX05 原生：ACP 媒体经真实 artifact/Host 读取并在重挂、刷新、冷恢复后可用", async () => {
+  it("UX05 原生：ACP 媒体经真实 artifact/Host 读取并在虚拟滚动重挂、刷新、冷恢复后可用", async () => {
+    await skipOccupationOnboardingIfPresent();
     await startNewV4Draft();
     await prepareV4ConversationE2E({ skipProvider: true, skipShellReady: true });
     const marker = `${CASE_MARKER}_UX05_NATIVE_DONE`;
@@ -254,6 +269,7 @@ describe("Assistant Preview Cards E2E", () => {
     await assertLoadedAssistantMedia(3);
     const screenshots = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
     if (screenshots) await browser.saveScreenshot(join(screenshots, "ux05-native-cold.png"));
+    await assertNativeMediaVirtualized(marker);
   }).timeout(360_000);
 
   it("UX04: 非最终正文关键入口在已工作折叠外可见，并保留原始上下文", async () => {
@@ -686,6 +702,174 @@ async function assertNativeMediaOutsideHistory() {
     async () => browser.execute((el) => (el as HTMLImageElement).naturalWidth > 0, image),
     { timeout: 30_000 },
   );
+}
+
+async function assertNativeMediaVirtualized(marker: string) {
+  const historyTurns = 14;
+  const paneId = await getV4FocusedPaneId();
+  if (!paneId) throw new Error("缺少虚拟滚动验证的当前 pane");
+  const turnId = await browser.execute(() => {
+    const turn = document.querySelector<HTMLElement>('[data-v4-turn-unit="true"]');
+    const image = turn?.querySelector<HTMLImageElement>(
+      "[data-conversation-deliverable] img[data-markdown-image]",
+    );
+    const media = Array.from(
+      turn?.querySelectorAll<HTMLMediaElement>(
+        "[data-assistant-media] audio, [data-assistant-media] video",
+      ) ?? [],
+    );
+    if (!turn?.dataset.turnId || !image || media.length !== 3) return null;
+    (window as NativeMediaProbeWindow).__ux05VirtualizationProbe = {
+      turn,
+      image,
+      media,
+      imageSource: image.currentSrc,
+      sources: media.map((node) => node.currentSrc),
+    };
+    return turn.dataset.turnId;
+  });
+  if (!turnId) throw new Error("缺少已解码的首轮原生媒体节点");
+  try {
+    if ((await getV4TimelineScrollState(paneId)).hasBackToBottom)
+      await clickV4TimelineBackToBottom();
+    for (let index = 2; index <= historyTurns; index += 1) {
+      const prompt = `E2E_UX05_NATIVE_HISTORY_${String(index).padStart(3, "0")}`;
+      await sendV4Prompt(prompt);
+      // 每轮等待新 logical turn 的最终正文，避免复用相同 fixture marker 误读旧轮完成。
+      await browser.waitUntil(
+        async () => {
+          const actual = await browser.execute((currentPaneId) => {
+            const timeline = document.querySelector(
+              `[data-testid="v4-session-pane-${currentPaneId}"] [data-testid="v4-timeline"]`,
+            );
+            const lastTurn = Array.from(
+              timeline?.querySelectorAll('[data-v4-turn-unit="true"]') ?? [],
+            ).at(-1);
+            return {
+              count: Number(timeline?.getAttribute("data-render-unit-count")),
+              lastTurnText: lastTurn?.textContent ?? "",
+            };
+          }, paneId);
+          return (
+            actual.count === index &&
+            actual.lastTurnText.includes(prompt) &&
+            actual.lastTurnText.includes(marker)
+          );
+        },
+        { timeout: 30_000, timeoutMsg: `第 ${index} 个原生媒体历史 turn 未完成` },
+      );
+      await waitForV4Pane(
+        (snapshot) => !snapshot.canStop,
+        `第 ${index} 个原生媒体 turn 未回到空闲`,
+      );
+    }
+    if ((await getV4TimelineScrollState(paneId)).hasBackToBottom)
+      await clickV4TimelineBackToBottom();
+    await browser.waitUntil(
+      async () =>
+        browser.execute((id) => {
+          const probe = (window as NativeMediaProbeWindow).__ux05VirtualizationProbe;
+          const current = Array.from(document.querySelectorAll('[data-v4-turn-unit="true"]')).find(
+            (node) => node.getAttribute("data-turn-id") === id,
+          );
+          return Boolean(
+            probe &&
+            !current &&
+            !probe.turn.isConnected &&
+            !probe.image.isConnected &&
+            probe.media.every((node) => !node.isConnected),
+          );
+        }, turnId),
+      { timeout: 15_000, timeoutMsg: "首轮媒体仍在 DOM 中，未证明真实 virtualizer 卸载" },
+    );
+    const unmounted = await getV4TimelineScrollState(paneId);
+    expect(unmounted.renderUnitCount).toBe(historyTurns);
+    expect(unmounted.mountedRenderUnitCount).toBeLessThan(historyTurns);
+    expect(unmounted.scrollHeight).toBeGreaterThan(unmounted.clientHeight * 2);
+    await scrollV4TimelineToTop(paneId);
+    await browser.waitUntil(
+      async () =>
+        browser.execute((id) => {
+          const turn = Array.from(document.querySelectorAll('[data-v4-turn-unit="true"]')).find(
+            (node) => node.getAttribute("data-turn-id") === id,
+          );
+          const image = turn?.querySelector<HTMLImageElement>(
+            "[data-conversation-deliverable] img[data-markdown-image]",
+          );
+          const media = Array.from(
+            turn?.querySelectorAll<HTMLMediaElement>(
+              "[data-assistant-media] audio, [data-assistant-media] video",
+            ) ?? [],
+          );
+          return Boolean(
+            image &&
+            image.naturalWidth > 0 &&
+            media.length === 3 &&
+            media.every((node) => node.readyState > 0 && !node.error),
+          );
+        }, turnId),
+      { timeout: 30_000, timeoutMsg: "首轮媒体虚拟滚动重挂后未完成实际解码" },
+    );
+    const remounted = await browser.execute((id) => {
+      const probe = (window as NativeMediaProbeWindow).__ux05VirtualizationProbe!;
+      const turn = Array.from(document.querySelectorAll('[data-v4-turn-unit="true"]')).find(
+        (node) => node.getAttribute("data-turn-id") === id,
+      )!;
+      const image = turn.querySelector<HTMLImageElement>(
+        "[data-conversation-deliverable] img[data-markdown-image]",
+      )!;
+      const media = Array.from(
+        turn.querySelectorAll<HTMLMediaElement>(
+          "[data-assistant-media] audio, [data-assistant-media] video",
+        ),
+      );
+      return {
+        newTurn: turn !== probe.turn && !probe.turn.isConnected,
+        newImage:
+          image !== probe.image &&
+          image.currentSrc.startsWith("blob:") &&
+          image.currentSrc !== probe.imageSource,
+        newMedia: media.every((node) => !probe.media.includes(node)),
+        newArtifactSources: media.filter(
+          (node) => node.currentSrc.startsWith("blob:") && !probe.sources.includes(node.currentSrc),
+        ).length,
+        imageWidth: image.naturalWidth,
+        media: media.map((node) => ({
+          ready: node.readyState,
+          controls: node.controls,
+          autoplay: node.autoplay,
+          paused: node.paused,
+        })),
+        historyOpen: turn
+          .querySelector('[data-testid^="chat-assistant-history-trigger-"]')
+          ?.getAttribute("data-history-open"),
+      };
+    }, turnId);
+    expect(remounted.newTurn).toBe(true);
+    expect(remounted.newImage).toBe(true);
+    expect(remounted.newMedia).toBe(true);
+    expect(remounted.newArtifactSources).toBe(2);
+    expect(remounted.imageWidth).toBeGreaterThan(0);
+    expect(remounted.media).toHaveLength(3);
+    expect(
+      remounted.media.every(
+        (node) => node.ready > 0 && node.controls && !node.autoplay && node.paused,
+      ),
+    ).toBe(true);
+    expect(remounted.historyOpen).toBe("false");
+    const screenshots = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
+    if (screenshots) {
+      await browser.saveScreenshot(join(screenshots, "ux05-native-virtual-remount.png"));
+      await writeFile(
+        join(screenshots, "ux05-native-virtual-remount.json"),
+        JSON.stringify({ unmounted, remounted }, null, 2),
+      );
+    }
+  } finally {
+    await browser.execute(() => {
+      delete (window as NativeMediaProbeWindow).__ux05VirtualizationProbe;
+    });
+  }
 }
 
 async function assertNarrowMediaLayout() {

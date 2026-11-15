@@ -185,6 +185,12 @@ the supplied session attachment reader / selected Host file service; they are no
 cached as a second conversation fact. Unmount, reader/session/workspace change and
 retry release temporary object URLs and ignore stale resource responses.
 
+Native-media E2E recovery includes the real turn virtualizer: create 14 completed
+turns through the existing ACP fixture and command path, verify the first media
+turn is absent from the DOM at the bottom, then scroll back to remount it. Its
+new image/audio/video nodes must read usable sources and remain paused with
+native controls; draft switching alone does not establish virtualization coverage.
+
 ```text
 assistantText rows (desktop continuous / mobile replayable hydration)
   |

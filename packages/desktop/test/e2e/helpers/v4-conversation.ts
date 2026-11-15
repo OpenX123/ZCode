@@ -1684,10 +1684,12 @@ export interface V4TimelineScrollState {
   hasBackToBottom: boolean;
 }
 
-export function getV4TimelineScrollState(): Promise<V4TimelineScrollState> {
+export function getV4TimelineScrollState(paneId?: string): Promise<V4TimelineScrollState> {
   return browser.execute(
-    (timelineTestId, bottomTestId) => {
-      const timeline = document.querySelector<HTMLElement>(`[data-testid="${timelineTestId}"]`);
+    (timelineTestId, bottomTestId, paneTestId) => {
+      // 冷恢复后隐藏 draft 可保留空 timeline；显式 pane 避免把它当作目标历史窗口。
+      const root = paneTestId ? document.querySelector(`[data-testid="${paneTestId}"]`) : document;
+      const timeline = root?.querySelector<HTMLElement>(`[data-testid="${timelineTestId}"]`);
       return {
         scrollTop: timeline?.scrollTop ?? 0,
         scrollHeight: timeline?.scrollHeight ?? 0,
@@ -1698,11 +1700,12 @@ export function getV4TimelineScrollState(): Promise<V4TimelineScrollState> {
         following: timeline?.getAttribute("data-following") ?? null,
         mountedRenderUnitCount:
           timeline?.querySelectorAll('[data-v4-turn-unit="true"]').length ?? 0,
-        hasBackToBottom: Boolean(document.querySelector(`[data-testid="${bottomTestId}"]`)),
+        hasBackToBottom: Boolean(root?.querySelector(`[data-testid="${bottomTestId}"]`)),
       };
     },
     TID_V4_TIMELINE,
     TID_V4_TIMELINE_BOTTOM,
+    paneId ? testId(TID_V4_SESSION_PANE, paneId) : null,
   );
 }
 
@@ -1718,23 +1721,34 @@ export function getV4TimelineScrollState(): Promise<V4TimelineScrollState> {
  * 注意不能等 scrollTop 停在 0：到顶会触发 loadOlder，prepend 锚定会立刻把
  * scrollTop 平移到保持阅读位置的新值（这正是被测语义），0 只是瞬态。
  */
-export async function scrollV4TimelineToTop() {
-  await browser.execute((timelineTestId) => {
-    const timeline = document.querySelector<HTMLElement>(`[data-testid="${timelineTestId}"]`);
-    if (!timeline) return;
-    // 修复原因：ConversationTimeline 会先用 wheel/touch/key 记录真实用户意图，
-    // 仅写 scrollTop 的脚本滚动可能被布局保护窗口归类为虚拟化校正，继续保持底部跟随。
-    timeline.dispatchEvent(
-      new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -600 }),
-    );
-    timeline.scrollTop = 0;
-    timeline.dispatchEvent(new Event("scroll"));
-  }, TID_V4_TIMELINE);
+export async function scrollV4TimelineToTop(paneId?: string) {
+  const paneTestId = paneId ? testId(TID_V4_SESSION_PANE, paneId) : null;
+  await browser.execute(
+    (timelineTestId, scopeTestId) => {
+      const root = scopeTestId
+        ? document.querySelector(`[data-testid="${scopeTestId}"]`)
+        : document;
+      const timeline = root?.querySelector<HTMLElement>(`[data-testid="${timelineTestId}"]`);
+      if (!timeline) return;
+      // 修复原因：ConversationTimeline 会先用 wheel/touch/key 记录真实用户意图，
+      // 仅写 scrollTop 的脚本滚动可能被布局保护窗口归类为虚拟化校正，继续保持底部跟随。
+      timeline.dispatchEvent(
+        new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -600 }),
+      );
+      timeline.scrollTop = 0;
+      timeline.dispatchEvent(new Event("scroll"));
+    },
+    TID_V4_TIMELINE,
+    paneTestId,
+  );
   await browser.waitUntil(
     async () =>
       browser.execute(
-        (timelineTestId, rowPrefix) => {
-          const timeline = document.querySelector<HTMLElement>(`[data-testid="${timelineTestId}"]`);
+        (timelineTestId, rowPrefix, scopeTestId) => {
+          const root = scopeTestId
+            ? document.querySelector(`[data-testid="${scopeTestId}"]`)
+            : document;
+          const timeline = root?.querySelector<HTMLElement>(`[data-testid="${timelineTestId}"]`);
           if (!timeline) return false;
           const timelineTop = timeline.getBoundingClientRect().top;
           const viewportHeight = timeline.clientHeight;
@@ -1747,6 +1761,7 @@ export async function scrollV4TimelineToTop() {
         },
         TID_V4_TIMELINE,
         TID_V4_ROW,
+        paneTestId,
       ),
     {
       timeout: 15000,
