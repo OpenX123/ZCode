@@ -803,16 +803,17 @@ describe("外部引擎首发前配置与同会话续聊", () => {
   it("W4 Codex → Claude → Codex 热切换：控件不空白，预热命中 1 秒内可操作", async () => {
     await installExternalEngineFixtures();
     await prepareV4ConversationE2E({ skipProvider: true });
-    const switchEngineTimed = (engine: "codex" | "claude-code") =>
-      browser.execute(async (target) => {
+    const switchEngineTimed = async (engine: "codex" | "claude-code") => {
+      // YCode 的 Radix DropdownMenuTrigger 在 pointerdown 打开；DOM click 不会触发该真实交互。
+      const trigger = await composerModelTrigger();
+      await trigger.waitForClickable();
+      await trigger.click();
+      return browser.execute(async (target) => {
         const visible = (selector: string) =>
           [...document.querySelectorAll<HTMLElement>(selector)].find(
             (element) => element.getClientRects().length > 0,
           );
-        // W2：引擎胶囊已删除，切换行在模型入口弹层顶部；先打开弹层，再从点击切换项开始计时。
-        visible(
-          '[data-testid="engine-config-model-effort"], [data-testid="chat-model-select-trigger"]',
-        )?.click();
+        // W2：弹层已由真实点击打开；仍从点击切换项开始计时，不把打开菜单耗时计入预热。
         const optionSelector = `[data-testid="engine-switch-option-${target}"]`;
         const option = await new Promise<HTMLElement | undefined>((resolve) => {
           const startedWaiting = performance.now();
@@ -861,6 +862,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         });
         return { engine: target, visibleMs: visibleMs!, enabledMs: enabledMs! };
       }, engine);
+    };
     // 每次计时后关闭弹层，下一次从入口重新打开，避免再次点击入口把已开弹层关掉。
     const switchEngine = async (engine: "codex" | "claude-code") => {
       const sample = await switchEngineTimed(engine);
@@ -1620,10 +1622,8 @@ describe("外部引擎首发前配置与同会话续聊", () => {
 
   it("深度提交等待确认时不回跳，拒绝后恢复确认值", async () => {
     await installExternalEngineFixtures();
-    await startNewV4Draft();
     await prepareV4ConversationE2E({
       skipProvider: true,
-      skipShellReady: true,
     });
     for (const [, engine] of [
       ["Claude Code", "claude-code"],
@@ -1655,6 +1655,12 @@ describe("外部引擎首发前配置与同会话续聊", () => {
         await browser.getUrl(),
       );
       await setCurrentElectronRendererContentSize(engine === "codex" ? 430 : 1280, 812);
+      // 430px 会把桌面可见侧栏变成覆盖会话的抽屉；先用真实快捷键收起，才能点击底下的配置入口。
+      const sidebarBackdrop = $('[data-testid="workspace-sidebar-drawer-backdrop"]');
+      if (await sidebarBackdrop.isExisting()) {
+        await browser.keys([process.platform === "darwin" ? "Meta" : "Control", "b"]);
+        await sidebarBackdrop.waitForExist({ reverse: true });
+      }
       await browser.execute((dark) => {
         const actions = (
           window as typeof window & {

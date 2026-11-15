@@ -1,0 +1,145 @@
+{
+  "source": {
+    "engine": "codex",
+    "adapterVersion": "2.2.2",
+    "capturedAt": "2026-11-15",
+    "promptCount": 0,
+    "currentModelMatchesReferenceDisplayName": true,
+    "redacted": [
+      "model identifiers and names",
+      "session identifiers",
+      "descriptions and metadata omitted"
+    ],
+    "observedMethods": [
+      "session/new",
+      "session/set_config_option",
+      "session/set_config_option:restore",
+      "session/resume"
+    ]
+  },
+  "configOptions": [
+    {
+      "id": "mode",
+      "name": "Mode",
+      "currentValue": "agent",
+      "options": [
+        {
+          "value": "read-only",
+          "name": "Read-only"
+        },
+        {
+          "value": "workspace-write",
+          "name": "Workspace access"
+        },
+        {
+          "value": "agent",
+          "name": "Auto review"
+        },
+        {
+          "value": "agent-full-access",
+          "name": "Full access"
+        }
+      ]
+    },
+    {
+      "id": "collaboration_mode",
+      "name": "Collaboration mode",
+      "currentValue": "default",
+      "options": [
+        {
+          "value": "default",
+          "name": "Default"
+        },
+        {
+          "value": "plan",
+          "name": "Plan"
+        }
+      ]
+    },
+    {
+      "id": "model",
+      "name": "Model",
+      "currentValue": "native-model-0",
+      "options": [
+        {
+          "value": "native-model-0",
+          "name": "native-model-0"
+        },
+        {
+          "value": "native-model-1",
+          "name": "native-model-1"
+        },
+        {
+          "value": "native-model-2",
+          "name": "native-model-2"
+        },
+        {
+          "value": "native-model-3",
+          "name": "native-model-3"
+        },
+        {
+          "value": "native-model-4",
+          "name": "native-model-4"
+        },
+        {
+          "value": "native-model-5",
+          "name": "native-model-5"
+        },
+        {
+          "value": "native-model-6",
+          "name": "native-model-6"
+        },
+        {
+          "value": "native-model-7",
+          "name": "native-model-7"
+        }
+      ]
+    },
+    {
+      "id": "reasoning_effort",
+      "name": "Reasoning effort",
+      "currentValue": "high",
+      "options": [
+        {
+          "value": "low",
+          "name": "Low"
+        },
+        {
+          "value": "medium",
+          "name": "Medium"
+        },
+        {
+          "value": "high",
+          "name": "High"
+        },
+        {
+          "value": "xhigh",
+          "name": "Xhigh"
+        },
+        {
+          "value": "max",
+          "name": "Max"
+        },
+        {
+          "value": "ultra",
+          "name": "Ultra"
+        }
+      ]
+    },
+    {
+      "id": "fast-mode",
+      "name": "Fast mode",
+      "currentValue": "off",
+      "options": [
+        {
+          "value": "off",
+          "name": "Off"
+        },
+        {
+          "value": "on",
+          "name": "On"
+        }
+      ]
+    }
+  ]
+}

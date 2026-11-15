@@ -6,6 +6,7 @@ import type { EngineConfigOption } from "@zcode/shared";
 import type { AgentRuntimeInternal } from "../src/runtime/internal.js";
 import { prepareExternalEngineSession } from "../src/external-engine/session.js";
 import { setup } from "./helpers/external-engine-runtime.js";
+import nativeCatalog from "../../adapters/tests/fixtures/codex-native-config-options.json";
 
 const option = (currentValue: string): EngineConfigOption => ({
   id: "model",
@@ -42,6 +43,31 @@ function withPort(
 }
 
 describe("外部引擎缓存选项清单（W4）", () => {
+  test("真实脱敏目录从 port 确认进入 Runtime 与配置事件，目录变化不残留旧 effort", async () => {
+    const { runtime, events } = setup([]);
+    let notify: ExternalEngineSessionInput["onConfigOptions"] | undefined;
+    withPort(runtime, async (input) => {
+      notify = input.onConfigOptions;
+      await notify(nativeCatalog.configOptions);
+    });
+    await prepareExternalEngineSession(runtime, createRootTraceContext());
+    const latestOptions = () => {
+      const event = events.at(-1);
+      if (!event) throw new Error("缺少原生配置事件");
+      return (event.payload as { engineConfigOptions: EngineConfigOption[] }).engineConfigOptions;
+    };
+    expect(runtime.engineConfigOptions).toEqual(nativeCatalog.configOptions);
+    expect(latestOptions()).toEqual(nativeCatalog.configOptions);
+    const withoutEffort = nativeCatalog.configOptions.filter(({ id }) => id !== "reasoning_effort");
+    if (!notify) throw new Error("缺少原生目录回调");
+    await notify(withoutEffort);
+    expect(runtime.engineConfigOptions).toEqual(withoutEffort);
+    expect(latestOptions()).toEqual(withoutEffort);
+    await notify(nativeCatalog.configOptions);
+    expect(runtime.engineConfigOptions).toEqual(nativeCatalog.configOptions);
+    expect(latestOptions()).toEqual(nativeCatalog.configOptions);
+  });
+
   test("connecting 先发布缓存清单，确认后替换为 live；缓存不进入 Runtime 真值", async () => {
     const { runtime, events } = setup([]);
     let seenWorkspaceKey: string | undefined;

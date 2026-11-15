@@ -30,6 +30,7 @@ import {
   createExternalEnginePort,
   runExternalEngineConnectionTest,
 } from "../src/external-engine/index.js";
+import nativeCatalog from "./fixtures/codex-native-config-options.json";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -43,13 +44,21 @@ const fs = require("node:fs");
 const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\n");
 const sid = "native-session";
 const mode = process.env.FIXTURE_MODE || "ok";
+const nativeCatalog = JSON.parse(process.env.FIXTURE_CONFIG_OPTIONS || "[]");
 if (process.env.FIXTURE_CWD_FILE) fs.writeFileSync(process.env.FIXTURE_CWD_FILE, process.cwd());
 let prompt;
 const text = (value) => send({ method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: value } } } });
 const info = (meta) => send({ method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "session_info_update", _meta: meta } } });
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
-  if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1 } });
+  if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { resume: {} } } } });
+  else if ((message.method === "session/new" || message.method === "session/resume") && mode.startsWith("native-catalog")) {
+    if (mode === "native-catalog-notification-first") {
+      send({ method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "config_option_update", configOptions: nativeCatalog } } });
+      send({ method: "session/update", params: { sessionId: "another-native-session", update: { sessionUpdate: "config_option_update", configOptions: [] } } });
+    }
+    send({ id: message.id, result: { sessionId: sid, configOptions: mode === "native-catalog-notification-first" ? nativeCatalog.filter(option => option.id !== "reasoning_effort") : nativeCatalog } });
+  }
   else if (message.method === "session/new" && mode === "null-description") send({ id: message.id, result: { sessionId: sid, configOptions: [{ id: "model", name: "Model", type: "select", currentValue: "gw-model", options: [{ value: "gw-model", name: "6.1 Sol", description: null, _meta: { jetbrains: { air: { version: 1, kind: "standard" } } } }, { value: "gpt-5.5", name: "5.5", description: "Frontier model" }] }] } });
   else if (message.method === "session/new") send({ id: message.id, result: { sessionId: sid } });
   else if (message.method === "session/cancel") send({ id: prompt.id, result: { stopReason: "cancelled" } });
@@ -284,6 +293,46 @@ describe("Windows 运行时补位", () => {
 });
 
 describe("原生配置目录归一", () => {
+  test.each([false, true])("脱敏真实 Codex 目录通过%s恢复握手，effort 原始档位完整保留", async (resume) => {
+    const f = await setup("codex", {
+      FIXTURE_MODE: "native-catalog",
+      FIXTURE_CONFIG_OPTIONS: JSON.stringify(nativeCatalog.configOptions),
+    });
+    const input = turn("codex");
+    const onConfigOptions = vi.fn(async () => {});
+    try {
+      await f.port.prepareSession({
+        ...input,
+        ...(resume ? { externalSessionId: "native-session" } : {}),
+        onConfigOptions,
+      });
+      expect(onConfigOptions).toHaveBeenLastCalledWith(nativeCatalog.configOptions);
+      expect(nativeCatalog.configOptions.find(({ id }) => id === "reasoning_effort")?.options.map(({ value }) => value))
+        .toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
+    } finally {
+      await f.port.closeSession(input.sessionId);
+    }
+  });
+
+  test.each([false, true])("new/resume=%s 先通知后旧响应不丢 effort，其他 session 的通知不清空目录", async (resume) => {
+    const f = await setup("codex", {
+      FIXTURE_MODE: "native-catalog-notification-first",
+      FIXTURE_CONFIG_OPTIONS: JSON.stringify(nativeCatalog.configOptions),
+    });
+    const input = turn("codex");
+    const onConfigOptions = vi.fn(async () => {});
+    try {
+      await f.port.prepareSession({
+        ...input,
+        ...(resume ? { externalSessionId: "native-session" } : {}),
+        onConfigOptions,
+      });
+      expect(onConfigOptions).toHaveBeenCalledExactlyOnceWith(nativeCatalog.configOptions);
+    } finally {
+      await f.port.closeSession(input.sessionId);
+    }
+  });
+
   test("Codex 模型选项值的 description 为 null 时握手成功并视同缺省（本机 Windows 实测形状）", async () => {
     const f = await setup("codex", { FIXTURE_MODE: "null-description" });
     const received: unknown[] = [];

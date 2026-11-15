@@ -8,6 +8,7 @@
 - `EXTERNAL_ENGINE_RUNTIMES` 是 adapter 包名、锁定版本、官方 CLI 与环境变量规则的唯一来源；安装、检测与启动方都从这里读取。
 - `externalEngineStatusSchema.ready` 是外部引擎会话的执行门禁，失败时使用 `engine_not_ready`。
 - `engineConfigOptionKind` 是原生配置类别的唯一判定（`model`、思考深度 `effort`、其余 `other`）；深度选择器与按引擎记忆共用；`isRememberableEngineConfig` 在其上加入 configId 恰为 `mode` 的非计划权限模式，是记忆写入、schema 与恢复的唯一判定。
+- 原生目录是能力的唯一来源，类别判定不得创造档位或将 `collaboration_mode` 当作深度；未知 id 保留为 other。目录缺少 effort 不单独证明模型不支持，须区分未下发、未知 id、更新丢失与错误绑定；诊断标准见 external-agent-engines-spec.md「原生思考深度目录的诊断边界」。
 - `node/cli.ts` 解析 Windows npm/pnpm 包装入口的目标：Claude 指向 `.exe` 或 JS 时使用该文件，Codex 的官方 `codex.js` 解析为平台包内原生 `codex.exe`（找不到时保留 `.cmd`）；Host 检测与 adapter 连接共用同一结果。
 
 规则来源：`docs/desktop/external-agent-engines-spec.md`。

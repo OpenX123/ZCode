@@ -179,6 +179,33 @@ it("Escape 丢弃预览，模型切换后的目录不会沿用旧档位", () => 
   expect(onChange).not.toHaveBeenCalled();
 });
 
+it("原生目录移除深度后不伪造控件，重新下发时恢复档位且不沿用旧预览", () => {
+  const onChange = vi.fn();
+  const model: EngineConfigOption = {
+    id: "model",
+    name: "Model",
+    currentValue: "native-model-0",
+    options: [{ value: "native-model-0", name: "Native model" }],
+  };
+  const collaboration: EngineConfigOption = {
+    id: "collaboration_mode",
+    name: "Collaboration mode",
+    currentValue: "default",
+    options: [{ value: "default", name: "Default" }],
+  };
+  const view = render(tree([model, effort, collaboration], onChange));
+  fireEvent.click(screen.getByTestId("engine-config-model-effort"));
+  fireEvent.change(screen.getByRole("slider"), { target: { value: "2" } });
+  view.rerender(tree([model, collaboration], onChange));
+  expect(screen.queryByRole("slider")).toBeNull();
+  expect(screen.queryByTestId("engine-effort-value")).toBeNull();
+  fireEvent.click(screen.getByTestId("engine-more-options").querySelector("summary")!);
+  expect(screen.getByTestId("engine-config-collaboration_mode")).toBeDefined();
+  view.rerender(tree([model, effort, collaboration], onChange));
+  expect(screen.getByRole("slider").getAttribute("aria-valuetext")).toBe("Medium");
+  expect(onChange).not.toHaveBeenCalled();
+});
+
 it("单档和禁用配置不提交；未知当前值可显式选择首档", () => {
   const onChange = vi.fn();
   const view = render(

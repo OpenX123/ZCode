@@ -12,6 +12,8 @@ prepareSession 与 runTurn 共用连接和初始化路径，首次 prompt 复用
 
 新连接初始化时 configValues 是 Runtime 上次确认的选择；依照 resume 最新目录恢复后再发布 configOptions。缺失值明确失败并关闭失败连接，不能静默回落新会话。
 
+原生目录与配置更新均按当前原生 session 绑定归一化；new/resume 的同会话 config_option_update 先于响应到达时，以通知目录收口，较旧响应不得抹掉 effort。非当前绑定通知不能替换当前目录；不从模型名或未知配置 id 补造档位。诊断区分不支持、未下发、未知 id、更新丢失、错误绑定，证据与真实账号覆盖边界见所属 spec。
+
 新建 Claude 会话未确认 mode 且原生当前为 default 时，目录支持 auto 才通过现有配置 RPC 选择 Auto；发布原生实际返回值，保留模型限制的调整。已有会话、已确认选择、其他原生模式和 Codex 不应用新建默认值；不写用户 CLI 设置或绕过权限。
 
 prepareSession 是同会话 single-flight 的连接恢复入口：只对连接/超时/internal error 有限退避重试；closeSession 与 signal 中止在途准备和退避。runTurn 只在 prompt 前复用准备，prompt 从不自动重发。恢复协商 resume/load 能力，load 不重放用户正文/工具至回调；保留原 externalSessionId 和已确认配置。未确认 session/new 的失败不自动重发。

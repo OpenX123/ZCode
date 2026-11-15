@@ -23,7 +23,7 @@ describe("原生配置类别", () => {
     expect(engineConfigOptionKind("model")).toBe("model");
     for (const id of ["effort", "reasoning_effort", "reasoning-effort", "thought_level", "Effort"])
       expect(engineConfigOptionKind(id)).toBe("effort");
-    for (const id of ["mode", "permission-mode", "fast", "Model"])
+    for (const id of ["mode", "permission-mode", "fast", "Model", "collaboration_mode"])
       expect(engineConfigOptionKind(id)).toBe("other");
   });
 

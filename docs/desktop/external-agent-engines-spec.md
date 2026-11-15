@@ -740,6 +740,39 @@ sequenceDiagram
 - 窄工具栏复用 `useComposerToolbarFit` 的布局裁决：配置入口收为有可访问名称的图标，只读引擎 Logo 保持固定小尺寸，避免外层 `shrink-0` 裁切选项。不新建第二套宽度检测或业务状态。
 - 验收：两家引擎的模式与弹层内模型入口展开完整目录；菜单不溢出视口，窄视口允许滚动，每项均能滚动到达、点击并保存选择。深度拖动及键盘调节正确回传原始值；单档、未知当前值、禁用、切换模型后的档位变化均不产生隐式配置写入。覆盖深浅主题、窄视口及减少动态效果。
 
+#### 原生思考深度目录的诊断边界（UX02）
+
+原生 `configOptions` 是唯一能力目录；`engineConfigOptionKind` 只分类，不补造档位。诊断按同一原生 session、引擎和连接绑定，对照 `session/new` / `session/resume` 响应、`config_option_update`、Runtime `config.engineConfigOptions` 与 UI；只采集配置字段、原始枚举值和确认值，session/model 标识脱敏，不保存凭据、正文或原始帧。
+
+| 分类     | 判定证据                                                | 处理边界                                                       |
+| -------- | ------------------------------------------------------- | -------------------------------------------------------------- |
+| 不支持   | 上游模型能力明确为空，原生目录没有 effort               | 合法无控件；不从模型名称猜能力                                 |
+| 未下发   | 尚无完整原生目录，或目录缺项但没有上游能力证据          | 保持未确认；缺项本身不足以断言模型不支持                       |
+| 未知 id  | 原生目录和 snapshot 保留该配置，但类别为 other          | 更多选项仍可用；有真实字段证据后才扩展分类                     |
+| 更新丢失 | 同一绑定原生通知含能力，后续较旧响应或投影却丢失        | 仅修接收、归一化或投影中有证据的边界；先通知后响应不能回退目录 |
+| 错误绑定 | session / engine / connectionProfileId 不属于当前 owner | 丢弃非当前绑定更新；旧 ACK 不推进新绑定的恢复                  |
+
+连接失败须先按既有结构化失败合同诊断，不伪装成“不支持”。切换模型时以新目录为准，effort 消失时移除控件、重新出现时恢复原始档位，单档只展示；打开或目录变化均不得隐式写配置。写回继续复用 CLI/Host owner、`setEngineConfigOption` CAS 和 ACK 屏障。
+
+```mermaid
+sequenceDiagram
+  participant N as 原生引擎
+  participant A as ACP 绑定与通知队列
+  participant R as CLI Runtime 配置 owner
+  participant U as snapshot / UI
+  N-->>A: 当前 session 的目录通知
+  N-->>A: new/resume 响应（可能是旧目录）
+  A->>A: 同绑定通知优先收口，其他绑定不采纳
+  A-->>R: 确认后的原生目录
+  R-->>U: engineConfigOptions
+  U->>R: 既有 setEngineConfigOption CAS
+  R->>N: 原始 configId / value
+  N-->>R: 原生确认目录
+  R-->>U: ACK 与 snapshot（旧绑定 ACK 不推进新恢复）
+```
+
+2026-11-15 本机 Codex adapter 2.2.2 零 prompt 采样中，新建、两次原生切模及同一进程恢复均返回 `reasoning_effort`；真实配置目录 fixture 位于 adapter tests/fixtures。该次没有收到 `config_option_update`，因此通知顺序、Runtime snapshot、草稿预热、停止恢复与旧 ACK 隔离由受控回归验证；这不构成真实账号历史冷恢复或截图中缺失问题已修复的证明。
+
 ```mermaid
 flowchart TD
   A[点击无边框触发器] --> B{配置类型}
