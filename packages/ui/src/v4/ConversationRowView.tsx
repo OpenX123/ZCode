@@ -1,4 +1,5 @@
 import { GenUiMessageResponse } from "@/gen-ui/index.js";
+import { MessageResponse } from "@/components/ai-elements/message.js";
 import { ConversationUserInputBubble } from "@/v4/ConversationUserInputBubble.js";
 import { expandTopicInputMessages } from "@/v4/topicInputMessages.js";
 import { ConnectedBotGroupDeliveryAction } from "@/v4/BotGroupDeliveryAction.js";
@@ -231,6 +232,7 @@ export interface EditWorkspaceRewindAvailability {
 }
 
 export interface ConversationRowViewProps {
+  suppressTextFenceActions?: boolean;
   row: ConversationRow;
   /** 渲染上下文（theme/codePreviewSettings/workspacePath）；宿主保证引用稳定。 */
   context: ConversationRowRenderContext;
@@ -1638,6 +1640,7 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
 });
 
 const AssistantTextRowView = memo(function AssistantTextRowView({
+  suppressTextFenceActions,
   row,
   context,
   onFork,
@@ -1650,6 +1653,7 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
   codeCommentCards,
   codeCommentProjectionEnabled,
 }: {
+  suppressTextFenceActions?: boolean;
   row: AssistantTextRow;
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
@@ -1683,6 +1687,7 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
           selectable 语义必须放在稳定的 DOM 包装层上，完成态和 streaming 共用同一路径。 */}
       <div data-conversation-selectable="true" className="w-full text-ui-base">
         <GenUiMessageResponse
+          suppressTextFenceActions={suppressTextFenceActions}
           completed={row.state === "complete"}
           messageKey={`${row.rowId}:${row.entityId ?? ""}`}
           renderZCodeFileCitations
@@ -1701,6 +1706,20 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
         >
           {visibleText}
         </GenUiMessageResponse>
+        {row.media?.length ? (
+          <MessageResponse
+            media={row.media}
+            theme={context.theme}
+            codePreviewSettings={context.codePreviewSettings}
+            sessionId={context.sessionId ?? undefined}
+            readAttachment={context.readAttachment}
+            workspacePath={context.workspacePath}
+            workspaceIdentity={context.workspaceIdentity}
+            workspaceRemoteSessionId={context.workspaceRemoteSessionId}
+            onOpenExternalUrl={context.onOpenBrowserUrl}
+            onOpenFileLink={context.onOpenFileLink}
+          />
+        ) : null}
       </div>
       {codeCommentCardsEnabled && codeCommentCards && codeCommentCards.length > 0 ? (
         <div className="mt-3">
@@ -2302,6 +2321,7 @@ const SubagentRowView = memo(function SubagentRowView({ row }: { row: SubagentRo
  * useCallback/useMemo）。
  */
 function ConversationRowViewImpl({
+  suppressTextFenceActions,
   row,
   context,
   onFork,
@@ -2332,6 +2352,7 @@ function ConversationRowViewImpl({
     case "assistantText":
       return (
         <AssistantTextRowView
+          suppressTextFenceActions={suppressTextFenceActions}
           row={row}
           context={context}
           onFork={onFork}

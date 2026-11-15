@@ -1,9 +1,11 @@
 import { structuredPatch } from "diff";
+import { assistantMediaRefSchema, type AssistantMediaRef } from "@zcode/shared/zcode-protocol-v4";
 import {
   createMessageId,
   createPartId,
   SessionEventType,
   type MessageId,
+  type FilePart,
   type ReasoningPart,
   type SessionEvent,
   type TextPart,
@@ -14,6 +16,8 @@ import {
 import type { AgentRuntimeInternal } from "../runtime/internal.js";
 
 const EXTERNAL_TURN_CANCELLED_MESSAGE = "External engine turn cancelled";
+const OUTPUT_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
+const OUTPUT_MEDIA_MAX_BASE64_CHARS = Math.ceil(OUTPUT_MEDIA_MAX_BYTES / 3) * 4;
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -87,7 +91,7 @@ export interface SyntheticToolSettlement {
  */
 export class ExternalTranscriptWriter {
   readonly messageId: MessageId = createMessageId();
-  readonly parts: Array<TextPart | ReasoningPart | ToolPart> = [];
+  readonly parts: Array<TextPart | ReasoningPart | ToolPart | FilePart> = [];
   response = "";
   toolCallCount = 0;
   private readonly created = Date.now();
@@ -167,8 +171,36 @@ export class ExternalTranscriptWriter {
     kind: "agent_message_chunk" | "agent_thought_chunk",
   ): Promise<void> {
     const content = record(update.content);
-    if (content.type !== "text" || typeof content.text !== "string") return;
     const parentToolCallId = record(record(update._meta).claudeCode).parentToolUseId;
+    if (content.type !== "text" || typeof content.text !== "string") {
+      // 父工具活动的 owner 仍是工具元数据，不能因媒体分支抢先处理而污染主回答。
+      if (typeof parentToolCallId === "string" || kind === "agent_thought_chunk") {
+        const resource = content.type === "resource" ? record(content.resource) : content;
+        const mime =
+          typeof resource.mimeType === "string" ? resource.mimeType.slice(0, 128) : "unknown";
+        let reference = "";
+        try {
+          const uri = new URL(String(resource.uri ?? ""));
+          if (["https:", "http:"].includes(uri.protocol) && !uri.username && !uri.password)
+            reference = uri.href.slice(0, 4096);
+        } catch {
+          /* 无可安全打开的引用，仅保留类型提示。 */
+        }
+        await this.chunk(
+          {
+            ...update,
+            content: {
+              type: "text",
+              text: `\n[ACP resource: ${mime}]${reference ? ` ${reference}` : ""}\n`,
+            },
+          },
+          kind,
+        );
+        return;
+      }
+      await this.mediaChunk(content, kind);
+      return;
+    }
     if (typeof parentToolCallId === "string") {
       const parent = this.tools.get(parentToolCallId);
       if (!parent || parent.state.status !== "running") return;
@@ -220,6 +252,141 @@ export class ExternalTranscriptWriter {
       kind: type === "text" ? "text_delta" : "reasoning_delta",
       assistantMessageId: this.messageId,
       partId: active.id,
+    });
+  }
+
+  private async mediaChunk(
+    content: Record<string, unknown>,
+    kind: "agent_message_chunk" | "agent_thought_chunk",
+  ): Promise<void> {
+    const resource = content.type === "resource" ? record(content.resource) : content;
+    const mime = typeof resource.mimeType === "string" ? resource.mimeType.toLowerCase() : "";
+    const uri = typeof resource.uri === "string" ? resource.uri : "";
+    const mediaType = mime.split("/", 1)[0];
+    const id = createPartId();
+    const name =
+      typeof content.name === "string" && content.name.trim()
+        ? content.name.slice(0, 512)
+        : undefined;
+    const candidate = (source: AssistantMediaRef["source"]) =>
+      assistantMediaRefSchema.safeParse({
+        id,
+        mediaType,
+        mimeType: mime,
+        source,
+        ...(name ? { name } : {}),
+      });
+    const data =
+      typeof resource.blob === "string"
+        ? resource.blob
+        : typeof resource.data === "string"
+          ? resource.data
+          : undefined;
+    let media: AssistantMediaRef | undefined;
+    let sizeBytes: number | undefined;
+    // 旧 writer 在非 text 分支直接 return，ACP 图片/音频永久丢失。先沿附件 data URL 格式落 artifact 与 FilePart，
+    // 然后沿同一 ModelStreaming 文本段发布引用，杜绝内联本体进入 topic 或冷恢复漂移。
+    if (
+      data !== undefined &&
+      candidate({ kind: "artifact", uri: "zcode-artifact://validation/media" }).success
+    ) {
+      if (
+        data.length <= OUTPUT_MEDIA_MAX_BASE64_CHARS &&
+        // 分组重复正则在合法20 MiB输入上耗尽V8栈；长度与字母表分别验证保持同一编码边界。
+        data.length % 4 === 0 &&
+        /^[A-Za-z0-9+/]*={0,2}$/u.test(data) &&
+        data.length > 0
+      ) {
+        const bytes = Buffer.from(data, "base64");
+        if (bytes.byteLength <= OUTPUT_MEDIA_MAX_BYTES) {
+          const store = this.runtime.artifactStore;
+          if (!store) throw new Error("ACP media artifact storage unavailable");
+          const artifact = await store.writeToolResultArtifact({
+            sessionId: this.runtime.sessionId,
+            toolCallId: id,
+            toolName: "external-engine-media",
+            content: `data:${mime};base64,${data}`,
+            contentType: "text/plain",
+            retention: "session",
+            trace: this.traceContext,
+          });
+          media = candidate({ kind: "artifact", uri: artifact.uri }).data;
+          if (!media) throw new Error("ACP media artifact reference invalid");
+          sizeBytes = bytes.byteLength;
+        }
+      }
+    } else if (data === undefined && uri) {
+      media = candidate({
+        kind: uri.startsWith("zcode-artifact://") ? "artifact" : "url",
+        ...(uri.startsWith("zcode-artifact://") ? { uri } : { url: uri }),
+      } as AssistantMediaRef["source"]).data;
+    }
+    if (!media) {
+      // 未知类型保留有界可读提示及原引用，绝不序列化 content（可能带 base64/凭据）。
+      let reference = "";
+      try {
+        const parsed = new URL(uri);
+        if (
+          ["https:", "http:", "file:"].includes(parsed.protocol) &&
+          !parsed.username &&
+          !parsed.password
+        )
+          reference = uri.slice(0, 4096);
+      } catch {
+        /* 非 URL 引用不提升为可打开资源。 */
+      }
+      const receivedText = typeof resource.text === "string" ? resource.text.slice(0, 4000) : "";
+      await this.chunk(
+        {
+          content: {
+            type: "text",
+            text: `\n[ACP resource unavailable: ${mime.slice(0, 128) || "unknown"}]${reference ? ` ${reference}` : ""}${receivedText ? `\n${receivedText}` : ""}\n`,
+          },
+        },
+        kind,
+      );
+      return;
+    }
+    await this.closeActiveText();
+    const source = media.source.kind === "artifact" ? media.source.uri : media.source.url;
+    const part: FilePart = {
+      id,
+      sessionID: this.runtime.sessionId,
+      messageID: this.messageId,
+      type: "file",
+      mime,
+      url: source,
+      ...(name ? { filename: name } : {}),
+      metadata: {
+        storageKind: media.source.kind === "artifact" ? "artifact" : "remote_ref",
+        ...(media.source.kind === "artifact" ? { artifactUri: source } : {}),
+        ...(sizeBytes !== undefined ? { sizeBytes } : {}),
+        assistantMedia: media,
+      },
+    };
+    this.parts.push(part);
+    await this.runtime.persistPart(part, this.traceContext);
+    await this.emit(SessionEventType.ModelStreaming, {
+      kind: "text_start",
+      delta: "",
+      done: false,
+      assistantMessageId: this.messageId,
+      partId: id,
+    });
+    await this.emit(SessionEventType.ModelStreaming, {
+      kind: "text_delta",
+      delta: "",
+      done: false,
+      assistantMessageId: this.messageId,
+      partId: id,
+      media: [media],
+    });
+    await this.emit(SessionEventType.ModelStreaming, {
+      kind: "text_end",
+      delta: "",
+      done: false,
+      assistantMessageId: this.messageId,
+      partId: id,
     });
   }
 

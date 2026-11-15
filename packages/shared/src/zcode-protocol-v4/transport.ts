@@ -1064,16 +1064,16 @@ export type V4AttachmentPreviewSourceResult = z.infer<typeof v4AttachmentPreview
 export const v4AttachmentReadResultSchema = z
   .object({
     dataBase64: z.string(),
-    mediaType: z
-      .string()
-      .refine(
-        (value) =>
-          value.startsWith("image/") ||
-          value.startsWith("video/") ||
-          value.split(";", 1)[0]?.trim().toLowerCase() === "application/pdf" ||
-          value.split(";", 1)[0]?.trim().toLowerCase() === "text/plain",
-        "attachment preview only supports image/video/pdf/plain text types",
-      ),
+    mediaType: z.string().refine(
+      (value) =>
+        value.startsWith("image/") ||
+        // ACP音频已由原Host授权读取；响应白名单必须接纳同一媒体类型，否则字节在RPC边界丢失。
+        value.startsWith("audio/") ||
+        value.startsWith("video/") ||
+        value.split(";", 1)[0]?.trim().toLowerCase() === "application/pdf" ||
+        value.split(";", 1)[0]?.trim().toLowerCase() === "text/plain",
+      "attachment preview only supports image/audio/video/pdf/plain text types",
+    ),
     totalBytes: z.number().int().nonnegative().max(PROTOCOL_V4_LIMITS.attachmentPreviewMaxBytes),
     nextOffset: z.number().int().positive().nullable(),
   })
@@ -1082,6 +1082,7 @@ export const v4AttachmentReadResultSchema = z
     if (
       // 根因：运行时已支持材料文本，响应 schema 仍只接受媒体，导致跨进程预览失败。
       (value.mediaType.startsWith("image/") ||
+        value.mediaType.startsWith("audio/") ||
         value.mediaType.split(";", 1)[0]?.trim().toLowerCase() === "text/plain") &&
       value.totalBytes > PROTOCOL_V4_LIMITS.attachmentMaxBytes
     ) {
@@ -1090,7 +1091,7 @@ export const v4AttachmentReadResultSchema = z
         maximum: PROTOCOL_V4_LIMITS.attachmentMaxBytes,
         origin: "number",
         inclusive: true,
-        message: "image/text preview exceeds total byte limit",
+        message: "image/audio/text preview exceeds total byte limit",
         path: ["totalBytes"],
       });
     }

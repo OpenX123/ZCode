@@ -144,6 +144,8 @@ function decodePromptAttachmentDataUrl(
   if (
     !mediaType.startsWith("image/") &&
     !mediaType.startsWith("video/") &&
+    // ACP 输出音频与旧附件共用 data URL artifact；读取不能再次把已授权音频拒绝。
+    !mediaType.startsWith("audio/") &&
     mediaType !== "application/pdf" &&
     // 根因：文本材料复用上传 artifact，但原 data URL 解码器仅接受媒体，合法预览被二次拒绝。
     !(

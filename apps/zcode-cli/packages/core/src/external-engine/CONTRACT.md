@@ -1,5 +1,9 @@
 # 外部引擎 Runtime
 
+ACP 输出媒体由同一 ExternalTranscriptWriter 先写受限 data URL artifact（最多20 MiB）和 FilePart，再发布带同源 media 的既有 ModelStreaming；无旁路 stream/kind。每个 FilePart 独立文本段，media id 等于 part id，冷恢复复用持久化 media 元数据。未知内容转可读提示和安全引用；base64 不进事件或日志。schema/type 定义在 shared v4 rows.ts，旧消息缺省兼容。
+
+媒体提升只处理无 parentToolUseId 的 agent_message_chunk（子 Runtime 自己的 writer 同样适用）。带 parent 的非文本只保留有界 externalActivity 提示和安全引用；思考块仍归 reasoning。tool_call_update 沿原工具合同，本项不新增 tool media schema。
+
 取消冷恢复：同一 settlement metadata 附受限 subagentStatus（completed/failed/cancelled，lost 归 failed），Bootstrap 只将带 cancelled 的 error part 恢复为取消；缺失/非法值保留旧规则，不允许 error 被改成成功。writer.finish 在 aborted 且无显式 error 时持久化既有 AbortError/resultType:cancelled 标记；显式失败错误、正文及其他 metadata 不变。
 
 终态摘要随既有 synthetic settlement 的 `state.metadata.summaryText` 持久化；不覆盖 Agent part 的其他 metadata，也不改失败/取消/失联的原 error 状态和 errorText。Bootstrap 冷投影成功仍优先 output.result，其后只读取有效非空 summaryText；旧历史保留原回退。该字段是父摘要派生事实，不承载 child 详情缓存。

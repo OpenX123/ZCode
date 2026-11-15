@@ -55,6 +55,69 @@ import {
 } from "./helpers/registry-backed-test-app.js";
 
 describe("session persistence", () => {
+  it("reads ACP image/audio data URL artifacts through the existing attachment contract", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-acp-media-"));
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
+    const sessionId = createSessionId("acp-media");
+    const artifactStore = createNodeToolArtifactStore({ rootDir: join(root, "artifacts") });
+    const app = await createZCodeApp({
+      artifactStore,
+      env: {},
+      runtimeConfig: { workingDirectory: root },
+      sessionId,
+      sessionStore: store,
+      skipUserConfig: true,
+    });
+    try {
+      for (const mime of ["image/png", "audio/wav", "video/mp4", "application/pdf"]) {
+        // 与 writer 的同一 port/编码合同；使用真实磁盘 store 检查应用读取，避免 mock 掩盖编码不匹配。
+        const artifact = await artifactStore.writeToolResultArtifact({
+          sessionId,
+          toolCallId: mime,
+          toolName: "external-engine-media",
+          content: `data:${mime};base64,YWJj`,
+          contentType: "text/plain",
+          retention: "session",
+        });
+        await expect(
+          app.readPromptAttachment({ ref: artifact.uri, mime, maxBytes: 3 }),
+        ).resolves.toEqual({ bytes: Buffer.from("abc"), mediaType: mime });
+        await expect(
+          app.readPromptAttachment({ ref: artifact.uri, mime, maxBytes: 2 }),
+        ).rejects.toThrow("previewTooLarge");
+      }
+      const oldAttachment = await app.writePromptAttachment({
+        bytes: Buffer.from("old"),
+        mime: "image/png",
+        fileName: "old.png",
+      });
+      await expect(
+        app.readPromptAttachment({ ref: oldAttachment.ref, mime: "image/png", maxBytes: 3 }),
+      ).resolves.toEqual({ bytes: Buffer.from("old"), mediaType: "image/png" });
+      for (const content of [
+        "data:audio/wav;base64,%invalid%",
+        "data:application/x-unknown;base64,YWJj",
+      ]) {
+        const artifact = await artifactStore.writeToolResultArtifact({
+          sessionId,
+          toolCallId: "invalid",
+          toolName: "external-engine-media",
+          content,
+          contentType: "text/plain",
+          retention: "session",
+        });
+        await expect(
+          app.readPromptAttachment({ ref: artifact.uri, mime: "audio/wav", maxBytes: 3 }),
+        ).rejects.toThrow(/previewArtifactInvalid|previewNotMedia/u);
+      }
+    } finally {
+      await app.close?.();
+      store.close();
+      // Windows 原生文件句柄释放可能短暂滞后；先关闭 app/SQLite，再让 rm 有界重试清理。
+      await rm(root, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
   it("persists Highspeed metadata in the user message data", async () => {
     const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionId = createSessionId("highspeed-message-metadata");
@@ -121,9 +184,10 @@ describe("session persistence", () => {
       videoCacheRootDir,
     });
     const primeSpy = vi.spyOn(artifactStore, "primeMediaAttachmentPath");
+    let app: Awaited<ReturnType<typeof createZCodeApp>> | undefined;
 
     try {
-      const app = await createZCodeApp({
+      app = await createZCodeApp({
         artifactStore,
         env: {},
         runtimeConfig: { workingDirectory: process.cwd() },
@@ -170,6 +234,7 @@ describe("session persistence", () => {
       await unlink(primed.path);
       await unlink(videoPath.path);
       await app.close?.();
+      app = undefined;
 
       const coldStore = createNodeToolArtifactStore({
         imageCacheRootDir,
@@ -191,8 +256,10 @@ describe("session persistence", () => {
       expect(rebuiltVideo.path).toBe(videoPath.path);
       await expect(readFile(rebuiltVideo.path)).resolves.toEqual(Buffer.from(videoBytes));
     } finally {
+      await app?.close?.();
       sessionStore.close();
-      await rm(tempRoot, { force: true, recursive: true });
+      // 失败路径也先 dispose，rm 重试仅处理 Windows 临时目录清理。
+      await rm(tempRoot, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 
@@ -329,7 +396,7 @@ describe("session persistence", () => {
     } finally {
       await app?.close?.();
       store.close();
-      await rm(tempRoot, { force: true, recursive: true });
+      await rm(tempRoot, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 

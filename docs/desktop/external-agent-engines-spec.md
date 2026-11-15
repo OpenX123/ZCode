@@ -1231,3 +1231,38 @@ sequenceDiagram
 - 子会话权限进入父会话待处理交互并带来源，应答回原生 optionId；可取消/不可取消两种 Stop；未知子 ID 丢弃；父 + 子冷恢复后 `snapshot.subagents`、Agent 行与子正文一致；界面识别 camelCase `spawnAgent`。
 - reply-only、最终正文逐字相同/不同/仅部分包含、空白 reply、重复终态、取消/失败和嵌套回归须同时检查持久化 part、writer.response 对应的 TurnComplete.response、父摘要与冷恢复投影；最终正文必须先于 assistant 终态和 TurnComplete/TurnError 落库。
 - 夹具通过不等于真实供应商验收：真实 Claude/Codex 子智能体、Windows 整机需另行验证。
+
+# ACP 输出媒体（UX05）
+
+以仓库锁定 ACP SDK 0.21.1 的 v1 ContentBlock 为准，不升级 experimental v2；
+prompt 输入能力门禁不限制已经收到的输出。`ExternalTranscriptWriter` 是唯一写入者：
+image/audio 的 base64 data、resource 的 blob 使用既有受限 data URL artifact port，
+resource_link 和带 MIME 的 HTTP(S) 引用用既有 FilePart；未知类型保存可读提示和安全引用，
+不把原始 data/blob 写入事件、日志或 command/topic frame。每项二进制最多 20 MiB。
+
+本项只提升无 parentToolUseId 的 agent_message_chunk（包括子 Runtime 自己的 writer）。
+父工具非文本活动只保留有界 externalActivity 提示/安全引用，思考块仍归 reasoning；
+tool_call_update 沿原工具合同，不新增 tool media schema，不宣称支持所有 ACP 工具媒体。
+artifact 沿既有附件 data URL 文本编码，metadata 大小记解码后的字节数；读取复用原接口，
+不增加 binary 标记或双编码读取兜底。
+
+`packages/shared/src/zcode-protocol-v4/rows.ts` 同源定义 `assistantMediaRefSchema`
+及 z.infer 类型，供 V4 行和既有 strict ModelStreaming schema/CLI 事件共用；不新增
+未受管 assistant-media.ts。引用仅含 id、image/audio/video、匹配的 MIME、artifact URI
+或无凭据 HTTP(S) URL、可选 name；id ≤256、MIME ≤128、引用 ≤4096、name ≤512，单行 ≤32。
+旧行不带 media 继续有效，空 text + 非空 media 是有效回答。
+
+```text
+ACP content -> ExternalTranscriptWriter (单一 owner)
+            -> data URL artifact（如有）-> FilePart 持久化
+            -> 既有 ModelStreaming text_start/delta/end + 可选 media
+            -> 同源 schema -> normalizer -> ProductProjection row.upserted
+            -> desktop-continuous / replayable snapshot 与 gap repair
+FilePart -> cold hydration -> 同一 ModelStreaming / ProductProjection
+row media -> session + workspace identity + remote session -> 原 Host attachment read
+```
+
+每个媒体 FilePart 独立对应一个文本段身份，先落库后发布；同 part id 媒体引用幂等合并。
+投影在文本增量前接纳媒体，不增加流式 kind；终态/陈旧 run 仍由原有生命周期拒收。
+冷恢复从 FilePart 的同源 media 元数据重建，不依赖内存或 UI 缓存。资源丢失仍保留引用
+与失败状态。存储失败必须可见，不能把未持久化的媒体发布为成功成果。

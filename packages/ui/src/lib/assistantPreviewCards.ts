@@ -19,6 +19,10 @@ import {
 import { decodeFilePathUriEscapes, getPathLeaf, toFileUrl } from "@/lib/path.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import { collectGenUiSourcePaths, matchesGenUiSourcePath } from "@/gen-ui/contract.js";
+import {
+  assistantPresentationReferences,
+  classifyAssistantMedia,
+} from "@/v4/conversation-presentation/index.js";
 
 export {
   extractAssistantFileReferences,
@@ -98,9 +102,8 @@ export function isValidAssistantPreviewWebsiteUrl(url: string): boolean {
   const trimmedUrl = normalizeTrailingUrlText(url.trim());
   if (!trimmedUrl) return false;
 
-  const isLocalHttpUrl = STRICT_LOCALHOST_URL_RE.test(trimmedUrl);
   const isFileHtmlUrl = STRICT_FILE_HTML_URL_RE.test(trimmedUrl);
-  if (!isLocalHttpUrl && !isFileHtmlUrl) return false;
+  if (!isFileHtmlUrl && !/^https?:\/\//iu.test(trimmedUrl)) return false;
 
   try {
     const parsedUrl = new URL(trimmedUrl);
@@ -111,7 +114,7 @@ export function isValidAssistantPreviewWebsiteUrl(url: string): boolean {
       (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") &&
       parsedUrl.username.length === 0 &&
       parsedUrl.password.length === 0 &&
-      (parsedUrl.hostname === "localhost" || parsedUrl.hostname === "127.0.0.1") &&
+      Boolean(parsedUrl.hostname) &&
       (port === null || (port > 0 && port <= 65_535))
     );
   } catch {
@@ -304,18 +307,36 @@ export function buildAssistantPreviewCardsFromReferences(
   const positionedCards: PositionedCard[] = [];
   let hasLocalHttpPreview = false;
 
-  for (const match of content.matchAll(LOCALHOST_URL_RE)) {
-    const url = normalizeTrailingUrlText(match[0] ?? "");
+  // 既有 localhost 行内地址语义保持；普通公网卡仅来自闭合的收到引用。
+  const closedReferences = assistantPresentationReferences(content);
+  const websiteReferences = [
+    ...closedReferences,
+    // 闭合引用已保留完整括号/查询；旧行内正则不能再从同一原文切出截断的第二张卡。
+    ...Array.from(content.matchAll(LOCALHOST_URL_RE))
+      .filter(
+        (match) =>
+          !closedReferences.some(
+            (reference) => match.index >= reference.start && match.index < reference.end,
+          ),
+      )
+      .map((match) => ({ target: normalizeTrailingUrlText(match[0]), start: match.index })),
+  ];
+  for (const reference of websiteReferences) {
+    const url = reference.target;
     if (!isValidAssistantPreviewWebsiteUrl(url)) continue;
+    if (classifyAssistantMedia(url)) continue;
+    const isLocal = STRICT_LOCALHOST_URL_RE.test(url);
     // Web 远控没有本地端口转发或 HTML 运行环境；在候选上限前过滤，避免隐藏卡片占位。
-    if (options.suppressWebRemoteCards) continue;
-    const filePath = resolveLocalhostHtmlChangedPath(url, workspacePath, changedFilePaths, {
-      homePath: options.homePath,
-    });
+    if (options.suppressWebRemoteCards && isLocal) continue;
+    const filePath = isLocal
+      ? resolveLocalhostHtmlChangedPath(url, workspacePath, changedFilePaths, {
+          homePath: options.homePath,
+        })
+      : null;
     if (filePath && matchesGenUiSourcePath(filePath, genUiSources)) continue;
-    hasLocalHttpPreview = true;
+    hasLocalHttpPreview ||= isLocal;
     positionedCards.push({
-      position: match.index ?? 0,
+      position: reference.start,
       card: {
         id: `website:${url}`,
         type: "website",

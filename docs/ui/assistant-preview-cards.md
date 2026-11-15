@@ -17,6 +17,7 @@ directives such as `::code-comment{...}` remain strict.
 
 ## Scope
 
+- Typed assistant media also remains visible outside collapsed work history when a later text summary arrives. Each received media item has one derived view with its original row/id source; media-only rows are valid. A final ordinary website link cannot hide MIME-qualified media. Only already embedded matching media covers that item; partial final coverage keeps the other items visible. The projection preserves original rows, scoped attachment authorization, and final-row actions. Anonymous shares show HTTP source links or attachment labels without automatic media requests or local artifact links.
 - Preview card file types: Markdown, HTML, DOCX, XLSX, PPTX, PDF, MP4, MOV,
   WebM, M4V, MP3, WAV, M4A, OGG, Opus, FLAC, and WEBA.
 - Every preview card uses a 24 x 24 px leading icon for website, recognized-file,
@@ -156,9 +157,33 @@ delivered assistant rows -> pure source/range extraction -> collapsed-history ex
 existing row context -> selected workspace Host -> existing file/link opening
 ```
 
-Preview cards remain a UI-only projection from already delivered V4 rows. They do
-not add protocol rows, snapshot fields, replayable events, relay state, or
-agent-side metadata.
+Preview cards remain a UI-only projection from already delivered V4 rows. The
+separate UX05 native-media contract adds optional `assistantText.media` references;
+cards do not own those references or introduce another media stream.
+
+The public share timeline explicitly disables automatic media rendering: links produced
+by its existing image sanitization must not become fetched image/audio/video previews.
+Authenticated readonly conversation views retain their existing scoped media access.
+
+### Delivered media and websites (UX05)
+
+Ordinary HTTP(S) websites use received link titles and the URL domain only. No
+page metadata fetch, arbitrary iframe, auto-open or autoplay is permitted. Existing
+local HTML/file gates and Host-scoped opening remain unchanged; mobile suppresses
+only unsupported localhost/file previews, not ordinary public website links.
+Direct image/audio/video references render with existing image/media controls.
+Typed MIME metadata permits extensionless media; a URL without known MIME or a
+recognized media extension stays a website. Missing/failed media retains its
+original reference, an unavailable state and an explicit retry action. Retrying
+only rereads that resource, never reruns the assistant turn. Single-URL closed
+`text` fences in final and historical bodies keep the original code and expose
+the same safe native open action, so final-body deduplication cannot hide access.
+
+`conversation-presentation` adds only pure media classification/extraction. Its
+public entrypoint remains safe for readonly shares. Media bytes are read through
+the supplied session attachment reader / selected Host file service; they are not
+cached as a second conversation fact. Unmount, reader/session/workspace change and
+retry release temporary object URLs and ignore stale resource responses.
 
 ```text
 assistantText rows (desktop continuous / mobile replayable hydration)

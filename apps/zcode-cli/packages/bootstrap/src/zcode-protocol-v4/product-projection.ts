@@ -2918,8 +2918,29 @@ export class ProductProjection {
         return this.openTextRow(event, fact);
       case "text_delta": {
         const open = this.streamingTextRowId === null ? this.openTextRow(event, fact) : [];
+        const opened = open.find(
+          (delta) => delta.op === "row.appended" || delta.op === "row.upserted",
+        );
+        const row = opened && "row" in opened ? opened.row : this.findRow(this.streamingTextRowId!);
+        const mediaUpdate: ConversationDelta[] =
+          row?.kind === "assistantText" && payload.media?.length
+            ? [
+                {
+                  op: "row.upserted",
+                  row: {
+                    ...row,
+                    media: [
+                      ...new Map(
+                        [...(row.media ?? []), ...payload.media].map((item) => [item.id, item]),
+                      ).values(),
+                    ].slice(0, 32),
+                  },
+                },
+              ]
+            : [];
         return [
           ...open,
+          ...mediaUpdate,
           {
             op: "row.delta",
             rowId: this.streamingTextRowId as number,
@@ -4738,7 +4759,8 @@ export class ProductProjection {
     const childSessionId = this.stringPayload(payload, "childSessionId");
     const parentToolCallId = this.stringPayload(payload, "parentToolCallId");
     const previousRunCall = existing && this.subagentRunCallByRowId.get(existing.rowId);
-    if (existing && parentToolCallId) this.subagentRunCallByRowId.set(existing.rowId, parentToolCallId);
+    if (existing && parentToolCallId)
+      this.subagentRunCallByRowId.set(existing.rowId, parentToolCallId);
     const resumedBackgroundWork = this.resumedSubagentBackgroundWorkDelta(
       event,
       payload,
@@ -4868,7 +4890,8 @@ export class ProductProjection {
     const currentCall = existing && this.subagentRunCallByRowId.get(existing.rowId);
     if (currentCall && parentToolCallId && currentCall !== parentToolCallId) return [];
     const childSessionId = this.stringPayload(payload, "childSessionId");
-    if (existing?.childSessionId && childSessionId && existing.childSessionId !== childSessionId) return [];
+    if (existing?.childSessionId && childSessionId && existing.childSessionId !== childSessionId)
+      return [];
     const status = this.mapSubagentStatus(this.stringPayload(payload, "status"));
     const totalToolUseCount = payload.totalToolUseCount;
     // 终态以运行时汇总的工具调用数为准（镜像事件不落库，冷启动后实时计数可能不全）。
@@ -4939,9 +4962,14 @@ export class ProductProjection {
     };
     const workId = payload.taskId;
     if (!workId) return [];
-    const subagentRow = this.findSubagentRow(workId) ?? (payload.childSessionId
-      ? this.snapshot.rows.window.find((row): row is SubagentRow => row.kind === "subagent" && row.childSessionId === payload.childSessionId)
-      : undefined);
+    const subagentRow =
+      this.findSubagentRow(workId) ??
+      (payload.childSessionId
+        ? this.snapshot.rows.window.find(
+            (row): row is SubagentRow =>
+              row.kind === "subagent" && row.childSessionId === payload.childSessionId,
+          )
+        : undefined);
     const currentCall = subagentRow && this.subagentRunCallByRowId.get(subagentRow.rowId);
     if (currentCall && payload.toolCallId && currentCall !== payload.toolCallId) return [];
     const prev = this.snapshot.backgroundWorks;

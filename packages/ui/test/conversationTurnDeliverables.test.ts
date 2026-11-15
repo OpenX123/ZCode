@@ -4,6 +4,10 @@ import {
   extractConversationDeliverables,
   resolveConversationDeliverableKey,
 } from "@/v4/conversation-presentation/index.js";
+import {
+  buildConversationFlowItems,
+  resolveConversationFlowItemKey,
+} from "@/v4/conversationTurnFlowItems.js";
 
 function row(
   text: string,
@@ -22,6 +26,122 @@ function row(
 }
 
 describe("UX04 source deliverables", () => {
+  const audio = {
+    id: "audio-1",
+    mediaType: "audio" as const,
+    mimeType: "audio/wav",
+    source: { kind: "url" as const, url: "https://example.invalid/download?id=1" },
+    name: "音频成果",
+  };
+  const image = {
+    id: "image-1",
+    mediaType: "image" as const,
+    mimeType: "image/png",
+    source: { kind: "url" as const, url: "https://example.invalid/image" },
+    name: "图片成果",
+  };
+  const mediaFlow = (source: AssistantTextRow, final: AssistantTextRow) =>
+    buildConversationFlowItems({
+      orderedRows: [source, final],
+      assistantHistoryRows: [source],
+      assistantFollowingRows: [],
+      assistantTailRows: [],
+      latestAssistantTextRow: final,
+      visibleAssistantTextRow: final,
+      timelineOnly: false,
+    });
+
+  it("UX05 空正文媒体保留单项原引用，正文缓存不吞掉媒体增量", () => {
+    const source = row("", "streaming");
+    expect(extractConversationDeliverables([source])).toEqual([]);
+    source.media = [audio, image];
+    const refs = extractConversationDeliverables([source]);
+    expect(refs).toHaveLength(2);
+    expect(refs[0]).toMatchObject({
+      sourceFormat: "typedMedia",
+      sourceRowId: 12,
+      media: audio,
+      contextText: "",
+      start: 0,
+      end: 0,
+    });
+    expect(refs[1]?.media).toBe(image);
+    expect(refs[0]?.key).toContain(audio.id);
+  });
+
+  it("UX05 媒体之后的最终摘要不隐藏成果，每项独立且原行不变", () => {
+    const source = { ...row("原说明"), media: [audio, image] };
+    const final = row("完成", "complete", 20);
+    const items = mediaFlow(source, final);
+    const refs = items.flatMap((item) =>
+      item.kind === "assistantText" && item.deliverable ? [item.deliverable] : [],
+    );
+    expect(refs.map((ref) => ref.media)).toEqual([audio, image]);
+    expect(items[0]).toEqual({ kind: "assistantHistory", rows: [source] });
+    expect(source.text).toBe("原说明");
+    expect(items.at(-1)).toMatchObject({ row: final, latest: true });
+  });
+
+  it("UX05 最终普通同URL链接不吞typed媒体，最终嵌入只逐项覆盖", () => {
+    const source = {
+      ...row("[网页](https://example.invalid/download?id=1)"),
+      media: [audio, image],
+    };
+    const final = row("[网页](https://example.invalid/download?id=1)", "complete", 20);
+    const refs = (target: AssistantTextRow) =>
+      mediaFlow(source, target).flatMap((item) =>
+        item.kind === "assistantText" && item.deliverable ? [item.deliverable] : [],
+      );
+    expect(refs(final).map((ref) => ref.media)).toEqual([audio, image]);
+    expect(refs({ ...final, media: [audio] }).map((ref) => ref.media)).toEqual([image]);
+    expect(refs({ ...final, media: [audio, image] })).toEqual([]);
+    expect(
+      refs({
+        ...final,
+        text: `${final.text}\n\n![图片](https://example.invalid/image)`,
+        media: [audio],
+      }),
+    ).toEqual([]);
+    const changedMime = { ...audio, mimeType: "audio/mpeg" };
+    expect(refs({ ...final, media: [changedMime] }).map((ref) => ref.media)).toEqual([
+      audio,
+      image,
+    ]);
+  });
+
+  it("UX05 同目标网页与媒体key区分，来源变化稳定且完整scope隔离", () => {
+    const source = { ...row("[网页](https://example.invalid/download?id=1)"), media: [audio] };
+    const items = mediaFlow(source, row("完成", "complete", 20)).filter(
+      (item) => item.kind === "assistantText" && item.deliverable,
+    );
+    expect(
+      new Set(items.map((item, index) => resolveConversationFlowItemKey(item, index, 0))).size,
+    ).toBe(2);
+    const reference = extractConversationDeliverables([source]).find((ref) => ref.media)!;
+    const earlier = extractConversationDeliverables([
+      { ...source, rowId: 1, media: [{ ...audio, id: "earlier" }] },
+    ]).find((ref) => ref.media)!;
+    const scope = {
+      workspacePath: "/same",
+      workspaceIdentity: "ssh:a",
+      workspaceRemoteSessionId: "r",
+      sessionId: "s",
+      logEpoch: "e",
+    };
+    const key = resolveConversationDeliverableKey(reference, scope, "t");
+    expect(resolveConversationDeliverableKey(earlier, scope, "t")).toBe(key);
+    expect(earlier.key).not.toBe(reference.key);
+    for (const changed of [
+      { workspaceIdentity: "ssh:b" },
+      { workspaceRemoteSessionId: "r2" },
+      { sessionId: "s2" },
+      { logEpoch: "e2" },
+    ])
+      expect(resolveConversationDeliverableKey(reference, { ...scope, ...changed }, "t")).not.toBe(
+        key,
+      );
+    expect(resolveConversationDeliverableKey(reference, scope, "t2")).not.toBe(key);
+  });
   it("保留独立入口完整用途段落、授权参数和准确来源区间", () => {
     const source = row(
       "请打开以下入口完成操作：\n\nhttps://example.invalid/authorize?code=fixture&next=%2Fdone\n",

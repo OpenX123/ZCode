@@ -39,6 +39,7 @@ import {
 } from "@zcode/shared";
 import {
   conversationInputIntentSchema,
+  assistantMediaRefSchema,
   errorAttributionSchema,
   workflowBlockedMetaSchema,
   workflowLaunchMetaSchema,
@@ -1193,6 +1194,8 @@ function modelChangeKeyOfPart(
 function assistantMessageHasSynthesizableContent(message: MessageWithParts): boolean {
   return message.parts.some((part) => {
     switch (part.type) {
+      case "file":
+        return assistantMediaRefSchema.safeParse(part.metadata?.assistantMedia).success;
       case "text":
         return part.ignored !== true && part.text.length > 0;
       case "reasoning":
@@ -1254,6 +1257,30 @@ function synthesizeAssistantParts(
   let toolCallCount = 0;
   for (const part of message.parts) {
     switch (part.type) {
+      case "file": {
+        const media = assistantMediaRefSchema.safeParse(part.metadata?.assistantMedia);
+        if (!media.success) break;
+        // 冷路径复用同一文本段事件，不从正文猜媒体，也不另建恢复事实。
+        const identity = {
+          assistantMessageId: String(message.info.id),
+          partId: part.id,
+          delta: "",
+          done: false,
+        };
+        push(
+          SessionEventType.ModelStreaming,
+          { ...identity, kind: "text_start" },
+          turnId,
+          messageCreatedAtMs(message),
+        );
+        push(
+          SessionEventType.ModelStreaming,
+          { ...identity, kind: "text_delta", media: [media.data] },
+          turnId,
+        );
+        push(SessionEventType.ModelStreaming, { ...identity, kind: "text_end" }, turnId);
+        break;
+      }
       case "text":
         synthesizeTextPart(
           part,

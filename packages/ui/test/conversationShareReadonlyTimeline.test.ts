@@ -93,6 +93,42 @@ const buildArtifactRow = (rowId: number, artifactVersionId: string) => ({
 });
 
 describe("ConversationShareReadonlyTimeline", () => {
+  it("UX05 分享媒体成果常显但不自动加载URL或暴露本地artifact入口", () => {
+    const source = {
+      ...rows[2]!,
+      text: "",
+      media: [
+        {
+          id: "url",
+          mediaType: "audio" as const,
+          mimeType: "audio/wav",
+          name: "公开音频",
+          source: { kind: "url" as const, url: "https://example.invalid/media" },
+        },
+        {
+          id: "artifact",
+          mediaType: "image" as const,
+          mimeType: "image/png",
+          name: "本地图片",
+          source: { kind: "artifact" as const, uri: "zcode-artifact://private/secret" },
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      createElement(ConversationShareReadonlyTimeline, {
+        rows: [...rows.slice(0, 2), source, rows[3]!, { ...rows[2]!, rowId: 5, text: "完成" }],
+        locale: "zh-CN",
+      }),
+    );
+    expect(html.match(/data-conversation-deliverable=/g)).toHaveLength(2);
+    expect(html).toContain("公开音频");
+    expect(html).toContain("本地图片");
+    expect(html).toContain("https://example.invalid/media");
+    expect(html).not.toMatch(/<(audio|video|img)\b/);
+    expect(html).not.toContain("zcode-artifact://private/secret");
+    expect(html).not.toContain("v4-retry");
+    expect(html).not.toContain("v4-fork");
+  });
   it("UX04 共享页前插早A后保留A/B原段首来源锚，既不裁剪原文也不重复整个目标组", () => {
     const source = {
       ...rows[2]!,
@@ -676,7 +712,15 @@ describe("ConversationShareReadonlyTimeline", () => {
         createdAt: 2,
         createdAtSeq: 2,
         kind: "assistantText" as const,
-        text: "看图 ![tracker](https://tracker.invalid/pixel.png)",
+        text: "看图 ![tracker](https://tracker.invalid/pixel.png)\n\n[音频](https://tracker.invalid/a.wav)",
+        media: [
+          {
+            id: "remote-audio",
+            mediaType: "audio",
+            mimeType: "audio/wav",
+            source: { kind: "url", url: "https://tracker.invalid/native.wav" },
+          },
+        ],
         state: "complete" as const,
       },
       {
@@ -704,6 +748,8 @@ describe("ConversationShareReadonlyTimeline", () => {
     // 关键不是 URL 是否出现在 HTML 里（链接的 title 属性带着它无害），
     // 而是不能有任何自动发起请求的 <img src>。
     expect(html).not.toContain("<img");
+    expect(html).not.toContain("<audio");
+    expect(html).not.toContain("<video");
     expect(html).not.toContain('src="https://tracker.invalid');
     // 信息不丢：降级成外链后 URL 仍可被访客显式点击。
     expect(html).toContain('title="https://tracker.invalid/pixel.png"');

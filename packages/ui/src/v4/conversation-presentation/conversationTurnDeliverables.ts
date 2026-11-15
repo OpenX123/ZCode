@@ -191,10 +191,35 @@ export function extractConversationDeliverables(
   rows: readonly AssistantTextRow[],
 ): readonly ConversationDeliverable[] {
   // 必须先保留原段的所有引用再分组，过早跨来源去重会把仍在的 A/B 段错误改锚到 B。
-  return rows.flatMap(extractRow);
+  return rows.flatMap((row) => [
+    ...extractRow(row),
+    // 文本未变时仍可能收到 media 增量；只缓存文字解析，不缓存第二份媒体事实。
+    ...(row.media ?? []).map(
+      (media): ConversationDeliverable => ({
+        key: `${row.rowId}:media:${media.id}`,
+        sourceRowId: row.rowId,
+        start: row.text.length,
+        end: row.text.length,
+        kind: media.mediaType === "image" ? "image" : "file",
+        sourceFormat: "typedMedia",
+        target: media.source.kind === "artifact" ? media.source.uri : media.source.url,
+        media,
+        contextStart: row.text.length,
+        contextEnd: row.text.length,
+        contextText: "",
+      }),
+    ),
+  ]);
 }
 
 export function resolveConversationDeliverableIdentity(reference: ConversationDeliverable): string {
+  if (reference.media)
+    return JSON.stringify([
+      "typedMedia",
+      reference.media.mediaType,
+      reference.media.mimeType,
+      reference.target,
+    ]);
   return JSON.stringify([...new Set(reference.identityTargets ?? [reference.target])].sort());
 }
 

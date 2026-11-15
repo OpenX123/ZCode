@@ -7,6 +7,7 @@ import type {
 import type { ConversationCuaGroupRenderItem } from "@/v4/conversationCuaGroups.js";
 import {
   extractConversationDeliverables,
+  classifyAssistantMedia,
   resolveConversationDeliverableIdentity,
   type ConversationDeliverable,
 } from "@/v4/conversation-presentation/index.js";
@@ -65,12 +66,13 @@ export function buildConversationFlowItems(options: {
   const followingRowIds = new Set(options.assistantFollowingRows.map((row) => row.rowId));
   const tailRowIds = new Set(options.assistantTailRows.map((row) => row.rowId));
   const items: ConversationTurnFlowItem[] = [];
+  const visibleReferences = extractConversationDeliverables(
+    [options.visibleAssistantTextRow, options.latestAssistantTextRow].filter(
+      (row): row is AssistantTextRow => row !== undefined,
+    ),
+  );
   const visibleTargets = new Set(
-    extractConversationDeliverables(
-      [options.visibleAssistantTextRow, options.latestAssistantTextRow].filter(
-        (row): row is AssistantTextRow => row !== undefined,
-      ),
-    ).map((reference) => reference.target),
+    visibleReferences.filter((reference) => !reference.media).map((reference) => reference.target),
   );
   const sourceRows = options.orderedRows.filter(
     (row): row is AssistantTextRow =>
@@ -94,6 +96,16 @@ export function buildConversationFlowItems(options: {
     for (const reference of references.toSorted(
       (a, b) => a.contextStart - b.contextStart || a.start - b.start,
     )) {
+      if (reference.media) {
+        // 类型化媒体没有正文区间；每个成果只引用当前媒体，不能合并成整行再重复渲染。
+        contexts.push({
+          reference,
+          targets: new Set([reference.target]),
+          textFenceTargets: new Set(),
+        });
+        context = undefined;
+        continue;
+      }
       if (!context || reference.contextStart >= context.reference.contextEnd) {
         context = { reference, targets: new Set(), textFenceTargets: new Set() };
         contexts.push(context);
@@ -115,13 +127,37 @@ export function buildConversationFlowItems(options: {
   }
   // 先合并来源区间再判最终覆盖，首引用锚点不因部分覆盖而跳到另一目标。
   const representedTargets = new Set(visibleTargets);
+  const representedMedia = [...visibleReferences];
   const deliverables = contexts.flatMap((context) => {
+    if (context.reference.media) {
+      const reference = context.reference;
+      const media = reference.media!;
+      // 普通无扩展网页链接没有媒体展示能力，不能覆盖 MIME 明确的原生媒体。
+      const covered = representedMedia.some((candidate) => {
+        if (candidate.target !== reference.target) return false;
+        if (candidate.media)
+          return (
+            resolveConversationDeliverableIdentity(candidate) ===
+            resolveConversationDeliverableIdentity(reference)
+          );
+        const classification = classifyAssistantMedia(candidate.target);
+        if (classification)
+          return (
+            classification.mediaType === media.mediaType &&
+            classification.mimeType === media.mimeType
+          );
+        return candidate.kind === "image" && media.mediaType === "image";
+      });
+      representedMedia.push(reference);
+      return covered ? [] : [reference];
+    }
     const identityTargets = [...context.targets];
     const hasNewTarget = identityTargets.some((target) => !representedTargets.has(target));
     const textFenceTargets = [...context.textFenceTargets].filter(
       (target) => !representedTargets.has(target),
     );
     for (const target of identityTargets) representedTargets.add(target);
+    representedMedia.push(context.reference);
     return hasNewTarget ? [{ ...context.reference, identityTargets, textFenceTargets }] : [];
   });
   let appendedDeliverables = false;

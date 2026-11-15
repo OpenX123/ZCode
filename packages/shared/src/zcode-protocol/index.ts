@@ -3,6 +3,7 @@ import {
   sessionEngineSchema,
 } from "../external-engine/index.js";
 import { zcodeProtocolTraceSchema } from "./trace.js";
+import { assistantMediaRefsSchema } from "../zcode-protocol-v4/rows.js";
 // Bot 反向回复的名字解析/待澄清结果与 App、CLI 使用同一严格 schema。
 export { channelReplyRequestSchema, channelReplyResultSchema } from "../channel-mention.js";
 export { zcodeProtocolTraceSchema, type ZCodeProtocolTrace } from "./trace.js";
@@ -1409,6 +1410,7 @@ export const zcodeModelStreamingKindSchema = z.enum([
 ]);
 export const zcodeModelStreamingEventPayloadSchema = z
   .object({
+    media: assistantMediaRefsSchema.optional(),
     assistantMessageId: z.string().optional(),
     delta: z.string().optional(),
     done: z.boolean().optional(),

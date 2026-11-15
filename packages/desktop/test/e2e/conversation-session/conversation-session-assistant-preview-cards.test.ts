@@ -11,8 +11,14 @@ import {
 } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  EXTERNAL_ENGINE_RUNTIMES,
+  managedAdapterEntrySegments,
+  managedAdapterInstallDirName,
+} from "@zcode/shared/external-engine";
+import { resolveE2EStorageRoot } from "../helpers/e2e-runtime-paths.js";
 import {
   TID_BROWSER_ADDRESS_INPUT,
   TID_BROWSER_WEBVIEW,
@@ -25,11 +31,14 @@ import {
   setCurrentElectronRendererContentSize,
 } from "../helpers/desktop-app.js";
 import { restartIntoWorkspacePreservingProfile } from "../helpers/model-provider-restart.js";
+import { restartIntoWorkspacePreservingProfile as restartCurrentWorkspacePreservingProfile } from "../helpers/model-provider-restart-runtime.js";
 import {
   clickV4Stop,
+  getV4FocusedPaneId,
   prepareV4ConversationE2E,
   selectV4TaskById,
   sendV4Prompt,
+  sendV4PromptInPane,
   startNewV4Draft,
   switchV4Mode,
   waitForV4AssistantMessageContaining,
@@ -66,6 +75,9 @@ interface PreviewCardSnapshot {
 
 let fixtureServer: Server | null = null;
 let fixtureRootUrl = "";
+let retryMediaAvailable = false;
+let fixtureVideo: Buffer;
+let fixtureImage: Buffer;
 
 async function setExcerptPresentation(locale: "zh-CN" | "en-US", theme: "zai-light" | "zai-dark") {
   const result = await browser.executeAsync(
@@ -87,6 +99,15 @@ async function setExcerptPresentation(locale: "zh-CN" | "en-US", theme: "zai-lig
 
 describe("Assistant Preview Cards E2E", () => {
   before(async () => {
+    [fixtureVideo, fixtureImage] = await Promise.all([
+      readFile(new URL("../fixtures/media/sample-video.mp4", import.meta.url)),
+      readFile(
+        new URL(
+          "../fixtures/fs/conversation-session/conversation-session-stop-tool-results/first.png",
+          import.meta.url,
+        ),
+      ),
+    ]);
     fixtureServer = createFixtureServer();
     fixtureRootUrl = await listen(fixtureServer);
   });
@@ -102,6 +123,138 @@ describe("Assistant Preview Cards E2E", () => {
     await browser.electron.restoreAllMocks();
     await clearAppData();
   });
+
+  it("UX05 展示：网页卡、直接及本地媒体、失效重试、最终正文入口", async () => {
+    await prepareCase();
+    await materializeMediaFixtures();
+    retryMediaAvailable = false;
+    await setExcerptPresentation("zh-CN", "zai-light");
+    const marker = `${CASE_MARKER}_UX05_DISPLAY`;
+    await sendV4Prompt(`${marker} E2E_BROWSER_FIXTURE_URL:${fixtureRootUrl}`);
+    await waitForCompleted(`${marker}_DONE`);
+    await assertLoadedAssistantMedia(3);
+    await browser.waitUntil(
+      async () =>
+        (await readPreviewCards(["UX05 公共网站"])).some((card) => card.title === "UX05 公共网站"),
+      { timeout: 30_000 },
+    );
+    await clickPreviewCard("UX05 公共网站");
+    await browser.waitUntil(
+      async () =>
+        (await browser.$(`[data-testid="${TID_BROWSER_ADDRESS_INPUT}"]`).getValue()) ===
+        "https://example.com/ux05",
+      { timeout: 10_000 },
+    );
+    await closeSidePanes();
+    const failed = await browser.$(
+      `[data-assistant-media]:has(button[title="${fixtureRootUrl}-retry.wav"])`,
+    );
+    await failed.$('[role="alert"]').waitForDisplayed();
+    expect(await failed.getText()).toContain(`${fixtureRootUrl}-retry.wav`);
+    retryMediaAvailable = true;
+    await failed.$("button=重试").click();
+    await browser.waitUntil(async () => failed.$("audio").isExisting(), { timeout: 10_000 });
+    await assertLoadedAssistantMedia(4);
+    const image = await browser.$('img[alt="UX05 图片"]');
+    await image.scrollIntoView();
+    await browser.waitUntil(
+      async () => browser.execute((el) => (el as HTMLImageElement).naturalWidth > 0, image),
+      { timeout: 10_000 },
+    );
+    const fence = await browser.$("[data-assistant-text-fence-link]");
+    await fence.scrollIntoView();
+    await fence.click();
+    await waitForBrowserSurface(`${fixtureRootUrl}-final?next=(step)&x=1`, "APC01_LOCAL_URL_PAGE");
+    await closeSidePanes();
+    const screenshots = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
+    if (screenshots) await browser.saveScreenshot(join(screenshots, "ux05-display-light-zh.png"));
+    await assertNarrowMediaLayout();
+  }).timeout(240_000);
+
+  it("UX05 原生：ACP 媒体经真实 artifact/Host 读取并在重挂、刷新、冷恢复后可用", async () => {
+    await startNewV4Draft();
+    await prepareV4ConversationE2E({ skipProvider: true, skipShellReady: true });
+    const marker = `${CASE_MARKER}_UX05_NATIVE_DONE`;
+    await installNativeMediaAdapter([
+      { type: "image", mimeType: "image/png", data: fixtureImage.toString("base64") },
+      { type: "audio", mimeType: "audio/wav", data: createFixtureWav().toString("base64") },
+      {
+        type: "resource",
+        resource: {
+          uri: "file:///fixture/video.mp4",
+          mimeType: "video/mp4",
+          blob: fixtureVideo.toString("base64"),
+        },
+      },
+      {
+        type: "resource_link",
+        uri: `${fixtureRootUrl}-download`,
+        mimeType: "audio/wav",
+        name: "无扩展名音频",
+      },
+      {
+        type: "resource",
+        resource: {
+          uri: "https://example.com/unknown",
+          mimeType: "application/x-unknown",
+          text: "UX05 未知资源说明",
+        },
+      },
+      { type: "text", text: marker },
+    ]);
+    const paneId = await getV4FocusedPaneId();
+    if (!paneId) throw new Error("缺少当前 pane");
+    const trigger = await browser.$(
+      `[data-testid="v4-session-pane-${paneId}"] [data-testid="chat-model-select-trigger"], [data-testid="v4-session-pane-${paneId}"] [data-testid="engine-config-model-effort"]`,
+    );
+    await trigger.click();
+    await browser.$('[data-testid="engine-switch-option-claude-code"]').click();
+    if (await browser.$('[data-testid="engine-switch-row"]').isDisplayed())
+      await browser.keys("Escape");
+    await sendV4PromptInPane(paneId, "UX05 验证原生输出媒体");
+    await waitForCompleted(marker);
+    const sessionId = await waitForBoundSession(marker);
+    await assertNativeMediaOutsideHistory();
+    await assertLoadedAssistantMedia(3);
+    const sourceButton = await browser.$(
+      "[data-conversation-deliverable] [data-deliverable-show-source]",
+    );
+    await sourceButton.click();
+    expect(
+      await browser
+        .$('[data-testid^="chat-assistant-history-trigger-"]')
+        .getAttribute("data-history-open"),
+    ).toBe("true");
+    expect(await browser.$("body").getText()).toContain("UX05 未知资源说明");
+    await browser.$('[data-testid^="chat-assistant-history-trigger-"]').click();
+    await startNewV4Draft();
+    await selectV4TaskById(sessionId);
+    await waitForCompleted(marker);
+    await assertNativeMediaOutsideHistory();
+    await assertLoadedAssistantMedia(3);
+    await browser.refresh();
+    await selectV4TaskById(sessionId, 60_000);
+    await waitForCompleted(marker);
+    await assertNativeMediaOutsideHistory();
+    await assertLoadedAssistantMedia(3);
+    const nativeWorkspace = await browser.execute(
+      () =>
+        (
+          window as Window & {
+            __zcodeTabStoreE2E?: { getState(): { activeWorkspacePath?: string | null } };
+          }
+        ).__zcodeTabStoreE2E?.getState().activeWorkspacePath,
+    );
+    if (!nativeWorkspace) throw new Error("缺少原生任务实际工作区");
+    // 无项目任务使用自己的 draft workspace；不能等待无关的固定 ZCodeProject。
+    await restartCurrentWorkspacePreservingProfile(nativeWorkspace);
+    await selectV4TaskById(sessionId, 60_000);
+    await waitForCompleted(marker);
+    await assertNativeMediaOutsideHistory();
+    await assertLoadedAssistantMedia(3);
+    const screenshots = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
+    if (screenshots) await browser.saveScreenshot(join(screenshots, "ux05-native-cold.png"));
+  }).timeout(360_000);
 
   it("UX04: 非最终正文关键入口在已工作折叠外可见，并保留原始上下文", async () => {
     await browser.waitUntil(
@@ -482,6 +635,157 @@ async function prepareCase(options: { yolo?: boolean } = {}) {
   }
   await rm(CASE_ROOT, { recursive: true, force: true });
   await mkdir(CASE_ROOT, { recursive: true });
+}
+
+async function assertLoadedAssistantMedia(count: number) {
+  let latest: unknown;
+  await browser.waitUntil(
+    async () => {
+      const values = await browser.execute(() =>
+        Array.from(
+          document.querySelectorAll<HTMLMediaElement>(
+            "[data-assistant-media] audio, [data-assistant-media] video",
+          ),
+        ).map((node) => ({
+          ready: node.readyState,
+          controls: node.controls,
+          autoplay: node.autoplay,
+          paused: node.paused,
+          source: node.currentSrc,
+          error: node.error?.code,
+        })),
+      );
+      latest = values;
+      return (
+        values.length >= count &&
+        values.filter((value) => value.ready > 0 && !value.error).length >= count
+      );
+    },
+    { timeout: 30_000, timeoutMsg: `媒体没有加载元数据: ${JSON.stringify(latest)}` },
+  );
+  const controls = await browser.execute(() =>
+    Array.from(
+      document.querySelectorAll<HTMLMediaElement>(
+        "[data-assistant-media] audio, [data-assistant-media] video",
+      ),
+    ).every((node) => node.controls && !node.autoplay && node.paused),
+  );
+  expect(controls).toBe(true);
+}
+
+async function assertNativeMediaOutsideHistory() {
+  const trigger = await browser.$('[data-testid^="chat-assistant-history-trigger-"]');
+  expect(await trigger.getAttribute("data-history-open")).toBe("false");
+  expect(await browser.$$("[data-conversation-deliverable] [data-assistant-media]")).toHaveLength(
+    3,
+  );
+  const image = await browser.$("[data-conversation-deliverable] img[data-markdown-image]");
+  await image.waitForExist();
+  await image.scrollIntoView();
+  await browser.waitUntil(
+    async () => browser.execute((el) => (el as HTMLImageElement).naturalWidth > 0, image),
+    { timeout: 30_000 },
+  );
+}
+
+async function assertNarrowMediaLayout() {
+  const previous = await setCurrentElectronRendererContentSize(1280, 900);
+  const minimum = await browser.electron.execute((electron, id) => {
+    const window = electron.BrowserWindow.fromId(id)!;
+    const min = window.getMinimumSize();
+    window.setMinimumSize(320, 400);
+    return min;
+  }, previous.windowId);
+  try {
+    await setCurrentElectronRendererContentSize(430, 900);
+    await setExcerptPresentation("en-US", "zai-dark");
+    const drawer = await browser.$('[data-testid="workspace-sidebar-drawer-backdrop"]');
+    if (await drawer.isDisplayed()) {
+      await browser.action("pointer").move({ x: 420, y: 450 }).down().up().perform();
+      await drawer.waitForDisplayed({ reverse: true });
+    }
+    await browser.$("[data-assistant-media]").scrollIntoView();
+    const layout = await browser.execute(() => ({
+      width: innerWidth,
+      media: Array.from(document.querySelectorAll("[data-assistant-media]")).map((node) => {
+        const rect = node.getBoundingClientRect();
+        return { left: rect.left, right: rect.right };
+      }),
+    }));
+    expect(Math.abs(layout.width - 430)).toBeLessThanOrEqual(1);
+    expect(layout.media.length).toBeGreaterThanOrEqual(4);
+    for (const item of layout.media) {
+      expect(item.left).toBeGreaterThanOrEqual(0);
+      expect(item.right).toBeLessThanOrEqual(layout.width + 1);
+    }
+    const screenshots = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
+    if (screenshots)
+      await browser.saveScreenshot(join(screenshots, "ux05-display-dark-en-narrow.png"));
+  } finally {
+    await browser.electron.execute(
+      (electron, id, min) => electron.BrowserWindow.fromId(id)?.setMinimumSize(min[0]!, min[1]!),
+      previous.windowId,
+      minimum,
+    );
+    await restoreElectronRendererContentSize(previous);
+    await setExcerptPresentation("zh-CN", "zai-light");
+  }
+}
+
+async function installNativeMediaAdapter(contents: Array<Record<string, unknown>>) {
+  const bin = process.env.ZCODE_E2E_EXTERNAL_ENGINE_FIXTURE_BIN;
+  if (!bin || !process.env.PATH?.split(process.platform === "win32" ? ";" : ":").includes(bin))
+    throw new Error("需要隔离的官方 CLI 状态夹具 PATH");
+  const descriptor = EXTERNAL_ENGINE_RUNTIMES["claude-code"];
+  const root = join(resolveE2EStorageRoot(), "engines", managedAdapterInstallDirName(descriptor));
+  const entry = join(root, ...managedAdapterEntrySegments(descriptor));
+  await mkdir(dirname(entry), { recursive: true });
+  const script = (
+    await readFile(
+      new URL(
+        "../../../../../apps/zcode-cli/packages/bootstrap/tests/fixtures/native-subagents/acp-fixture.cjs",
+        import.meta.url,
+      ),
+      "utf8",
+    )
+  )
+    .replace("process.env.FIXTURE_FRAMES", "require('node:path').join(__dirname,'frames.json')")
+    .replace(
+      "process.env.FIXTURE_LOG",
+      "require('node:path').join(__dirname,'client-messages.jsonl')",
+    );
+  await writeFile(entry, script);
+  await writeFile(
+    join(dirname(entry), "frames.json"),
+    JSON.stringify({
+      mainSessionId: "ux05-native",
+      prompt: contents.map((content) => ({
+        update: { sessionUpdate: "agent_message_chunk", content },
+      })),
+      load: [],
+    }),
+  );
+  await writeFile(
+    join(root, "node_modules", ...descriptor.adapterPackage.split("/"), "package.json"),
+    JSON.stringify({ version: descriptor.adapterVersion }),
+  );
+}
+
+function createFixtureWav() {
+  const wav = Buffer.alloc(8044, 128);
+  wav.write("RIFF", 0);
+  wav.writeUInt32LE(8036, 4);
+  wav.write("WAVEfmt ", 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(8000, 24);
+  wav.writeUInt32LE(8000, 28);
+  wav.writeUInt16LE(1, 32);
+  wav.writeUInt16LE(8, 34);
+  wav.write("data", 36);
+  wav.writeUInt32LE(8000, 40);
+  return wav;
 }
 
 async function waitForCompleted(marker: string) {
@@ -1041,7 +1345,28 @@ async function closeSidePanes() {
 }
 
 function createFixtureServer(): Server {
-  return createServer((_request, response) => {
+  return createServer((request, response) => {
+    const path = request.url?.split("?", 1)[0] ?? "";
+    if (path.endsWith("-retry.wav") && !retryMediaAvailable) {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+    if (path.endsWith(".wav") || path.endsWith("-download")) {
+      response.setHeader("content-type", "audio/wav");
+      response.end(createFixtureWav());
+      return;
+    }
+    if (path.endsWith(".mp4")) {
+      response.setHeader("content-type", "video/mp4");
+      response.end(fixtureVideo);
+      return;
+    }
+    if (path.endsWith(".png")) {
+      response.setHeader("content-type", "image/png");
+      response.end(fixtureImage);
+      return;
+    }
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(
       "<!doctype html><html><head><title>APC01 Local Preview</title></head><body>APC01_LOCAL_URL_PAGE</body></html>",

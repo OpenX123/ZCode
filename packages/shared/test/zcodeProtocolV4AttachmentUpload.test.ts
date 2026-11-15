@@ -144,7 +144,7 @@ describe("v4 chunked attachment protocol", () => {
     expect(() => v4AttachmentCommitParamsSchema.parse({ ...terminal, extra: true })).toThrow();
   });
 
-  it("sent preview accepts exact image/video row targets and rejects other media", () => {
+  it("sent preview accepts exact image/audio/video row targets and rejects unknown media", () => {
     const params = {
       sessionId: "session-1",
       ref: "/workspace/demo.mov",
@@ -169,7 +169,7 @@ describe("v4 chunked attachment protocol", () => {
     expect(() =>
       v4AttachmentReadResultSchema.parse({
         dataBase64: "AA==",
-        mediaType: "audio/mpeg",
+        mediaType: "application/x-unknown",
         totalBytes: 1,
         nextOffset: null,
       }),

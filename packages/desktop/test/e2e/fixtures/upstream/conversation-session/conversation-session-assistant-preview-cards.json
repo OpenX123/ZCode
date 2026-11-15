@@ -548,6 +548,35 @@
           "text": "E2E_ASSISTANT_PREVIEW_CARDS_WORK_EXCERPT_DONE 已完成，请使用前面的入口继续。"
         }
       }
+    },
+    {
+      "id": "assistant-preview-cards-ux05-display",
+      "description": "UX05 展示批次：实际媒体服务、404 重试、普通网页与最终正文 text fence。",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "固定已经送达的媒体引用；浏览器解码、Host 本地读取与原生打开继续走真实链路。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": [
+          "E2E_ASSISTANT_PREVIEW_CARDS_UX05_DISPLAY",
+          "E2E_BROWSER_FIXTURE_URL:"
+        ],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "ux05-display",
+          "inputTokens": 96,
+          "outputTokens": 100,
+          "text": "[UX05 公共网站](https://example.com/ux05)\n\n![UX05 图片]({{browserFixtureUrl}}.png)\n\n[直接音频]({{browserFixtureUrl}}.wav)\n\n[直接视频]({{browserFixtureUrl}}.mp4)\n\n[本地音频](<assistant-preview-e2e/media/生成 音频.wav>)\n\n[失效音频]({{browserFixtureUrl}}-retry.wav)\n\n```text\n{{browserFixtureUrl}}-final?next=(step)&x=1\n```\n\nE2E_ASSISTANT_PREVIEW_CARDS_UX05_DISPLAY_DONE"
+        }
+      }
     }
   ]
 }

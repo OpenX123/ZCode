@@ -814,6 +814,8 @@ export type ModelStreamingKind =
   | "error";
 
 export interface ModelStreamingPayload {
+  /** 同源媒体引用，writer 先持久化 FilePart，再沿既有事件发布。 */
+  media?: import("@zcode/shared/zcode-protocol-v4").AssistantMediaRef[];
   delta: string;
   done: boolean;
   kind?: ModelStreamingKind;

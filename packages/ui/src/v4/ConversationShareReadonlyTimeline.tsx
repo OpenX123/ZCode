@@ -305,12 +305,14 @@ function UserInputPresentation({
 }
 
 const AssistantTextPresentation = memo(function AssistantTextPresentation({
+  suppressTextFenceActions,
   row,
   theme,
   codePreviewSettings,
   artifactNames,
   onOpenExternalUrl,
 }: {
+  suppressTextFenceActions?: boolean;
   row: AssistantTextRow;
   theme: Theme;
   codePreviewSettings: CodePreviewSettings;
@@ -325,6 +327,8 @@ const AssistantTextPresentation = memo(function AssistantTextPresentation({
     <div data-conversation-share-row-kind="assistantText" className="group/assistant-row">
       <div data-conversation-selectable="true" className="w-full text-ui-base">
         <MessageResponse
+          allowAutomaticMedia={false}
+          suppressTextFenceActions={suppressTextFenceActions}
           streaming={false}
           theme={theme}
           codePreviewSettings={codePreviewSettings}
@@ -333,6 +337,25 @@ const AssistantTextPresentation = memo(function AssistantTextPresentation({
         >
           {markdown}
         </MessageResponse>
+        {row.media?.map((media) => (
+          <div key={media.id} className="mt-2 text-ui-sm">
+            {media.source.kind === "url" ? (
+              <Button
+                variant="link"
+                size="xs"
+                className="px-0"
+                title={media.source.url}
+                onClick={() => {
+                  if (media.source.kind === "url") onOpenExternalUrl(media.source.url);
+                }}
+              >
+                {media.name || media.mimeType}
+              </Button>
+            ) : (
+              <span>{media.name || media.mimeType}</span>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -860,8 +883,15 @@ function ReadonlySegment({
           content = (
             <div data-conversation-deliverable={item.deliverable?.key}>
               <AssistantTextPresentation
+                suppressTextFenceActions={Boolean(item.deliverable)}
                 row={
-                  item.deliverable ? { ...item.row, text: item.deliverable.contextText } : item.row
+                  item.deliverable
+                    ? {
+                        ...item.row,
+                        text: item.deliverable.contextText,
+                        media: item.deliverable.media ? [item.deliverable.media] : undefined,
+                      }
+                    : item.row
                 }
                 theme={theme}
                 codePreviewSettings={codePreviewSettings}
@@ -1295,7 +1325,7 @@ function ConversationShareReadonlyTimelineContent({
                           className="px-4 pb-5 @md/conversation:px-6"
                           data-share-content-fallback={block.id}
                         >
-                          <MessageResponse>
+                          <MessageResponse allowAutomaticMedia={false}>
                             {fallbacks.get(block.fallback_row_id) ?? ""}
                           </MessageResponse>
                         </div>

@@ -30,7 +30,8 @@ describe("PreviewPaneMediaContent", () => {
 
     expect(html).toContain("<video");
     expect(html).toContain("controls");
-    expect(html).toContain("playsinline");
+    // React 静态序列化保留 playsInline 驼峰；HTML 属性语义大小写不敏感。
+    expect(html.toLowerCase()).toContain("playsinline");
     expect(html).toContain('preload="metadata"');
     expect(html).not.toContain("autoplay");
   });

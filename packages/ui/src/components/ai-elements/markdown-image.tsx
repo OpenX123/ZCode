@@ -22,10 +22,13 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { isImagePreviewPath } from "@/lib/codeViewer.js";
 import { resolveMarkdownFileLink } from "@/lib/markdownFileLink.js";
 import { logger } from "@/logger.js";
+import { Button } from "@/components/ui/button.js";
 
 export { clampImagePreviewOffset as clampMarkdownImagePreviewOffset } from "@/components/ai-elements/image-preview-dialog.js";
 
 export type MarkdownImageProps = ComponentProps<"img"> & {
+  mimeType?: string;
+  onOpenSource?: (source: string) => void;
   node?: unknown;
   workspacePath?: string;
   workspaceHomePath?: string;
@@ -140,6 +143,8 @@ function readPreviewGroup(target: HTMLButtonElement): ImagePreviewDialogItem[] {
 }
 
 export function MarkdownImage({
+  mimeType,
+  onOpenSource,
   alt,
   className,
   node: _node,
@@ -155,13 +160,22 @@ export function MarkdownImage({
   const { intl } = useZCodeIntl();
   const services = useOptionalServices();
   const resolvedSrc = typeof src === "string" ? src : "";
-  const artifactRef = useMemo(() => decodeMarkdownArtifactImageSource(resolvedSrc), [resolvedSrc]);
+  const artifactRef = useMemo(
+    () =>
+      resolvedSrc.startsWith("zcode-artifact://")
+        ? resolvedSrc
+        : decodeMarkdownArtifactImageSource(resolvedSrc),
+    [resolvedSrc],
+  );
   const localImageLink = useMemo(() => {
     const fileLink = resolveMarkdownFileLink(workspacePath, resolvedSrc, {
       homePath: workspaceHomePath,
     });
-    return fileLink && isImagePreviewPath(fileLink.path) ? fileLink : null;
-  }, [resolvedSrc, workspaceHomePath, workspacePath]);
+    return fileLink && (mimeType?.startsWith("image/") || isImagePreviewPath(fileLink.path))
+      ? fileLink
+      : null;
+  }, [mimeType, resolvedSrc, workspaceHomePath, workspacePath]);
+  const [attempt, setAttempt] = useState(0);
   const [localImageDataUrl, setLocalImageDataUrl] = useState<string | null>(null);
   const [localImageFailed, setLocalImageFailed] = useState(false);
   const [artifactImageUrl, setArtifactImageUrl] = useState<string | null>(null);
@@ -198,7 +212,7 @@ export function MarkdownImage({
     return () => {
       disposed = true;
     };
-  }, [localImageLink, services]);
+  }, [attempt, localImageLink, services]);
 
   useEffect(
     () => () => {
@@ -246,7 +260,36 @@ export function MarkdownImage({
       disposed = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [artifactRef, readAttachment, sessionId]);
+  }, [artifactRef, attempt, readAttachment, sessionId]);
+
+  const recovery = (
+    <div className="flex min-w-0 flex-col items-center gap-2">
+      {onOpenSource && !artifactRef ? (
+        <Button
+          type="button"
+          variant="link"
+          size="xs"
+          className="h-auto max-w-full whitespace-normal break-all"
+          onClick={() => onOpenSource(resolvedSrc)}
+        >
+          {resolvedSrc}
+        </Button>
+      ) : (
+        <span className="max-w-full break-all text-ui-xs">{artifactRef ?? resolvedSrc}</span>
+      )}
+      <Button
+        type="button"
+        variant="outline"
+        size="xs"
+        onClick={() => {
+          setBrowserImageState({ source: "", status: "loading" });
+          setAttempt((value) => value + 1);
+        }}
+      >
+        {intl.formatMessage({ id: "common.retry" })}
+      </Button>
+    </div>
+  );
 
   const displaySrc = artifactRef
     ? artifactImageUrl
@@ -268,7 +311,10 @@ export function MarkdownImage({
         title={localImageLink?.path}
       >
         {failed ? (
-          <ImageOffIcon aria-hidden="true" className="size-6" />
+          <div className="flex min-w-0 flex-col items-center gap-2">
+            <ImageOffIcon aria-hidden="true" className="size-6" />
+            {recovery}
+          </div>
         ) : (
           intl.formatMessage({ id: "common.loading" })
         )}
@@ -290,6 +336,7 @@ export function MarkdownImage({
         title={localImageLink?.path}
       >
         <ImageOffIcon aria-hidden="true" className="size-6" />
+        {recovery}
       </div>
     );
   }
@@ -352,7 +399,7 @@ export function MarkdownImage({
         <img
           // React 复用同一 img 时，旧资源的异步事件可能命中新 src 的处理器。
           // 按资源重建节点，确保 load/error 只更新触发该事件的图片状态。
-          key={displaySrc}
+          key={`${displaySrc}:${attempt}`}
           alt={imageAlt}
           className={cn(
             imageThumbnailClassName,

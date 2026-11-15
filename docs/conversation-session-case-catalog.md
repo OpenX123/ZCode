@@ -2439,7 +2439,7 @@ assistantText rows
   -> failed / 非 latest row: 不显示
 ```
 
-本组覆盖 `localhost` / `127.0.0.1`、`file://...html`、HTML、Markdown、DOCX、XLSX、PPTX 和 PDF；文件引用支持 Unicode、空格及跨平台路径词法规则。不从公网 URL、任务级 aggregate change summary 或历史轮次文件列表推断卡片，避免跨轮串入口。文件存在性校验必须走当前 workspace service，不能在 renderer 中直接访问本地文件系统。
+本组覆盖 `localhost` / `127.0.0.1`、收到的闭合 HTTP(S) 引用、`file://...html`、HTML、Markdown、DOCX、XLSX、PPTX、PDF 和媒体；普通网页卡只使用已收到的标题/域名，不抓取站点元数据。文件引用支持 Unicode、空格及跨平台路径词法规则。不从任务级 aggregate change summary 或历史轮次文件列表推断卡片，避免跨轮串入口。文件存在性校验必须走当前 workspace service，不能在 renderer 中直接访问本地文件系统。
 
 | ID    | 前置状态                                                                                                            | 用户/系统事件                                           | 规则命中                                       | 期望结果                                                                                                                                                                                                                                     | Review   |
 | ----- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
@@ -2459,6 +2459,8 @@ assistantText rows
 | APC14 | completed Office preview card                                                                                       | right-click, dropdown and menu actions                  | assistantPreviewCardMenu                       | Compact Preview/Open context actions without directory entry and unchanged dropdown; scoped preview and native default-app calls; Web/remote capability exclusion covered by focused tests                                                   | accepted |
 
 ### APC 首批 E2E 范围与 fixture 边界（2026-08-04 已确认）
+
+UX05 补充验收（2026-11-15）：展示批次覆盖收到的公网网页卡、直接图片/音视频、本地媒体、失效来源与重试、无自动播放、最终 text fence 完整入口，以及英文暗色窄屏。原生批次使用隔离 ACP adapter fixture，覆盖 image/audio/resource blob/resource link→既有 FilePart/artifact→V4 row.media→Host 读取；媒体在最终摘要之后仍常显于折叠历史外，保留来源上下文，切换草稿重挂、刷新和完整冷启动继续读取。该 fixture 不代表真实账号、SSH、实体手机或长历史虚拟滚动覆盖。匿名分享只展示 HTTP 来源或附件名称，不自动加载媒体。
 
 - 首批接受 `APC01` 至 `APC09`：除四类打开链路外，同时覆盖 interrupted、streaming、整轮去重、15→10/不回填和 cold resume。它们属于正交状态，不因已有 focused tests 而从窗口 E2E 剪枝。
 - `APC10` 接受为 citation 专项：正文链接、四类卡片准入和参数忽略由 focused renderer/parser tests 首先守住；desktop local 的组合 E2E 作为后续窗口用例，不与现有 APC01-APC09 的 URL、fileChanges 和数量边界重复展开。desktop continuous 与 mobile replayable 只改变文本到达方式，不改变 citation 派生规则。

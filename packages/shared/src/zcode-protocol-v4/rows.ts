@@ -201,12 +201,68 @@ export type UserInputRow = z.infer<typeof userInputRowSchema>;
 // 不变量：追加只能进 state="streaming" 的行；普通新 response 必然新 rowId。唯一例外是
 // ProductProjection 已由 length/zero-tool 事实确认的 output-token Continue，会重新打开同 turn
 // 且视觉紧邻的 assistantText row；客户端仍只观察标准 row.upserted + row.delta。
+// ACP 输出只传有界引用；schema/type 是 live、snapshot、cold hydration 的同源合同。
+const assistantMediaUrlSchema = z
+  .string()
+  .max(4096)
+  .url()
+  .refine((value) => {
+    // Zod 的 URL 检查失败仍会执行 refine；非法输入必须返回校验失败，不能让 safeParse 抛异常。
+    try {
+      const url = new URL(value);
+      return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+    } catch {
+      return false;
+    }
+  });
+const assistantMediaArtifactSchema = z
+  .string()
+  .max(4096)
+  .regex(/^zcode-artifact:\/\/[^/\s?#]+\/[^/\s?#]+$/u)
+  .refine((value) => {
+    try {
+      return value
+        .slice("zcode-artifact://".length)
+        .split("/")
+        .every((part) => {
+          const decoded = decodeURIComponent(part);
+          return (
+            decoded !== "." &&
+            decoded !== ".." &&
+            !/[\\/]/u.test(decoded) &&
+            Array.from(decoded).every((character) => character.charCodeAt(0) >= 32)
+          );
+        });
+    } catch {
+      return false;
+    }
+  });
+export const assistantMediaRefSchema = z
+  .object({
+    id: z.string().trim().min(1).max(256),
+    mediaType: z.enum(["image", "audio", "video"]),
+    mimeType: z
+      .string()
+      .max(128)
+      .regex(/^(?:image|audio|video)\/[a-zA-Z0-9!#$&^_.+-]+$/u),
+    source: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("artifact"), uri: assistantMediaArtifactSchema }).strict(),
+      z.object({ kind: z.literal("url"), url: assistantMediaUrlSchema }).strict(),
+    ]),
+    name: z.string().trim().min(1).max(512).optional(),
+  })
+  .strict()
+  .refine((ref) => ref.mimeType.startsWith(`${ref.mediaType}/`));
+export type AssistantMediaRef = z.infer<typeof assistantMediaRefSchema>;
+export const assistantMediaRefsSchema = z.array(assistantMediaRefSchema).max(32);
+
 export const assistantTextRowSchema = z.object({
   ...rowBaseFields,
   kind: z.literal("assistantText"),
   // 同一模型 response 的正文与工具共享此 ID；optional 兼容旧 snapshot。
   assistantResponseId: z.string().min(1).optional(),
   text: z.string(),
+  media: assistantMediaRefsSchema.optional(),
   state: z.enum(["streaming", "complete", "interrupted", "failed"]),
   model: z.string().optional(),
   feedback: z.enum(["like", "dislike"]).optional(),

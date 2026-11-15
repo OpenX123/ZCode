@@ -66,9 +66,15 @@ export function ConversationTurnRow({
   const platform = useOptionalPlatform();
   const content = (
     <ConversationRowView
+      suppressTextFenceActions={Boolean(deliverable)}
       row={
         deliverable && row.kind === "assistantText"
-          ? { ...row, text: deliverable.contextText, actions: undefined }
+          ? {
+              ...row,
+              text: deliverable.contextText,
+              media: deliverable.media ? [deliverable.media] : undefined,
+              actions: undefined,
+            }
           : row
       }
       context={context}

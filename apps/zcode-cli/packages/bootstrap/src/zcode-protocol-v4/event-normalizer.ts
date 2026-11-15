@@ -11,6 +11,7 @@ import type {
 } from "@zcode/contracts";
 import { SessionEventType } from "@zcode/contracts";
 import type { AttachmentRef } from "@zcode/shared/zcode-protocol-v4";
+import { assistantMediaRefsSchema } from "@zcode/shared/zcode-protocol-v4";
 
 export type CanonicalConversationVisibility = "visible" | "modelOnly" | "stateOnly";
 export type CanonicalConversationOrigin =
@@ -107,6 +108,7 @@ export interface CanonicalTurnAttachment extends Omit<AttachmentRef, "ref"> {
 }
 
 export interface CanonicalModelStream {
+  media?: ModelStreamingPayload["media"];
   kind: ModelStreamingPayload["kind"];
   delta: string;
   done: boolean;
@@ -309,6 +311,7 @@ function normalizeModelStreaming(
     openAssistantSegments: NormalizeConversationEventContext["openAssistantSegments"];
   },
 ): CanonicalAssistantSegmentFact {
+  const media = assistantMediaRefsSchema.safeParse(payload.media);
   const lane = assistantStreamLane(payload.kind);
   const openSegment =
     lane === "text" || lane === "reasoning" ? ids.openAssistantSegments?.[lane] : undefined;
@@ -348,6 +351,7 @@ function normalizeModelStreaming(
     placement: { lane: "assistantWork", relation: "withinProductTurn" },
     diagnostics,
     stream: {
+      ...(media.success ? { media: media.data } : {}),
       kind: payload.kind,
       delta: payload.delta,
       done: payload.done,

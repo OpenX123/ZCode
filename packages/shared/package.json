@@ -16,6 +16,7 @@
     "./process-diagnostic": "./src/process-diagnostic.ts",
     "./model-selection": "./src/model-selection.ts",
     "./model-config": "./src/model-config.ts",
+    "./media-preview": "./src/media-preview.ts",
     "./config-schema": "./src/config-schema.ts",
     "./node": "./src/node.ts",
     "./sqlite-migrations": "./src/sqlite-migrations/index.ts",

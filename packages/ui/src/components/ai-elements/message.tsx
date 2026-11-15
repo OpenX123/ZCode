@@ -104,6 +104,12 @@ import { createZCodeFileCitationRemarkPlugin } from "@/lib/zcodeFileCitationRema
 import { windowsFileLinkEscapeRemarkPlugin } from "@/lib/windowsFileLinkEscapeRemarkPlugin.js";
 import { projectZCodeFileCitations } from "@/lib/zcodeFileCitation.js";
 import { rewriteMarkdownArtifactImageSources } from "@zcode/shared";
+import type { AssistantMediaRef } from "@zcode/shared/zcode-protocol-v4";
+import {
+  assistantPresentationReferences,
+  classifyAssistantMedia,
+} from "@/v4/conversation-presentation/index.js";
+import { AssistantMediaContent } from "@/previewPaneMediaContent.js";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -355,6 +361,10 @@ export const MessageBranchPage = ({ className, ...props }: MessageBranchPageProp
 };
 
 export type MessageResponseProps = {
+  media?: readonly AssistantMediaRef[];
+  suppressTextFenceActions?: boolean;
+  /** 公开分享关闭自动媒体加载；已认证只读会话仍使用默认展示。 */
+  allowAutomaticMedia?: boolean;
   /** 办公模式的正式回答固定换行，不覆盖用户保存的代码预览设置。 */
   forceCodeWrap?: boolean;
   className?: string;
@@ -1297,6 +1307,9 @@ export const messageResponsePropsAreEqual = (
   nextProps: Readonly<MessageResponseProps>,
 ): boolean =>
   prevProps.children === nextProps.children &&
+  prevProps.media === nextProps.media &&
+  prevProps.suppressTextFenceActions === nextProps.suppressTextFenceActions &&
+  prevProps.allowAutomaticMedia === nextProps.allowAutomaticMedia &&
   prevProps.forceCodeWrap === nextProps.forceCodeWrap &&
   nextProps.streaming === prevProps.streaming &&
   nextProps.streamingAnimationKey === prevProps.streamingAnimationKey &&
@@ -1315,6 +1328,9 @@ export const messageResponsePropsAreEqual = (
 
 export const MessageResponse = memo(
   ({
+    media,
+    suppressTextFenceActions = false,
+    allowAutomaticMedia = true,
     className,
     streaming = false,
     forceCodeWrap = false,
@@ -1332,8 +1348,71 @@ export const MessageResponse = memo(
     codePreviewSettings = DEFAULT_CODE_PREVIEW_SETTINGS,
     children,
   }: MessageResponseProps) => {
+    const platform = useOptionalPlatform();
     const wrapLongLines = forceCodeWrap || codePreviewSettings.wrapLongLines;
     const rawMarkdown = useMemo(() => extractCodeText(children), [children]);
+    const references = useMemo(
+      () => assistantPresentationReferences(rawMarkdown, streaming),
+      [rawMarkdown, streaming],
+    );
+    const textFenceTargets = useMemo(
+      () =>
+        new Set(
+          references.filter((ref) => ref.sourceFormat === "textFence").map((ref) => ref.target),
+        ),
+      [references],
+    );
+    const deliveredMedia = useMemo(() => {
+      if (!allowAutomaticMedia) return [];
+      const typed = (media ?? []).map((ref) => ({
+        id: ref.id,
+        source: ref.source.kind === "artifact" ? ref.source.uri : ref.source.url,
+        mediaType: ref.mediaType,
+        mimeType: ref.mimeType,
+        name: ref.name,
+      }));
+      const seen = new Set(typed.map((ref) => ref.source));
+      for (const ref of references) {
+        const classification = classifyAssistantMedia(ref.target);
+        if (!classification || ref.kind === "image" || seen.has(ref.target)) continue;
+        seen.add(ref.target);
+        typed.push({ id: ref.target, source: ref.target, ...classification, name: undefined });
+      }
+      return typed;
+    }, [allowAutomaticMedia, media, references]);
+    const openMediaSource = useCallback(
+      (source: string) => {
+        if (isExternalWebHref(source)) {
+          if (platform && resolveMessageLinkOpenTarget({ href: source }) === "external-browser")
+            platform.openExternal(source);
+          else onOpenExternalUrl?.(source);
+          return;
+        }
+        const file = resolveMarkdownFileLink(workspacePath, source, {
+          homePath: workspaceHomePath,
+        });
+        if (file)
+          onOpenFileLink?.(
+            buildMessageFileLinkTarget({
+              href: source,
+              path: file.path,
+              label: getPathLeaf(file.path),
+              workspacePath,
+              workspaceIdentity,
+              workspaceRemoteSessionId,
+            }),
+          );
+      },
+      [
+        onOpenExternalUrl,
+        onOpenFileLink,
+        platform,
+        workspaceHomePath,
+        workspaceIdentity,
+        workspacePath,
+        workspaceRemoteSessionId,
+      ],
+    );
     const renderStreaming = streaming;
     const closedMarkdownFences = useMemo(
       () => collectClosedMarkdownFences(rawMarkdown),
@@ -1506,15 +1585,34 @@ export const MessageResponse = memo(
             </span>
           );
         },
-        img: (imageProps: MarkdownImageProps) => (
-          <MarkdownImage
-            {...imageProps}
-            workspacePath={workspacePath}
-            workspaceHomePath={workspaceHomePath}
-            sessionId={sessionId}
-            readAttachment={readAttachment}
-          />
-        ),
+        img: (imageProps: MarkdownImageProps) => {
+          const source = typeof imageProps.src === "string" ? imageProps.src : "";
+          if (!allowAutomaticMedia) return <span>{imageProps.alt || source}</span>;
+          const classification = classifyAssistantMedia(source);
+          if (classification && classification.mediaType !== "image")
+            return (
+              <AssistantMediaContent
+                source={source}
+                {...classification}
+                name={imageProps.alt}
+                workspacePath={workspacePath}
+                workspaceHomePath={workspaceHomePath}
+                sessionId={sessionId}
+                readAttachment={readAttachment}
+                onOpenSource={openMediaSource}
+              />
+            );
+          return (
+            <MarkdownImage
+              {...imageProps}
+              workspacePath={workspacePath}
+              workspaceHomePath={workspaceHomePath}
+              sessionId={sessionId}
+              readAttachment={readAttachment}
+              onOpenSource={openMediaSource}
+            />
+          );
+        },
         p: MarkdownImageParagraph,
         h1: (headingProps: MarkdownHeadingProps) => (
           <MessageMarkdownHeading {...headingProps} headingLevel="h1" />
@@ -1567,27 +1665,41 @@ export const MessageResponse = memo(
           const language = getCodeLanguage(codeClassName);
 
           return (
-            <CodeBlock
-              className="my-4 border border-border bg-card"
-              code={codeText}
-              // 流式消息里的代码围栏会被 Streamdown 反复拆分/重挂载。
-              // 高亮等消息完成后再启动，避免 async highlighter 和消息流更新叠加触发 React #185。
-              enableSyntaxHighlighting={!renderStreaming}
-              fontSizePx={codePreviewSettings.fontSizePx}
-              language={language}
-              mermaidStreaming={
-                renderStreaming && !closedMarkdownFencesRef.current.has(codeText.trim())
-              }
-              theme={codeBlockTheme}
-              appTheme={theme}
-              wrapLongLines={wrapLongLines}
-            >
-              <CodeBlockHeader
-                className="pl-3 pr-2 pt-2"
+            <>
+              <CodeBlock
+                className="my-4 border border-border bg-card"
+                code={codeText}
+                // 流式消息里的代码围栏会被 Streamdown 反复拆分/重挂载。
+                // 高亮等消息完成后再启动，避免 async highlighter 和消息流更新叠加触发 React #185。
+                enableSyntaxHighlighting={!renderStreaming}
+                fontSizePx={codePreviewSettings.fontSizePx}
                 language={language}
-                showWrapButton={!forceCodeWrap}
-              />
-            </CodeBlock>
+                mermaidStreaming={
+                  renderStreaming && !closedMarkdownFencesRef.current.has(codeText.trim())
+                }
+                theme={codeBlockTheme}
+                appTheme={theme}
+                wrapLongLines={wrapLongLines}
+              >
+                <CodeBlockHeader
+                  className="pl-3 pr-2 pt-2"
+                  language={language}
+                  showWrapButton={!forceCodeWrap}
+                />
+              </CodeBlock>
+              {!suppressTextFenceActions &&
+              textFenceTargets.has(codeText.trim()) &&
+              onOpenExternalUrl ? (
+                <MessageExternalLink
+                  href={codeText.trim()}
+                  onOpenExternalUrl={onOpenExternalUrl}
+                  className="mb-3 block max-w-full break-all text-ui-sm"
+                  data-assistant-text-fence-link
+                >
+                  {codeText.trim()}
+                </MessageExternalLink>
+              ) : null}
+            </>
           );
         },
         blockquote: MarkdownBlockquote,
@@ -1602,6 +1714,7 @@ export const MessageResponse = memo(
         ul: MarkdownUnorderedList,
       }),
       [
+        allowAutomaticMedia,
         codeBlockTheme,
         codePreviewSettings.fontSizePx,
         wrapLongLines,
@@ -1609,6 +1722,9 @@ export const MessageResponse = memo(
         onOpenFileLink,
         onOpenCodeViewer,
         onOpenExternalUrl,
+        openMediaSource,
+        suppressTextFenceActions,
+        textFenceTargets,
         readAttachment,
         renderStreaming,
         sessionId,
@@ -1628,7 +1744,7 @@ export const MessageResponse = memo(
         scope={boundaryScope}
       >
         <Streamdown
-          key={streamdownRenderKey}
+          key={`${streamdownRenderKey}:${allowAutomaticMedia}`}
           className={responseClassName}
           // Streamdown 自身是 memo，比较函数不看 components。app light/dark 切换时
           // codeBlockTheme 只存在于自定义 code renderer 闭包里，若不改 key，当前 task 已挂载的
@@ -1663,6 +1779,17 @@ export const MessageResponse = memo(
         >
           {targetMarkdown}
         </Streamdown>
+        {deliveredMedia.map((item) => (
+          <AssistantMediaContent
+            key={`${streamdownRenderKey}:${item.id}`}
+            {...item}
+            sessionId={sessionId}
+            readAttachment={readAttachment}
+            workspacePath={workspacePath}
+            workspaceHomePath={workspaceHomePath}
+            onOpenSource={openMediaSource}
+          />
+        ))}
       </MessageResponseMarkdownBoundary>
     );
   },

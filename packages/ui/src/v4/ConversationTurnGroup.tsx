@@ -123,7 +123,7 @@ function toRetryProgress(apiRetry: ApiRetryState): { attempt: number; maxRetries
 
 function hasTurnOutput(unit: ConversationTurnRenderUnit): boolean {
   return (
-    unit.assistantTextRows.some((row) => row.text.trim()) ||
+    unit.assistantTextRows.some((row) => row.text.trim() || row.media?.length) ||
     unit.assistantWorkRows.some((row) =>
       row.kind === "reasoning"
         ? Boolean(row.text.trim())

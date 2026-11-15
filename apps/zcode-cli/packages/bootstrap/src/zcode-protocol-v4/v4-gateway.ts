@@ -2426,6 +2426,7 @@ export class ConversationV4Gateway {
       // 文本只开放既有材料标记，后续仍须通过权威行、附件索引和 ref 的归属校验。
       return (
         mime.startsWith("image/") ||
+        mime.startsWith("audio/") ||
         mime.startsWith("video/") ||
         mime === "application/pdf" ||
         (mime === "text/plain" &&
@@ -2458,6 +2459,22 @@ export class ConversationV4Gateway {
     // 旧 renderer 没有 row target，无法按消息定位持久 artifact；一旦
     // previewRef 存在就只能授权该 durable ref，不能重新放行可变的原始路径。
     for (const row of publisher.getSnapshot().rows.window) {
+      if (row.kind === "assistantText" && artifactRefBelongsToSession(ref, sessionId)) {
+        const media = row.media?.find(
+          (item) => item.source.kind === "artifact" && item.source.uri === ref,
+        );
+        if (media) {
+          // ACP 媒体与 Markdown 图片共用原 Host 读取；必须由权威行和当前 session 双重证明归属。
+          return {
+            attachment: {
+              ref,
+              fileName: media.name ?? "assistant-media",
+              mime: media.mimeType,
+              bytes: 0,
+            },
+          };
+        }
+      }
       if (row.kind === "userInput") {
         for (const attachment of row.attachments ?? []) {
           if (!isPreviewable(attachment)) continue;
@@ -2534,6 +2551,7 @@ export class ConversationV4Gateway {
         if (
           !allowGeneric &&
           !resultMime.startsWith("image/") &&
+          !resultMime.startsWith("audio/") &&
           !resultMime.startsWith("video/") &&
           resultMime !== "application/pdf" &&
           !(

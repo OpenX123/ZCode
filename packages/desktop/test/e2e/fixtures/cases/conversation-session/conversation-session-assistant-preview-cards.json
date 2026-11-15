@@ -31,6 +31,11 @@
       "path": "assistant-preview-e2e/bounds/*.pdf",
       "source": "created-by-spec",
       "description": "spec 写入存在性候选；不打开内容，只验证 Host stat、15 个候选和最多 10 张卡片。"
+    },
+    {
+      "path": "engines/*/frames.json",
+      "source": "created-by-spec",
+      "description": "UX05 原生批次在隔离 profile 的受管 adapter 中发送 ACP image/audio/resource_blob/resource_link；真实 writer、store、Host、renderer 和 cold resume，不使用账号。"
     }
   ],
   "requests": [
@@ -159,6 +164,13 @@
       "timingPolicy": "fast-text",
       "source": "synthetic",
       "syntheticReason": "最终正文只确认完成，确保入口可见性来自工作成果投影而非最终重复链接。"
+    },
+    {
+      "id": "assistant-preview-cards-ux05-display",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "固定已经送达的媒体引用；浏览器解码、Host 本地读取与原生打开继续走真实链路。"
     }
   ]
 }

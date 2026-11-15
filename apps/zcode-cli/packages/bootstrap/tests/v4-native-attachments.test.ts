@@ -830,6 +830,64 @@ describe("gateway v4 chunked attachment transaction", () => {
     gateway.dispose();
   });
 
+  it.each(["audio", "video", "image"])(
+    "typed assistant %s 只由原 session 精确 artifact 引用授权",
+    async (kind) => {
+      const ref = `zcode-artifact://s1/${kind}`;
+      const mime = `${kind}/${kind === "audio" ? "mpeg" : kind === "image" ? "png" : "mp4"}`;
+      const read = vi
+        .fn()
+        .mockResolvedValue({ bytes: Buffer.from("fixture-media"), mediaType: mime });
+      const gateway = makeGateway({ readSessionAttachment: read });
+      ingestAttachmentRow(gateway, []);
+      gateway.ingest("s1", {
+        id: "typed-media",
+        sessionId: "s1",
+        turnId: "turn-preview",
+        type: SessionEventType.ModelStreaming,
+        timestamp: new Date(3),
+        traceId: "trace-preview",
+        sequenceNumber: 3,
+        payload: {
+          kind: "text_delta",
+          delta: "",
+          done: false,
+          assistantMessageId: "assistant-media",
+          partId: "media-part",
+          media: [
+            {
+              id: "media-part",
+              mediaType: kind,
+              mimeType: mime,
+              source: { kind: "artifact", uri: ref },
+            },
+            {
+              id: "cross-session",
+              mediaType: kind,
+              mimeType: mime,
+              source: { kind: "artifact", uri: "zcode-artifact://other/private" },
+            },
+          ],
+        },
+      } as Parameters<ConversationV4Gateway["ingest"]>[1]);
+      await expect(
+        gateway.attachmentRead({ sessionId: "s1", ref, offset: 0, limit: 100 }),
+      ).resolves.toMatchObject({ mediaType: mime });
+      for (const denied of [
+        "zcode-artifact://other/private",
+        "zcode-artifact://s1/absent",
+        "/tmp/private.mp3",
+      ]) {
+        await expect(
+          gateway.attachmentRead({ sessionId: "s1", ref: denied, offset: 0, limit: 100 }),
+        ).rejects.toThrow("fault.attachment.previewRefNotAuthorized");
+      }
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(read).toHaveBeenCalledWith("s1", expect.objectContaining({ ref, mime }));
+      gateway.dispose();
+    },
+  );
+
   it("已发送视频按 row 身份和附件序号授权，并把持久消息锚点交给宿主", async () => {
     const video = {
       ref: "/tmp/demo.mov",

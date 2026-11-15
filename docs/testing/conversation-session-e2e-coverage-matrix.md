@@ -1394,6 +1394,8 @@ artifact 后人工观察”的软通过口径。
 
 ### Conversation Share Candidate 覆盖
 
+UX05（2026-11-15）在既有 APC spec 增加展示与原生媒体两个独立用例。Windows local replay 两项通过（`desktop-e2e-20261115211627162-p50860-23884f50b0a18eb3`）：展示批次14.904s，原生批次18.210s；后者验证 terminal 折叠外成果、真实 artifact/Host 读取、来源上下文、草稿切换重挂、刷新和完整冷启动。纯投影测试覆盖空正文、多媒体逐项覆盖、同 URL 网页与 MIME 媒体区别、来源/id/scope 与匿名分享隐私。详细结果见本次 T05 报告和 `.e2e-artifacts`；真实引擎账号、SSH、实体手机、长历史虚拟滚动及 Docker admission 未覆盖，不将其标成 formal gate 通过。
+
 | Catalog ID           | 覆盖状态 | 自动化                      | 备注                                                                                               |
 | -------------------- | -------- | --------------------------- | -------------------------------------------------------------------------------------------------- |
 | ~~SHARE25 ~~ retired | planned  | services + UI + Desktop E2E | PDF 预览卡片做选择阶段 stat 并上传；三个存在但不支持的 MP4 只产生 warning；正文 `~/...` 不产生候选 |

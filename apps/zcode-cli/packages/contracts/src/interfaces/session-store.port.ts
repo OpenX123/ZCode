@@ -479,6 +479,8 @@ export type FilePartSource =
     };
 
 export interface AttachmentStorageMetadata {
+  /** ACP 输出媒体的同源展示引用；本体仅在 artifact store。 */
+  assistantMedia?: import("@zcode/shared/zcode-protocol-v4").AssistantMediaRef;
   sizeBytes?: number;
   sha256?: string;
   image?: {
