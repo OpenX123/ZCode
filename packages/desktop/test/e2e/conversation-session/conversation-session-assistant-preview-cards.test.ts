@@ -18,7 +18,12 @@ import {
   TID_BROWSER_WEBVIEW,
   TID_PREVIEW_PANE,
 } from "@zcode/shared/test-ids";
-import { clearAppData, DEFAULT_WORKSPACE } from "../helpers/desktop-app.js";
+import {
+  clearAppData,
+  DEFAULT_WORKSPACE,
+  restoreElectronRendererContentSize,
+  setCurrentElectronRendererContentSize,
+} from "../helpers/desktop-app.js";
 import { restartIntoWorkspacePreservingProfile } from "../helpers/model-provider-restart.js";
 import {
   clickV4Stop,
@@ -62,6 +67,24 @@ interface PreviewCardSnapshot {
 let fixtureServer: Server | null = null;
 let fixtureRootUrl = "";
 
+async function setExcerptPresentation(locale: "zh-CN" | "en-US", theme: "zai-light" | "zai-dark") {
+  const result = await browser.executeAsync(
+    (next, done: (result: string) => void) => {
+      const actions = (window as typeof window & { __testActions?: Record<string, unknown> })
+        .__testActions;
+      if (typeof actions?.setLocale !== "function" || typeof actions?.setTheme !== "function") {
+        done("缺少locale/theme测试入口");
+        return;
+      }
+      (actions.setLocale as (value: string) => void)(next.locale);
+      (actions.setTheme as (value: string) => void)(next.theme);
+      requestAnimationFrame(() => done("ok"));
+    },
+    { locale, theme },
+  );
+  expect(result).toBe("ok");
+}
+
 describe("Assistant Preview Cards E2E", () => {
   before(async () => {
     fixtureServer = createFixtureServer();
@@ -79,6 +102,120 @@ describe("Assistant Preview Cards E2E", () => {
     await browser.electron.restoreAllMocks();
     await clearAppData();
   });
+
+  it("UX04: 非最终正文关键入口在已工作折叠外可见，并保留原始上下文", async () => {
+    await browser.waitUntil(
+      async () =>
+        (await browser.$('[data-testid="onboarding-page"]').isExisting()) ||
+        (await browser.$('[data-testid="task-settings-button"]').isExisting()),
+      { timeout: 30_000 },
+    );
+    await browser.keys("Escape");
+    await prepareCase({ yolo: true });
+    await setExcerptPresentation("zh-CN", "zai-light");
+    const marker = `${CASE_MARKER}_WORK_EXCERPT`;
+    await sendV4Prompt(
+      `${marker}: publish the entry before working. E2E_BROWSER_FIXTURE_URL:${fixtureRootUrl}`,
+    );
+    await waitForCompleted(`${marker}_DONE`);
+    const sessionId = await waitForBoundSession(marker);
+    const excerpt = await browser.$(
+      `[data-conversation-deliverable]:has(button[title="${fixtureRootUrl}"])`,
+    );
+    await excerpt.waitForDisplayed();
+    expect(await excerpt.getText()).toContain("请打开此入口继续操作");
+    expect(await excerpt.$(`button[title="${fixtureRootUrl}"]`).isDisplayed()).toBe(true);
+    expect(await excerpt.$$('[data-testid^="v4-fork"], [data-testid^="v4-retry"]').length).toBe(0);
+    const sourceKey = await excerpt.getAttribute("data-conversation-deliverable");
+    const history = await browser.$('[data-testid^="chat-assistant-history-content"]');
+    expect(await history.isDisplayed()).toBe(false);
+    const screenshotDir = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
+    if (screenshotDir) await browser.saveScreenshot(join(screenshotDir, "ux04-collapsed.png"));
+    await excerpt.$("[data-deliverable-show-source]").click();
+    await history.waitForDisplayed();
+    expect(await history.getText()).toContain("请打开此入口继续操作");
+    expect(await excerpt.getAttribute("data-conversation-deliverable")).toBe(sourceKey);
+    const trigger = await browser.$('[data-testid^="chat-assistant-history-trigger"]');
+    await trigger.click();
+    await history.waitForDisplayed({ reverse: true });
+    await excerpt.$(`button[title="${fixtureRootUrl}"]`).click();
+    await waitForBrowserSurface(fixtureRootUrl, "APC01_LOCAL_URL_PAGE");
+    await closeSidePanes();
+    const textEntryUrl = `${fixtureRootUrl}-text-entry?next=(step)&label=%E4%B8%AD%E6%96%87%20path&angle=%3Cdone%3E`;
+    const textEntry = await browser.$("button[data-deliverable-open-link]");
+    expect(await textEntry.getAttribute("title")).toBe(textEntryUrl);
+    await textEntry.scrollIntoView();
+    // 真实 Tab 聚焦与 Enter 激活，验证原生按钮可用且完整 URL 没有经过 Markdown 重建。
+    await excerpt.$("[data-deliverable-show-source]").click();
+    await trigger.click();
+    for (let step = 0; step < 16 && !(await textEntry.isFocused()); step += 1) {
+      await browser.keys("Tab");
+    }
+    expect(await textEntry.isFocused()).toBe(true);
+    await browser.keys("Enter");
+    await waitForBrowserSurface(textEntryUrl, "APC01_LOCAL_URL_PAGE");
+    await closeSidePanes();
+    await startNewV4Draft();
+    expect(await browser.$("[data-conversation-deliverable]").isExisting()).toBe(false);
+    await selectV4TaskById(sessionId);
+    const restored = await browser.$(
+      `[data-conversation-deliverable]:has(button[title="${fixtureRootUrl}"])`,
+    );
+    await restored.waitForDisplayed();
+    expect(await restored.getAttribute("data-conversation-deliverable")).toBe(sourceKey);
+    if (screenshotDir) await browser.saveScreenshot(join(screenshotDir, "ux04-restored.png"));
+    const originalWindow = await setCurrentElectronRendererContentSize(1280, 900);
+    const minimum = await browser.electron.execute((electron, id) => {
+      const window = electron.BrowserWindow.fromId(id)!;
+      const previous = window.getMinimumSize();
+      // 仅测试窄屏：Windows 原生最小宽为 481px，暂时下调后验证真实 430px viewport。
+      window.setMinimumSize(320, 400);
+      return previous;
+    }, originalWindow.windowId);
+    try {
+      await setCurrentElectronRendererContentSize(430, 900);
+      await setExcerptPresentation("en-US", "zai-dark");
+      const drawer = await browser.$('[data-testid="workspace-sidebar-drawer-backdrop"]');
+      if (await drawer.isDisplayed()) {
+        // 窄屏标题栏被 drawer 自身拖拽区覆盖，真实点击右侧露出的 backdrop 收起。
+        await browser.action("pointer").move({ x: 420, y: 450 }).down().up().perform();
+        await drawer.waitForDisplayed({ reverse: true });
+      }
+      await restored.scrollIntoView();
+      expect(await restored.$("[data-deliverable-show-source]").getText()).toBe(
+        "View original context",
+      );
+      const layout = await browser.execute(() => ({
+        width: window.innerWidth,
+        excerpts: Array.from(document.querySelectorAll("[data-conversation-deliverable]")).map(
+          (node) => {
+            const rect = node.getBoundingClientRect();
+            return { left: rect.left, right: rect.right, width: rect.width };
+          },
+        ),
+      }));
+      if (screenshotDir) {
+        await browser.saveScreenshot(join(screenshotDir, "ux04-narrow-dark-en.png"));
+        await writeFile(join(screenshotDir, "ux04-layout.json"), JSON.stringify(layout, null, 2));
+      }
+      // 与精确窗口 helper 相同：Windows 物理像素换算允许 1px 原生舍入，布局仍用实际宽度校验。
+      expect(Math.abs(layout.width - 430)).toBeLessThanOrEqual(1);
+      expect(layout.excerpts).toHaveLength(1);
+      for (const rect of layout.excerpts) {
+        expect(rect.width).toBeGreaterThan(0);
+        expect(rect.left).toBeGreaterThanOrEqual(0);
+        expect(rect.right).toBeLessThanOrEqual(layout.width + 1);
+      }
+    } finally {
+      await browser.electron.execute(
+        (electron, id, min) => electron.BrowserWindow.fromId(id)?.setMinimumSize(min[0]!, min[1]!),
+        originalWindow.windowId,
+        minimum,
+      );
+      await restoreElectronRendererContentSize(originalWindow);
+      await setExcerptPresentation("zh-CN", "zai-light");
+    }
+  }).timeout(240_000);
 
   it("APC01/APC04: completed localhost URL 去重并打开真实 Browser 页面", async () => {
     await prepareCase();

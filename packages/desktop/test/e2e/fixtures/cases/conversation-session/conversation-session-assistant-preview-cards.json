@@ -145,6 +145,20 @@
       "source": "synthetic",
       "timingPolicy": "fast-text",
       "syntheticReason": "冷启动后显式选择目标历史 task，避免把自动恢复当前 task 误算成 cold resume 证据。"
+    },
+    {
+      "id": "assistant-preview-cards-work-excerpt-source",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "固定来源正文加工具调用，真实验证终态折叠外的入口、说明、原文展开和会话恢复。"
+    },
+    {
+      "id": "assistant-preview-cards-work-excerpt-final",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "最终正文只确认完成，确保入口可见性来自工作成果投影而非最终重复链接。"
     }
   ]
 }

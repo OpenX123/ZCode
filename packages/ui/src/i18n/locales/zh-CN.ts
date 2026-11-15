@@ -1987,6 +1987,7 @@ const zhCN: Record<string, string> = {
   "chat.codeComments.many": "{count} 条评论",
   "chat.codeComments.remove": "移除代码评论",
   "chat.codeCommentCards.expandAll": "展开 {count} 条评论",
+  "chat.deliverable.showSourceContext": "查看原始上下文",
   "chat.codeCommentCards.collapseAll": "收起评论",
   "chat.codeCommentCards.openReview": "打开 {title} 的代码审查",
   "chat.webElements.one": "1 个网页元素",

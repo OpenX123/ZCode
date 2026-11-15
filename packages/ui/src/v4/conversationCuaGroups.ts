@@ -233,6 +233,12 @@ export function prepareCuaGroupFlowItems(
       continue;
     }
     if (item.kind === "assistantText") {
+      if (item.deliverable) {
+        // 来源片段是额外展示引用，不是新的 assistant response，不能再吸入 CUA 折叠组。
+        closeGroup();
+        prepared.push(item);
+        continue;
+      }
       handleAssistantMessage(item.row, "assistantWork", () => prepared.push(item));
       continue;
     }

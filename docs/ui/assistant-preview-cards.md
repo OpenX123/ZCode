@@ -99,6 +99,55 @@ directives such as `::code-comment{...}` remain strict.
 
 ## Projection and state boundary
 
+### Work-history deliverable excerpts (UX04)
+
+`conversation-presentation` owns the pure extraction contract at
+`packages/ui/src/v4/conversation-presentation/index.ts`. It projects already
+loaded assistant text, without protocol, media, Host, queue, or persistence facts.
+The original row and its copy/fork/retry anchor remain unchanged. A collapsed
+work history additionally exposes source excerpts and a button to expand the
+original context. Excerpts have no message actions or preview-card auto-open.
+Single-URL text fences retain their code block and explanation and additionally
+offer an explicit native button through the existing URL-opening callbacks and
+browser-routing policy. The complete validated target is passed directly, never
+reconstructed as Markdown; keyboard activation has the same behavior as clicking.
+
+Only closed Markdown links/images, standalone HTTP(S) URLs, and closed `text`
+fences containing exactly one HTTP(S) URL qualify. Inline code, indented code,
+other fences and commands do not qualify. Streaming standalone URLs require a
+line ending; incomplete Markdown/fences never qualify. Valid received references
+survive failed/interrupted turns. This does not change terminal preview-card
+gates, file validation, limits, or the Markdown/HTML fileChanges gate.
+
+Each reference retains its source row, exact half-open source range, and complete
+surrounding paragraph; a standalone URL also retains the immediately preceding
+explanation paragraph. Full targets are deduplicated in source order. Targets
+already present in the visible final body produce no extra standalone excerpt. A
+paragraph containing several references is rendered once. If only some targets
+are in the final body, the complete source paragraph remains intact for the new
+targets, even when it also contains those previously visible references; when
+all targets are covered, the paragraph is omitted. Extraction is memoized by source
+row/text/state so work-clock ticks do not parse unchanged history again.
+
+Overlapping context ranges from the same source row are merged into one exact
+source slice, anchored to the first original reference key. Ranges from different
+rows never merge. Coverage is evaluated over all merged targets; every uncovered
+text-fence target retains a separate native open action keyed by its complete
+target. An already covered target gets no additional standalone open action.
+
+Source/range keys are stable across prepend, streaming-to-terminal transitions,
+and manual history expansion. Mounted excerpts additionally use
+`workspaceIdentity?.trim() || workspacePath`, remote session, session, log epoch,
+and turn scope; file opening reuses the same row context and Host accessor.
+The public module entrypoint remains pure so shared readonly timelines cannot
+pull runtime services into the public share dependency closure.
+
+```text
+delivered assistant rows -> pure source/range extraction -> collapsed-history excerpt
+                        -> unchanged original work history -> expand original context
+existing row context -> selected workspace Host -> existing file/link opening
+```
+
 Preview cards remain a UI-only projection from already delivered V4 rows. They do
 not add protocol rows, snapshot fields, replayable events, relay state, or
 agent-side metadata.

@@ -12,6 +12,11 @@ import type { EditWorkspaceRewindAvailability } from "@/v4/ConversationRowView.j
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 import type { ConversationTurnRenderUnit } from "@/v4/conversationTurnRenderUnits.js";
 import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
+import type { ConversationDeliverable } from "@/v4/conversation-presentation/index.js";
+import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { Button } from "@/components/ui/button.js";
+import { useOptionalPlatform } from "@/hooks/usePlatform.js";
+import { resolveMessageLinkOpenTarget } from "@/embeddedBrowserHelpers.js";
 
 interface ConversationTurnRowProps {
   row: ConversationRow;
@@ -34,6 +39,8 @@ interface ConversationTurnRowProps {
   assistantCodeCommentProjectionEnabled?: boolean;
   reasoningContentVariant?: "default" | "nested";
   userInputStatus?: string;
+  deliverable?: ConversationDeliverable;
+  onShowSourceContext?: () => void;
 }
 
 export function ConversationTurnRow({
@@ -52,25 +59,80 @@ export function ConversationTurnRow({
   assistantCodeCommentProjectionEnabled,
   reasoningContentVariant,
   userInputStatus,
+  deliverable,
+  onShowSourceContext,
 }: ConversationTurnRowProps) {
-  return (
+  const { intl } = useZCodeIntl();
+  const platform = useOptionalPlatform();
+  const content = (
     <ConversationRowView
-      row={row}
+      row={
+        deliverable && row.kind === "assistantText"
+          ? { ...row, text: deliverable.contextText, actions: undefined }
+          : row
+      }
       context={context}
-      onFork={onFork}
-      onRetry={onRetry}
+      onFork={deliverable ? undefined : onFork}
+      onRetry={deliverable ? undefined : onRetry}
       onEdit={onEdit}
       editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
-      hideAssistantActions={hideAssistantActions}
+      hideAssistantActions={deliverable ? true : hideAssistantActions}
       deferAssistantActions={deferAssistantActions}
       assistantCopyText={assistantCopyText}
-      assistantPreviewCards={assistantPreviewCards}
-      assistantPreviewCardsAutoOpenKey={assistantPreviewCardsAutoOpenKey}
-      assistantCodeCommentCards={assistantCodeCommentCards}
+      assistantPreviewCards={deliverable ? undefined : assistantPreviewCards}
+      assistantPreviewCardsAutoOpenKey={deliverable ? undefined : assistantPreviewCardsAutoOpenKey}
+      assistantCodeCommentCards={deliverable ? undefined : assistantCodeCommentCards}
       assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
       reasoningContentVariant={reasoningContentVariant}
       userInputStatus={userInputStatus}
     />
+  );
+  if (!deliverable) return content;
+  return (
+    <div
+      data-conversation-deliverable={deliverable.key}
+      data-source-row-id={deliverable.sourceRowId}
+    >
+      {content}
+      {(
+        deliverable.textFenceTargets ??
+        (deliverable.sourceFormat === "textFence" ? [deliverable.target] : [])
+      ).map((href) => (
+        <Button
+          key={href}
+          data-deliverable-open-link
+          type="button"
+          variant="link"
+          size="xs"
+          title={href}
+          className="mt-1 mr-3 px-0"
+          disabled={!platform && !context.onOpenBrowserUrl}
+          onClick={(event) => {
+            // text fence 本身不可点击；直接传完整目标，避免拼 Markdown 截断括号与查询参数。
+            const target = resolveMessageLinkOpenTarget({
+              href,
+              forceExternal: event.metaKey || event.ctrlKey,
+            });
+            if (target === "app-browser" || !platform) {
+              context.onOpenBrowserUrl?.(href);
+            } else {
+              platform.openExternal(href);
+            }
+          }}
+        >
+          {intl.formatMessage({ id: "common.open" })}
+        </Button>
+      ))}
+      <Button
+        data-deliverable-show-source
+        variant="link"
+        size="xs"
+        className="mt-1 px-0 text-foreground-subtle"
+        onClick={onShowSourceContext}
+      >
+        {intl.formatMessage({ id: "chat.deliverable.showSourceContext" })}
+      </Button>
+    </div>
   );
 }
 

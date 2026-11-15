@@ -190,7 +190,7 @@ pnpm --dir apps/zcode-cli/packages/core exec vitest run tests/external-engine-su
 
 **文件与责任**
 
-- 新增：`packages/ui/src/v4/conversationTurnDeliverables.ts`（纯提取与来源引用）。
+- 新增：受管 `packages/ui/src/v4/conversation-presentation` 五件套与公开 `index.ts`；`conversationTurnDeliverables.ts` 负责纯提取与来源引用。
 - 新增测试：`packages/ui/test/conversationTurnDeliverables.test.ts`。
 - 修改：`packages/ui/src/v4/conversationTurnWorkSegments.ts`、`conversationTurnFlowItems.ts`、`ConversationTurnRow.tsx`（接入常显片段）。
 - 复用：`packages/ui/src/v4/assistantPreviewCards.ts`、`packages/ui/src/lib/assistantPreviewCards.ts`。
@@ -207,8 +207,12 @@ export interface ConversationDeliverable {
   readonly sourceRowId: number;
   readonly start: number;
   readonly end: number;
-  readonly kind: "link" | "image" | "audio" | "video" | "file";
+  readonly kind: "link" | "image" | "file";
+  readonly sourceFormat: "markdown" | "standaloneUrl" | "textFence";
   readonly target: string;
+  readonly textFenceTargets?: readonly string[];
+  readonly contextStart: number;
+  readonly contextEnd: number;
   readonly contextText: string;
 }
 

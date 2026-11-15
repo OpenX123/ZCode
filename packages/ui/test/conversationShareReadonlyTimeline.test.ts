@@ -93,6 +93,65 @@ const buildArtifactRow = (rowId: number, artifactVersionId: string) => ({
 });
 
 describe("ConversationShareReadonlyTimeline", () => {
+  it("UX04 合并 Markdown与两个fence来源，只渲染一次原段并保留每个未覆盖完整打开目标", () => {
+    const a = "https://example.invalid/a";
+    const b = "https://example.invalid/b(step)?next=(done)&label=%20path";
+    const c = "https://example.invalid/c?next=%3Cdone%3E";
+    const source = {
+      ...rows[2]!,
+      text: `[A](${a})\n\n\`\`\`text\n${b}\n\`\`\`\n\`\`\`text\n${c}\n\`\`\``,
+    };
+    const render = (finalText: string) =>
+      renderToStaticMarkup(
+        createElement(ConversationShareReadonlyTimeline, {
+          rows: [...rows.slice(0, 2), source, rows[3]!, { ...source, rowId: 5, text: finalText }],
+          locale: "zh-CN",
+        }),
+      );
+    const html = render("完成");
+    expect(html.match(/data-conversation-deliverable=/g)).toHaveLength(1);
+    expect(html.match(/data-deliverable-open-link="true"/g)).toHaveLength(2);
+    expect(html).toContain(`title="${b.replaceAll("&", "&amp;")}"`);
+    expect(html).toContain(`title="${c}"`);
+    const coveredB = render(`[B](${b})`);
+    expect(coveredB.match(/data-conversation-deliverable=/g)).toHaveLength(1);
+    expect(coveredB.match(/data-deliverable-open-link="true"/g)).toHaveLength(1);
+    expect(coveredB).toMatch(
+      new RegExp(
+        `data-deliverable-open-link="true"[^>]*title="${c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`,
+      ),
+    );
+  });
+  it("UX04 保留 text fence 原文并提供可点击的原始 URL 打开入口", () => {
+    const target =
+      "https://example.invalid/login(step)?next=(done)&label=%E4%B8%AD%E6%96%87%20path&angle=%3Cdone%3E";
+    const source = { ...rows[2]!, text: `继续操作：\n\n\`\`\`text\n${target}\n\`\`\`` };
+    const html = renderToStaticMarkup(
+      createElement(ConversationShareReadonlyTimeline, {
+        rows: [...rows.slice(0, 2), source, rows[3]!, { ...source, rowId: 5, text: "完成" }],
+        locale: "zh-CN",
+      }),
+    );
+    expect(html).toContain("data-deliverable-open-link");
+    expect(html).toContain(`title="${target.replaceAll("&", "&amp;")}"`);
+    expect(html).toMatch(/<button[^>]*data-deliverable-open-link/);
+    expect(html).toContain("继续操作");
+    expect(html).toContain('data-language="text"');
+  });
+  it("UX04 共享只读时间线在已工作外保留原段落与上下文入口", () => {
+    const source = { ...rows[2]!, text: "入口说明：[继续](https://example.invalid/login)" };
+    const html = renderToStaticMarkup(
+      createElement(ConversationShareReadonlyTimeline, {
+        rows: [...rows.slice(0, 2), source, rows[3]!, { ...source, rowId: 5, text: "完成" }],
+        locale: "zh-CN",
+      }),
+    );
+    expect(html).toContain('data-conversation-deliverable="3:');
+    expect(html).toContain("入口说明");
+    expect(html).toContain("查看原始上下文");
+    expect(html).not.toContain("v4-retry");
+    expect(html).not.toContain("v4-fork");
+  });
   beforeEach(() => {
     openActionProps.values = [];
   });

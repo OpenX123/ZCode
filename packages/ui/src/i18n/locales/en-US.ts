@@ -2165,6 +2165,7 @@ const enUS: Record<string, string> = {
   "chat.codeComments.many": "{count} comments",
   "chat.codeComments.remove": "Remove code comments",
   "chat.codeCommentCards.expandAll": "Show {count} comments",
+  "chat.deliverable.showSourceContext": "View original context",
   "chat.codeCommentCards.collapseAll": "Collapse comments",
   "chat.codeCommentCards.openReview": "Open code review for {title}",
   "chat.webElements.one": "1 web element",

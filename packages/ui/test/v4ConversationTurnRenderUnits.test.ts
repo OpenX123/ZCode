@@ -20,6 +20,7 @@ import {
 } from "@/v4/conversationProjectionStore.js";
 import { resolveAssistantCopyText } from "@/v4/ConversationTurnRow.js";
 import { resolveConversationFlowItemKey } from "@/v4/conversationTurnFlowItems.js";
+import { buildConversationTurnWorkSegments } from "@/v4/conversationTurnWorkSegments.js";
 
 function baseRow<T extends ConversationRow>(
   row: Omit<T, "createdAt" | "createdAtSeq" | "rowId" | "turnId"> & {
@@ -213,6 +214,185 @@ function goalVerifyMarker(rowId: number): TimelineMarkerRow {
 }
 
 describe("buildConversationTurnRenderUnits", () => {
+  it("UX04 非最终正文成果常显，原文保留、段落只展示一次、最终正文同目标去重", () => {
+    const source = assistantText(
+      3,
+      "用于登录：[入口](https://example.invalid/login) 与 [说明](文档/操作 说明.pdf)。",
+    );
+    const final = assistantText(5, "完成，另见 [入口](https://example.invalid/login)。", {
+      actions: { canFork: true, canRetry: true },
+    });
+    const [unit] = buildConversationTurnRenderUnits([
+      turnHeader(1),
+      userInput(2, "开始"),
+      source,
+      toolCall(4),
+      final,
+    ]);
+    const excerpts = unit!.flowItems.filter(
+      (item) => item.kind === "assistantText" && item.deliverable,
+    );
+    expect(excerpts).toHaveLength(1);
+    expect(excerpts[0]).toMatchObject({
+      row: source,
+      latest: false,
+      deliverable: { target: "https://example.invalid/login", contextText: source.text },
+    });
+    expect(unit!.assistantHistoryRows).toContain(source);
+    expect(unit!.latestAssistantTextRow).toBe(final);
+    const [deduped] = buildConversationTurnRenderUnits([
+      turnHeader(1),
+      source,
+      toolCall(4),
+      assistantText(5, "[入口](https://example.invalid/login) [说明](文档/操作 说明.pdf)"),
+    ]);
+    expect(
+      deduped!.flowItems.filter((item) => item.kind === "assistantText" && item.deliverable),
+    ).toEqual([]);
+    const [bothNew] = buildConversationTurnRenderUnits([
+      turnHeader(1),
+      source,
+      toolCall(4),
+      assistantText(5, "完成"),
+    ]);
+    expect(
+      bothNew!.flowItems.filter((item) => item.kind === "assistantText" && item.deliverable),
+    ).toHaveLength(1);
+    const beforeCovered = bothNew!.flowItems.find(
+      (item) => item.kind === "assistantText" && item.deliverable,
+    )!;
+    expect(resolveConversationFlowItemKey(beforeCovered, 0, 0)).toBe(
+      resolveConversationFlowItemKey(excerpts[0]!, 3, 0),
+    );
+  });
+
+  it.each([
+    ["独立 B", "https://example.invalid/b", []],
+    ["fence B", "```text\nhttps://example.invalid/b\n```", ["https://example.invalid/b"]],
+    [
+      "同上下文 B/C fences",
+      "```text\nhttps://example.invalid/b\n```\n```text\nhttps://example.invalid/c\n```",
+      ["https://example.invalid/b", "https://example.invalid/c"],
+    ],
+  ] as const)(
+    "UX04 合并 A Markdown 段与%s的相交上下文并保留全部未覆盖打开动作",
+    (_label, suffix, fenceTargets) => {
+      const source = assistantText(3, `[A](https://example.invalid/a)\n\n${suffix}`);
+      const select = (finalText: string) =>
+        buildConversationTurnRenderUnits([
+          turnHeader(1),
+          source,
+          toolCall(4),
+          assistantText(5, finalText),
+        ])[0]!.flowItems.filter((item) => item.kind === "assistantText" && item.deliverable);
+      const initial = select("完成");
+      expect(initial).toHaveLength(1);
+      const first = initial[0]!;
+      expect(first).toMatchObject({
+        deliverable: {
+          sourceRowId: 3,
+          start: 0,
+          target: "https://example.invalid/a",
+          contextText: source.text,
+          textFenceTargets: fenceTargets,
+        },
+      });
+      const partial = select("[A](https://example.invalid/a)");
+      expect(partial).toHaveLength(1);
+      expect(partial[0]).toMatchObject({
+        deliverable: { contextText: source.text, textFenceTargets: fenceTargets },
+      });
+      expect(resolveConversationFlowItemKey(partial[0]!, 8, 0)).toBe(
+        resolveConversationFlowItemKey(first, 1, 0),
+      );
+      if (fenceTargets.length > 0) {
+        const coveredB = select("[B](https://example.invalid/b)");
+        expect(coveredB[0]).toMatchObject({
+          deliverable: {
+            contextText: source.text,
+            textFenceTargets: fenceTargets.filter(
+              (target) => target !== "https://example.invalid/b",
+            ),
+          },
+        });
+        expect(resolveConversationFlowItemKey(coveredB[0]!, 2, 0)).toBe(
+          resolveConversationFlowItemKey(first, 1, 0),
+        );
+      }
+      expect(
+        select(
+          "[A](https://example.invalid/a) [B](https://example.invalid/b) [C](https://example.invalid/c)",
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it("UX04 相同上下文来自不同 row 时不拼接原文", () => {
+    const first = assistantText(3, "[A](https://example.invalid/a)");
+    const second = assistantText(4, "https://example.invalid/b");
+    const unit = buildConversationTurnRenderUnits([
+      turnHeader(1),
+      first,
+      second,
+      toolCall(5),
+      assistantText(6, "完成"),
+    ])[0]!;
+    expect(
+      unit.flowItems
+        .filter((item) => item.kind === "assistantText" && item.deliverable)
+        .map((item) => (item.kind === "assistantText" ? item.deliverable?.contextText : "")),
+    ).toEqual([first.text, second.text]);
+  });
+
+  it("UX04 streaming→failed、中断、前插历史和强制展开都保留同一来源 key", () => {
+    const source = assistantText(3, "[入口](https://example.invalid/login)", {
+      state: "streaming",
+    });
+    const select = (rows: ConversationRow[], forceOpenHistory = false) => {
+      const unit = buildConversationTurnRenderUnits(rows).at(-1)!;
+      return buildConversationTurnWorkSegments({
+        key: unit.key,
+        header: unit.header,
+        orderedRows: unit.renderRows,
+        assistantTailRows: unit.assistantTailRows,
+        latestAssistantTextRow: unit.latestAssistantTextRow,
+        isRunning: unit.isRunning,
+        isLastTurn: unit.isLastTurn,
+        isInterrupted: false,
+        forceOpenHistory,
+        timelineOnly: false,
+      })[0]!;
+    };
+    const running = [
+      turnHeader(1, { state: "running" }),
+      source,
+      toolCall(4, "Bash", { status: "running" }),
+    ];
+    const item = select(running).flowItems.find(
+      (entry) => entry.kind === "assistantText" && entry.deliverable,
+    )!;
+    const key = resolveConversationFlowItemKey(item, 1, 0);
+    for (const rows of [
+      running,
+      [userInput(0, "更早", { turnId: "old" }), ...running],
+      [
+        turnHeader(1, { state: "failed" }),
+        { ...source, state: "failed" } as AssistantTextRow,
+        toolCall(4),
+      ],
+    ]) {
+      for (const forceOpen of [false, true]) {
+        const unit = select(rows, forceOpen);
+        const excerpt = unit.flowItems.find(
+          (entry) => entry.kind === "assistantText" && entry.deliverable,
+        )!;
+        expect(excerpt).toBeDefined();
+        expect(resolveConversationFlowItemKey(excerpt, 7, 0)).toBe(key);
+        if (forceOpen) expect(unit.assistantHistoryDefaultOpen).toBe(true);
+      }
+    }
+  });
+
   it("尾轮 token 不访问历史行并保留历史派生；历史修订和新轮仍与全窗构建相等", () => {
     const select = createConversationTurnRenderUnitsSelector();
     const history = [turnHeader(1), userInput(2, "问题"), assistantText(3, "旧回答")];

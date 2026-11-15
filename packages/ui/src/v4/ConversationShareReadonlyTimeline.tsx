@@ -64,7 +64,12 @@ import {
   buildConversationTurnRenderUnits,
   type ConversationTurnRenderUnit,
 } from "@/v4/conversationTurnRenderUnits.js";
-import type { AssistantWorkRow, ConversationTurnFlowItem } from "@/v4/conversationTurnFlowItems.js";
+import {
+  resolveConversationFlowItemKey,
+  type AssistantWorkRow,
+  type ConversationTurnFlowItem,
+} from "@/v4/conversationTurnFlowItems.js";
+import { Button } from "@/components/ui/button.js";
 import type { ConversationTurnWorkSegment } from "@/v4/conversationTurnWorkSegments.js";
 import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
 import { normalizeConversationShareMarkdown } from "@/v4/conversationShareMarkdown.js";
@@ -123,11 +128,13 @@ export type ConversationShareArtifactOpenAction = ComponentType<{
 
 interface ReadonlyLabels {
   history: string;
+  showSourceContext: string;
   computerUse: string;
   explore: string;
   execute: string;
   changes: string;
   artifactPreview: string;
+  open: string;
   markerCompact: string;
   markerModelChange: string;
   unsupportedRows: string;
@@ -851,13 +858,45 @@ function ReadonlySegment({
           content = <UserInputPresentation row={item.row} artifactUrls={artifactUrls} />;
         } else if (item.kind === "assistantText") {
           content = (
-            <AssistantTextPresentation
-              row={item.row}
-              theme={theme}
-              codePreviewSettings={codePreviewSettings}
-              artifactNames={artifactNames}
-              onOpenExternalUrl={onOpenExternalUrl}
-            />
+            <div data-conversation-deliverable={item.deliverable?.key}>
+              <AssistantTextPresentation
+                row={
+                  item.deliverable ? { ...item.row, text: item.deliverable.contextText } : item.row
+                }
+                theme={theme}
+                codePreviewSettings={codePreviewSettings}
+                artifactNames={artifactNames}
+                onOpenExternalUrl={onOpenExternalUrl}
+              />
+              {(
+                item.deliverable?.textFenceTargets ??
+                (item.deliverable?.sourceFormat === "textFence" ? [item.deliverable.target] : [])
+              ).map((href) => (
+                <Button
+                  key={href}
+                  data-deliverable-open-link
+                  type="button"
+                  variant="link"
+                  size="xs"
+                  title={href}
+                  className="mt-1 mr-3 px-0"
+                  onClick={() => onOpenExternalUrl(href)}
+                >
+                  {labels.open}
+                </Button>
+              ))}
+              {item.deliverable ? (
+                <Button
+                  data-deliverable-show-source
+                  variant="link"
+                  size="xs"
+                  className="mt-1 px-0 text-foreground-subtle"
+                  onClick={() => setHistoryOpen(true)}
+                >
+                  {labels.showSourceContext}
+                </Button>
+              ) : null}
+            </div>
           );
         } else if (item.kind === "cuaGroup") {
           const group = (
@@ -914,7 +953,9 @@ function ReadonlySegment({
         }
         const showHistoryStatus = hasHistory && index === firstAssistantFlowItemIndex;
         return (
-          <Fragment key={`${segment.key}:${item.kind}:${index}`}>
+          <Fragment
+            key={`${segment.key}:${resolveConversationFlowItemKey(item, index, firstAssistantFlowItemIndex)}`}
+          >
             {showHistoryStatus ? (
               <ReadonlyHistoryStatus
                 segment={segment}
@@ -1122,11 +1163,13 @@ function ConversationShareReadonlyTimelineContent({
   }, []);
   const labels: ReadonlyLabels = {
     history: intl.formatMessage({ id: "conversationShare.readonly.history" }),
+    showSourceContext: intl.formatMessage({ id: "chat.deliverable.showSourceContext" }),
     computerUse: intl.formatMessage({ id: "conversationShare.readonly.computerUse" }),
     explore: intl.formatMessage({ id: "conversationShare.readonly.explore" }),
     execute: intl.formatMessage({ id: "conversationShare.readonly.execute" }),
     changes: intl.formatMessage({ id: "conversationShare.readonly.changes" }),
     artifactPreview: intl.formatMessage({ id: "conversationShare.readonly.artifactPreview" }),
+    open: intl.formatMessage({ id: "common.open" }),
     markerCompact: intl.formatMessage({ id: "conversationShare.readonly.markerCompact" }),
     markerModelChange: intl.formatMessage({ id: "conversationShare.readonly.markerModelChange" }),
     unsupportedRows: intl.formatMessage({ id: "conversationShare.readonly.unsupportedRows" }),

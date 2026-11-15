@@ -906,6 +906,19 @@ modules:
       ui: .
     owner: mobile-remote
 
+  # conversation-presentation：由 architecture:adopt 登记
+  - id: conversation-presentation
+    roots:
+      - packages/ui/src/v4/conversation-presentation
+    managed: true
+    requires: [shared]
+    publicEntrypoints:
+      - packages/ui/src/v4/conversation-presentation/index.ts
+      - packages/ui/src/v4/conversation-presentation/contract.ts
+    layers:
+      ui: .
+    owner: conversation
+
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
   # 基于领先 staging 很多的分支开工时，merge-base 之前的"新增"文件不应被追溯。

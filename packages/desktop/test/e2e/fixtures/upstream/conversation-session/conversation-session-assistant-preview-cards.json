@@ -495,6 +495,59 @@
           "text": "E2E_ASSISTANT_PREVIEW_CARDS_PARKING_DONE"
         }
       }
+    },
+    {
+      "id": "assistant-preview-cards-work-excerpt-source",
+      "description": "UX04 非最终正文中发布入口，随后真实 Write，使该正文进入工作历史。",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "固定来源正文加工具调用，真实验证终态折叠外的入口、说明、原文展开和会话恢复。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_ASSISTANT_PREVIEW_CARDS_WORK_EXCERPT"],
+        "bodyExcludes": ["Generate a concise title", "toolu_apc_work_excerpt_write"]
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_apc_work_excerpt\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"e2e-model\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":100,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"请打开此入口继续操作：[继续操作]({{browserFixtureUrl}})\\n备用入口：\\n\\n```text\\n{{browserFixtureUrl}}-text-entry?next=(step)&label=%E4%B8%AD%E6%96%87%20path&angle=%3Cdone%3E\\n```\\n\\nE2E_ASSISTANT_PREVIEW_CARDS_WORK_EXCERPT_EARLY\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_apc_work_excerpt_write\",\"name\":\"Write\",\"input\":{}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"file_path\\\":\\\"assistant-preview-e2e/work-step.txt\\\",\\\"content\\\":\\\"UX04 work excerpt fixture\\\\n\\\"}\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":80}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+      }
+    },
+    {
+      "id": "assistant-preview-cards-work-excerpt-final",
+      "description": "UX04 最终正文不重复入口。",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "最终正文只确认完成，确保入口可见性来自工作成果投影而非最终重复链接。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": [
+          "E2E_ASSISTANT_PREVIEW_CARDS_WORK_EXCERPT",
+          "toolu_apc_work_excerpt_write"
+        ],
+        "bodyExcludes": ["Generate a concise title"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "msg_apc_work_excerpt_final",
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "text": "E2E_ASSISTANT_PREVIEW_CARDS_WORK_EXCERPT_DONE 已完成，请使用前面的入口继续。"
+        }
+      }
     }
   ]
 }

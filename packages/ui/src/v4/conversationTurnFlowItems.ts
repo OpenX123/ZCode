@@ -5,13 +5,22 @@ import type {
   UserInputRow,
 } from "@zcode/shared/zcode-protocol-v4";
 import type { ConversationCuaGroupRenderItem } from "@/v4/conversationCuaGroups.js";
+import {
+  extractConversationDeliverables,
+  type ConversationDeliverable,
+} from "@/v4/conversation-presentation/index.js";
 
 export type AssistantWorkRow = Exclude<ConversationRow, TurnHeaderRow | UserInputRow>;
 
 export type ConversationTurnFlowItem =
   | { kind: "userInput"; row: UserInputRow }
   | { kind: "assistantHistory"; rows: AssistantWorkRow[] }
-  | { kind: "assistantText"; row: AssistantTextRow; latest: boolean }
+  | {
+      kind: "assistantText";
+      row: AssistantTextRow;
+      latest: boolean;
+      deliverable?: ConversationDeliverable;
+    }
   | { kind: "assistantWork"; rows: AssistantWorkRow[] }
   | ConversationCuaGroupRenderItem;
 
@@ -55,6 +64,72 @@ export function buildConversationFlowItems(options: {
   const followingRowIds = new Set(options.assistantFollowingRows.map((row) => row.rowId));
   const tailRowIds = new Set(options.assistantTailRows.map((row) => row.rowId));
   const items: ConversationTurnFlowItem[] = [];
+  const visibleTargets = new Set(
+    extractConversationDeliverables(
+      [options.visibleAssistantTextRow, options.latestAssistantTextRow].filter(
+        (row): row is AssistantTextRow => row !== undefined,
+      ),
+    ).map((reference) => reference.target),
+  );
+  const sourceRows = options.orderedRows.filter(
+    (row): row is AssistantTextRow =>
+      isAssistantTextRow(row) && (historyRowIds.has(row.rowId) || followingRowIds.has(row.rowId)),
+  );
+  const sourceById = new Map(sourceRows.map((row) => [row.rowId, row]));
+  const referencesByRow = new Map<number, ConversationDeliverable[]>();
+  for (const reference of options.timelineOnly ? [] : extractConversationDeliverables(sourceRows)) {
+    const references = referencesByRow.get(reference.sourceRowId) ?? [];
+    references.push(reference);
+    referencesByRow.set(reference.sourceRowId, references);
+  }
+  type SourceContext = {
+    reference: ConversationDeliverable;
+    targets: Set<string>;
+    textFenceTargets: Set<string>;
+  };
+  const contexts: SourceContext[] = [];
+  for (const references of referencesByRow.values()) {
+    let context: SourceContext | undefined;
+    for (const reference of references.toSorted(
+      (a, b) => a.contextStart - b.contextStart || a.start - b.start,
+    )) {
+      if (!context || reference.contextStart >= context.reference.contextEnd) {
+        context = { reference, targets: new Set(), textFenceTargets: new Set() };
+        contexts.push(context);
+      } else {
+        // 独立入口会借前段说明；合并相交区间，避免 A 段单列后又在 B 的上下文里重复。
+        const contextStart = context.reference.contextStart;
+        const contextEnd = Math.max(context.reference.contextEnd, reference.contextEnd);
+        const anchor = context.reference.start <= reference.start ? context.reference : reference;
+        context.reference = {
+          ...anchor,
+          contextStart,
+          contextEnd,
+          contextText: sourceById.get(reference.sourceRowId)!.text.slice(contextStart, contextEnd),
+        };
+      }
+      context.targets.add(reference.target);
+      if (reference.sourceFormat === "textFence") context.textFenceTargets.add(reference.target);
+    }
+  }
+  // 先合并来源区间再判最终覆盖，首引用锚点不因部分覆盖而跳到另一目标。
+  const deliverables = contexts
+    .filter((context) => [...context.targets].some((target) => !visibleTargets.has(target)))
+    .map((context) => ({
+      ...context.reference,
+      textFenceTargets: [...context.textFenceTargets].filter(
+        (target) => !visibleTargets.has(target),
+      ),
+    }));
+  let appendedDeliverables = false;
+  const appendDeliverables = () => {
+    if (appendedDeliverables) return;
+    appendedDeliverables = true;
+    for (const deliverable of deliverables) {
+      const row = sourceById.get(deliverable.sourceRowId);
+      if (row) items.push({ kind: "assistantText", row, latest: false, deliverable });
+    }
+  };
 
   for (const row of options.orderedRows) {
     if (isUserInputRow(row)) {
@@ -73,6 +148,8 @@ export function buildConversationFlowItems(options: {
       !tailRowIds.has(row.rowId) &&
       !options.timelineOnly
     ) {
+      // 原历史原位保留；仅在外置正文之前投影完整来源段，不能因“已工作”收起而丢失成果。
+      appendDeliverables();
       items.push({
         kind: "assistantText",
         row,
@@ -86,6 +163,7 @@ export function buildConversationFlowItems(options: {
       row,
     );
   }
+  appendDeliverables();
 
   return items;
 }
@@ -109,6 +187,8 @@ export function resolveConversationFlowItemKey(
   index: number,
   firstAssistantFlowItemIndex: number,
 ): string {
+  if (item.kind === "assistantText" && item.deliverable)
+    return `deliverable:${item.deliverable.key}`;
   if (item.kind === "userInput" || item.kind === "assistantText") {
     return `${item.kind}:${item.row.rowId}`;
   }
