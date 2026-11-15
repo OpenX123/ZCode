@@ -114,6 +114,7 @@ stopped` never regresses to the generic `Tool call · Stopped` summary.
 ## UX06 连续服务树与手动优先折叠
 
 - `conversation-presentation/index.ts` 公开纯 `buildConversationMcpGroups`：仅按原行序把连续、同 turn、同原生 parentToolCallId 的同服务普通 MCP 行投影为组。正文（包括空 text + typed media）、其他工具、其他服务均截断；不重排、不写回 ID/parent/状态。缺 discovery 的历史只按显式 MCP envelope 回退。Node REPL、CUA 与插件交互保留专用 renderer。
+- 服务身份与展示短名分离：discovery 行使用完整配置 `serverName`，legacy 行使用未缩短的 envelope encoded server 段，同短名的不同服务不得合组。旧 envelope 无法无损恢复 discovery 配置键，两种来源保持独立身份域，不猜测同一或缓存映射；混合格式中即使实际同服务也可能多一组。机械服务短名仅用于既有显示。
 - 服务组摘要使用 SVG 插头图标、服务名称、调用数和真实子调用聚合状态；仍有活动调用时为运行中，否则按失败、停止、完成的优先级汇总，取消调用不能显示为全部完成。子卡沿用 MCP 结果优先与二级参数。组、子调用分别折叠，执行与权限身份仍为真实 toolCallId。
 - 仅 MCP（以及后续明确接入的子任务）使用 `defaultOpen` 与用户 override：运行默认开、终态/冷历史默认关；手动开关优先于后续进度和终态。read/edit 规则不变。
 - Renderer override 的唯一所有者是独立 `disclosure.tsx` 公开入口；只存手动布尔值与更新顺序，不存执行事实、不持久化。键包含 workspace identity/path fallback、remote session、session、epoch、turn、类型和真实调用 ID；组把一次手动意图关联到当前成员，增量和前插后按最新共同成员意图恢复，虚拟重挂复用。

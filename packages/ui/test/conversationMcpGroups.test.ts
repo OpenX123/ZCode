@@ -59,6 +59,66 @@ describe("连续 MCP 服务投影", () => {
       ),
     ).toEqual(["alpha", "beta", "alpha"]);
   });
+  it("legacy 同短名不同完整服务保持 A→A / B / A 身份边界", () => {
+    const rows = [
+      mcp(701, "unused", {
+        display: undefined,
+        toolName: "mcp__plugin_one_alpha__alpha_lookup",
+      }),
+      mcp(702, "unused", {
+        display: undefined,
+        toolName: "mcp__plugin_one_alpha__alpha_list",
+      }),
+      mcp(703, "unused", {
+        display: undefined,
+        toolName: "mcp__plugin_two_alpha__alpha_lookup",
+      }),
+      mcp(704, "unused", {
+        display: undefined,
+        toolName: "mcp__plugin_one_alpha__alpha_lookup",
+      }),
+    ];
+    expect(group(rows)).toEqual([
+      { kind: "mcpGroup", serverName: "alpha", rows: [rows[0], rows[1]] },
+      { kind: "mcpGroup", serverName: "alpha", rows: [rows[2]] },
+      { kind: "mcpGroup", serverName: "alpha", rows: [rows[3]] },
+    ]);
+  });
+  it("legacy 与 discovery 不凭相同短名推断同一服务，同源连续调用仍合组", () => {
+    const rows = [
+      mcp(711, "alpha", { display: undefined }),
+      mcp(712, "alpha", { display: undefined }),
+      mcp(713, "alpha"),
+      mcp(714, "alpha"),
+      mcp(715, "alpha", { display: undefined }),
+    ];
+    expect(group(rows)).toEqual([
+      { kind: "mcpGroup", serverName: "alpha", rows: [rows[0], rows[1]] },
+      { kind: "mcpGroup", serverName: "alpha", rows: [rows[2], rows[3]] },
+      { kind: "mcpGroup", serverName: "alpha", rows: [rows[4]] },
+    ]);
+  });
+  it("discovery 保留完整配置服务键，canonical metadata 优先且 A→B→A 不重排", () => {
+    const rows = [
+      mcp(721, "plugin:one:alpha"),
+      mcp(722, "alpha", {
+        output: {
+          display: {
+            kind: "mcp_tool",
+            serverName: "plugin:one:alpha",
+            toolName: "lookup",
+          },
+        },
+      }),
+      mcp(723, "plugin:two:alpha"),
+      mcp(724, "plugin:one:alpha"),
+    ];
+    expect(group(rows)).toEqual([
+      { kind: "mcpGroup", serverName: "plugin:one:alpha", rows: [rows[0], rows[1]] },
+      { kind: "mcpGroup", serverName: "plugin:two:alpha", rows: [rows[2]] },
+      { kind: "mcpGroup", serverName: "plugin:one:alpha", rows: [rows[3]] },
+    ]);
+  });
   it.each([
     {
       kind: "assistantText",

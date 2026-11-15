@@ -23,6 +23,17 @@ export function readConversationMcpServer(row: ConversationRow): string | undefi
   return readLegacyMcpToolPresentation(row.toolName)?.serverName;
 }
 
+function readConversationMcpServerIdentity(row: ToolCallRow): string {
+  const display = row.output?.display ?? row.display;
+  // 展示短名可能碰撞；仅处理已识别的 MCP 行，保留完整服务键。
+  // legacy 无法无损还原 discovery 配置键，两种来源不能凭短名推断同一。
+  return JSON.stringify(
+    display?.kind === "mcp_tool"
+      ? ["discovery", display.serverName]
+      : ["legacy", row.toolName.split("__")[1]],
+  );
+}
+
 export function buildConversationMcpGroups(
   rows: readonly ConversationRow[],
 ): readonly ConversationMcpGroupItem[] {
@@ -37,8 +48,9 @@ export function buildConversationMcpGroups(
     const anchor = previous?.kind === "mcpGroup" ? previous.rows[0] : undefined;
     if (
       previous?.kind === "mcpGroup" &&
-      previous.serverName === serverName &&
-      anchor?.turnId === row.turnId &&
+      anchor &&
+      readConversationMcpServerIdentity(anchor) === readConversationMcpServerIdentity(row) &&
+      anchor.turnId === row.turnId &&
       anchor.parentToolCallId === row.parentToolCallId
     ) {
       items[items.length - 1] = { ...previous, rows: [...previous.rows, row] };

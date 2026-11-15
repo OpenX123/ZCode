@@ -69,6 +69,59 @@ function reasoning(rowId: number): ReasoningRow {
 }
 
 describe("buildAssistantWorkRenderItems", () => {
+  it("isolates legacy MCP services with the same display name, members, and failures", () => {
+    const rows = [
+      toolCall(701, "mcp__plugin_one_alpha__alpha_lookup", {}),
+      toolCall(702, "mcp__plugin_one_alpha__alpha_list", {}),
+      toolCall(703, "mcp__plugin_two_alpha__alpha_lookup", {}, { status: "error" }),
+      toolCall(704, "mcp__plugin_one_alpha__alpha_lookup", {}),
+    ];
+    const items = buildRenderItems(rows);
+    expect(items).toMatchObject([
+      {
+        kind: "mcpGroup",
+        key: "mcp:tool-701",
+        rows: [{ rowId: 701 }, { rowId: 702 }],
+        node: {
+          toolCall: {
+            title: "alpha",
+            status: "completed",
+            raw: { mcpGroupIds: ["tool-701", "tool-702"] },
+          },
+          childToolCalls: [
+            { toolCall: { toolId: "tool-701" } },
+            { toolCall: { toolId: "tool-702" } },
+          ],
+        },
+      },
+      {
+        kind: "mcpGroup",
+        key: "mcp:tool-703",
+        rows: [{ rowId: 703 }],
+        node: {
+          toolCall: {
+            title: "alpha",
+            status: "failed",
+            raw: { mcpGroupIds: ["tool-703"] },
+          },
+          childToolCalls: [{ toolCall: { toolId: "tool-703" } }],
+        },
+      },
+      {
+        kind: "mcpGroup",
+        key: "mcp:tool-704",
+        rows: [{ rowId: 704 }],
+        node: {
+          toolCall: {
+            title: "alpha",
+            status: "completed",
+            raw: { mcpGroupIds: ["tool-704"] },
+          },
+          childToolCalls: [{ toolCall: { toolId: "tool-704" } }],
+        },
+      },
+    ]);
+  });
   it("keeps a single Explore, Terminal, or Changes tool ungrouped", () => {
     expect(buildRenderItems([toolCall(1, "Read", { path: "package.json" })])).toMatchObject([
       { kind: "row", row: { rowId: 1 } },
