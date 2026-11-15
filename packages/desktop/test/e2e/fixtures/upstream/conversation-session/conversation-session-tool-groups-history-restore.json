@@ -4,6 +4,26 @@
   "spec": "./test/e2e/conversation-session/conversation-session-tool-groups-history-restore.test.ts",
   "fixtures": [
     {
+      "id": "tge05-title",
+      "description": "TGE05限定标题回放，不扩大业务matcher。",
+      "metadata": {
+        "kind": "common",
+        "source": "synthetic",
+        "timingPolicy": "fast-text",
+        "syntheticReason": "限定旧TGE05标题旁路，独立于分组主轮，避免缺失回放引发后台重试。"
+      },
+      "maxMatches": 2,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["Generate a concise title", "E2E_TOOL_GROUPS_HISTORY_RESTORE"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": "TGE05 restored tool groups"
+      }
+    },
+    {
       "id": "ux06-mcp-title",
       "description": "UX06 标题旁路与业务回放严格分离。",
       "metadata": {
@@ -30,7 +50,7 @@
         "kind": "main",
         "source": "synthetic",
         "timingPolicy": "tool-use",
-        "syntheticReason": "固定三类 group 的最小历史，验证 cold restore。"
+        "syntheticReason": "连续两个真实 Read 满足既有 Explore 最小两项前提，比较 live/cold。"
       },
       "maxMatches": 1,
       "match": {
@@ -41,13 +61,22 @@
       },
       "response": {
         "statusCode": 200,
-        "toolUse": {
-          "id": "toolu_tge05_read",
-          "name": "Read",
-          "input": {
-            "file_path": "{{e2eRuntimeRoot}}/conversation-session-tool-groups-history-restore/read.txt"
+        "toolUses": [
+          {
+            "id": "toolu_tge05_read",
+            "name": "Read",
+            "input": {
+              "file_path": "{{e2eRuntimeRoot}}/conversation-session-tool-groups-history-restore/read.txt"
+            }
+          },
+          {
+            "id": "toolu_tge05_read_second",
+            "name": "Read",
+            "input": {
+              "file_path": "{{e2eRuntimeRoot}}/conversation-session-tool-groups-history-restore/read-second.txt"
+            }
           }
-        }
+        ]
       }
     },
     {
@@ -57,7 +86,7 @@
         "kind": "main",
         "source": "synthetic",
         "timingPolicy": "tool-use",
-        "syntheticReason": "固定单命令 Terminal，比较 live 与 cold summary。"
+        "syntheticReason": "连续两个真实命令满足既有 Terminal 最小两项前提，比较 live/cold。"
       },
       "maxMatches": 1,
       "match": {
@@ -68,13 +97,22 @@
       },
       "response": {
         "statusCode": 200,
-        "toolUse": {
-          "id": "toolu_tge05_execute",
-          "name": "Bash",
-          "input": {
-            "command": "node -e \"console.log('TGE05_EXEC')\""
+        "toolUses": [
+          {
+            "id": "toolu_tge05_execute",
+            "name": "Bash",
+            "input": {
+              "command": "node -e \"console.log('TGE05_EXEC')\""
+            }
+          },
+          {
+            "id": "toolu_tge05_execute_second",
+            "name": "Bash",
+            "input": {
+              "command": "node -e \"console.log('TGE05_EXEC_SECOND')\""
+            }
           }
-        }
+        ]
       }
     },
     {
@@ -84,7 +122,7 @@
         "kind": "main",
         "source": "synthetic",
         "timingPolicy": "tool-use",
-        "syntheticReason": "固定单文件 Changes，比较 live 与 cold summary。"
+        "syntheticReason": "连续两个真实 Write 满足既有 Changes 最小两项前提，比较 live/cold。"
       },
       "maxMatches": 1,
       "match": {
@@ -95,14 +133,24 @@
       },
       "response": {
         "statusCode": 200,
-        "toolUse": {
-          "id": "toolu_tge05_write",
-          "name": "Write",
-          "input": {
-            "file_path": "{{e2eRuntimeRoot}}/conversation-session-tool-groups-history-restore/write.ts",
-            "content": "export const restored = true;\n"
+        "toolUses": [
+          {
+            "id": "toolu_tge05_write",
+            "name": "Write",
+            "input": {
+              "file_path": "{{e2eRuntimeRoot}}/conversation-session-tool-groups-history-restore/write.ts",
+              "content": "export const restored = true;\n"
+            }
+          },
+          {
+            "id": "toolu_tge05_write_second",
+            "name": "Write",
+            "input": {
+              "file_path": "{{e2eRuntimeRoot}}/conversation-session-tool-groups-history-restore/write-second.ts",
+              "content": "export const restored = true;\n"
+            }
           }
-        }
+        ]
       }
     },
     {

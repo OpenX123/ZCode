@@ -40,13 +40,18 @@ import {
   waitForV4AssistantMessageContaining,
   waitForV4Pane,
 } from "../../../helpers/v4-conversation.js";
-import { expandAssistantHistoriesWithContent } from "../../../helpers/conversation-session-tool-diagnostics.js";
+import {
+  expandAssistantHistoriesWithContent,
+  expandVisibleToolCallGroups,
+} from "../../../helpers/conversation-session-tool-diagnostics.js";
 
 const CASE_NAME = "conversation-session-tool-groups-history-restore";
 const CASE_MARKER = "E2E_TOOL_GROUPS_HISTORY_RESTORE";
 const RUNTIME_ROOT = resolveE2ERuntimePath(CASE_NAME);
 const READ_PATH = resolveE2EToolPath(CASE_NAME, "read.txt");
+const SECOND_READ_PATH = resolveE2EToolPath(CASE_NAME, "read-second.txt");
 const WRITE_PATH = resolveE2EToolPath(CASE_NAME, "write.ts");
+const SECOND_WRITE_PATH = resolveE2EToolPath(CASE_NAME, "write-second.ts");
 
 describe("TGE05 desktop tool groups history restore", () => {
   before(async function () {
@@ -72,9 +77,10 @@ describe("TGE05 desktop tool groups history restore", () => {
     await sendV4Prompt(
       [
         `${CASE_MARKER}: Follow these tool steps in order.`,
-        `1. Read ${READ_PATH}.`,
-        `2. Bash exactly: node -e "console.log('TGE05_EXEC')"`,
-        `3. Write ${WRITE_PATH} with exactly "export const restored = true;\\n".`,
+        // 原准备只有每类一项，而既有三类分组都要求连续两项；不能为旧断言恢复单项空壳组。
+        `1. Read ${READ_PATH}, then Read ${SECOND_READ_PATH}.`,
+        `2. Bash exactly: node -e "console.log('TGE05_EXEC')", then node -e "console.log('TGE05_EXEC_SECOND')".`,
+        `3. Write ${WRITE_PATH} and ${SECOND_WRITE_PATH}, each with exactly "export const restored = true;\\n".`,
         `4. Reply with exactly "${E2E_REPLY_TOKEN}" and no other text.`,
       ].join(" "),
     );
@@ -82,6 +88,11 @@ describe("TGE05 desktop tool groups history restore", () => {
     await waitForV4Pane((snapshot) => !snapshot.canStop, "TGE05 工具轮没有结束", 150000);
     await expandAssistantHistoriesWithContent();
     const liveGroups = await waitForThreeCompletedGroups();
+    expect(liveGroups.map((group) => group.toolName)).toEqual([
+      "Explore",
+      "ExecuteGroup",
+      "ChangesGroup",
+    ]);
 
     const sessionId = (await getV4PaneSnapshot()).sessionId;
     if (!sessionId || sessionId === "draft") throw new Error("TGE05 缺少 sessionId");
@@ -91,6 +102,32 @@ describe("TGE05 desktop tool groups history restore", () => {
 
     expect(toStableGroupEvidence(restoredGroups)).toEqual(toStableGroupEvidence(liveGroups));
     expect((await getV4PaneSnapshot()).sessionId).toBe(sessionId);
+    const evidence = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
+    if (evidence) {
+      // child 已挂载时展开动画仍可能裁切截图，等待有限动画结束后记录稳定画面。
+      await browser.waitUntil(
+        async () =>
+          browser.execute(() =>
+            Array.from(
+              document.querySelectorAll<HTMLElement>(
+                '[data-tool-name="Explore"], [data-tool-name="ExecuteGroup"], [data-tool-name="ChangesGroup"]',
+              ),
+            )
+              .flatMap((group) => group.getAnimations({ subtree: true }))
+              .every(
+                (animation) =>
+                  animation.playState !== "running" ||
+                  animation.effect?.getTiming().iterations === Infinity,
+              ),
+          ),
+        { timeout: 5000, timeoutMsg: "TGE05 分组展开动画未结束" },
+      );
+      await browser.saveScreenshot(join(evidence, "tge05-restored-groups.png"));
+      await writeFile(
+        join(evidence, "tge05-groups.json"),
+        JSON.stringify({ liveGroups, restoredGroups }, null, 2),
+      );
+    }
   });
 });
 
@@ -98,6 +135,7 @@ async function prepareFixture() {
   await rm(RUNTIME_ROOT, { recursive: true, force: true });
   await mkdir(RUNTIME_ROOT, { recursive: true });
   await writeFile(join(RUNTIME_ROOT, "read.txt"), "TGE05_READ\n", "utf8");
+  await writeFile(join(RUNTIME_ROOT, "read-second.txt"), "TGE05_READ_SECOND\n", "utf8");
 }
 
 async function waitForThreeCompletedGroups() {
@@ -108,6 +146,14 @@ async function waitForThreeCompletedGroups() {
       return latest.length === 3 && latest.every((group) => group.status === "completed");
     },
     { timeout: 60000, timeoutMsg: `TGE05 没有得到三个完成分组: ${JSON.stringify(latest)}` },
+  );
+  await expandVisibleToolCallGroups();
+  await browser.waitUntil(
+    async () => {
+      latest = await listConversationToolGroups();
+      return latest.length === 3 && latest.every((group) => group.childCount === 2);
+    },
+    { timeout: 15000, timeoutMsg: "TGE05 三类真实分组未各包含两个调用" },
   );
   return latest;
 }

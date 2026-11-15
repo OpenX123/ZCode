@@ -20,6 +20,13 @@
   ],
   "requests": [
     {
+      "id": "tge05-title",
+      "kind": "common",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "限定旧TGE05标题旁路，独立于分组主轮，避免缺失回放引发后台重试。"
+    },
+    {
       "id": "ux06-mcp-title",
       "kind": "common",
       "source": "synthetic",
@@ -31,21 +38,21 @@
       "kind": "main",
       "source": "synthetic",
       "timingPolicy": "tool-use",
-      "syntheticReason": "固定三类 group 的最小历史，验证 cold restore。"
+      "syntheticReason": "连续两个真实 Read 满足既有 Explore 最小两项前提，比较 live/cold。"
     },
     {
       "id": "tge05-execute",
       "kind": "main",
       "source": "synthetic",
       "timingPolicy": "tool-use",
-      "syntheticReason": "固定单命令 Terminal，比较 live 与 cold summary。"
+      "syntheticReason": "连续两个真实命令满足既有 Terminal 最小两项前提，比较 live/cold。"
     },
     {
       "id": "tge05-write",
       "kind": "main",
       "source": "synthetic",
       "timingPolicy": "tool-use",
-      "syntheticReason": "固定单文件 Changes，比较 live 与 cold summary。"
+      "syntheticReason": "连续两个真实 Write 满足既有 Changes 最小两项前提，比较 live/cold。"
     },
     {
       "id": "tge05-final",
