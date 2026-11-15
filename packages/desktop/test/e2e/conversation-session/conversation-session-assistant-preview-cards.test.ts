@@ -13,6 +13,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Key } from "webdriverio";
 import {
   EXTERNAL_ENGINE_RUNTIMES,
   managedAdapterEntrySegments,
@@ -90,6 +91,7 @@ type NativeMediaProbeWindow = Window & {
 let fixtureServer: Server | null = null;
 let fixtureRootUrl = "";
 let retryMediaAvailable = false;
+let retryMediaRequestCount = 0;
 let fixtureVideo: Buffer;
 let fixtureImage: Buffer;
 
@@ -142,6 +144,7 @@ describe("Assistant Preview Cards E2E", () => {
     await prepareCase();
     await materializeMediaFixtures();
     retryMediaAvailable = false;
+    retryMediaRequestCount = 0;
     await setExcerptPresentation("zh-CN", "zai-light");
     const marker = `${CASE_MARKER}_UX05_DISPLAY`;
     await sendV4Prompt(`${marker} E2E_BROWSER_FIXTURE_URL:${fixtureRootUrl}`);
@@ -152,7 +155,15 @@ describe("Assistant Preview Cards E2E", () => {
         (await readPreviewCards(["UX05 公共网站"])).some((card) => card.title === "UX05 公共网站"),
       { timeout: 30_000 },
     );
-    await clickPreviewCard("UX05 公共网站");
+    const websiteOrigin = await establishKeyboardOrigin();
+    const keyboardSteps = {
+      website: await activateByTabAndEnter(
+        await browser.$('[data-preview-card-title="UX05 公共网站"] button'),
+        64,
+        true,
+        websiteOrigin.readCountAfter,
+      ),
+    };
     await browser.waitUntil(
       async () =>
         (await browser.$(`[data-testid="${TID_BROWSER_ADDRESS_INPUT}"]`).getValue()) ===
@@ -166,9 +177,18 @@ describe("Assistant Preview Cards E2E", () => {
     await failed.$('[role="alert"]').waitForDisplayed();
     expect(await failed.getText()).toContain(`${fixtureRootUrl}-retry.wav`);
     retryMediaAvailable = true;
-    await failed.$("button=重试").click();
+    const retryOrigin = await establishKeyboardOrigin();
+    await failed.$('[role="alert"]').waitForDisplayed();
+    const retryKeyboard = await activateByTabAndEnter(
+      await failed.$("button=重试"),
+      64,
+      true,
+      retryOrigin.readCountAfter,
+    );
     await browser.waitUntil(async () => failed.$("audio").isExisting(), { timeout: 10_000 });
     await assertLoadedAssistantMedia(4);
+    expect(retryMediaRequestCount).toBeGreaterThan(retryOrigin.readCountAfter);
+    const retryReadCountAfterEnter = retryMediaRequestCount;
     const image = await browser.$('img[alt="UX05 图片"]');
     await image.scrollIntoView();
     await browser.waitUntil(
@@ -181,7 +201,23 @@ describe("Assistant Preview Cards E2E", () => {
     await waitForBrowserSurface(`${fixtureRootUrl}-final?next=(step)&x=1`, "APC01_LOCAL_URL_PAGE");
     await closeSidePanes();
     const screenshots = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
-    if (screenshots) await browser.saveScreenshot(join(screenshots, "ux05-display-light-zh.png"));
+    if (screenshots) {
+      await browser.saveScreenshot(join(screenshots, "ux05-display-light-zh.png"));
+      await writeFile(
+        join(screenshots, "ux05-display-keyboard.json"),
+        JSON.stringify(
+          {
+            ...keyboardSteps,
+            retry: retryKeyboard,
+            websiteOrigin,
+            retryOrigin,
+            retryReadCountAfterEnter,
+          },
+          null,
+          2,
+        ),
+      );
+    }
     await assertNarrowMediaLayout();
   }).timeout(240_000);
 
@@ -317,11 +353,7 @@ describe("Assistant Preview Cards E2E", () => {
     // 真实 Tab 聚焦与 Enter 激活，验证原生按钮可用且完整 URL 没有经过 Markdown 重建。
     await excerpt.$("[data-deliverable-show-source]").click();
     await trigger.click();
-    for (let step = 0; step < 16 && !(await textEntry.isFocused()); step += 1) {
-      await browser.keys("Tab");
-    }
-    expect(await textEntry.isFocused()).toBe(true);
-    await browser.keys("Enter");
+    await activateByTabAndEnter(textEntry, 16);
     await waitForBrowserSurface(textEntryUrl, "APC01_LOCAL_URL_PAGE");
     await closeSidePanes();
     await startNewV4Draft();
@@ -651,6 +683,92 @@ async function prepareCase(options: { yolo?: boolean } = {}) {
   }
   await rm(CASE_ROOT, { recursive: true, force: true });
   await mkdir(CASE_ROOT, { recursive: true });
+}
+
+async function establishKeyboardOrigin() {
+  const paneId = await getV4FocusedPaneId();
+  if (!paneId) throw new Error("缺少键盘验收的当前 pane");
+  const composer = await browser.$(
+    `[data-testid="v4-session-pane-${paneId}"] [data-testid="v4-composer-input"]`,
+  );
+  const readCountBefore = retryMediaRequestCount;
+  const browserBefore = await browser
+    .$(`[data-testid="${TID_BROWSER_ADDRESS_INPUT}"]`)
+    .isExisting();
+  expect(browserBefore).toBe(false);
+  expect(await composer.getText()).toBe("");
+  expect(
+    await browser.execute(
+      (element) =>
+        Boolean((element as HTMLElement).closest('button,a,[role="button"],[role="link"]')),
+      composer,
+    ),
+  ).toBe(false);
+  // 真实点击空编辑器只建立可重复的导航起点，目标动作必须等待后续 Enter。
+  await composer.click();
+  expect(await composer.isFocused()).toBe(true);
+  const browserAfter = await browser.$(`[data-testid="${TID_BROWSER_ADDRESS_INPUT}"]`).isExisting();
+  expect(browserAfter).toBe(false);
+  expect(retryMediaRequestCount).toBe(readCountBefore);
+  return { readCountBefore, readCountAfter: retryMediaRequestCount, browserBefore, browserAfter };
+}
+
+async function activateByTabAndEnter(
+  target: Awaited<ReturnType<typeof browser.$>>,
+  maxTabs = 64,
+  backwards = false,
+  expectedIdleReadCount?: number,
+) {
+  await target.scrollIntoView();
+  let tabs = 0;
+  const readFocus = () =>
+    browser.execute((element) => {
+      const active = document.activeElement;
+      return {
+        tag: active?.tagName,
+        role: active?.getAttribute("role"),
+        title: active?.getAttribute("title"),
+        testId: active?.getAttribute("data-testid"),
+        text: active?.textContent?.slice(0, 120),
+        documentFocused: document.hasFocus(),
+        targetFocused: active === element,
+      };
+    }, target);
+  const focusTrail = [await readFocus()];
+  // 沿 UX04 的真实 Tab/Enter 路径；只观察焦点，不调用 focus 或目标的 click/callback。
+  while (!(await target.isFocused()) && tabs < maxTabs) {
+    if (backwards)
+      await browser.action("key").down(Key.Shift).down(Key.Tab).up(Key.Tab).up(Key.Shift).perform();
+    else await browser.keys("Tab");
+    tabs += 1;
+    focusTrail.push(await readFocus());
+  }
+  if (!(await target.isFocused())) {
+    const diagnostics = await browser.execute(
+      (element) => ({
+        documentFocused: document.hasFocus(),
+        active: document.activeElement?.outerHTML.slice(0, 1000),
+        target: (element as HTMLElement).outerHTML.slice(0, 1000),
+      }),
+      target,
+    );
+    throw new Error(
+      `Tab 未到达目标: tabs=${tabs}, diagnostics=${JSON.stringify({ ...diagnostics, focusTrail })}`,
+    );
+  }
+  const beforeEnter =
+    expectedIdleReadCount === undefined
+      ? undefined
+      : {
+          browserOpen: await browser.$(`[data-testid="${TID_BROWSER_ADDRESS_INPUT}"]`).isExisting(),
+          retryReadCount: retryMediaRequestCount,
+        };
+  if (beforeEnter) {
+    expect(beforeEnter.browserOpen).toBe(false);
+    expect(beforeEnter.retryReadCount).toBe(expectedIdleReadCount);
+  }
+  await browser.keys("Enter");
+  return { tabs, direction: backwards ? "Shift+Tab" : "Tab", focusTrail, beforeEnter };
 }
 
 async function assertLoadedAssistantMedia(count: number) {
@@ -1531,6 +1649,7 @@ async function closeSidePanes() {
 function createFixtureServer(): Server {
   return createServer((request, response) => {
     const path = request.url?.split("?", 1)[0] ?? "";
+    if (path.endsWith("-retry.wav")) retryMediaRequestCount += 1;
     if (path.endsWith("-retry.wav") && !retryMediaAvailable) {
       response.writeHead(404);
       response.end();

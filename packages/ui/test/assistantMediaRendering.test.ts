@@ -2,14 +2,17 @@
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MessageResponse } from "@/components/ai-elements/message.js";
+import { MessageResponse, type MessageResponseProps } from "@/components/ai-elements/message.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { MarkdownImage } from "@/components/ai-elements/markdown-image.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { buildAssistantPreviewCards } from "@/lib/assistantPreviewCards.js";
-import type { AssistantMediaRef } from "@zcode/shared/zcode-protocol-v4";
+import type { AssistantMediaRef, AssistantTextRow } from "@zcode/shared/zcode-protocol-v4";
 import { ConversationTurnRow } from "@/v4/ConversationTurnRow.js";
-import { extractConversationDeliverables } from "@/v4/conversation-presentation/index.js";
+import {
+  extractConversationDeliverables,
+  resolveConversationDeliverableKey,
+} from "@/v4/conversation-presentation/index.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 
 // CodeViewer 正文位于第三方 shadow DOM；这里只观察传入的原文，真实渲染由 E2E 覆盖。
@@ -39,6 +42,154 @@ const ref = (
 });
 
 describe("UX05 已送达媒体", () => {
+  it.each([
+    ["image", "image/png", "img"],
+    ["audio", "audio/wav", "audio"],
+    ["video", "video/mp4", "video"],
+  ] as const)(
+    "%s 成果前插较早来源不重挂真实叶子、不重读或重置 Blob",
+    async (kind, mimeType, selector) => {
+      const reader = vi.fn().mockResolvedValue({ bytes: new Uint8Array([1]), mediaType: mimeType });
+      const createUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:original");
+      const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+      const source: AssistantTextRow = {
+        rowId: 12,
+        turnId: "t",
+        createdAt: 1,
+        createdAtSeq: 12,
+        kind: "assistantText",
+        text: "",
+        state: "complete",
+        media: [
+          {
+            id: "latest",
+            name: "较晚来源",
+            mediaType: kind,
+            mimeType,
+            source: { kind: "artifact", uri: "zcode-artifact://session-a/result" },
+          },
+        ],
+      };
+      const context = {
+        workspacePath: "/same",
+        workspaceIdentity: "ssh:host-a",
+        workspaceRemoteSessionId: "r-a",
+        sessionId: "session-a",
+        logEpoch: "epoch-a",
+        theme: "light" as const,
+        codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
+        readAttachment: reader,
+      };
+      const renderRow = (row: AssistantTextRow) => {
+        const deliverable = extractConversationDeliverables([row])[0]!;
+        return wrap(
+          createElement(ConversationTurnRow, {
+            key: resolveConversationDeliverableKey(deliverable, context, row.turnId),
+            row,
+            deliverable,
+            context,
+          }),
+        );
+      };
+      const view = render(renderRow(source));
+      await waitFor(() =>
+        expect(view.container.querySelector(selector)?.getAttribute("src")).toBe("blob:original"),
+      );
+      const original = view.container.querySelector(selector)!;
+      if (original instanceof HTMLMediaElement) original.currentTime = 0.75;
+      view.rerender(
+        renderRow({
+          ...source,
+          rowId: 1,
+          createdAtSeq: 1,
+          media: [{ ...source.media![0]!, id: "earlier", name: "较早来源" }],
+        }),
+      );
+      await waitFor(() =>
+        expect(view.container.querySelector(selector)?.getAttribute("src")).toBe("blob:original"),
+      );
+      expect(view.container.querySelector('[data-source-row-id="1"]')).not.toBeNull();
+      expect(view.container.querySelector('[data-source-row-id="12"]')).toBeNull();
+      expect(view.container.querySelector(selector)).toBe(original);
+      if (original instanceof HTMLMediaElement) expect(original.currentTime).toBe(0.75);
+      else expect(original.getAttribute("alt")).toBe("较早来源");
+      expect(reader).toHaveBeenCalledTimes(1);
+      expect(reader).toHaveBeenCalledWith({
+        sessionId: "session-a",
+        ref: "zcode-artifact://session-a/result",
+      });
+      expect(createUrl).toHaveBeenCalledTimes(1);
+      expect(revoke).not.toHaveBeenCalled();
+    },
+  );
+  it.each([
+    "target",
+    "MIME",
+    "mediaType",
+    "reader",
+    "session",
+    "workspacePath",
+    "workspaceIdentity",
+    "remoteSession",
+  ] as const)("媒体 %s 改变仍释放旧 Blob 并按新上下文重读", async (changed) => {
+    const reader = vi
+      .fn()
+      .mockResolvedValue({ bytes: new Uint8Array([1]), mediaType: "audio/mpeg" });
+    const nextReader = vi
+      .fn()
+      .mockResolvedValue({ bytes: new Uint8Array([2]), mediaType: "audio/mpeg" });
+    vi.spyOn(URL, "createObjectURL")
+      .mockReturnValueOnce("blob:before")
+      .mockReturnValueOnce("blob:after");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const media = ref("audio", { kind: "artifact", uri: "zcode-artifact://session-a/clip" });
+    const props: MessageResponseProps = {
+      theme: "light",
+      media: [media],
+      readAttachment: reader,
+      sessionId: "session-a",
+      workspacePath: "/same",
+      workspaceIdentity: "ssh:host-a",
+      workspaceRemoteSessionId: "r-a",
+    };
+    const nextProps: MessageResponseProps = { ...props };
+    if (changed === "target")
+      nextProps.media = [
+        { ...media, source: { kind: "artifact", uri: "zcode-artifact://session-a/other" } },
+      ];
+    if (changed === "MIME") nextProps.media = [{ ...media, mimeType: "audio/wav" }];
+    if (changed === "mediaType")
+      nextProps.media = [{ ...media, mediaType: "video", mimeType: "video/mp4" }];
+    if (changed === "reader") nextProps.readAttachment = nextReader;
+    if (changed === "session") nextProps.sessionId = "session-b";
+    if (changed === "workspacePath") nextProps.workspacePath = "/other";
+    if (changed === "workspaceIdentity") nextProps.workspaceIdentity = "ssh:host-b";
+    if (changed === "remoteSession") nextProps.workspaceRemoteSessionId = "r-b";
+    const view = render(wrap(createElement(MessageResponse, props)));
+    await waitFor(() =>
+      expect(view.container.querySelector("audio")?.getAttribute("src")).toBe("blob:before"),
+    );
+    const original = view.container.querySelector("audio")!;
+    view.rerender(wrap(createElement(MessageResponse, nextProps)));
+    const selector = changed === "mediaType" ? "video" : "audio";
+    await waitFor(() =>
+      expect(view.container.querySelector(selector)?.getAttribute("src")).toBe("blob:after"),
+    );
+    expect(view.container.querySelector(selector)).not.toBe(original);
+    expect(original.isConnected).toBe(false);
+    expect(revoke).toHaveBeenCalledWith("blob:before");
+    expect(changed === "reader" ? nextReader : reader).toHaveBeenLastCalledWith({
+      sessionId: changed === "session" ? "session-b" : "session-a",
+      ref:
+        changed === "target"
+          ? "zcode-artifact://session-a/other"
+          : "zcode-artifact://session-a/clip",
+    });
+    expect(reader).toHaveBeenCalledTimes(changed === "reader" ? 1 : 2);
+    expect(nextReader).toHaveBeenCalledTimes(changed === "reader" ? 1 : 0);
+    view.unmount();
+    expect(revoke).toHaveBeenCalledWith("blob:after");
+  });
   it("类型化成果每个excerpt只渲染当前媒体，并保留准确来源和上下文按钮", () => {
     const source = {
       rowId: 12,

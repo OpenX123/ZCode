@@ -1396,6 +1396,8 @@ artifact 后人工观察”的软通过口径。
 
 UX05（2026-11-15）在既有 APC spec 增加展示与原生媒体两个独立用例。Windows local replay 两项通过（`desktop-e2e-20261115211627162-p50860-23884f50b0a18eb3`）：展示批次14.904s，原生批次18.210s；后者验证 terminal 折叠外成果、真实 artifact/Host 读取、来源上下文、草稿切换重挂、刷新和完整冷启动。追加 focused 原生场景通过（`desktop-e2e-20261115212917704-p49648-992db7ff9792dfdd`，35.960s）：同一原生 fixture 真实生成 14 个 completed turns / 98 raw rows，底部仅挂载9轮；首轮旧 DOM 断开，回顶后新节点与3个 artifact Blob URL 重新生成，图片解码、3个音视频 readyState=4、controls/paused/无 autoplay 均通过。纯投影测试覆盖空正文、多媒体逐项覆盖、同 URL 网页与 MIME 媒体区别、来源/id/scope 与匿名分享隐私。详细结果见本次 T05 报告和 `.e2e-artifacts`；真实引擎账号、SSH、实体手机及 Docker admission 未覆盖，不将其标成 formal gate 通过。
 
+UX05 Fix1（2026-11-15）：真实 `ConversationTurnRow` rerender 覆盖来源 row/id/name 更新时 image/audio/video 的 DOM、src、Blob 与播放位置复用；另验 target/MIME/type、reader/session/workspace scope 变化仍释放并重读。原实现3项 RED，修复后相关6文件70项通过。Windows focused 展示通过（`desktop-e2e-20261115215628208-p11424-104529e7efe613e9`，16.833s，无 retry）：从实际点击的空 composer 经5次/10次 Shift+Tab 分别到达精确网页打开/资源重试按钮，完整 activeElement 轨迹存于 `ux05-display-keyboard.json`；起点点击前后及 Enter 前 Browser 均未开、重试读取计数均为1，Enter 后网页完整目标正确、重试计数变为2且音频解码/暂停/controls通过。最终 text fence 仅保留原完整URL点击验收。Fix1原生场景另在 `desktop-e2e-20261115214404201-p15460-52840878eda686e4` 通过26.820s，含cold与14轮真实虚拟滚动；该批次展示曾失败，不能把整批次标为通过。原有环境和formal gate边界不变。
+
 | Catalog ID           | 覆盖状态 | 自动化                      | 备注                                                                                               |
 | -------------------- | -------- | --------------------------- | -------------------------------------------------------------------------------------------------- |
 | ~~SHARE25 ~~ retired | planned  | services + UI + Desktop E2E | PDF 预览卡片做选择阶段 stat 并上传；三个存在但不支持的 MP4 只产生 warning；正文 `~/...` 不产生候选 |

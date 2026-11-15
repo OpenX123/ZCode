@@ -178,6 +178,10 @@ original reference, an unavailable state and an explicit retry action. Retrying
 only rereads that resource, never reruns the assistant turn. Single-URL closed
 `text` fences in final and historical bodies keep the original code and expose
 the same safe native open action, so final-body deduplication cannot hide access.
+The website-card open button and unavailable-resource retry button remain
+reachable by native Tab navigation and activate with Enter.
+Their desktop acceptance uses real keyboard input and verifies the resulting
+browser target or decoded resource, without programmatically focusing the target.
 
 `conversation-presentation` adds only pure media classification/extraction. Its
 public entrypoint remains safe for readonly shares. Media bytes are read through

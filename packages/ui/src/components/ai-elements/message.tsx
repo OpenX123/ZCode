@@ -1781,7 +1781,8 @@ export const MessageResponse = memo(
         </Streamdown>
         {deliveredMedia.map((item) => (
           <AssistantMediaContent
-            key={`${streamdownRenderKey}:${item.id}`}
+            // 来源前插会改变 id/name；叶子按资源身份复用，避免重置播放与重复读取 Blob。
+            key={JSON.stringify([streamdownRenderKey, item.mediaType, item.mimeType, item.source])}
             {...item}
             sessionId={sessionId}
             readAttachment={readAttachment}
