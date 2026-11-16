@@ -352,6 +352,17 @@ async function verifyUx09Appearance(id: string, title: string) {
     window.setMinimumSize(320, 400);
     return old;
   }, original.windowId);
+  const platformWindow = await browser.electron.execute(
+    (electron, windowId) => ({
+      isMacDesktop: process.platform === "darwin",
+      isMacFullscreen: electron.BrowserWindow.fromId(windowId)!.isFullScreen(),
+    }),
+    original.windowId,
+  );
+  // SidePane 无更新按钮；按当前平台/fullscreen 合同验收，不能将 Windows 的 88px 套到 macOS。
+  const compactLeadingPadding =
+    platformWindow.isMacDesktop && !platformWindow.isMacFullscreen ? 168 : 88;
+  const fullViewShortcut = [platformWindow.isMacDesktop ? "Command" : "Control", "Shift", "f"];
   try {
     for (const [locale, theme, width] of [
       ["zh-CN", "zai-light", 1280],
@@ -400,7 +411,16 @@ async function verifyUx09Appearance(id: string, title: string) {
         };
         const header = heading.closest("header")!;
         const actions = header.querySelector(".relative.ml-auto.shrink-0");
-        const logo = document.querySelector('[data-testid="desktop-top-logo-sidebar-toggle"]');
+        // macOS 没有 Windows/Linux 的 logo test ID；两种平台共用可见的浮层交互容器。
+        const leading = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            '[class~="@container/topoverlayer"] > div > .pointer-events-auto',
+          ),
+        ).find((node) => {
+          const box = node.getBoundingClientRect();
+          return box.width > 0 && box.height > 0 && getComputedStyle(node).visibility === "visible";
+        });
+        if (!leading) throw new Error("UX09 未找到可见顶部浮层操作组");
         return {
           width: innerWidth,
           left: rect.left,
@@ -413,11 +433,9 @@ async function verifyUx09Appearance(id: string, title: string) {
           ),
           group: describe(heading.closest("[data-workbench-header-group]")),
           titleElement: describe(heading.querySelector("h1")),
-          leadingGroup: describe(logo?.parentElement ?? null),
-          leadingWrapper: describe(logo?.parentElement?.parentElement ?? null),
-          leadingButtons: Array.from(logo?.parentElement?.querySelectorAll("button") ?? []).map(
-            describe,
-          ),
+          leadingGroup: describe(leading),
+          leadingWrapper: describe(leading.parentElement),
+          leadingButtons: Array.from(leading.querySelectorAll("button")).map(describe),
         };
       });
       if (process.env.ZCODE_E2E_ARTIFACT_DIR) {
@@ -426,7 +444,7 @@ async function verifyUx09Appearance(id: string, title: string) {
         );
         await writeFile(
           join(process.env.ZCODE_E2E_ARTIFACT_DIR, `ux09-layout-${width}.json`),
-          JSON.stringify({ id, title, requestedWidth: width, ...layout }, null, 2),
+          JSON.stringify({ id, title, platformWindow, requestedWidth: width, ...layout }, null, 2),
         );
       }
       expect(layout.titleWidth).toBeGreaterThan(0);
@@ -468,7 +486,7 @@ async function verifyUx09Appearance(id: string, title: string) {
           await launcher.click();
           await browser.waitUntil(async () => (await $$("[data-side-pane-tab-id]").length) > 0);
         }
-        await browser.keys(["Control", "Shift", "f"]);
+        await browser.keys(fullViewShortcut);
         const fullViewTab = await $(`[data-testid="${TID_SIDE_PANE_FULL_VIEW_CONVERSATION_TAB}"]`);
         await fullViewTab.waitForDisplayed();
         await setCurrentElectronRendererContentSize(430, 900);
@@ -479,27 +497,43 @@ async function verifyUx09Appearance(id: string, title: string) {
         }
         await browser.waitUntil(
           async () => {
-            return browser.execute((tabId) => {
-              const tab = document.querySelector<HTMLElement>(`[data-testid="${tabId}"]`)!;
-              const tabList = tab.closest('[role="tablist"]')!;
-              const rect = tab.getBoundingClientRect();
-              return (
-                getComputedStyle(tabList).paddingLeft === "88px" &&
-                rect.width > 0 &&
-                tab.contains(
-                  document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2),
-                )
-              );
-            }, TID_SIDE_PANE_FULL_VIEW_CONVERSATION_TAB);
+            return browser.execute(
+              (tabId, expectedPadding) => {
+                const tab = document.querySelector<HTMLElement>(`[data-testid="${tabId}"]`)!;
+                const tabList = tab.closest('[role="tablist"]')!;
+                const rect = tab.getBoundingClientRect();
+                return (
+                  getComputedStyle(tabList).paddingLeft === `${expectedPadding}px` &&
+                  rect.width > 0 &&
+                  tab.contains(
+                    document.elementFromPoint(
+                      rect.left + rect.width / 2,
+                      rect.top + rect.height / 2,
+                    ),
+                  )
+                );
+              },
+              TID_SIDE_PANE_FULL_VIEW_CONVERSATION_TAB,
+              compactLeadingPadding,
+            );
           },
           { timeout: 5_000, timeoutMsg: "完整视图标题与窄屏浮层操作重叠" },
         );
         const fullViewLayout = await browser.execute((tabId) => {
           const tab = document.querySelector<HTMLElement>(`[data-testid="${tabId}"]`)!;
           const rect = tab.getBoundingClientRect();
-          const leading = document
-            .querySelector('[data-testid="desktop-top-logo-sidebar-toggle"]')!
-            .parentElement!.getBoundingClientRect();
+          const leadingGroup = Array.from(
+            document.querySelectorAll<HTMLElement>(
+              '[class~="@container/topoverlayer"] > div > .pointer-events-auto',
+            ),
+          ).find((node) => {
+            const box = node.getBoundingClientRect();
+            return (
+              box.width > 0 && box.height > 0 && getComputedStyle(node).visibility === "visible"
+            );
+          });
+          if (!leadingGroup) throw new Error("UX09 完整视图未找到可见顶部浮层操作组");
+          const leading = leadingGroup.getBoundingClientRect();
           return {
             left: rect.left,
             right: rect.right,
@@ -510,7 +544,7 @@ async function verifyUx09Appearance(id: string, title: string) {
           };
         }, TID_SIDE_PANE_FULL_VIEW_CONVERSATION_TAB);
         expect(await fullViewDrawer.isDisplayed()).toBe(false);
-        expect(fullViewLayout.paddingLeft).toBe("88px");
+        expect(fullViewLayout.paddingLeft).toBe(`${compactLeadingPadding}px`);
         expect(fullViewLayout.left).toBeGreaterThanOrEqual(fullViewLayout.leadingRight);
         expect(fullViewLayout.right).toBeLessThanOrEqual(fullViewLayout.viewportWidth);
         expect(await fullViewTab.getAttribute("title")).toBe(title);
@@ -520,10 +554,10 @@ async function verifyUx09Appearance(id: string, title: string) {
           );
           await writeFile(
             join(process.env.ZCODE_E2E_ARTIFACT_DIR, "ux09-side-pane-layout-430.json"),
-            JSON.stringify(fullViewLayout, null, 2),
+            JSON.stringify({ platformWindow, compactLeadingPadding, ...fullViewLayout }, null, 2),
           );
         }
-        await browser.keys(["Control", "Shift", "f"]);
+        await browser.keys(fullViewShortcut);
         await $(`[data-testid="${TID_WORKSPACE_HEADER}"]`).waitForDisplayed();
       }
     }
