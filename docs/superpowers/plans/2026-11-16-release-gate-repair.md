@@ -393,7 +393,7 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 1: 准入与受控夹具。** 先catalog/matrix/spec，再fixture/场景。隔离HOME/USERPROFILE/userData/cache覆盖与descriptor/归档；探测真实目标，建立A/B两SHA和owner/.reaping原字节。两种marker都走实际连接/安装或更新，不Renderer注入Error。秘密碰撞保持为合成受控输入，禁止真实凭据。
 - [ ] **Step 2: 构建与真实交互。** 按目标包当前脚本准备匹配Task15的新桌面产物，不和dist依赖测试并行。三入口均验证当前错误、精确按钮与retry/update；两种marker及秘密碰撞至少各触发一条真实链。记录Main原生打开的A目标一致性布尔证据，并至少一次系统层检查文件管理器实际打开A，不只spy/DOM断言。
 - [ ] **Step 3: 退出后恢复。** 先复制安全固定步骤并保留文件管理器窗口，至少一次真实托盘/菜单正常退出并验证退出确认/Host清理；与helper强制fallback区分。精确A lock的夹具清理仅放 `afterElectronProcessExit`，旧进程树未归零不得删或建新session。保持同隔离profile/cache重启，通过原retry/update验证A恢复成功、B与归档未误改、成功后旧locator消失。禁止裸reload/rm、sleep或只等main PID。
-- [ ] **Step 4: GREEN/报告与生命周期。** 按实际package命令运行精确候选spec，保存run/summary/脱敏证据与系统层结果；恢复环境，只清理本次fixture。桌面e2e类型、定向lint/format/diff/架构通过；报告task-16-report.md并独立审查。若发现产品缺陷先报具体证据给controller，不通过削断言修绿。macOS/Linux未实机测则如实列出，根门禁继续由controller统一。
+- [ ] **Step 4: GREEN/报告与生命周期。** 按实际package命令运行精确候选spec，保存run/summary/脱敏证据与系统层结果；恢复环境，只清理本次fixture。使用最终新桌面产物补跑原T11 MODE02/03未包装的正式严格场景，Task17仅提供定位证据与命令，不替代此验收；不改原哨兵、timeout或终端产品。桌面e2e类型、定向lint/format/diff/架构通过；报告task-16-report.md并独立审查。若发现产品缺陷先报具体证据给controller，不通过削断言修绿。macOS/Linux未实机测则如实列出，根门禁继续由controller统一。
 
 ### Task 17: 只读补齐严格 PTY 输入异常的定位证据
 
