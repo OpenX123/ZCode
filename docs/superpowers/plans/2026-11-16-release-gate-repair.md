@@ -163,6 +163,18 @@ for (const entry of [rootEntry, nodeEntry]) {
 - [ ] **Step 3: GREEN 与迁入验证。** 运行上述九规格，加上 `packages/services/test/credentialService.test.ts`、`packages/services/test/standaloneProviderRuntime.test.ts`、`packages/shared/test/mcp.test.ts`、`packages/desktop/test/windowHostAttachmentRpcPolicy.test.ts`。最后一个规格的旧 46 数字计数已知另有 R3 任务，若仍失败保留明确独立结果；本任务新增/迁移断言与其余保留 suite 必须实际通过。不触碰其计数、不新增 skip、不修改 timeout。迁入历史读取由 standaloneProviderRuntime 的 `getImportedConversation` 正向/缺失用例覆盖，不恢复云 API。
 - [ ] **Step 4: 静态、自审与提交。** 修改前后运行架构检查、变更测试文件格式/diff 检查。报告逐文件旧失败→新覆盖/原保留覆盖映射、真实命令与统计、潜在未覆盖边界，并只提交本任务测试/必要 spec；独立 controller 派审。真实 UI 未变不为本任务额外添加 E2E；根类型/lint 与完整门禁仍在整批结束执行。
 
+#### Task 4 Fix 1：关闭已暴露的 Bot 启动/释放验收缺口
+
+独立审查 I1 确认迁移本身合规，但最终 composition 清理 EPERM 阻塞 GREEN。原“仅测试”限制在本次 fix 增加以下有界例外，先由可控生命周期回归验证根因，再修已有 owner；不能靠改变authorityMode、删清理或重试掩盖。
+
+- Additional Modify: `packages/services/src/bots/botsService.ts`；仅确有证据时修改 `channelRuntime.ts` 与三个 Provider runtime 的既有关闭路径，不增加公共产品API。
+- Additional Test: 复用 `packages/services/test/botsService.status.test.ts` / `botsService.fixtures.ts` 与 `botsChannelRuntime.test.ts` 的当前 fixture，选择覆盖实际改动的最小文件；不机械重跑所有Bots大套件。
+- Spec: `docs/testing/1.4.1-gate-repair-spec.md` 的服务释放边界（已先补owner/时序）。
+- [ ] **Fix 1.1: 确定性 RED。** 空受控Bot配置、deferred Repo读取/初始化，在startup已经接纳但IO未完成时调用disposeAllAndWait；验证原实现提前完成/仍能晚到读写。以明确入场信号、deferred释放和原关闭Promise观测，不用sleep/固定微任务次数/真实轮询网络。原单次EPERM不是唯一根因证明，报告分清静态候选与新RED。
+- [ ] **Fix 1.2: 最小所有者收口。** 复用Bots Service现有shutdown Promise和启动的真实Promise引用，失效恢复后等待已接纳startup refresh/初始化/continuation完成；如需runtime刷新队列drain，扩展现有队列的完成合同而非另建计时状态。并发dispose同一Promise，晚到初始化不能重启后台runtime，不产生unhandled rejection；中文注释解释文件锁清理竞争。不要吞新增错误来伪造初始化成功。
+- [ ] **Fix 1.3: GREEN。** 新确定性回归、实际覆盖的Bots释放规格通过；重跑composition精确文件及原Task4最终12文件批次，全部通过（独立R3仍另列不混入该批）。保留原EPERM日志，不用首次通过覆盖复跑失败。
+- [ ] **Fix 1.4: 静态/报告/提交。** 架构before/after、services当前context、定向format/lint/diff；完整fix报告追加原task-4-report.md，含命令、输出与覆盖测试。原实施者修复后controller按215107a2..fixHEAD唯一scoped复审I1及fix新增破坏；R3不在本次fix范围。
+
 ### Task 5: 修正原平台豁免 API 与原生资源路径断言
 
 **Files:**
@@ -337,6 +349,16 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 2: 最小可见性修复。** ended Agent目录仅在panel时可独自保留shell；mini无内容时不因ended Agent存活。保留其他summary优先级、ended workflow和panel目录入口、运行Agent；修正过时中文注释并说明空胶囊根因。不得关闭详情、取消任务或把summary可见性当CLI事实。
 - [ ] **Step 3: GREEN与交互。** 完整精确UI规格通过；运行现有subagent工作卡Electron场景，必要时增加结束后mini消失但已开详情保持的断言。只按目标包真实入口执行，遵循E2E case lifecycle/spec；不把静态HTML单测当交互E2E通过。原T08无需重新大范围审查。
 - [ ] **Step 4: 静态/自审/提交。** DESIGN.md、架构before/after及UI相关context；定向格式/lint/diff，完整报告真实UT/E2E统计与环境边界，独立审查。
+
+### Task 14: 设计可操作的本地资源锁恢复诊断出口
+
+**Files:** Read-only `sourceServerReleaseResolver.ts` 与测试、shared source-server connectionErrors/connectionLog、Host sourceOperationLogs/连接失败出口、Main desktopRemoteSessions、实际Renderer连接错误与日志展示；对应standalone spec。
+
+**Interfaces:** 只产出有证据的最小设计，不改正式source/test/spec/index/HEAD。原两条退出回收标记提示需要可操作的本地锁目录；公共错误/日志脱敏不能为过UT全局关闭。
+
+- [ ] **Step 1: 核真实出口。** 从resolver异常一路跟踪到实际本地用户界面，列每处normalize/重建Error/消息schema/渲染的字段丢失与脱敏；不要把无人消费的metadata当作可操作UX。
+- [ ] **Step 2: 提供最小方案。** 明确本地cache owner/可信lockDir来源、允许的结构化恢复数据/动作、普通日志与复制日志仍脱敏的边界；不能增加远端凭据/路径泄露旁路，不能仅把原路径断言改成redacted。若现有UI已有安全本地打开路径能力优先复用；若需要消息字段，列真实公开接口和迁移边界。给出最小改动文件与先spec后RED/GREEN的具体验收，不实施。
+- [ ] **Step 3: 交付。** 产出task-14-report.md，区分已证实链路、方案权衡、必要的用户可操作步骤/实际组件以及未验证点；用图说明唯一owner与字段/动作流，不跑无关门禁。controller独立审查设计，再生成实施brief。
 
 ## 后续执行规则
 
