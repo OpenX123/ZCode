@@ -16,6 +16,7 @@ import {
   WorkspaceHeaderTitleSection,
 } from "@/WorkspaceHeaderSections.js";
 import type { WorkspaceHeaderVariant } from "@/WorkspaceHeaderSections/shared.js";
+import { useIsMobileCompactViewport } from "@/lib/mobileTextInput.js";
 
 /**
  * 侧栏收起时左上角浮层（侧栏开关、前进后退、新建、更新）盖在内容区顶栏上，顶栏需要让出的左侧留白。
@@ -26,13 +27,24 @@ export function resolveTopOverlayLeadingPaddingClass({
   isMacDesktop,
   isMacFullscreen,
   hasUpdateReady,
+  isCompactViewport = false,
 }: {
   isSidebarVisible: boolean;
   isMacDesktop?: boolean;
   isMacFullscreen?: boolean;
   hasUpdateReady?: boolean;
+  isCompactViewport?: boolean;
 }): string | false {
   if (isSidebarVisible) return false;
+  // 实测 430px 窄窗已隐藏前后导航，但仍预留原宽度会把标题挤成 0px。
+  // 与导航共用 compact 断点，只减去两枚 28px 按钮和两处 4px 间隙；宽屏预留不变。
+  if (isCompactViewport) {
+    if (isMacDesktop) {
+      if (hasUpdateReady) return isMacFullscreen ? "pl-32" : "pl-50";
+      return isMacFullscreen ? "pl-22" : "pl-42";
+    }
+    return hasUpdateReady ? "pl-28" : "pl-22";
+  }
   if (isMacDesktop) {
     if (hasUpdateReady) return isMacFullscreen ? "pl-48" : "pl-66";
     return isMacFullscreen ? "pl-38" : "pl-58";
@@ -163,11 +175,13 @@ export function WorkspaceHeader({
   const [selectedEditor, setSelectedEditor] = useState<EditorInfo | null>(null);
   // Linux 与 Windows 共用内联窗控，不再预留旧悬浮窗控的标题栏区域。
   const usesInlineWindowControls = Boolean(isWindowsDesktop || (isDesktop && !isMacDesktop));
+  const isCompactViewport = useIsMobileCompactViewport();
   const headerWindowControlsPaddingClass = resolveTopOverlayLeadingPaddingClass({
     isSidebarVisible,
     isMacDesktop,
     isMacFullscreen,
     hasUpdateReady,
+    isCompactViewport,
   });
 
   return (

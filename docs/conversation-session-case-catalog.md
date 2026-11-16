@@ -4891,3 +4891,10 @@ YD-PREVIEW-01 accepted：桌面窄栏打开 Markdown/Python 后正文面板必�
 复现种子采用真实现场的分栏缓存 `preview: 0 / directory: 0`，覆盖文件树打开 Markdown/Python、缩小窗口后重新展开侧栏，以及消息文件卡片打开新的预览标签。旧实现同场景两项均失败，修复后两项通过；仍保留 manual-review 候选状态，不自动晋升 CI。
 
 YD-SUBAGENT-01 accepted：运行中折叠保留各状态计数；滚动离开工作卡后输入工具栏仍有目录入口；全部结束后停止动画且保留历史入口。沿 SAT31/SAT32 manual-review 路径验收，不自动晋升 CI。
+
+
+## UX09 工作台标题统一（2026-11-15）
+
+accepted：扩展既有正式 `conversation-session-task-title-marquee.test.ts` 的 UX09 场景，保留 TTL01–TTL06 与 TTL07 的原有溢出断言；TTL07 旧 workspace button/hover 段按现有工作台合同迁移为只读项目、完整路径及会话名前后序断言。真实 CLI/Host 回放生成标题，侧栏右键与键盘 Enter 重命名后，栏头、菜单和侧栏无需重开即同名；renderer refresh 与 Electron reloadSession 冷恢复后不降级。菜单原生键盘打开并保留完整长名；草稿统一本地化新会话；Zai Light/中文/1280 与 Zai Dark/英文/430 窄窗留图和布局检查。完整 workspace identity 隔离由目标UT验证，真实 SSH/手机不列为已覆盖。case-local 上游仅含 UX09 限定 marker 的主回复和标题 sidecar，不使用通配回放。
+
+430 窄窗同时断言栏头标题具有实际可读宽度、与可见浮层按钮无重叠，并以真实快捷键进入 SidePane 完整视图，验证共享 leading 留白下对话 tab 不被遮挡。compact 与导航隐藏共用 `max-width: 767px` 判断，仅移除已隐藏导航的 64px 占位；宽屏及各平台预留变体由表驱动 UT 守护，不据此声称已在其它操作系统实测。

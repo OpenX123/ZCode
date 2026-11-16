@@ -21,6 +21,7 @@ import { useConversationPanePresentation } from "@/side-pane-full-view/index.js"
 import { ProjectComposerMenu } from "@/project-sidebar/ProjectComposerMenu.js";
 import { useOptionalProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
 import type { ProjectSidebarProps } from "@/project-sidebar/contract.js";
+import { useWorkbenchSessionTitle } from "@/project-sidebar/useWorkbenchSessionTitle.js";
 
 export interface WorkbenchPaneHeadersProps {
   onCreateTask: ProjectSidebarProps["onCreateTask"];
@@ -57,9 +58,7 @@ function WorkbenchPaneHeader({
   const project = directory?.projects.find(
     (item) => item.id === projectId && (!hostId || item.hostId === hostId),
   );
-  const title = tab.sessionId
-    ? cachedTask?.title || task?.title || intl.formatMessage({ id: "taskList.untitled" })
-    : intl.formatMessage({ id: "workbench.newConversation" });
+  const title = useWorkbenchSessionTitle(tab);
   const provider: ZCodeProvider = cachedTask?.provider ?? task?.provider ?? ZCODE_AGENT_PROVIDER;
   const projectLabel =
     project?.name ??

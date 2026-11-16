@@ -2,5 +2,55 @@
   "version": 1,
   "caseName": "conversation-session-task-title-marquee",
   "spec": "./test/e2e/conversation-session/conversation-session-task-title-marquee.test.ts",
-  "fixtures": []
+  "fixtures": [
+    {
+      "id": "ux09-title-title",
+      "description": "E2E_UX09_TITLE_SEED 首发的 case-local 标题生成响应。",
+      "metadata": {
+        "kind": "common",
+        "timingPolicy": "controlled-stream",
+        "source": "synthetic",
+        "syntheticReason": "固定标题并延迟5秒，证明会话已建立后生成标题由真实CLI/Host链同步到工作台各入口。"
+      },
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["Generate a concise title", "E2E_UX09_TITLE_SEED"]
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "delayMs": 5000,
+        "body": "{\"id\": \"ux09-title-generated\", \"type\": \"message\", \"role\": \"assistant\", \"model\": \"deepseek-v4-flash\", \"content\": [{\"type\": \"text\", \"text\": \"{\\\"title\\\": \\\"UX09 自动生成的完整会话标题\\\"}\"}], \"stop_reason\": \"end_turn\", \"stop_sequence\": null, \"usage\": {\"input_tokens\": 64, \"cache_creation_input_tokens\": 0, \"cache_read_input_tokens\": 0, \"output_tokens\": 16}}"
+      }
+    },
+    {
+      "id": "ux09-title-seed",
+      "description": "UX09: create a real CLI session for generated and custom title synchronization.",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "重命名只需一个已存在 session；首轮文案固定。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_UX09_TITLE_SEED"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "ux09-title-seed",
+          "inputTokens": 80,
+          "outputTokens": 8,
+          "text": "UX09_TITLE_SEED_OK"
+        }
+      }
+    }
+  ]
 }

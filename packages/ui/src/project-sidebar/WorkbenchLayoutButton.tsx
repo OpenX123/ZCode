@@ -12,8 +12,7 @@ import {
 import { toast } from "@/components/ui/toast.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useOptionalProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
-import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
-import { getTaskMeta } from "@/store/zcodeSessionStoreSelectors.js";
+import { useWorkbenchSessionTitle } from "@/project-sidebar/useWorkbenchSessionTitle.js";
 import {
   getFocusedWorkbenchTab,
   useWorkbenchTabsStore,
@@ -23,24 +22,15 @@ import {
 import { WINDOWS_CAPTION_CONTROL_CLASS } from "@/windowCaptionControls.js";
 
 function WorkbenchViewItem({ tab, label }: { tab: WorkbenchTab; label: string }) {
-  const { intl } = useZCodeIntl();
-  const title = useZCodeSessionStore((state) => {
-    const workspace = state.workspaces[workbenchWorkspaceKey(tab.workspaceScope)];
-    return workspace && tab.sessionId ? getTaskMeta(workspace, tab.sessionId)?.title : undefined;
-  });
+  const title = useWorkbenchSessionTitle(tab);
   return (
     <DropdownMenuItem
       data-testid={`workbench-activate-tab-${tab.id}`}
       onSelect={() => useWorkbenchTabsStore.getState().activateTab(tab.id)}
-      title={tab.workspaceScope.workspacePath}
+      title={title}
     >
       <span className="shrink-0 text-foreground-subtle">{label}</span>
-      <span className="truncate">
-        {title ||
-          (tab.sessionId
-            ? tab.sessionId.slice(0, 8)
-            : intl.formatMessage({ id: "workbench.newConversation" }))}
-      </span>
+      <span className="min-w-0 whitespace-normal break-words">{title}</span>
     </DropdownMenuItem>
   );
 }

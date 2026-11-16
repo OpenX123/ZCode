@@ -28,6 +28,29 @@ Task title can come from several places during a session lifecycle. Renderer cod
 
 ## Compatibility
 
+### 工作台栏头与视图菜单（UX09）
+
+- 栏头和布局菜单共用 `useWorkbenchSessionTitle(tab)` 只读解析。目录仍由 `ProjectDirectoryProvider` 持有，CLI/Host 是已提交标题 owner；hook 不请求正文、不持久化标题、不新增缓存或写入路径。
+- 使用 `workspaceIdentity?.trim() || workspacePath` 与 sessionId 精确匹配目录事实和既有会话元数据。remoteSessionId 仍由 Tab scope 携带，不能按相同 path 跨 attachment 借用标题。
+- 候选复用 `mergeTaskMetaCandidates`：按既有 updatedAt 修订顺序选择，保留 titleOverridden 手动标题及非占位标题的保护。非空缓存没有无条件优先权；目录事实与缓存相同时，侧栏、栏头、菜单同名。生成与 first_input 的来源优先级由 CLI 已有事实链处理，UI 的 ZCodeTaskMeta 不含 titleSource，不推断来源或创造新版本。
+- 草稿、空白标题和默认 `New session` 在栏头及菜单统一显示已有本地化“新会话”。不向用户显示 sessionId 前缀。栏头可视觉截断；菜单显示完整标题，并在 title 属性保留完整名称。
+- 先由 CLI 更新标题，再由 Host 索引发布目录/元数据变更，最后两个入口从同一候选重算；无需重开会话。较新的占位快照不能把有效标题降级。
+
+```mermaid
+flowchart LR
+  CLI[CLI 标题 owner] -->|1. 更新标题| Host[Host 索引事实]
+  Host -->|2. 发布投影| Directory[既有目录事实]
+  Host -->|2. 发布投影| Cache[既有会话元数据]
+  Directory -->|3. 读取候选| Resolver[同一只读标题解析]
+  Cache -->|3. 读取候选| Resolver
+  Resolver --> Header[栏头]
+  Resolver --> Menu[布局菜单]
+  Directory --> Sidebar[侧栏原有事实展示]
+```
+
+- 窄屏顶栏继续为可见浮层操作留白。共享 `resolveTopOverlayLeadingPaddingClass` 使用导航隐藏所用的 `useIsMobileCompactViewport`（`max-width: 767px`）作为唯一断点：侧栏隐藏且 compact 时，各平台/fullscreen/update 变体相对原宽屏预留减去两个 28px 导航按钮及两个 4px 间隙，共 64px；宽屏与侧栏可见规则不变。WorkspaceHeader 和 SidePane 完整视图的 tab 栏共用此规则，不改变右侧 actions 实测占位。导航尺寸或隐藏断点变更时须同步维护本合同及回归，标题必须有可读宽度且不与可见浮层按钮重叠。
+- 验收：缺缓存、陈旧/空/占位缓存、手动标题、生成取代首输入、较新事实与恢复防降级、真正无标题/草稿、相同 path/ID 不同 identity；真实 Electron 通过侧栏改名后验证各入口即时同步，生成后同步及 renderer/cold 恢复不降级，检查两主题、两语言、窄窗及键盘。
+
 - Workspace-scoped title lookup uses `workspaceIdentity?.trim() || workspacePath`, matching remote workspace isolation. The active read also belongs to its scoped service/attachment and task ID; late responses cannot overwrite a newer target or request.
 - The rule applies to desktop `desktop-continuous` restore and web remote `web-remote-replayable` restore. Replayable recovery can use snapshots to refill runtime fields, but it must not bypass the same title authority merge.
 

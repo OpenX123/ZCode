@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceWorkbenchLayoutButton } from "@/project-sidebar/WorkbenchLayoutButton.js";
 import { useWorkbenchTabsStore } from "@/v4/workbench-tabs/index.js";
 
+const fixture = vi.hoisted(() => ({ tasks: [] as Record<string, unknown>[] }));
+
 vi.mock("@/store/zcodeSessionStore.js", () => ({
   useZCodeSessionStore: (selector: (state: unknown) => unknown) => selector({ workspaces: {} }),
 }));
@@ -12,7 +14,8 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({ intl: { formatMessage: ({ id }: { id: string }) => id } }),
 }));
 vi.mock("@/project-sidebar/ProjectDirectoryProvider.js", () => ({
-  useOptionalProjectDirectory: () => null,
+  useOptionalProjectDirectory: () =>
+    fixture.tasks.length ? { factTree: { tasks: fixture.tasks } } : null,
 }));
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children: import("react").ReactNode }) => children,
@@ -20,6 +23,7 @@ vi.mock("@/ControlHintTooltip.js", () => ({
 
 const scope = { workspacePath: "/project" };
 beforeEach(() => {
+  fixture.tasks = [];
   window.PointerEvent = MouseEvent as typeof PointerEvent;
   useWorkbenchTabsStore.setState({ groups: [], tabs: {}, focusedGroupId: "", ratio: 0.5 });
   useWorkbenchTabsStore.getState().initialize(scope, "session-a");
@@ -37,6 +41,17 @@ function setup() {
 }
 
 describe("右上工作台布局入口", () => {
+  it("菜单缺缓存时显示完整事实标题，不显示截短会话 ID", () => {
+    const title = "UX09 一个完整的目录事实标题";
+    fixture.tasks = [{ taskId: "session-a", workspacePath: "/project", title, updatedAt: 2 }];
+    const view = setup();
+    view.menu();
+    const tab = Object.values(useWorkbenchTabsStore.getState().tabs)[0]!;
+    const item = view.getByTestId(`workbench-activate-tab-${tab.id}`);
+    expect(item.textContent).toContain(title);
+    expect(item.getAttribute("title")).toBe(title);
+  });
+
   it("单一图标菜单分栏创建独立草稿，交换不改变视图身份", () => {
     const view = setup();
     const leftId = useWorkbenchTabsStore.getState().groups[0]!.activeTabId;

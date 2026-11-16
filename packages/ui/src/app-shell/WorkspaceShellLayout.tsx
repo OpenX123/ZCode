@@ -1473,6 +1473,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
                 isMacDesktop,
                 isMacFullscreen,
                 hasUpdateReady: false,
+                isCompactViewport,
               }),
               onSelectSurface: fullViewController.setSurface,
             }

@@ -29,4 +29,41 @@ describe("resolveTopOverlayLeadingPaddingClass", () => {
       resolveTopOverlayLeadingPaddingClass({ isSidebarVisible: false, hasUpdateReady: true }),
     ).toBe("pl-44");
   });
+
+  it.each([
+    [false, false, false, "pl-38", "pl-22"],
+    [false, false, true, "pl-44", "pl-28"],
+    [false, true, false, "pl-38", "pl-22"],
+    [false, true, true, "pl-44", "pl-28"],
+    [true, false, false, "pl-58", "pl-42"],
+    [true, false, true, "pl-66", "pl-50"],
+    [true, true, false, "pl-38", "pl-22"],
+    [true, true, true, "pl-48", "pl-32"],
+  ] as const)(
+    "keeps wide spacing and removes only hidden navigation space: mac=%s fullscreen=%s update=%s",
+    (isMacDesktop, isMacFullscreen, hasUpdateReady, wide, compact) => {
+      const flags = { isMacDesktop, isMacFullscreen, hasUpdateReady };
+      expect(
+        resolveTopOverlayLeadingPaddingClass({
+          ...flags,
+          isSidebarVisible: false,
+          isCompactViewport: false,
+        }),
+      ).toBe(wide);
+      expect(
+        resolveTopOverlayLeadingPaddingClass({
+          ...flags,
+          isSidebarVisible: false,
+          isCompactViewport: true,
+        }),
+      ).toBe(compact);
+      expect(
+        resolveTopOverlayLeadingPaddingClass({
+          ...flags,
+          isSidebarVisible: true,
+          isCompactViewport: true,
+        }),
+      ).toBe(false);
+    },
+  );
 });

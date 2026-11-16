@@ -82,18 +82,41 @@ const remote = {
 const renderHeaders = () => render(createElement(WorkbenchPaneHeaders, { onCreateTask: vi.fn() }));
 
 describe("每栏工作台标题", () => {
+  it("较新目录事实立即替换陈旧非空缓存，真正无标题与草稿同名", () => {
+    useWorkbenchTabsStore.getState().initialize(local, "session");
+    fixture.tasks = [
+      { taskId: "session", workspacePath: "/same", title: "新事实标题", updatedAt: 2 },
+    ];
+    fixture.workspaces = { "/same": { taskMetas: { session: { title: "旧缓存", updatedAt: 1 } } } };
+    const view = renderHeaders();
+    expect(view.getByRole("heading").textContent).toBe("新事实标题");
+    fixture.tasks = [];
+    fixture.workspaces = {};
+    view.rerender(createElement(WorkbenchPaneHeaders, { onCreateTask: vi.fn() }));
+    expect(view.getByRole("heading").textContent).toBe("workbench.newConversation");
+  });
+
   it("相同目录的本地和远端会话按完整身份显示各自项目、标题和菜单 scope", () => {
     const state = useWorkbenchTabsStore.getState();
     state.initialize(local, "same-session");
     state.openSession({ workspaceScope: remote, sessionId: "same-session" }, "right");
     const [left, right] = useWorkbenchTabsStore.getState().groups;
     fixture.tasks = [
-      { taskId: "same-session", workspacePath: "/same", projectId: "a", hostId: "local" },
+      {
+        taskId: "same-session",
+        workspacePath: "/same",
+        projectId: "a",
+        hostId: "local",
+        title: "左侧会话",
+        updatedAt: 2,
+      },
       {
         taskId: "same-session",
         ...remote,
         projectId: "b",
         hostId: "remote:server:host",
+        title: "右侧会话",
+        updatedAt: 2,
       },
     ];
     fixture.projects = [

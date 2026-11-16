@@ -7,7 +7,22 @@
     "./test/e2e/fixtures/upstream/conversation-session/conversation-session-task-title-marquee.json"
   ],
   "fileFixtures": [],
-  "providerRequestPolicy": "none",
-  "noProviderRequests": true,
-  "requests": []
+  "requests": [
+    {
+      "id": "ux09-title-title",
+      "description": "E2E_UX09_TITLE_SEED 首发的 case-local 标题生成响应。",
+      "kind": "common",
+      "timingPolicy": "controlled-stream",
+      "source": "synthetic",
+      "syntheticReason": "固定标题并延迟5秒，证明会话已建立后生成标题由真实CLI/Host链同步到工作台各入口。"
+    },
+    {
+      "id": "ux09-title-seed",
+      "description": "UX09: create a real CLI session for generated and custom title synchronization.",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "重命名只需一个已存在 session；首轮文案固定。"
+    }
+  ]
 }

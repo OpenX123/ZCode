@@ -4432,3 +4432,10 @@ AX03/AX07 的最终输入区合同以 external-agent-engines-spec.md 顶部为�
 | -------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | YD-PREVIEW-01  | partial | fileManagerPaneLayout 聚焦回归覆盖 source 初开300px；APC05加强实际尺寸断言；pending desktop-preview-layout补可见尺寸与目录切换 |
 | YD-SUBAGENT-01 | partial | subagentWorkCard/contract 单测覆盖折叠、状态与常驻入口；沿既有 subagent-work-card pending E2E 验收                             |
+
+
+## UX09 工作台标题统一（2026-11-15）
+
+accepted：扩展既有正式 `conversation-session-task-title-marquee.test.ts` 的 UX09 场景，保留 TTL01–TTL06 与 TTL07 的原有溢出断言；TTL07 旧 workspace button/hover 段按现有工作台合同迁移为只读项目、完整路径及会话名前后序断言。真实 CLI/Host 回放生成标题，侧栏右键与键盘 Enter 重命名后，栏头、菜单和侧栏无需重开即同名；renderer refresh 与 Electron reloadSession 冷恢复后不降级。菜单原生键盘打开并保留完整长名；草稿统一本地化新会话；Zai Light/中文/1280 与 Zai Dark/英文/430 窄窗留图和布局检查。完整 workspace identity 隔离由目标UT验证，真实 SSH/手机不列为已覆盖。case-local 上游仅含 UX09 限定 marker 的主回复和标题 sidecar，不使用通配回放。
+
+430 窄窗同时断言栏头标题具有实际可读宽度、与可见浮层按钮无重叠，并以真实快捷键进入 SidePane 完整视图，验证共享 leading 留白下对话 tab 不被遮挡。compact 与导航隐藏共用 `max-width: 767px` 判断，仅移除已隐藏导航的 64px 占位；宽屏及各平台预留变体由表驱动 UT 守护，不据此声称已在其它操作系统实测。

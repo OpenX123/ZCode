@@ -3,9 +3,39 @@ import {
   TID_WORKSPACE_HEADER,
   TID_WORKSPACE_PATH,
   TID_WORKSPACE_TITLE,
+  TID_SIDE_PANE_FULL_VIEW_CONVERSATION_TAB,
+  TID_SIDE_PANE_TOGGLE,
+  TID_CHAT_MODEL_SELECT_TRIGGER,
+  TID_CHAT_MODEL_SELECT_GROUP,
+  TID_CHAT_MODEL_SELECT_ITEM,
+  TID_V4_MODEL_CONFIG,
+  TID_V4_SESSION_PANE,
   testId,
 } from "@zcode/shared/test-ids";
+import { encodeCustomModelValue } from "@zcode/shared";
+import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
+import { Key } from "webdriverio";
 import { DEFAULT_WORKSPACE, clearAppData, waitForWorkspaceApp } from "../helpers/desktop-app.js";
+import {
+  setCurrentElectronRendererContentSize,
+  restoreElectronRendererContentSize,
+} from "../helpers/desktop-app.js";
+import {
+  prepareV4ConversationE2E,
+  sendV4Prompt,
+  waitForV4Pane,
+  waitForV4TimelineContaining,
+  selectV4TaskById,
+  startNewV4Draft,
+  getV4FocusedPaneId,
+} from "../helpers/v4-conversation.js";
+import {
+  ensureUpstreamProviderForE2E,
+  UPSTREAM_PROVIDER_ID,
+  UPSTREAM_MODEL,
+  UPSTREAM_THOUGHT_LEVEL,
+} from "../helpers/upstream-provider.js";
 import { ensureProjectExpanded } from "../helpers/project-sidebar.js";
 import {
   TASK_TITLE_MARQUEE_LONG_ID,
@@ -142,7 +172,12 @@ describe("TTL：Task 名称溢出走马灯", () => {
       `[data-testid="${TID_WORKSPACE_HEADER}"] [data-testid="${TID_WORKSPACE_PATH}"]`,
     );
     await icon.waitForDisplayed({ timeout: 15000 });
-    expect(await icon.getTagName()).toBe("button");
+    // 当前工作台合同：真实会话只读展示所属项目；旧 workspace button/hover popup 已退场。
+    expect(await icon.getTagName()).toBe("span");
+    expect(await icon.getText()).toBe("ZCodeProject");
+    expect(await icon.getAttribute("title")).toBe(DEFAULT_WORKSPACE);
+    expect(await icon.getAttribute("data-workspace-abs-path")).toBe(DEFAULT_WORKSPACE);
+    expect(await icon.$("button").isExisting()).toBe(false);
     expect(
       await browser.execute(
         (pathId, titleId) => {
@@ -155,20 +190,362 @@ describe("TTL：Task 名称溢出走马灯", () => {
       ),
     ).toBe(true);
     expect(await $("[data-workspace-header-branch]").isExisting()).toBe(false);
-    await icon.moveTo();
-    const info = await $("[data-workspace-header-context-info]");
-    await info.waitForDisplayed({ timeout: 5000 });
-    expect(await info.getText()).toContain("ZCodeProject");
-    expect(await info.$("[data-workspace-context-path]").getText()).toContain("ZCodeProject");
-    const activity = await info.$("[data-workspace-last-activity]");
-    await activity.waitForDisplayed({ timeout: 10000 });
-    expect(await activity.getText()).toMatch(/Last active|最近活动/);
-    expect(await info.$("[data-workspace-chat-counts]").isExisting()).toBe(false);
-    await $(`[data-testid="${TID_WORKSPACE_TITLE}"]`).moveTo();
-    await icon.click();
-    await info.waitForDisplayed({ timeout: 5000 });
+  });
+  it("UX09：生成、侧栏键盘重命名、刷新和冷恢复后栏头与菜单同名", async function () {
+    this.timeout(240_000);
+    await prepareUx09Draft();
+    await sendV4Prompt("E2E_UX09_TITLE_SEED 建立标题一致性会话");
+    await waitForV4TimelineContaining("UX09_TITLE_SEED_OK", 45_000);
+    const session = await waitForV4Pane(
+      (s) => Boolean(s.sessionId && s.sessionId !== "draft"),
+      "UX09 会话没有建立",
+    );
+    const id = session.sessionId!;
+    await waitForUnifiedTitle(id, "UX09 自动生成的完整会话标题");
+
+    const row = await $(`[data-testid="${testId(TID_TASK_ITEM, id)}"]`);
+    await row.click({ button: "right" });
+    // 入口固定在侧栏任务右键菜单；只在已可见菜单中按当前语言选择。
+    const items = await $$('[role="menuitem"]');
+    let selected = false;
+    for (const item of items) {
+      if (/^(重命名任务|Rename task)$/u.test(await item.getText())) {
+        await item.click();
+        selected = true;
+        break;
+      }
+    }
+    expect(selected).toBe(true);
+    const input = await $('[role="dialog"] input');
+    await input.waitForDisplayed();
+    const custom =
+      "UX09 手动命名后的完整会话标题 Long title remains available in every workbench entry";
+    await input.setValue(custom);
+    expect(await $(`[data-testid="${TID_WORKSPACE_TITLE}"]`).getAttribute("title")).not.toBe(
+      custom,
+    );
+    expect(await input.isFocused()).toBe(true);
+    await browser.keys(Key.Enter);
+    await input.waitForDisplayed({ reverse: true });
+    await waitForUnifiedTitle(id, custom);
+    await browser.refresh();
+    await waitForUnifiedTitle(id, custom);
+    await browser.reloadSession();
+    await selectV4TaskById(id, 45_000);
+    await waitForV4TimelineContaining("UX09_TITLE_SEED_OK", 45_000);
+    await waitForUnifiedTitle(id, custom);
+    await verifyUx09Appearance(id, custom);
+    await startNewV4Draft();
+    await browser.waitUntil(
+      async () =>
+        (await $(`[data-testid="${TID_WORKSPACE_TITLE}"]`).getAttribute("title")) === "新会话",
+      { timeout: 15_000 },
+    );
+    await assertWorkbenchMenuTitle("新会话");
   });
 });
+
+async function prepareUx09Draft() {
+  await prepareV4ConversationE2E({ skipProvider: true });
+  await ensureUpstreamProviderForE2E({ skipToolbarSelection: true });
+  const paneId = await getV4FocusedPaneId();
+  expect(paneId).toBeTruthy();
+  const pane = await $(`[data-testid="${testId(TID_V4_SESSION_PANE, paneId!)}"]`);
+  const config = await pane.$(`[data-testid="${TID_V4_MODEL_CONFIG}"]`);
+  const trigger = await pane.$(`[data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"]`);
+  // 旧会话保持挂载时会有多个同名控件；只从真实焦点 pane 打开当前菜单。
+  await trigger.waitForClickable();
+  await trigger.click();
+  const provider = await $('[data-testid="composer-provider-trigger"]');
+  await provider.waitForDisplayed();
+  await provider.moveTo();
+  const group = await $(
+    `[data-testid="${testId(TID_CHAT_MODEL_SELECT_GROUP, `registry-provider:${UPSTREAM_PROVIDER_ID}`)}"]`,
+  );
+  await group.waitForClickable();
+  await group.click();
+  const model = await $(
+    `[data-testid="${testId(TID_CHAT_MODEL_SELECT_ITEM, encodeCustomModelValue(UPSTREAM_PROVIDER_ID, UPSTREAM_MODEL))}"]`,
+  );
+  await model.waitForClickable();
+  await model.click();
+  await browser.waitUntil(async () => (await config.getAttribute("data-model")) === UPSTREAM_MODEL);
+  if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
+  if (UPSTREAM_THOUGHT_LEVEL) {
+    const slider = await $('[data-testid="composer-thought-slider"]');
+    await slider.waitForDisplayed();
+    const levels = JSON.parse((await slider.getAttribute("data-levels"))!) as string[];
+    const target = levels.indexOf(UPSTREAM_THOUGHT_LEVEL);
+    expect(target).toBeGreaterThanOrEqual(0);
+    if (Number(await slider.getValue()) !== target) {
+      await slider.click();
+      await browser.keys(Key.Home);
+      await browser.waitUntil(async () => Number(await slider.getValue()) === 0);
+      for (let index = 0; index < target; index++) {
+        await browser.waitUntil(
+          async () => (await slider.getAttribute("aria-disabled")) === "false",
+        );
+        await browser.keys(Key.ArrowRight);
+        await browser.waitUntil(async () => Number(await slider.getValue()) === index + 1);
+      }
+    }
+    await browser.waitUntil(
+      async () => (await config.getAttribute("data-thought")) === UPSTREAM_THOUGHT_LEVEL,
+    );
+  }
+  await browser.keys(Key.Escape);
+}
+
+async function waitForUnifiedTitle(sessionId: string, title: string) {
+  await browser.waitUntil(
+    async () => {
+      const heading = await $(`[data-testid="${TID_WORKSPACE_TITLE}"]`);
+      const row = await $(
+        `[data-testid="${testId(TID_TASK_ITEM, sessionId)}"] [data-task-title-copy="original"]`,
+      );
+      return (await heading.getAttribute("title")) === title && (await row.getText()) === title;
+    },
+    { timeout: 45_000, timeoutMsg: `UX09 栏头/侧栏未同步为 ${title}` },
+  );
+  await assertWorkbenchMenuTitle(title);
+}
+
+async function assertWorkbenchMenuTitle(title: string, screenshotName?: string) {
+  const trigger = await $('[data-testid="workbench-layout-menu"]');
+  await trigger.click();
+  await browser.waitUntil(async () => (await trigger.getAttribute("data-state")) === "open");
+  await browser.keys(Key.Escape);
+  // Radix 关闭动画后才恢复触发器焦点；原生按键须等待该可观察屏障，不能程序 focus。
+  await browser.waitUntil(() => trigger.isFocused(), {
+    timeoutMsg: "UX09 Escape 未将焦点还给布局入口",
+  });
+  await browser.keys(Key.Enter);
+  const item = await $('[data-testid^="workbench-activate-tab-"][title="' + title + '"]');
+  await item.waitForDisplayed();
+  expect(await item.getText()).toContain(title);
+  const layout = await browser.execute((node) => {
+    const rect = node.getBoundingClientRect();
+    const text = node.lastElementChild as HTMLElement;
+    return {
+      left: rect.left,
+      right: rect.right,
+      width: innerWidth,
+      textWidth: text.clientWidth,
+      textScrollWidth: text.scrollWidth,
+    };
+  }, item);
+  expect(layout.textWidth).toBeGreaterThan(0);
+  expect(layout.textScrollWidth).toBeLessThanOrEqual(layout.textWidth + 1);
+  expect(layout.left).toBeGreaterThanOrEqual(0);
+  expect(layout.right).toBeLessThanOrEqual(layout.width + 1);
+  if (screenshotName && process.env.ZCODE_E2E_ARTIFACT_DIR)
+    await browser.saveScreenshot(join(process.env.ZCODE_E2E_ARTIFACT_DIR, screenshotName));
+  await browser.keys(Key.Escape);
+  await browser.waitUntil(async () => (await trigger.getAttribute("data-state")) !== "open");
+}
+
+async function verifyUx09Appearance(id: string, title: string) {
+  const original = await setCurrentElectronRendererContentSize(1280, 900);
+  const minimum = await browser.electron.execute((electron, windowId) => {
+    const window = electron.BrowserWindow.fromId(windowId)!;
+    const old = window.getMinimumSize();
+    window.setMinimumSize(320, 400);
+    return old;
+  }, original.windowId);
+  try {
+    for (const [locale, theme, width] of [
+      ["zh-CN", "zai-light", 1280],
+      ["en-US", "zai-dark", 430],
+    ] as const) {
+      await browser.execute(
+        (language, color) => {
+          const actions = (
+            window as unknown as {
+              __testActions: { setLocale(value: string): void; setTheme(value: string): void };
+            }
+          ).__testActions;
+          actions.setLocale(language);
+          actions.setTheme(color);
+        },
+        locale,
+        theme,
+      );
+      await setCurrentElectronRendererContentSize(width, 900);
+      const drawer = await $('[data-testid="workspace-sidebar-drawer-backdrop"]');
+      if (await drawer.isDisplayed()) {
+        await browser.action("pointer").move({ x: 420, y: 450 }).down().up().perform();
+        await drawer.waitForDisplayed({ reverse: true });
+      }
+      await assertWorkbenchMenuTitle(title, `ux09-menu-${theme}-${locale}-${width}.png`);
+      const layout = await browser.execute(() => {
+        const heading = document.querySelector<HTMLElement>("[data-workbench-title]")!;
+        const rect = heading.getBoundingClientRect();
+        const describe = (node: Element | null) => {
+          if (!node) return null;
+          const box = node.getBoundingClientRect();
+          const style = getComputedStyle(node);
+          return {
+            tag: node.tagName,
+            className: node.className,
+            text: node.textContent?.slice(0, 100),
+            left: box.left,
+            right: box.right,
+            width: box.width,
+            height: box.height,
+            paddingLeft: style.paddingLeft,
+            paddingRight: style.paddingRight,
+            display: style.display,
+            visibility: style.visibility,
+          };
+        };
+        const header = heading.closest("header")!;
+        const actions = header.querySelector(".relative.ml-auto.shrink-0");
+        const logo = document.querySelector('[data-testid="desktop-top-logo-sidebar-toggle"]');
+        return {
+          width: innerWidth,
+          left: rect.left,
+          right: rect.right,
+          titleWidth: rect.width,
+          header: describe(header),
+          actions: describe(actions),
+          measuredActionsCss: getComputedStyle(header).getPropertyValue(
+            "--workbench-header-actions-width",
+          ),
+          group: describe(heading.closest("[data-workbench-header-group]")),
+          titleElement: describe(heading.querySelector("h1")),
+          leadingGroup: describe(logo?.parentElement ?? null),
+          leadingWrapper: describe(logo?.parentElement?.parentElement ?? null),
+          leadingButtons: Array.from(logo?.parentElement?.querySelectorAll("button") ?? []).map(
+            describe,
+          ),
+        };
+      });
+      if (process.env.ZCODE_E2E_ARTIFACT_DIR) {
+        await browser.saveScreenshot(
+          join(process.env.ZCODE_E2E_ARTIFACT_DIR, `ux09-${theme}-${locale}-${width}.png`),
+        );
+        await writeFile(
+          join(process.env.ZCODE_E2E_ARTIFACT_DIR, `ux09-layout-${width}.json`),
+          JSON.stringify({ id, title, requestedWidth: width, ...layout }, null, 2),
+        );
+      }
+      expect(layout.titleWidth).toBeGreaterThan(0);
+      expect(layout.left).toBeGreaterThanOrEqual(0);
+      expect(layout.right).toBeLessThanOrEqual(layout.width + 1);
+      if (width === 430) {
+        expect(layout.left).toBeGreaterThanOrEqual(layout.leadingGroup!.right);
+        expect(layout.titleElement!.width).toBeGreaterThanOrEqual(48);
+        expect(
+          Math.min(layout.right, layout.titleElement!.right) -
+            Math.max(layout.left, layout.titleElement!.left),
+        ).toBeGreaterThanOrEqual(24);
+        // 完整视图入口要求面板已实际展开；先在宽窗建立正式 SPFV 场景的同一前置，
+        // 再缩到窄窗验证共享留白，不能把「关闭面板后首次快捷键」当成布局回归。
+        await setCurrentElectronRendererContentSize(1280, 900);
+        const isSidePaneExpanded = () =>
+          browser.execute(() => {
+            const panel = document.querySelector(
+              '[data-workspace-side-frame="true"]',
+            )?.parentElement;
+            return Boolean(
+              panel &&
+              panel.getBoundingClientRect().width > 100 &&
+              getComputedStyle(panel).opacity === "1",
+            );
+          });
+        if (!(await isSidePaneExpanded())) {
+          await $(
+            `[data-testid="${TID_WORKSPACE_HEADER}"] [data-testid="${TID_SIDE_PANE_TOGGLE}"]`,
+          ).click();
+          await browser.waitUntil(isSidePaneExpanded, {
+            timeout: 10_000,
+            timeoutMsg: "UX09 完整视图前置：SidePane 未实际展开",
+          });
+        }
+        if ((await $$("[data-side-pane-tab-id]").length) === 0) {
+          const launcher = await $('[data-side-pane-open-tab-item="terminal"]');
+          await launcher.waitForClickable();
+          await launcher.click();
+          await browser.waitUntil(async () => (await $$("[data-side-pane-tab-id]").length) > 0);
+        }
+        await browser.keys(["Control", "Shift", "f"]);
+        const fullViewTab = await $(`[data-testid="${TID_SIDE_PANE_FULL_VIEW_CONVERSATION_TAB}"]`);
+        await fullViewTab.waitForDisplayed();
+        await setCurrentElectronRendererContentSize(430, 900);
+        const fullViewDrawer = await $('[data-testid="workspace-sidebar-drawer-backdrop"]');
+        if (await fullViewDrawer.isDisplayed()) {
+          await browser.action("pointer").move({ x: 420, y: 450 }).down().up().perform();
+          await fullViewDrawer.waitForDisplayed({ reverse: true });
+        }
+        await browser.waitUntil(
+          async () => {
+            return browser.execute((tabId) => {
+              const tab = document.querySelector<HTMLElement>(`[data-testid="${tabId}"]`)!;
+              const tabList = tab.closest('[role="tablist"]')!;
+              const rect = tab.getBoundingClientRect();
+              return (
+                getComputedStyle(tabList).paddingLeft === "88px" &&
+                rect.width > 0 &&
+                tab.contains(
+                  document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2),
+                )
+              );
+            }, TID_SIDE_PANE_FULL_VIEW_CONVERSATION_TAB);
+          },
+          { timeout: 5_000, timeoutMsg: "完整视图标题与窄屏浮层操作重叠" },
+        );
+        const fullViewLayout = await browser.execute((tabId) => {
+          const tab = document.querySelector<HTMLElement>(`[data-testid="${tabId}"]`)!;
+          const rect = tab.getBoundingClientRect();
+          const leading = document
+            .querySelector('[data-testid="desktop-top-logo-sidebar-toggle"]')!
+            .parentElement!.getBoundingClientRect();
+          return {
+            left: rect.left,
+            right: rect.right,
+            width: rect.width,
+            viewportWidth: innerWidth,
+            leadingRight: leading.right,
+            paddingLeft: getComputedStyle(tab.closest('[role="tablist"]')!).paddingLeft,
+          };
+        }, TID_SIDE_PANE_FULL_VIEW_CONVERSATION_TAB);
+        expect(await fullViewDrawer.isDisplayed()).toBe(false);
+        expect(fullViewLayout.paddingLeft).toBe("88px");
+        expect(fullViewLayout.left).toBeGreaterThanOrEqual(fullViewLayout.leadingRight);
+        expect(fullViewLayout.right).toBeLessThanOrEqual(fullViewLayout.viewportWidth);
+        expect(await fullViewTab.getAttribute("title")).toBe(title);
+        if (process.env.ZCODE_E2E_ARTIFACT_DIR) {
+          await browser.saveScreenshot(
+            join(process.env.ZCODE_E2E_ARTIFACT_DIR, "ux09-side-pane-430.png"),
+          );
+          await writeFile(
+            join(process.env.ZCODE_E2E_ARTIFACT_DIR, "ux09-side-pane-layout-430.json"),
+            JSON.stringify(fullViewLayout, null, 2),
+          );
+        }
+        await browser.keys(["Control", "Shift", "f"]);
+        await $(`[data-testid="${TID_WORKSPACE_HEADER}"]`).waitForDisplayed();
+      }
+    }
+  } finally {
+    await browser.electron.execute(
+      (electron, windowId, old) =>
+        electron.BrowserWindow.fromId(windowId)?.setMinimumSize(old[0]!, old[1]!),
+      original.windowId,
+      minimum,
+    );
+    await restoreElectronRendererContentSize(original);
+    await browser.execute(() => {
+      const actions = (
+        window as unknown as {
+          __testActions: { setLocale(value: string): void; setTheme(value: string): void };
+        }
+      ).__testActions;
+      actions.setLocale("zh-CN");
+      actions.setTheme("zai-light");
+    });
+  }
+}
 
 async function waitForTask(taskId: string) {
   const selectors = taskRowSelectors(taskId);

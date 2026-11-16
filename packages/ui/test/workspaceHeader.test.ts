@@ -3,6 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 
+const viewport = vi.hoisted(() => ({ compact: false }));
+vi.mock("@/lib/mobileTextInput.js", () => ({
+  useIsMobileCompactViewport: () => viewport.compact,
+}));
+
 vi.mock("@/WorkspaceHeaderSections.js", () => ({
   WorkspaceHeaderTitleSection: () =>
     createElement("div", {
@@ -87,6 +92,23 @@ describe("WorkspaceHeader", () => {
     expect(html.match(/data-header-variant=/g)).toHaveLength(1);
     expect(html).toContain("h-12");
     expect(html).not.toContain('role="tablist"');
+  });
+
+  it.each([
+    [false, "pl-38"],
+    [true, "pl-22"],
+  ] as const)("共享导航窄屏事实给分栏标题留白：compact=%s", async (compact, padding) => {
+    viewport.compact = compact;
+    try {
+      const html = await renderWorkspaceHeader({
+        isSidebarVisible: false,
+        workbenchTitles: (leadingPaddingClassName) =>
+          createElement("div", { "data-leading-padding": leadingPaddingClassName || "" }),
+      });
+      expect(html).toContain(`data-leading-padding="${padding}"`);
+    } finally {
+      viewport.compact = false;
+    }
   });
 
   it("uses the task variant by default and forwards it to the title section", async () => {
