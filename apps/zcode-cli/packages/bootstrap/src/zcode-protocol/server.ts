@@ -263,7 +263,7 @@ class ProtocolRuntimeActivity {
     string,
     {
       state: RuntimeActivityState;
-      app?: ZCodeProtocolSessionRecord["app"];
+      record?: Pick<ZCodeProtocolSessionRecord, "app">;
       observers: Set<{ active: boolean }>;
     }
   >();
@@ -286,18 +286,24 @@ class ProtocolRuntimeActivity {
     entry.state = state;
     if (state.closed) {
       entry.observers.clear();
-      entry.app = undefined;
+      entry.record = undefined;
     } else if (state.busy) for (const observer of entry.observers) observer.active = true;
     this.publish();
+  }
+
+  bindRecord(record: Pick<ZCodeProtocolSessionRecord, "app">, instanceId: number): void {
+    const entry = this.sessions.get(String(record.app.sessionId));
+    // 新 Core 的初始事实早于 record 注册；只能由该 app 的构造出口绑定，不能让迟到的旧调用者认领。
+    if (entry && !entry.state.closed && entry.state.instanceId === instanceId)
+      entry.record = record;
   }
 
   observe(record: Pick<ZCodeProtocolSessionRecord, "app">): { activate(): void; finish(): void } {
     const sessionId = String(record.app.sessionId);
     const entry = this.sessions.get(sessionId);
-    if (!entry || entry.state.closed || (entry.app && entry.app !== record.app)) {
+    if (!entry || entry.state.closed || entry.record !== record) {
       return { activate() {}, finish() {} };
     }
-    entry.app = record.app;
     const observer = {
       active: entry.state.busy || [...entry.observers].some((item) => item.active),
     };

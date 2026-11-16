@@ -3568,10 +3568,14 @@ async function createRecord(
   // automation-port 需要读取「本会话」的实时 model/mode/thought；record 在 app 之后才建。
   // 用可变持有者做惰性绑定：CronCreate 在 turn 中调用 create() 时 record 早已就绪。
   let ownSessionRecord: ZCodeProtocolSessionRecord | undefined;
+  let activityInstanceId: number | undefined;
   const app = await createWorkspaceZCodeApp(context, workspace, {
     env: context.deps.env,
     eventStore,
-    runtimeActivitySink: (state) => context.runtimeActivity?.updateCore(state),
+    runtimeActivitySink: (state) => {
+      if (state.sessionId === sessionId) activityInstanceId = state.instanceId;
+      context.runtimeActivity?.updateCore(state);
+    },
     resume,
     additionalDirectories: params.additionalDirectories ?? startupPreferences.additionalDirectories,
     runtimeConfig: {
@@ -3693,6 +3697,8 @@ async function createRecord(
     updatedAt: now,
     workspace,
   };
+  if (activityInstanceId !== undefined)
+    context.runtimeActivity?.bindRecord(record, activityInstanceId);
   const unsubscribeSessionEvents = app.runtime.subscribeEvents({
     onSessionEvent: (event) => onSessionEvent(context, record, event),
   });

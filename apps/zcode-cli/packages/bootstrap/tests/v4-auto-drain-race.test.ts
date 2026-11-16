@@ -3,6 +3,7 @@ import {
   SessionEventType,
   createTraceId,
   createTurnId,
+  type ProjectId,
   type SessionEvent,
   type SessionId,
 } from "@zcode/contracts";
@@ -18,8 +19,10 @@ import {
   reassembleTopicWireFrames,
   routedTopicWireFrameSchema,
 } from "@zcode/shared/zcode-protocol-v4";
+import { createSqliteSessionStore } from "@zcode/adapters/storage";
 import type { ZCodeApp, ZCodeAppOptions } from "../src/app/types.js";
 import { ZCodeProtocolAgentServer } from "../src/zcode-protocol/server.js";
+import type { ZCodeProtocolSessionRecord } from "../src/zcode-protocol/server-types.js";
 import { createFakeApp } from "./helpers/fake-zcode-app.js";
 
 const workspace = {
@@ -267,7 +270,297 @@ async function requestResult(
   return response.result;
 }
 
+async function createRecordReplacementHarness() {
+  const sessionId = "activity-real-record-replacement" as SessionId;
+  const store = await createSqliteSessionStore({ dbPath: ":memory:" });
+  const secondConstructed = deferred<void>();
+  const registerSecond = deferred<void>();
+  const snapshots: Array<ReturnType<typeof zcodeRuntimeActivitySnapshotSchema.parse>> = [];
+  function createGeneration(options: ZCodeAppOptions, instanceId: number) {
+    let eventSink: ((event: SessionEvent) => void) | undefined;
+    let sequence = 0;
+    let busy = false;
+    const completion = deferred<unknown>();
+    const core = (active: boolean, closed = false) => {
+      busy = active;
+      options.runtimeActivitySink?.({ sessionId, instanceId, busy, closed });
+    };
+    const emit = (type: SessionEvent["type"], payload: unknown) => {
+      sequence += 1;
+      eventSink?.({
+        id: `record-${instanceId}-event-${sequence}`,
+        sequenceNumber: sequence,
+        sessionId,
+        type,
+        payload,
+        traceId: createTraceId("record-replacement-trace"),
+        timestamp: new Date(1700000000000 + sequence),
+      } as SessionEvent);
+    };
+    const base = createFakeApp(options);
+    const readTodos = vi.fn().mockResolvedValue([]);
+    const readTarget = vi.fn().mockResolvedValue(null);
+    const reserveQueueItem = vi.fn().mockResolvedValue(true);
+    const sendInput = vi.fn().mockImplementation(async () => {
+      core(true);
+      return {
+        kind: "started_turn",
+        turnId: `record-turn-${instanceId}`,
+        completion: completion.promise,
+      };
+    });
+    const app = {
+      ...base,
+      readTodos,
+      readTarget,
+      reserveQueueItem,
+      sendInput,
+      close: async () => core(false, true),
+      setQueueAutoDrain: async (autoDrain: boolean) =>
+        emit(SessionEventType.QueueAutoDrainChanged, { autoDrain }),
+      runtime: {
+        ...base.runtime,
+        beginShutdown: () => core(false, true),
+        getActiveForegroundExecutionId: () => (busy ? `record-command-${instanceId}` : undefined),
+        subscribeEvents: (sink: { onSessionEvent?: (event: SessionEvent) => void }) => {
+          eventSink = sink.onSessionEvent;
+          return () => {
+            eventSink = undefined;
+          };
+        },
+      },
+    } as ZCodeApp;
+    return {
+      app,
+      core,
+      completion,
+      emit,
+      readTodos,
+      readTarget,
+      reserveQueueItem,
+      sendInput,
+      queue() {
+        const queueItemId = `record-${instanceId}-queued`;
+        emit(SessionEventType.TurnSteerQueued, {
+          pendingInputId: queueItemId,
+          inputId: `source-${queueItemId}`,
+          input: "queued",
+          inputPreview: "queued",
+          inputSize: 6,
+          delivery: "queue",
+          targetTurnId: `record-turn-${instanceId}`,
+          queueLength: 1,
+          intent: {
+            sourceCommandId: `source-${queueItemId}`,
+            queueItemId,
+            clientId: "replacement-client",
+            kind: "sendText",
+            admissionSeq: sequence + 1,
+            admittedAt: 1,
+            requestedDelivery: "queue",
+            admittedDelivery: "queue",
+          },
+        });
+      },
+    };
+  }
+  const generations: Array<ReturnType<typeof createGeneration>> = [];
+  const server = new ZCodeProtocolAgentServer({
+    cwd: workspace.workspacePath,
+    sessionStore: store,
+    createZCodeApp: async (options: ZCodeAppOptions) => {
+      const generation = createGeneration(options, generations.length + 1);
+      generations.push(generation);
+      generation.core(false);
+      if (generations.length === 2) {
+        secondConstructed.resolve();
+        await registerSecond.promise;
+      }
+      return generation.app;
+    },
+  });
+  server.setNotificationSink((message) => {
+    if (message.method === "process/runtimeActivity")
+      snapshots.push(zcodeRuntimeActivitySnapshotSchema.parse(message.params));
+    if (message.method === zcodeProtocolMethods.sessionRequestRuntimePreferences && "id" in message)
+      void server.handleMessage({
+        id: message.id,
+        result: { nativeSearchEnhancementsEnabled: false },
+      });
+  });
+  await requestResult(server, {
+    id: "record-create",
+    method: zcodeProtocolMethods.sessionCreate,
+    params: { sessionId, workspace },
+  });
+  await store.createSession({
+    id: sessionId,
+    projectID: "record-replacement-project" as ProjectId,
+    directory: workspace.workspacePath,
+    path: workspace.workspacePath,
+    slug: "record-replacement",
+    title: "record replacement",
+    version: "test",
+  });
+  generations[0]!.emit(SessionEventType.SessionCreated, { contextWindow: 128000, mode: "build" });
+  let commandSequence = 0;
+  const record = () =>
+    (
+      server as unknown as { context: { sessions: Map<string, ZCodeProtocolSessionRecord> } }
+    ).context.sessions.get(sessionId)!;
+  return {
+    generations,
+    snapshots,
+    record,
+    secondConstructed,
+    registerSecond,
+    async command(type: "sendText" | "setAutoDrain") {
+      const id = `replacement-command-${++commandSequence}`;
+      let baseRevision = 0;
+      if (type === "setAutoDrain") {
+        const snapshotId = `${id}-snapshot`;
+        await requestResult(server, {
+          id: snapshotId,
+          method: V4_METHODS.conversationSubscribe,
+          params: {
+            clientMode: "desktop-continuous",
+            connectionId: "replacement-read",
+            topic: conversationTopic(sessionId),
+          },
+        });
+        const initial = reassembleTopicWireFrames(
+          server
+            .takePostResponseMessages(snapshotId)
+            .map((message) => routedTopicWireFrameSchema.parse(message.params)),
+          conversationTopicFrameSchema,
+        );
+        if (initial.kind !== "complete" || initial.frame.payload.kind !== "snapshot")
+          throw new Error("missing replacement snapshot");
+        baseRevision = initial.frame.payload.snapshot.revision;
+      }
+      const result = await requestResult(server, {
+        id,
+        method: V4_METHODS.command,
+        params: {
+          baseRevision,
+          clientId: "replacement-client",
+          commandId: id,
+          issuedAt: 1,
+          sessionId,
+          type,
+          payload: type === "sendText" ? { text: "work" } : { autoDrain: true },
+        },
+      });
+      expect(result).toMatchObject({ status: "accepted" });
+    },
+    closeSession: () =>
+      requestResult(server, {
+        id: "record-close",
+        method: zcodeProtocolMethods.sessionClose,
+        params: { sessionId },
+      }),
+    resume: () =>
+      requestResult(server, {
+        id: "record-resume",
+        method: zcodeProtocolMethods.sessionResume,
+        params: { sessionId, workspace },
+      }),
+    async close() {
+      registerSecond.resolve();
+      for (const generation of generations) generation.completion.resolve({});
+      await server.shutdown();
+      server.disposeProjections();
+      store.close();
+    },
+  };
+}
+
 describe("v4 queue auto-drain foreground races", () => {
+  it("真实 record 换代：旧 mutation 在新 Core 构造与注册间返回，不能抢占新 app 观察归属", async () => {
+    const h = await createRecordReplacementHarness();
+    const oldMutation = deferred<[]>();
+    const newTarget = deferred<{ status: "paused" }>();
+    try {
+      const old = h.generations[0]!;
+      const oldRecord = h.record();
+      await h.command("sendText");
+      old.readTodos.mockClear();
+      old.readTodos.mockImplementationOnce(() => oldMutation.promise);
+      old.core(false);
+      old.completion.resolve({});
+      await vi.waitFor(() => expect(old.readTodos).toHaveBeenCalled());
+      await h.closeSession();
+      const resuming = h.resume();
+      await h.secondConstructed.promise;
+      const current = h.generations[1]!;
+      expect(current.app).not.toBe(old.app);
+      oldMutation.resolve([]);
+      await vi.waitFor(() => expect(oldRecord.residencyFinalizationCount).toBe(0));
+      h.registerSecond.resolve();
+      await resuming;
+      expect(h.record()).not.toBe(oldRecord);
+      expect(h.record().app).toBe(current.app);
+      current.emit(SessionEventType.SessionResumed, {});
+      current.readTarget.mockClear();
+      await h.command("sendText");
+      current.queue();
+      current.readTarget
+        .mockResolvedValueOnce(null)
+        .mockImplementationOnce(() => newTarget.promise);
+      const handoffStart = h.snapshots.length - 1;
+      current.core(false);
+      current.completion.resolve({});
+      await vi.waitFor(() => expect(current.readTarget).toHaveBeenCalledTimes(2));
+      expect(h.snapshots.at(-1)?.sessions).toMatchObject([{ instanceId: 2, busy: true }]);
+      for (const snapshot of h.snapshots.slice(handoffStart))
+        expect(snapshot.sessions).toMatchObject([{ instanceId: 2, busy: true }]);
+      expect(current.reserveQueueItem).not.toHaveBeenCalled();
+      newTarget.resolve({ status: "paused" });
+      await vi.waitFor(() => expect(h.record().residencyFinalizationCount).toBe(0));
+      expect(h.snapshots.at(-1)?.sessions).toMatchObject([{ instanceId: 2, busy: false }]);
+    } finally {
+      oldMutation.resolve([]);
+      newTarget.resolve({ status: "paused" });
+      await h.close();
+    }
+  });
+
+  it("真实 record 换代：旧 retry timer 不阻挡新 record，held 判定后不遗留 active 观察", async () => {
+    const h = await createRecordReplacementHarness();
+    vi.useFakeTimers();
+    try {
+      const old = h.generations[0]!;
+      const oldRecord = h.record();
+      old.core(true);
+      old.queue();
+      await h.command("setAutoDrain");
+      await vi.advanceTimersByTimeAsync(50);
+      await h.closeSession();
+      h.registerSecond.resolve();
+      await h.resume();
+      const current = h.generations[1]!;
+      expect(current.app).not.toBe(old.app);
+      expect(h.record()).not.toBe(oldRecord);
+      current.emit(SessionEventType.SessionResumed, {});
+      current.core(true);
+      current.queue();
+      await h.command("setAutoDrain");
+      current.readTarget.mockClear();
+      await vi.advanceTimersByTimeAsync(50);
+      expect(current.readTarget).not.toHaveBeenCalled();
+      current.readTarget.mockResolvedValue({ status: "paused" });
+      current.core(false);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(current.readTarget).toHaveBeenCalledOnce();
+      expect(h.snapshots.at(-1)?.sessions).toMatchObject([{ instanceId: 2, busy: false }]);
+      expect(old.reserveQueueItem).not.toHaveBeenCalled();
+      expect(current.reserveQueueItem).not.toHaveBeenCalled();
+    } finally {
+      await h.close();
+      vi.useRealTimers();
+    }
+  });
+
   it("activity：ACK 前预留，terminal 到 mutation/readTarget/remove 的已有交接连续 busy", async () => {
     const h = await createActivityHarness();
     const snapshotGate = deferred<[]>();

@@ -128,6 +128,7 @@ export interface ZCodeProtocolAgentServerContext {
   /** 只观察执行与既有 Bootstrap continuation，不参与 admission 或队列调度。 */
   runtimeActivity?: {
     updateCore(state: RuntimeActivityState): void;
+    bindRecord(record: Pick<ZCodeProtocolSessionRecord, "app">, instanceId: number): void;
     observe(record: Pick<ZCodeProtocolSessionRecord, "app">): {
       activate(): void;
       finish(): void;

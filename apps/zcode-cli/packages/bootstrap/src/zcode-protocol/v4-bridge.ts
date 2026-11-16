@@ -594,10 +594,15 @@ export function createConversationV4Gateway(
     },
   });
   let nativeExecutor: V4CommandExecutor;
-  const autoDrainRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  type AutoDrainRetry = {
+    record: ZCodeProtocolSessionRecord;
+    timer: ReturnType<typeof setTimeout>;
+  };
+  const autoDrainRetryTimers = new Map<string, AutoDrainRetry>();
   const queueFactVersions = new WeakMap<ZCodeProtocolSessionRecord, number>();
   const retryActivity = new WeakMap<ZCodeProtocolSessionRecord, { finish(): void }>();
   const autoDrainV4QueueIfReady = async (record: ZCodeProtocolSessionRecord): Promise<void> => {
+    if (context.sessions.get(record.app.sessionId) !== record) return;
     // Core 空闲不是 Bootstrap gate 已完成；观察同一实际 record 的既有交接，不能另建 lease。
     const activity = context.runtimeActivity?.observe(record);
     const inheritedRetry = retryActivity.get(record);
@@ -709,32 +714,49 @@ export function createConversationV4Gateway(
   };
   const scheduleAutoDrainRetry = (record: ZCodeProtocolSessionRecord): void => {
     const sessionId = record.app.sessionId;
+    if (context.sessions.get(sessionId) !== record) return;
+    const scheduled = autoDrainRetryTimers.get(sessionId);
+    if (scheduled && scheduled.record !== record) {
+      // sessionId 可复用，但原 timer 只属于旧 record；先撤销旧交接，才能登记新代的同一100ms重评。
+      clearTimeout(scheduled.timer);
+      autoDrainRetryTimers.delete(sessionId);
+      retryActivity.get(scheduled.record)?.finish();
+      retryActivity.delete(scheduled.record);
+    }
     const previous = retryActivity.get(record);
     const activity = context.runtimeActivity?.observe(record);
     activity?.activate();
     if (activity) retryActivity.set(record, activity);
     previous?.finish();
     if (autoDrainRetryTimers.has(sessionId)) return;
-    const timer = setTimeout(() => {
-      autoDrainRetryTimers.delete(sessionId);
-      if (context.sessions.get(sessionId) !== record) {
-        retryActivity.get(record)?.finish();
-        retryActivity.delete(record);
-        return;
-      }
-      void autoDrainV4QueueIfReady(record).catch((error: unknown) => {
-        context.logger?.warn("v4 auto-drain idle reevaluation failed", {
-          error: error instanceof Error ? error.message : String(error),
-          sessionId,
+    const retry: AutoDrainRetry = {
+      record,
+      timer: setTimeout(() => {
+        if (autoDrainRetryTimers.get(sessionId) !== retry) return;
+        autoDrainRetryTimers.delete(sessionId);
+        if (context.sessions.get(sessionId) !== record) {
+          retryActivity.get(record)?.finish();
+          retryActivity.delete(record);
+          return;
+        }
+        void autoDrainV4QueueIfReady(record).catch((error: unknown) => {
+          context.logger?.warn("v4 auto-drain idle reevaluation failed", {
+            error: error instanceof Error ? error.message : String(error),
+            sessionId,
+          });
         });
-      });
-    }, 100);
-    timer.unref?.();
-    autoDrainRetryTimers.set(sessionId, timer);
+      }, 100),
+    };
+    retry.timer.unref?.();
+    autoDrainRetryTimers.set(sessionId, retry);
   };
   const coreHost: V4CommandCoreHost = {
     observeRuntimeActivity: (record) =>
-      context.runtimeActivity?.observe(record as ZCodeProtocolSessionRecord) ?? { finish() {} },
+      context.sessions.get(record.app.sessionId) === record
+        ? (context.runtimeActivity?.observe(record as ZCodeProtocolSessionRecord) ?? {
+            finish() {},
+          })
+        : { finish() {} },
     // 同一注册表对象引用：view 是旧 record 的结构化窄视图，字段变更双向可见。
     getRecord: (sessionId) => context.sessions.get(sessionId),
     // 同一登记表实例：broker（旧目录）注册反向请求 deferred，
@@ -1130,6 +1152,7 @@ export function createConversationV4Gateway(
       return { available: true };
     },
     afterLegacyStateMutation: async (record, reason) => {
+      if (context.sessions.get(record.app.sessionId) !== record) return;
       const activity = context.runtimeActivity?.observe(record as ZCodeProtocolSessionRecord);
       try {
         await afterStateMutation(context, record as ZCodeProtocolSessionRecord, reason);
