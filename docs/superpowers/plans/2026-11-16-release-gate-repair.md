@@ -42,9 +42,9 @@
 pnpm exec vitest run packages/services/test/skillsService.test.ts packages/services/test/terminalService.test.ts packages/services/src/project/contract.test.ts --reporter=json --outputFile=<本任务 scratch>/task-1-red.json
 ```
 
-预期：skills 夹具只写 HOME 而生产 homedir 在 Windows 读取 USERPROFILE；终端某用例在 Windows 仍断言 POSIX shell；project 本地路径断言未按平台 normalize。逐项由实际源码确认，不能仅靠预期改测试。
+RED 已复现 22 条失败：skills 20、terminal 1、project 1。源码纠正了最初的 HOME 假设：生产 `resolveUserHomeDir` 与测试 homedir mock 已优先 HOME；实际技能污染来自 Windows 临时目录向上发现了真实用户目录中的 `.git`，随后把该祖先工作区的 `.agents` 扫入结果。终端某用例在 Windows 仍断言 POSIX shell；project 本地路径断言未按平台 normalize。原始失败记录保留，不把初步假设记成确认根因。
 
-- [ ] **Step 2: 收紧环境夹具。** 使用文件已有的环境保存/恢复模式隔离 HOME 与 USERPROFILE 或受控 `node:os` homedir；确保 `vi.resetModules` 前即生效。增加或保留“用户技能仅来自本次临时 home”的断言。终端测试显式选择被测平台，保留 Windows PowerShell/cmd 与 POSIX 启动参数覆盖，并隔离用户配置读取。不修改生产逻辑把 `/bin/sh` 强加给 Windows。
+- [ ] **Step 2: 收紧环境夹具。** 为每个临时 skills home 建立受控 `.git` 工作区边界，阻止发现真实祖先仓库；使用文件已有的环境保存/恢复模式隔离 HOME 与 USERPROFILE，确保 `vi.resetModules` 前即生效。增加或保留“用户技能仅来自本次临时 home”的断言。终端测试显式选择被测平台，保留 Windows PowerShell/cmd 与 POSIX 启动参数覆盖，并隔离 APPDATA、LOCALAPPDATA、XDG_CONFIG_HOME 等实际配置输入。不修改生产逻辑把 `/bin/sh` 强加给 Windows。
 
 ```ts
 // 夹具使用临时 home；测试结束后恢复原始环境，防止读到操作者的真实技能。
