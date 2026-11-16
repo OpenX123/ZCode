@@ -472,7 +472,6 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 3: 精确边界与 GREEN。** 验证单线路默认主卡真实入口、原 updateSource 重试、精确 locator；无 locator/非法 locator/错误 code 不出现可信恢复入口，且不触发定位；多线路主卡与其他线路不串 owner；snapshot 恢复后入口/定位动作消失或严格失效，遵从既有 Dialog 生命周期。保留现有 Toast 入口、未完成连接入口及所有已有断言，完整运行 sourceServerManagementPanel.test.ts。测试先保存再精确恢复自己改动的 clipboard/scrollIntoView 描述符，不进一步扩大已有污染。
 - [ ] **Step 4: 静态、自审与交接。** 定向 lint/format/diff、修改后默认真实架构检查；不 build/dist/打包/启动 E2E。报告 task-19-report.md，逐项列 RED/GREEN 命令/退出码/统计、owner、实际改动和未验 E2E；提交正式文件后释放 writer，controller 独立 spec/quality 审查。原 Task16/12/13 仍 OPEN，Task19 通过不冒称整体可发布。
 
-
 ### Task 20: 防止打包桌面 Agent 被启动目录中的仓库 dist 抢先匹配
 
 **根因证据：** Task16 Settings 真实 Main 日志的 spawn preflight argv 命中仓库 `apps/zcode-cli/packages/cli/dist/zcode.cjs`，虽包内 `resources/glm/zcode.cjs` 存在且摘要正确。WDIO packaged 分支已清除显式 COMMAND/ARGS_JSON/CWD。现 resolver 在 Electron 随包链前调用从 process.cwd 向上找仓库 dist 的分支；Main utility Host 继承启动 cwd，因此打包 app 从仓库启动时也会受影响。未把首次观察时间当引入提交。
@@ -486,6 +485,19 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 3: GREEN 与兼容。** 回归 Electron 精确随包+仓库共存、显式 env 原优先级、精确随包不存在时 dev 仓库优先于历史 bundle、开发字节码及 JS storage 保持、非 Electron不选桌面JS而继续 SSH/native fallback。完整运行两个受影响既有 suite（必要新增回归应合入既有文件），不修改 timeout/skip 或放宽 schema；不能把 mock 路径字符串比较冒称真实 packaged 运行。
 - [ ] **Step 4: 静态、自审与交接。** 定向 lint/format/diff、修改后默认架构，报告 task-20-report.md，包括 RED/GREEN 命令/统计、明确未验 E2E。只提交正式文件、释放 writer，独立 spec/quality 审查；不 build/dist/E2E。随后原 Task16 用匹配新包的 Main 实际 spawn argv+原始协议生命周期+随包 hash 的三者一致性作为准入，Task16/12/13 仍 OPEN。
 
+### Task 21: 恢复真实本地运行会话的应用退出确认事实
+
+**实证与未知：** Task16 新包 Settings `task16-settings-20261117-031456` 已走通当前在线卡片“查看详情”→原重试→组件 catch/Toast→详情。Main 59952 的原生产逻辑收到 tray-quit 后直接进入正常 Host 清理并退出，未出现确认记录，CUA clicks=0。该包构建日志和官方 ASAR 均证 ZCODE_ENV=production。Agent 原始第二 turn 在退出请求前 started/model.request.started，直到 Host 清理期间才 failed；受控 replay 在当时为 pending。没有任何 Main running-count 更新日志，但 request 时未直接采样 Main count/canStop，具体丢失机制仍须调查，不能直接宣称根因为 sendPrompt/submitCommand 差异。原件见 Task16 对应 run 的 quit-readonly-diagnosis.json 与 runtime-logs。
+
+**Files:** 先读 `packages/desktop/src/main/index.ts` / `desktopHostProcess.ts`、`packages/desktop/src/host/index.ts` / `hostWorkspaceTaskTracker.ts`、当前本地 Agent service/SDK 命令与运行事件边界及其现有精确测试。仅修改调查证明的 owning files 和对应测试；必要窄 helper 按治理登记，不迁移整个 Host 或绕过 admission。先更新 `docs/desktop/standalone-coding-harness-spec.md` 与本门禁 spec；跨协议变更确有必要时才同步 shared 严格 schema/运行时校验，须先给 controller 证据与最小方案。
+
+**Interfaces:** CLI/runtime 仍是 accepted/running/terminal 事实 owner，Host 为窗口内事实投影 owner，Main 只聚合现有 Host 报告并沿原生产退出确认/清理路径。不能用 Renderer canStop/optimistic store、注入计数或轮询推断事实，不能新增第二 admission。保留 workspaceIdentity/path fallback、owner/lease、source/session/generation 与 stale-run 防护。现有远端、legacy sendPrompt、runtime 释放和正常 idle 退出不退化。未知所有者或必须新增状态/事件时，先只读给最小选项与代价供 controller 裁决，不私建通用状态框架。
+
+- [ ] **Step 1: 精确只读归因。** 固定 Node24.14.0/pnpm10.33.2，freshness/规定架构检查，读取目标受控 context。沿真实 V4 本地提交、运行事件、Host projection 和 Main map 的实际路径，逐段给源码/已有日志证据；明确已证与待证，不重跑桌面、build、emit、网络/SSH 或操作 UI。先在报告写入最小修复方案与真实调用路径；不以文件名或时间接近推断引入提交。
+- [ ] **Step 2: owning spec 与精确 RED。** 先补产品合同、唯一状态所有者与事件次序图，再写覆盖实际 V4 命令路径的定向 RED。验证真实 accepted/running 跨过 RPC ACK/设置视图切换仍保留退出所需计数，直到 completed/failed/cancelled/release 的真实终态才清除。受控 deferred/真实事件驱动，不固定 sleep 或延长 timeout，不只测脱离调用者的纯加减计数器。
+- [ ] **Step 3: 最小 owner 修复与兼容。** 复用既有运行态事件与 report 接口，修复已证断点，不改确认框文案/默认取消、生产环境限制或退出预算。queued/busy admission、重复事件、迟到旧 run 终态、独立 workspace identity/Host、异常释放和幂等清理均不得误增/误减；保留当前合法远端和 legacy 链路。修 bug 的中文注释说明根因及依据，不以 catch 吞错或附加超时掩盖同步。
+- [ ] **Step 4: GREEN、静态与独立审查。** 完整跑实际受影响既有 suite，精确 RED→GREEN；类型/格式/lint/diff/真实架构执行并保留输出。报告 `task-21-report.md` 包含根因证据、owner/事件图、命令/退出码/统计、兼容范围、未覆盖项与后续构建依赖。只提交本任务正式文件并释放 writer，controller 派独立 spec/quality 审查；本任务不自行 build/stage/pack/E2E，不派子 agent。
+- [ ] **Step 5: 交接真实验收。** 独审通过后由原 Task16 唯一 owner 消费匹配最终源码的新包重验实际原生取消→运行保留→再次确认→Host 收口→完整旧树零→仅清 A→同 profile 恢复。构建方案由实际生产差异决定；未变 Agent/Task18 资源不擅自重 stage，受影响输入不能复用旧字节。旧 Task16 首装/向导/严格 MODE GREEN 保留为旧包阶段证据，最终同包验收、Task12/13 和完整发布门禁仍 OPEN。
 
 ## 后续执行规则
 
