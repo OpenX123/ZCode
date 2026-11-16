@@ -10,6 +10,8 @@ const profile: ConnectionProfile = {
   sourceServerId: "3cd4f9da-cd79-426c-9d70-75f36e9f6a87",
   transport: "ssh",
   target: { kind: "ssh", host: "example.test", username: "dev" },
+  // ConnectionProfile 是 schema 输出类型，夹具须显式包含默认后的生命周期状态。
+  lifecycleState: "active",
   createdAt: 1,
 };
 const target: RemoteTarget = {

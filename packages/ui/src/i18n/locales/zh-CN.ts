@@ -377,7 +377,7 @@ const zhCN: Record<string, string> = {
   "remote.cacheRecovery.locate": "定位本机锁文件夹",
   "remote.cacheRecovery.copySteps": "复制操作步骤",
   "remote.cacheRecovery.steps":
-    "1. 先定位本机锁文件夹，保留文件管理器窗口，并复制本说明。\n2. 保存工作，从托盘选择“退出”，或在 macOS 使用 Cmd+Q / 应用菜单完整退出全部应用实例。取消退出确认、关闭窗口或隐藏应用不算退出。\n3. 等待 Host 清理完成后，仅手动删除已定位目录中的 .tar.gz.lock 文件夹，保留其他归档和 SHA 目录。\n4. 重启应用，从原入口显式重试连接或更新。",
+    "1. 先定位本机锁文件夹，保留文件管理器窗口，并复制本说明。\n2. 保存工作，从托盘选择“退出”，或在 macOS 使用 Cmd+Q / 应用菜单完整退出全部应用实例。Linux 无托盘时使用应用正常退出入口：关闭全部窗口且未隐藏后，等待应用完整退出。取消退出确认或仅隐藏应用不算完整退出，仍有任何实例运行时不要删除。\n3. 等待 Host 清理完成后，仅手动删除已定位目录中的 .tar.gz.lock 文件夹，保留其他归档和 SHA 目录。\n4. 重启应用，从原入口显式重试连接或更新。",
   "remote.cacheRecovery.opened": "已打开锁所在目录，请保留文件管理器窗口并按步骤操作。",
   "remote.cacheRecovery.failed": "无法定位本机锁文件夹，请重新连接后重试。",
   "remote.cacheRecovery.desktopRequired":

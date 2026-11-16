@@ -13,6 +13,9 @@ import { RemoteProjectConnectionDetails } from "@/WorkspaceSidebar/RemoteProject
 import { RemoteConnectionConnectingStep } from "@/remote-connection/RemoteConnectionConnectingStep.js";
 import { resolveRemoteConnectionPresentation } from "@/lib/remoteConnectionPresentation.js";
 import zh from "@/i18n/locales/zh-CN.js";
+import en from "@/i18n/locales/en-US.js";
+
+const recoveryLocale = vi.hoisted(() => ({ current: "zh-CN" }));
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -20,16 +23,26 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
       formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) =>
         Object.entries(values ?? {}).reduce(
           (text, [key, value]) => text.replaceAll(`{${key}}`, String(value)),
-          zh[id] ?? id,
+          (recoveryLocale.current === "en-US" ? en : zh)[id] ?? id,
         ),
     },
   }),
 }));
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  recoveryLocale.current = "zh-CN";
+});
 
-it.each([false, true])(
-  "缓存恢复向导实际按钮使用 locator，复制固定步骤且保留原重试：升级=%s",
-  async (upgradeRequired) => {
+it.each([
+  { locale: "zh-CN", upgradeRequired: false },
+  { locale: "zh-CN", upgradeRequired: true },
+  { locale: "en-US", upgradeRequired: false },
+  { locale: "en-US", upgradeRequired: true },
+])(
+  "缓存恢复向导实际按钮使用 locator，复制固定步骤且保留原重试：语言=$locale，升级=$upgradeRequired",
+  async ({ locale, upgradeRequired }) => {
+    recoveryLocale.current = locale;
+    const messages = locale === "en-US" ? en : zh;
     const cacheRecovery = {
       kind: "source-server-cache-lock" as const,
       version: ZCODE_VERSION,
@@ -62,27 +75,62 @@ it.each([false, true])(
         children: createElement(RemoteConnectionConnectingStep, props),
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "定位本机锁文件夹" }));
+    fireEvent.click(screen.getByRole("button", { name: messages["remote.cacheRecovery.locate"]! }));
     expect(open).toHaveBeenCalledWith(cacheRecovery);
-    fireEvent.click(screen.getByRole("button", { name: "复制操作步骤" }));
-    expect(copy.mock.calls[0]?.[0]).toContain("退出");
-    for (const step of [
-      "保留文件管理器窗口",
-      "保存工作",
-      "全部应用实例",
-      "Cmd+Q",
-      "取消退出确认",
-      "等待 Host 清理完成",
-      "仅手动删除",
-      ".tar.gz.lock",
-      "保留其他归档和 SHA 目录",
-      "原入口显式重试",
-    ])
-      expect(copy.mock.calls[0]?.[0]).toContain(step);
+    fireEvent.click(
+      screen.getByRole("button", { name: messages["remote.cacheRecovery.copySteps"]! }),
+    );
+    const copiedSteps = copy.mock.calls[0]?.[0];
+    // Linux 无托盘时关完窗口可触发正常退出，不能把所有关窗笼统描述为未退出。
+    const requiredSteps =
+      locale === "en-US"
+        ? [
+            "keep the file manager window open",
+            "Save your work",
+            "every app instance",
+            "Cmd+Q",
+            "On Linux without a system tray",
+            "normal quit path",
+            "close all windows without hiding them",
+            "wait for the app to fully exit",
+            "Canceling the quit confirmation",
+            "hiding the app",
+            "Do not delete anything while any instance is still running",
+            "Wait for Host cleanup to finish",
+            "Manually delete only",
+            ".tar.gz.lock",
+            "Keep all other archives and SHA directories",
+            "explicitly retry",
+            "original entry point",
+          ]
+        : [
+            "保留文件管理器窗口",
+            "保存工作",
+            "全部应用实例",
+            "Cmd+Q",
+            "Linux 无托盘时",
+            "正常退出入口",
+            "关闭全部窗口且未隐藏",
+            "等待应用完整退出",
+            "取消退出确认",
+            "隐藏应用",
+            "仍有任何实例运行时不要删除",
+            "等待 Host 清理完成",
+            "仅手动删除",
+            ".tar.gz.lock",
+            "保留其他归档和 SHA 目录",
+            "原入口显式重试",
+          ];
+    for (const step of requiredSteps) expect(copiedSteps).toContain(step);
+    expect(copiedSteps).not.toContain(
+      locale === "en-US"
+        ? "Canceling the quit confirmation, closing a window, or hiding the app does not quit it"
+        : "取消退出确认、关闭窗口或隐藏应用不算退出",
+    );
     expect(copy.mock.calls[0]?.[0]).not.toContain(cacheRecovery.sha256);
     expect(copy.mock.calls[0]?.[0]).not.toContain(cacheRecovery.target);
     expect(document.body.textContent).not.toContain(cacheRecovery.sha256);
-    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    fireEvent.click(screen.getByRole("button", { name: messages["common.retry"]! }));
     expect(onRetry).toHaveBeenCalledOnce();
     view.rerender(
       createElement(PlatformProvider, {
@@ -97,7 +145,9 @@ it.each([false, true])(
       }),
     );
     await act(async () => pending.resolve({ success: false, error: "old failure" }));
-    expect(screen.queryByRole("button", { name: "定位本机锁文件夹" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: messages["remote.cacheRecovery.locate"]! }),
+    ).toBeNull();
     expect(document.body.textContent).not.toContain("old failure");
   },
 );

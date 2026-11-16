@@ -413,7 +413,7 @@ const enUS: Record<string, string> = {
   "remote.cacheRecovery.locate": "Locate local lock folder",
   "remote.cacheRecovery.copySteps": "Copy recovery steps",
   "remote.cacheRecovery.steps":
-    "1. Locate the local lock folder, keep the file manager window open, and copy these instructions.\n2. Save your work. Choose Quit from the system tray, or use Cmd+Q / the app menu on macOS, to fully quit every app instance. Canceling the quit confirmation, closing a window, or hiding the app does not quit it.\n3. Wait for Host cleanup to finish. Manually delete only the .tar.gz.lock folder in the located directory. Keep all other archives and SHA directories.\n4. Restart the app and explicitly retry the connection or update from the original entry point.",
+    "1. Locate the local lock folder, keep the file manager window open, and copy these instructions.\n2. Save your work. Choose Quit from the system tray, or use Cmd+Q / the app menu on macOS, to fully quit every app instance. On Linux without a system tray, use the app's normal quit path: close all windows without hiding them, then wait for the app to fully exit. Canceling the quit confirmation or only hiding the app does not fully quit it. Do not delete anything while any instance is still running.\n3. Wait for Host cleanup to finish. Manually delete only the .tar.gz.lock folder in the located directory. Keep all other archives and SHA directories.\n4. Restart the app and explicitly retry the connection or update from the original entry point.",
   "remote.cacheRecovery.opened":
     "Opened the lock's directory. Keep the file manager open and follow the steps.",
   "remote.cacheRecovery.failed": "Unable to locate the local lock folder. Reconnect and retry.",
