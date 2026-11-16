@@ -1,11 +1,5 @@
 // @vitest-environment jsdom
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceSidebarFooter } from "@/WorkspaceSidebarFooter.js";
@@ -46,10 +40,8 @@ beforeEach(() => {
     get matches() {
       return systemDark;
     },
-    addEventListener: (_event: string, listener: () => void) =>
-      listeners.add(listener),
-    removeEventListener: (_event: string, listener: () => void) =>
-      listeners.delete(listener),
+    addEventListener: (_event: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_event: string, listener: () => void) => listeners.delete(listener),
   }));
 });
 
@@ -96,9 +88,7 @@ describe("侧栏主题快捷按钮", () => {
   it("System 偏好变化只更新图标和名称，不写主题偏好", () => {
     const onThemeChange = vi.fn();
     footer("system", onThemeChange);
-    expect(
-      screen.getByRole("button", { name: "Switch to dark theme" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Switch to dark theme" })).toBeTruthy();
     act(() => {
       systemDark = true;
       for (const listener of listeners) listener();

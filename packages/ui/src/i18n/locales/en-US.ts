@@ -3073,6 +3073,7 @@ const enUS: Record<string, string> = {
   "settings.themeModeDescription": "Choose light, dark, or follow the system theme.",
   "settings.desktopZoom": "Window zoom",
   "settings.desktopZoomDescription": "Scale the whole desktop window.",
+  "settings.desktopZoomLoadFailed": "Unable to read window zoom.",
   "settings.themeMode.light": "Light",
   "settings.themeMode.dark": "Dark",
   "settings.themeMode.zai-light": "Light",

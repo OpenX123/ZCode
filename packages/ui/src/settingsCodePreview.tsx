@@ -23,6 +23,7 @@ import {
 import { getCodePreviewTheme } from "@/lib/codePreviewPreferences.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
+import { logger } from "@/logger.js";
 import type { CodePreviewSettings } from "@/store/index.js";
 import { THEME_MODES } from "@/settings/settingsPageConfig.js";
 import { MAX_UI_FONT_SIZE_PX, MIN_UI_FONT_SIZE_PX } from "@/lib/uiFontSize.js";
@@ -34,30 +35,56 @@ export function DesktopZoomSettingsRow({ isDesktop }: { isDesktop: boolean }) {
   const { intl } = useZCodeIntl();
   const platform = usePlatform();
   const [zoomLevel, setZoomLevel] = useState<number | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [retrySequence, setRetrySequence] = useState(0);
 
   useEffect(() => {
     if (!isDesktop) return;
 
     let cancelled = false;
-    let receivedEvent = false;
+    let subscribing = true;
+    let receivedLiveEvent = false;
+    setZoomLevel(null);
+    setLoadFailed(false);
     const dispose = platform.onDesktopZoomLevelChanged?.((state) => {
       if (cancelled || !Number.isFinite(state.zoomLevel)) return;
-      receivedEvent = true;
+      // preload 注册时同步回放缓存；只有注册完成后的事件才比权威查询更新。
+      if (!subscribing) {
+        receivedLiveEvent = true;
+        setLoadFailed(false);
+      }
       setZoomLevel(state.zoomLevel);
     });
-    void platform.getDesktopZoomLevel?.().then((state) => {
-      // 窗口事件可能先于异步初值返回；旧初值不能覆盖最新缩放级别。
-      if (!cancelled && !receivedEvent && Number.isFinite(state.zoomLevel)) {
-        setZoomLevel(state.zoomLevel);
-      }
-    }).catch(() => {
-      // 平台查询失败时保持操作禁用，等待后续窗口缩放事件给出权威级别。
-    });
+    subscribing = false;
+    const handleReadFailure = (error: unknown) => {
+      if (cancelled) return;
+      logger.warn("[DesktopZoomSettingsRow] 读取窗口缩放级别失败", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // 查询失败应可重试；若已有更新的窗口事件，它已提供了权威级别。
+      if (!receivedLiveEvent) setLoadFailed(true);
+    };
+    if (!platform.getDesktopZoomLevel) {
+      handleReadFailure(new Error("getDesktopZoomLevel unavailable"));
+    } else {
+      void platform
+        .getDesktopZoomLevel()
+        .then((state) => {
+          if (cancelled || receivedLiveEvent) return;
+          if (!Number.isFinite(state?.zoomLevel)) {
+            handleReadFailure(new Error("invalid desktop zoom level"));
+            return;
+          }
+          setZoomLevel(state.zoomLevel);
+          setLoadFailed(false);
+        })
+        .catch(handleReadFailure);
+    }
     return () => {
       cancelled = true;
       dispose?.();
     };
-  }, [isDesktop, platform]);
+  }, [isDesktop, platform, retrySequence]);
 
   if (!isDesktop) return null;
 
@@ -91,22 +118,40 @@ export function DesktopZoomSettingsRow({ isDesktop }: { isDesktop: boolean }) {
       label={intl.formatMessage({ id: "settings.desktopZoom" })}
       description={intl.formatMessage({ id: "settings.desktopZoomDescription" })}
       control={
-        <div className="flex items-center gap-2">
-          {controls.map(({ command, label, Icon, disabled, testId }) => (
-            <Button
-              key={command}
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              data-testid={testId}
-              aria-label={label}
-              title={label}
-              disabled={disabled}
-              onClick={() => void platform.executeDesktopCommand(command)}
+        <div className="flex min-w-0 flex-col items-end gap-2">
+          <div className="flex items-center gap-2">
+            {controls.map(({ command, label, Icon, disabled, testId }) => (
+              <Button
+                key={command}
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                data-testid={testId}
+                aria-label={label}
+                title={label}
+                disabled={disabled}
+                onClick={() => void platform.executeDesktopCommand(command)}
+              >
+                <Icon className="size-4" />
+              </Button>
+            ))}
+          </div>
+          {loadFailed ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-end gap-2 text-ui-sm text-destructive"
             >
-              <Icon className="size-4" />
-            </Button>
-          ))}
+              <span>{intl.formatMessage({ id: "settings.desktopZoomLoadFailed" })}</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setRetrySequence((sequence) => sequence + 1)}
+              >
+                {intl.formatMessage({ id: "common.retry" })}
+              </Button>
+            </div>
+          ) : null}
         </div>
       }
     />

@@ -2858,6 +2858,7 @@ const zhCN: Record<string, string> = {
   "settings.themeModeDescription": "选择浅色、深色或跟随系统主题。",
   "settings.desktopZoom": "窗口缩放",
   "settings.desktopZoomDescription": "缩放整个桌面窗口。",
+  "settings.desktopZoomLoadFailed": "无法读取窗口缩放级别。",
   "settings.themeMode.light": "浅色",
   "settings.themeMode.dark": "深色",
   "settings.themeMode.zai-light": "浅色",
