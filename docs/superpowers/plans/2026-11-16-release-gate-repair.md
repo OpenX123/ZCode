@@ -380,6 +380,7 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - Main/bridge: `desktopRemoteSessions.ts`、`desktopMainIpcRemote.ts`、`desktopMainIpcPlatform.ts`、`main/index.ts`、preload、desktopPlatform。
 - UI: `root/useRemoteWorkspaceHistory.ts`、`remote-connection-flow/index.ts`、`app-shell/types.ts`、`requestRemoteProjectConnection.ts`、`project-sidebar/remote-project-connection.ts` 及必要的现有presentation类型；`remoteConnectionPresentationErrors.ts`、`RemoteConnectionConnectingStep.tsx`、`SourceServerManagementPanel.tsx`、中英文文案。
 - Tests: 复用现有 resolver、shared contracts/log、remoteConnectionFailureContract、desktopRemoteSessions、Main平台、manager、management service、flow recovery、presentation、management panel 与 bridge/项目失败交接规格。实施报告必须列确切文件和命令，不用“相关测试”替代。
+- Governance: `architecture-policy.yaml`、现有 flow 的 `module.ts`/`CONTRACT.md`，以及 `packages/desktop/src/host/source-server-operation-logs-contract/` 的五件套。仅登记已触及的上游准入文件实际归属，不移动原实现，不增加例外或修改准入快照。
 
 **Interfaces:** resolver 独占可信恢复事实，manager 只拥有当前失败状态，Main只拥有同配置本机目录动作，UI只保留当前错误的派生投影。严格 `cacheRecovery={kind:"source-server-cache-lock",version,target,sha256}`；可选动作名 `openSourceServerCacheRecoveryDirectory`。不改普通RPC协议、Agent协议或SSH Server接口。
 
@@ -387,7 +388,7 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 2: 可信错误与明确出口。** 专用Error从已校验descriptor产生私有locator，固定安全正文；原normalize和secrets清洗保持。manager/Host失败reply/管理RPC data/Main/Renderer/flow/项目失败交接显式严格搬运同一字段，源服务器出口剔除非可信伪造保留名。新连接/更新、成功、断开、删除、reset/新epoch清除，不继承另一owner。不得将任意metadata展开到日志或公开响应。
 - [ ] **Step 3: 本机精确动作与实际UI。** Main使用Host同配置root、当前version、native canonical/lstat检查和现有文件管理器helper，仅打开精确SHA父目录；严格拒绝额外/路径字段、版本漂移、junction/symlink越界、前缀碰撞、锁缺失/非普通目录，无root fallback、rm或下载。安全logger adapter处理原生失败，不返回路径。三个真实入口复用两现有组件，通过usePlatform显示定位、固定可复制离线步骤和原retry/update；可见性须code+严格locator+能力，失败/迟到结果不得污染新错误。
 - [ ] **Step 4: 定向GREEN。** 原resolver整个文件（含Task3并发）全绿；shared严格/脱敏、真实RPC、Main IPC精确A/B SHA与覆盖root、伪造拒绝、桥接/失败交接/flow状态清理、UI三入口和按钮实际调用全通过。对主机配置的原参数、workspace identity、owner/lease/ACK不减覆盖。已有Task12改动按当前source复用，不重做其设计。
-- [ ] **Step 5: 静态/报告/提交。** 定向lint/format/diff、架构before/after、相关context，逐字段列生产者/消费者及测试证据。报告task-15-report.md，独立spec/quality审查。根type/lint/完整gate整批controller执行。真实交互由Task16继续；Task15不能以UT宣称E2E或可发布。仅提交正式文件，scratch保留但不跟踪，不push/发布。
+- [ ] **Step 5: 静态/报告/提交。** 定向lint/format/diff、架构before/after、相关context，逐字段列生产者/消费者及测试证据。修改后退出原样上游准入的三文件按 gate-repair spec 登记：Host 日志精确文件与合同目录组成受控 adapter，两个 UI presentation 精确文件并入已有 flow；先明确合同再登记，真实 run/read/remove/脱敏/迟到日志行为测试，不生成空断言模板。保留3条首次架构失败证据，完整基线复跑通过才关闭。报告task-15-report.md，独立spec/quality审查。根type/lint/完整gate整批controller执行。真实交互由Task16继续；Task15不能以UT宣称E2E或可发布。仅提交正式文件，scratch保留但不跟踪，不push/发布。
 
 ### Task 16: 验证缓存锁恢复的真实桌面交互与退出后重试
 
