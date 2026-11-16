@@ -1,5 +1,7 @@
 # Subagent Session Side Tabs
 
+UX08：输入区活动汇总全部结束后自动退场，仅影响该入口渲染；已打开的只读 child tab 继续由既有 Side Pane owner 管理，不关闭、不取消。成功卡通过原有 onOpenSubagentSession 查看结果，复用完整 workspaceIdentity/remoteSessionId/root/parent/child 身份，刷新后仍读取持久化子会话。
+
 ## 目标
 
 父会话 Agent 工具块中的子智能体详情入口使用 workspace 右侧共享面板，而不是

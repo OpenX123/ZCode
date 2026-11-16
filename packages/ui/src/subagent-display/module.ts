@@ -2,6 +2,6 @@
 export const subagentDisplayModule = {
   id: "subagent-display",
   owner: "conversation",
-  requires: ["ui", "shared"],
+  requires: ["ui", "shared", "conversation-presentation"],
   publicEntrypoints: ["index.ts", "contract.ts"],
 } as const;

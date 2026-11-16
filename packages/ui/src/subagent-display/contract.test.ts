@@ -13,7 +13,7 @@ import {
 } from "./model.js";
 
 describe("subagent-display 合同", () => {
-  it("常驻入口保留已结束子任务的目录事实", () => {
+  it("输入入口退场不删除已结束子任务的目录事实", () => {
     expect(subagentActivityExample.subagents.endedTotal).toBe(1);
     expect(subagentActivityExample.subagents.childSessionIds).toEqual(["child-a"]);
   });

@@ -17,7 +17,51 @@ import {
   resolveSubagentFaceVariant,
   subagentDisplayName,
   summarizeSubagentStatuses,
+  isSubagentStatusActive,
+  buildSubagentWorkCardModel,
 } from "@/subagent-display/model.js";
+
+describe("UX08 活动与已登记 manifest 边界", () => {
+  it("pending 不被当作结束，但未登记 child 仍只属于工作卡", () => {
+    expect(isSubagentStatusActive("pending")).toBe(true);
+    const model = buildSubagentWorkCardModel(
+      [
+        {
+          key: "pending",
+          toolCallId: "pending-call",
+          title: "等待登记",
+          subagentType: "Explore",
+          status: "running",
+          avatarIndex: 0,
+          fallbackName: "智能体 1",
+        },
+      ],
+      undefined,
+    );
+    expect(model.active).toBe(true);
+    expect(model.endedCount).toBe(0);
+    expect(model.members[0]).toMatchObject({ status: "pending" });
+    expect(model.members[0]?.childSessionId).toBeUndefined();
+  });
+  it.each(["done", "failed", "cancelled"] as const)("%s 为 ended，重复派生不改变事实", (status) => {
+    const inputs = [
+      {
+        key: "ended",
+        toolCallId: "ended-call",
+        childSessionId: "child",
+        title: "完成",
+        subagentType: "Explore",
+        status,
+        avatarIndex: 0,
+        fallbackName: "智能体 1",
+      },
+    ];
+    const first = buildSubagentWorkCardModel(inputs, undefined);
+    expect(first.active).toBe(false);
+    expect(first.endedCount).toBe(1);
+    expect(buildSubagentWorkCardModel(inputs, undefined)).toEqual(first);
+  });
+});
 
 describe("头像序号（docs/desktop/multi-agent-display-spec.md「序号」）", () => {
   it("按父会话清单的派发顺序取序号，重复项取首次出现", () => {

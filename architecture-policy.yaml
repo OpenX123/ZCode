@@ -338,7 +338,7 @@ modules:
   - id: subagent-display
     roots: [packages/ui/src/subagent-display]
     managed: true
-    requires: [ui, shared]
+    requires: [ui, shared, conversation-presentation]
     publicEntrypoints:
       - packages/ui/src/subagent-display/index.ts
       - packages/ui/src/subagent-display/contract.ts

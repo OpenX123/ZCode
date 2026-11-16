@@ -69,6 +69,8 @@ import {
   ConversationAgentSpawnRow,
   groupConsecutiveAgentSpawns,
   isActiveSubagentWorkCard,
+  isFailedSubagentWorkCard,
+  resolveSubagentWorkCardDisclosureKeys,
   type ConversationAssistantWorkDisplayItem,
 } from "@/subagent-display/index.js";
 import { ConversationFileSummaryPanel } from "@/v4/ConversationFileSummaryPanel.js";
@@ -466,11 +468,20 @@ function ConversationAssistantWorkItems({
   // 修复 SAT31（multi-agent-display-spec「折叠」）：父 Agent 派出后台子智能体后本轮结束，
   // 完成轮次的工作历史默认收起，仍在运行的工作卡也被折进「已工作 N 秒」，而状态胶囊仍显示
   // “1 个运行中”。依据：有活跃成员的工作卡豁免折叠——历史收起时把它渲染在 CollapsibleContent
-  // 之外（摘要之下），其余工作项照常折叠；展开时回到原位，全部成员结束后随轮次正常折叠。
+  // 之外（摘要之下），其余工作项照常折叠；UX08 同时保留失败及手动打开的相关卡。
   const pinnedItems =
     historyContainer && !historyContainer.open
       ? items.filter((item) => {
           if (isActiveSubagentWorkCard(item)) return true;
+          // 终态不可吞掉失败原因或手动正在查看的相关子任务；无关工作项仍按原规则折叠。
+          if (item.kind === "agentSpawnGroup" && item.presentation === "workCard") {
+            return (
+              isFailedSubagentWorkCard(item) ||
+              getConversationDisclosureOverride(
+                resolveSubagentWorkCardDisclosureKeys(context, item),
+              ) === true
+            );
+          }
           if (item.kind !== "mcpGroup") return false;
           const ids = item.rows.map((row) => row.toolCallId);
           const turnId = item.rows[0]!.turnId;

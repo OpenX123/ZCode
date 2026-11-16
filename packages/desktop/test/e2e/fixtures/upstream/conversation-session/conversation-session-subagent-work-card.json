@@ -4,6 +4,50 @@
   "spec": "./test/e2e/conversation-session/manual-review/pending/conversation-session-subagent-work-card.test.ts",
   "fixtures": [
     {
+      "id": "ux08-compact-E2E_UX08_LIFECYCLE",
+      "metadata": {
+        "kind": "common",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "仅覆盖此case原生小窗口触发的摘要请求，保留原marker供既有通知matcher继续工作。"
+      },
+      "maxMatches": 8,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_UX08_LIFECYCLE", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "ux08-compact-E2E_UX08_LIFECYCLE",
+          "text": "<summary>E2E_UX08_LIFECYCLE: background subagents were launched. Parent launch response completed. Continue from actual task notifications; do not launch new agents.</summary>"
+        }
+      }
+    },
+    {
+      "id": "ux08-compact-E2E_SUBAGENT_WORK_CARD_PARENT",
+      "metadata": {
+        "kind": "common",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "仅覆盖此case原生小窗口触发的摘要请求，保留原marker供既有通知matcher继续工作。"
+      },
+      "maxMatches": 8,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_SUBAGENT_WORK_CARD_PARENT", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "ux08-compact-E2E_SUBAGENT_WORK_CARD_PARENT",
+          "text": "<summary>E2E_SUBAGENT_WORK_CARD_PARENT: background subagents were launched. Parent launch response completed. Continue from actual task notifications; do not launch new agents.</summary>"
+        }
+      }
+    },
+    {
       "id": "subagent-work-card-title",
       "description": "标题生成固定返回，避免标题请求落入主对话 fixture。",
       "metadata": {
@@ -202,6 +246,238 @@
             "command": "sleep 60",
             "description": "E2E work card step 2"
           }
+        }
+      }
+    },
+    {
+      "id": "ux08-title",
+      "metadata": {
+        "kind": "title",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+      },
+      "maxMatches": 6,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["Generate a concise title", "E2E_UX08_LIFECYCLE"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "ux08-title",
+          "text": "{\"title\":\"UX08 lifecycle\"}"
+        }
+      }
+    },
+    {
+      "id": "ux08-launch",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-tool-use",
+        "source": "synthetic",
+        "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_UX08_LIFECYCLE"],
+        "bodyExcludes": [
+          "Generate a concise title",
+          "CRITICAL: Respond with TEXT ONLY",
+          "toolu_ux08_agent_a"
+        ]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUses": [
+          {
+            "id": "toolu_ux08_agent_a",
+            "name": "Agent",
+            "messageId": "msg_ux08_launch",
+            "input": {
+              "description": "UX08 task A",
+              "prompt": "UX08_CHILD_A: run Bash sleep 6 then reply UX08_RESULT_A.",
+              "run_in_background": true,
+              "subagent_type": "Explore"
+            }
+          },
+          {
+            "id": "toolu_ux08_agent_b",
+            "name": "Agent",
+            "messageId": "msg_ux08_launch",
+            "input": {
+              "description": "UX08 task B",
+              "prompt": "UX08_CHILD_B: run Bash sleep 25 then reply UX08_RESULT_B.",
+              "run_in_background": true,
+              "subagent_type": "Explore"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "ux08-launched",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": [
+          "E2E_UX08_LIFECYCLE",
+          "toolu_ux08_agent_a",
+          "toolu_ux08_agent_b",
+          "Async agent launched successfully"
+        ],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"],
+        "lastUserMessageIncludes": ["Async agent launched successfully"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "ux08-launched",
+          "text": "UX08_LAUNCHED"
+        }
+      }
+    },
+    {
+      "id": "ux08-notified",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+      },
+      "maxMatches": 4,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["<task-notification>"],
+        "bodyIncludes": ["E2E_UX08_LIFECYCLE"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "ux08-notified",
+          "text": "UX08_NOTIFIED"
+        }
+      }
+    },
+    {
+      "id": "ux08-child-A-work",
+      "metadata": {
+        "kind": "subagent",
+        "timingPolicy": "fast-tool-use",
+        "source": "synthetic",
+        "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["UX08_CHILD_A"],
+        "bodyExcludes": [
+          "Generate a concise title",
+          "CRITICAL: Respond with TEXT ONLY",
+          "toolu_ux08_work_A"
+        ]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_ux08_work_A",
+          "messageId": "msg_ux08_work_A",
+          "name": "Bash",
+          "input": {
+            "command": "sleep 6",
+            "description": "UX08 step A"
+          }
+        }
+      }
+    },
+    {
+      "id": "ux08-child-A-done",
+      "metadata": {
+        "kind": "subagent",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["UX08_CHILD_A", "toolu_ux08_work_A"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "ux08-done-A",
+          "text": "UX08_RESULT_A"
+        }
+      }
+    },
+    {
+      "id": "ux08-child-B-work",
+      "metadata": {
+        "kind": "subagent",
+        "timingPolicy": "fast-tool-use",
+        "source": "synthetic",
+        "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["UX08_CHILD_B"],
+        "bodyExcludes": [
+          "Generate a concise title",
+          "CRITICAL: Respond with TEXT ONLY",
+          "toolu_ux08_work_B"
+        ]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_ux08_work_B",
+          "messageId": "msg_ux08_work_B",
+          "name": "Bash",
+          "input": {
+            "command": "sleep 25",
+            "description": "UX08 step B"
+          }
+        }
+      }
+    },
+    {
+      "id": "ux08-child-B-done",
+      "metadata": {
+        "kind": "subagent",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["UX08_CHILD_B", "toolu_ux08_work_B"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "ux08-done-B",
+          "text": "UX08_RESULT_B"
         }
       }
     }

@@ -309,8 +309,35 @@ describe("UX06 MCP service tree disclosure", () => {
     expect(await firstChild.getAttribute("aria-expanded")).toBe("false");
     await firstChild.click();
     const secondChild = await browser.$(childTrigger("a2"));
+    const beforeSecondClick = await browser.execute((selector) => {
+      const button = document.querySelector(selector);
+      return {
+        expanded: button?.getAttribute("aria-expanded"),
+        status: button?.closest("[data-tool-call-id]")?.getAttribute("data-status"),
+      };
+    }, childTrigger("a2"));
+    const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
+    if (artifactDir)
+      await writeFile(
+        join(artifactDir, "ux06-a2-click.json"),
+        JSON.stringify({ before: beforeSecondClick }, null, 2),
+      );
+    // started gate 只证明 MCP 服务已执行，Renderer 仍可能是 pending；先验证运行默认展开再手动收起。
+    await browser.waitUntil(
+      async () => (await secondChild.getAttribute("aria-expanded")) === "true",
+      {
+        timeout: 15000,
+        timeoutMsg: "UX06 a2 运行投影没有默认展开，不能把首次点击当作收起",
+      },
+    );
     await secondChild.click();
-    expect(await secondChild.getAttribute("aria-expanded")).toBe("false");
+    const after = await secondChild.getAttribute("aria-expanded");
+    if (artifactDir)
+      await writeFile(
+        join(artifactDir, "ux06-a2-click.json"),
+        JSON.stringify({ before: beforeSecondClick, readyExpanded: "true", after }, null, 2),
+      );
+    expect(after).toBe("false");
     await releaseMcpGate("a2");
     await waitForMcpGate("b");
     expect(await first.getAttribute("aria-expanded")).toBe("true");

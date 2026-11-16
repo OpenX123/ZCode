@@ -173,6 +173,9 @@ describe("外部引擎原生子智能体（Codex AIR / Claude RFD）", () => {
       timeout: 30000,
       timeoutMsg: "父成员行没有投影同一最终摘要",
     });
+    expect(await member.getText()).toContain(`结果：${finalText}`);
+    expect(await member.getText()).not.toContain("原因：");
+    expect(await member.getText()).toContain("查看结果");
     await member.click();
     const child = await displayed(`[data-session-id="${childId}"]`);
     await browser.waitUntil(async () => (await child.getText()).includes(finalText), {

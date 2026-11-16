@@ -1,5 +1,7 @@
 # Subagent Session Directory
 
+UX08：输入工具栏的子任务汇总仅在已有父 manifest 登记 running/waiting/blocked 活动成员时显示，全部结束后退场；目录仍从原有导航可访问，历史成员不删除。尚未登记 child 的 pending 仅在主对话工作卡保持活动，不提前计入输入区或显示空目录；不从父轮结束推断 child 结束，不新增运行状态或事实缓存。
+
 ## 目标
 
 父 Session 的子智能体状态使用一份只读投影，同时驱动 composer 实时入口、右上角摘要、

@@ -1,4 +1,8 @@
 import type { ToolCallRow } from "@zcode/shared/zcode-protocol-v4";
+import {
+  resolveConversationDisclosureKeys,
+  type ConversationDisclosureScope,
+} from "@/v4/conversation-presentation/index.js";
 import { getAgentKindLabel, getAgentPrimaryText } from "@/ToolCallBlocks/renderers/agentHelpers.js";
 import {
   isAgentToolCallRow,
@@ -67,6 +71,27 @@ export function isActiveSubagentWorkCard(item: ConversationAssistantWorkDisplayI
   if (item.kind !== "agentSpawnGroup" || item.presentation !== "workCard") return false;
   return item.members.some((member) =>
     isSubagentStatusActive(describeAgentSpawnMember(member).status),
+  );
+}
+
+/** 手动意图与生命周期无关；真实调用别名使增量分组和外层历史读取同一选择。 */
+export function resolveSubagentWorkCardDisclosureKeys(
+  scope: ConversationDisclosureScope,
+  item: AgentSpawnGroupRenderItem,
+): readonly string[] {
+  return resolveConversationDisclosureKeys(
+    scope,
+    item.turnId,
+    "subagentWorkCard",
+    item.members.map((member) => describeAgentSpawnMember(member).toolCallId),
+  );
+}
+
+export function isFailedSubagentWorkCard(item: ConversationAssistantWorkDisplayItem): boolean {
+  return (
+    item.kind === "agentSpawnGroup" &&
+    item.presentation === "workCard" &&
+    item.members.some((member) => describeAgentSpawnMember(member).status === "failed")
   );
 }
 

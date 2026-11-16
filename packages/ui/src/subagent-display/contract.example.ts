@@ -28,7 +28,7 @@ export const subagentWorkLiveIndexExample: SubagentWorkLiveIndex = new Map([
   ["child-b", { liveStatus: "waiting", cancellableWorkId: "work-b" }],
 ]);
 
-/** 常驻入口直接消费父 manifest，全部结束时仍可查看目录。 */
+/** 活动入口直接消费父 manifest；此结束事实仍保留在目录，输入区入口退场。 */
 export const subagentActivityExample = {
   subagents: { revision: 1, childSessionIds: ["child-a"], running: [], endedTotal: 1 },
   onOpen: () => {},

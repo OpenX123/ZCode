@@ -22,6 +22,12 @@ import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { openSubagentSessionFromSummary } from "@/v4/ConversationAgentToolCallRow.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
+import {
+  getConversationDisclosureOverride,
+  setConversationDisclosureOverride,
+  useConversationDisclosureVersion,
+  visibleDisclosureOpen,
+} from "@/v4/conversation-presentation/disclosure.js";
 import type { AgentSpawnGroupRenderItem } from "./contract.js";
 import {
   buildSubagentAvatarIndex,
@@ -31,14 +37,12 @@ import {
   resolveSubagentAvatarIndexes,
   type SubagentWorkCardMember,
 } from "./model.js";
-import { describeAgentSpawnMember } from "./spawnGroups.js";
+import { describeAgentSpawnMember, resolveSubagentWorkCardDisclosureKeys } from "./spawnGroups.js";
 import { SubagentFace } from "./SubagentFace.js";
 
 const SUBAGENT_KNOWN_EFFORT_VALUES = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
 
 const EMPTY_AVATAR_INDEX = buildSubagentAvatarIndex(undefined);
-// 折叠/展开只属于 renderer 内存（与旧派发行同一模式）：虚拟列表重挂不丢，刷新即重置。
-const workCardOpenState = new Map<string, boolean>();
 
 type FormatMessage = ReturnType<typeof useZCodeIntl>["intl"]["formatMessage"];
 
@@ -194,15 +198,27 @@ function MemberRow({
               {detail}
             </span>
           ) : null}
-          {member.resultSummary ? (
+          {member.resultSummary || member.status === "done" ? (
             <span
               className="min-w-0 truncate text-ui-sm text-foreground-subtle"
               title={member.resultSummary}
             >
-              {formatMessage(
-                { id: "subagentDisplay.workCard.reason" },
-                { reason: member.resultSummary },
-              )}
+              {member.resultSummary
+                ? formatMessage(
+                    {
+                      id:
+                        member.status === "done"
+                          ? "subagentDisplay.workCard.result"
+                          : "subagentDisplay.workCard.reason",
+                    },
+                    { reason: member.resultSummary },
+                  )
+                : formatMessage({ id: "subagentDisplay.workCard.completedWithoutSummary" })}
+            </span>
+          ) : null}
+          {member.status === "done" && canOpen ? (
+            <span className="text-ui-sm text-brand">
+              {formatMessage({ id: "subagentDisplay.workCard.viewResult" })}
             </span>
           ) : null}
         </button>
@@ -255,17 +271,21 @@ export function SubagentWorkCard({
     );
   }, [context.subagentAvatarIndex, context.subagentWorkLiveIndex, intl, item.members]);
 
-  const firstToolCallId = model.members[0]?.toolCallId ?? "";
-  // 运行阶段的手动展开不能带到结束阶段，否则虚拟列表重挂后不会默认折叠。
-  const openStateKey = `${item.turnId}\0${firstToolCallId}\0${model.active ? "active" : "ended"}`;
-  const [, updateOpenState] = useState(0);
-  const open = workCardOpenState.get(openStateKey) ?? null;
+  useConversationDisclosureVersion();
+  const disclosureKeys = useMemo(
+    () => resolveSubagentWorkCardDisclosureKeys(context, item),
+    [context, item],
+  );
+  // 修复依据：active/ended 分库存偏好会在结束时关闭用户正在查看的内容；默认态不写入 override。
+  const open = visibleDisclosureOpen({
+    defaultOpen: model.active,
+    userOverride: getConversationDisclosureOverride(disclosureKeys),
+  });
   const setOpen = useCallback(
     (next: boolean) => {
-      workCardOpenState.set(openStateKey, next);
-      updateOpenState((version) => version + 1);
+      setConversationDisclosureOverride(disclosureKeys, next);
     },
-    [openStateKey],
+    [disclosureKeys],
   );
 
   const [now, setNow] = useState(() => Date.now());
@@ -295,7 +315,7 @@ export function SubagentWorkCard({
   }, [cancel, model.stopAllWorkIds]);
 
   const total = model.members.length;
-  const collapsed = !(open ?? model.active);
+  const collapsed = !open;
   const elapsedMs = elapsedOf(model.startedAt, model.endedAt, model.active, now);
   const elapsed = elapsedMs === undefined ? null : formatSubagentDuration(elapsedMs, formatMessage);
   const canOpenAny = Boolean(context.sessionId && context.onOpenSubagentSession);
@@ -462,6 +482,23 @@ export function SubagentWorkCard({
           </ul>
         </div>
       )}
+      {collapsed && model.members.some((member) => member.status === "failed") ? (
+        <div className="flex min-w-0 flex-col gap-1 px-3 pb-2 text-ui-sm text-destructive">
+          {model.members
+            .filter((member) => member.status === "failed")
+            .map((member) => (
+              <p key={member.key} className="break-words">
+                {member.name} ·{" "}
+                {member.resultSummary
+                  ? formatMessage(
+                      { id: "subagentDisplay.workCard.reason" },
+                      { reason: member.resultSummary },
+                    )
+                  : formatMessage({ id: "subagentDisplay.status.failed" })}
+              </p>
+            ))}
+        </div>
+      ) : null}
     </div>
   );
 }

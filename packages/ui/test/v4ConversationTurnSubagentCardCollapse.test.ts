@@ -16,6 +16,8 @@ import { ConversationTurnGroup } from "@/v4/ConversationTurnGroup.js";
 import { buildConversationTurnRenderUnits } from "@/v4/conversationTurnRenderUnits.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { resolveConversationDisclosureKeys } from "@/v4/conversation-presentation/index.js";
+import { setConversationDisclosureOverride } from "@/v4/conversation-presentation/disclosure.js";
 
 vi.mock("@/v4/ConversationRowView.js", async () => {
   const React = await import("react");
@@ -127,14 +129,14 @@ function assistantText(rowId: number): AssistantTextRow {
   } as AssistantTextRow;
 }
 
-function render(rows: ConversationRow[]): string {
+function render(rows: ConversationRow[], renderContext = context): string {
   const unit = buildConversationTurnRenderUnits(rows, {
     sessionPhase: "idle",
   })[0]!;
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN",
-      children: createElement(ConversationTurnGroup, { unit, context }),
+      children: createElement(ConversationTurnGroup, { unit, context: renderContext }),
     }),
   );
 }
@@ -172,5 +174,33 @@ describe("完成轮次折叠与运行中的 Subagent 工作卡（SAT31）", () =
     const html = render(turnRows("success"));
     expect(html).toContain('data-history-open="false"');
     expect(html).not.toContain('data-testid="v4-subagent-work-card-4"');
+  });
+  it("失败卡穿透外层历史，原因常显，其余历史不展开", () => {
+    const rows = turnRows("failed").map((row) =>
+      row.kind === "subagent" && row.status === "failed"
+        ? { ...row, summaryText: "权限不足" }
+        : row,
+    );
+    const html = render(rows);
+    expect(html).toContain('data-history-open="false"');
+    expect(html).toContain('data-testid="v4-subagent-work-card-4"');
+    expect(html).toContain("权限不足");
+    expect(html).not.toContain('data-testid="row-3"');
+  });
+  it("手动打开穿透终态外层，手动关闭恢复默认，完整 remote scope 隔离", () => {
+    const keys = resolveConversationDisclosureKeys(context, "turn-1", "subagentWorkCard", [
+      "call-4",
+      "call-5",
+    ]);
+    setConversationDisclosureOverride(keys, true);
+    expect(render(turnRows("success"))).toContain(
+      'data-testid="v4-subagent-open-side-pane-child-b"',
+    );
+    expect(
+      render(turnRows("success"), { ...context, workspaceRemoteSessionId: "remote-other" }),
+    ).not.toContain('data-testid="v4-subagent-work-card-4"');
+    expect(render(turnRows("success"))).not.toContain('data-testid="row-3"');
+    setConversationDisclosureOverride(keys, false);
+    expect(render(turnRows("success"))).not.toContain('data-testid="v4-subagent-work-card-4"');
   });
 });
