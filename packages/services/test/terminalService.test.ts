@@ -1,6 +1,6 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { spawnMock } = vi.hoisted(() => ({
@@ -10,6 +10,11 @@ const { spawnMock } = vi.hoisted(() => ({
 vi.mock("node-pty", () => ({
   spawn: spawnMock,
 }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, accessSync: vi.fn(actual.accessSync) };
+});
 
 import {
   parseWindowsBuildNumber,
@@ -35,7 +40,6 @@ const originalCi = process.env.CI;
 const originalPath = process.env.PATH;
 const originalPathExt = process.env.PATHEXT;
 const originalComSpec = process.env.ComSpec;
-const originalPlatform = process.platform;
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 const tempDirs: string[] = [];
 
@@ -119,6 +123,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.mocked(accessSync).mockReset();
   restoreEnv("SHELL", originalShell);
   restoreEnv("HOME", originalHome);
   restoreEnv("USERPROFILE", originalUserProfile);
@@ -202,15 +207,26 @@ describe("terminalService", () => {
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
-  it("should fall back to a usable shell when SHELL points to a missing executable", () => {
-    const invalidShell = join(tmpdir(), `zcode-missing-shell-${Date.now()}`);
-    process.env.SHELL = invalidShell;
+  it.each(["linux", "darwin"] as const)(
+    "should fall back to a usable shell when SHELL points to a missing executable on %s",
+    (platform) => {
+      setProcessPlatform(platform);
+      const invalidShell = join(makeTempDir("zcode-terminal-missing-shell-"), "missing");
+      process.env.SHELL = invalidShell;
+      // 回退路径固定属于 POSIX；控制可执行性，避免宿主是否安装 /bin/bash 改变分支覆盖。
+      vi.mocked(accessSync).mockImplementation((path) => {
+        if (path !== "/bin/bash") throw new Error("fixture executable not found");
+      });
 
-    const shell = resolveTerminalShell();
+      const shell = resolveTerminalShell();
 
-    expect(shell).not.toBe(invalidShell);
-    expect(shell).toMatch(getExpectedResolvedShellPattern());
-  });
+      expect(shell).not.toBe(invalidShell);
+      expect(shell).toMatch(getExpectedResolvedShellPattern());
+      expect(shell).toBe("/bin/bash");
+      expect(accessSync).toHaveBeenCalledWith(invalidShell, constants.X_OK);
+      expect(accessSync).toHaveBeenCalledWith(shell, constants.X_OK);
+    },
+  );
 
   it("should prefer pwsh over legacy powershell on Windows", () => {
     setProcessPlatform("win32");
@@ -243,52 +259,61 @@ describe("terminalService", () => {
     expect(cwd).toBe(home);
   });
 
-  it("should provide a UTF-8 locale when the parent process has C locale", () => {
-    const env = resolveTerminalEnv({
-      PATH: "/bin",
-      LANG: "",
-      LC_ALL: "",
-      LC_CTYPE: "C",
-      TERM: "dumb",
-      CI: "1",
-    });
+  it.each(["darwin", "linux", "win32"] as const)(
+    "should provide a UTF-8 locale when the parent process has C locale on %s",
+    (platform) => {
+      setProcessPlatform(platform);
+      const env = resolveTerminalEnv({
+        PATH: "/bin",
+        LANG: "",
+        LC_ALL: "",
+        LC_CTYPE: "C",
+        TERM: "dumb",
+        CI: "1",
+      });
 
-    if (process.platform === "darwin") {
-      expect(env.PATH?.split(":")).toEqual(
-        expect.arrayContaining(["/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]),
-      );
-    }
-    expect(env.LANG).toMatch(/utf-?8/i);
-    expect(env.LC_ALL).toMatch(/utf-?8/i);
-    expect(env.LC_CTYPE).toMatch(/utf-?8/i);
-    expect(env.TERM).toBe("xterm-256color");
-    expect(env.COLORTERM).toBe("truecolor");
-    expect(env.CI).toBeUndefined();
-  });
+      if (process.platform === "darwin") {
+        expect(env.PATH?.split(delimiter)).toEqual(
+          expect.arrayContaining(["/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]),
+        );
+      }
+      expect(env.LANG).toMatch(/utf-?8/i);
+      expect(env.LANG).toBe(platform === "darwin" ? "en_US.UTF-8" : "C.UTF-8");
+      expect(env.LC_ALL).toMatch(/utf-?8/i);
+      expect(env.LC_CTYPE).toMatch(/utf-?8/i);
+      expect(env.TERM).toBe("xterm-256color");
+      expect(env.COLORTERM).toBe("truecolor");
+      expect(env.CI).toBeUndefined();
+    },
+  );
 
-  it("should add common macOS command paths for GUI-launched terminal environments", () => {
-    // PATH 分隔符来自 node:path，按宿主平台验证原有 macOS 条件分支。
-    setProcessPlatform(originalPlatform);
-    const env = resolveTerminalEnv({
-      PATH: "/usr/bin:/bin:/usr/bin",
-    });
+  it.each(["darwin", "linux", "win32"] as const)(
+    "should add common macOS command paths for GUI-launched terminal environments on %s",
+    (platform) => {
+      setProcessPlatform(platform);
+      // 分隔符沿用被测 node:path 模块；显式执行 macOS 分支，不依赖真实宿主平台。
+      const path = ["/usr/bin", "/bin", "/usr/bin"].join(delimiter);
+      const env = resolveTerminalEnv({
+        PATH: path,
+      });
 
-    if (process.platform !== "darwin") {
-      expect(env.PATH).toBe("/usr/bin:/bin:/usr/bin");
-      return;
-    }
+      if (process.platform !== "darwin") {
+        expect(env.PATH).toBe(path);
+        return;
+      }
 
-    expect(env.PATH?.split(":")).toEqual([
-      "/usr/bin",
-      "/bin",
-      "/opt/homebrew/bin",
-      "/opt/homebrew/sbin",
-      "/usr/local/bin",
-      "/usr/local/sbin",
-      "/usr/sbin",
-      "/sbin",
-    ]);
-  });
+      expect(env.PATH?.split(delimiter)).toEqual([
+        "/usr/bin",
+        "/bin",
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+        "/usr/sbin",
+        "/sbin",
+      ]);
+    },
+  );
 
   it("should keep interactive terminal capabilities when spawning the terminal", async () => {
     const home = makeTempDir("zcode-terminal-home-");
