@@ -20,6 +20,7 @@ import {
   type PluginUiToolResultNotification,
 } from "@zcode/shared/mcp-apps";
 import { supportsHistoryFirst } from "./independentPlanSupport.js";
+import type { RuntimeTaskReporter } from "../process/runtimeProcessLifecycle.js";
 import {} from "@zcode/shared";
 import { zcodeMcpUiSamplingResultSchema } from "@zcode/shared";
 import { MCP_APPS_SAMPLING_TRANSPORT_TIMEOUT_MS } from "@zcode/shared/mcp-apps";
@@ -977,6 +978,7 @@ interface CreateZCodeAgentServiceOptions extends Omit<
   ZCodeAgentProcessManagerOptions,
   "idleTimeoutMs"
 > {
+  taskRuntimeReporter?: RuntimeTaskReporter;
   /** 仅桌面本地装配；远端明确为 false，拒绝读取到的外部引擎会话。 */
   externalEnginesSupported?: boolean;
   /**
@@ -1238,6 +1240,26 @@ export function createZCodeAgentService(
     PendingSessionRuntimePreferencesRequest
   >();
   const activeClientsByWorkspaceKey = new Map<string, ActiveWorkspaceClient>();
+  // 可信 chat client 对象就是本代来源；workspaceIdentity 只负责分区，不能替代实例身份。
+  const runtimeActivityByWorkspace = new Map<
+    string,
+    { client: ZCodeProtocolClient; count: number }
+  >();
+  let reportedRunningSessionCount = 0;
+  function reportRuntimeActivity(): void {
+    const runningTaskCount = [...runtimeActivityByWorkspace.values()].reduce(
+      (total, item) => total + item.count,
+      0,
+    );
+    if (runningTaskCount === reportedRunningSessionCount) return;
+    reportedRunningSessionCount = runningTaskCount;
+    options?.taskRuntimeReporter?.onRunningTaskCountChanged({ runningTaskCount });
+  }
+  function clearRuntimeActivity(workspaceKey: string, client: ZCodeProtocolClient): void {
+    if (runtimeActivityByWorkspace.get(workspaceKey)?.client !== client) return;
+    runtimeActivityByWorkspace.delete(workspaceKey);
+    reportRuntimeActivity();
+  }
   let spareServiceClosed = false;
   /**
    * W4：未绑定备用许可按外部引擎各 1 个、窗口至多 EXTERNAL_ENGINE_SPARE_PERMITS_PER_WINDOW 个。
@@ -1410,6 +1432,7 @@ export function createZCodeAgentService(
   const resolveSessionRuntimePreferences = options?.resolveSessionRuntimePreferences;
 
   function invalidateWorkspaceClient(workspaceKey: string, client: ZCodeProtocolClient): void {
+    clearRuntimeActivity(workspaceKey, client);
     if (spareCandidateClient === client) {
       spareCandidateClient = undefined;
       spareCandidateEntry = undefined;
@@ -1979,6 +2002,23 @@ export function createZCodeAgentService(
       return;
     }
     wiredClients.add(client);
+    const refreshRuntimeActivity = () => {
+      if (
+        lane !== "chat" ||
+        client.isDisposed ||
+        processManager.getExistingClient(workspace) !== client
+      )
+        return;
+      const snapshot = client.runtimeActivitySnapshot;
+      if (!snapshot) return;
+      runtimeActivityByWorkspace.set(resolveWorkspaceKey(workspace), {
+        client,
+        count: snapshot.sessions.filter((session) => session.busy).length,
+      });
+      reportRuntimeActivity();
+    };
+    // 初始化快照可能已先到达 client；订阅后同步重放缓存，没有业务命令或 Renderer 订阅门控。
+    refreshRuntimeActivity();
     const topicResources = createTopicResourceBridge(() => {
       // 预热可能没有 remoteSessionId；不能永久捕获 wireClient 首次参数。
       // 从同一个实际 CLI 的当前可信入口取路由，并在一次资源操作内保持不变。
@@ -2012,6 +2052,7 @@ export function createZCodeAgentService(
     });
     const disposables = [
       topicResources,
+      client.onRuntimeActivityChanged(refreshRuntimeActivity),
       client.onNotification((message) => {
         if (message.method === zcodeProtocolNotifications.providerRuntimeHeadersCancelled) {
           const parsed = zcodeProviderRuntimeHeadersCancelledSchema.safeParse(message.params);
@@ -2898,6 +2939,7 @@ export function createZCodeAgentService(
       return true;
     }
     const workspaceKey = resolveWorkspaceKey(params);
+    clearRuntimeActivity(workspaceKey, active.client);
     activeClientsByWorkspaceKey.delete(workspaceKey);
     interactionPreferenceSyncByWorkspaceKey.delete(workspaceKey);
     logger.warn(undefined, "复用的 ZCode Protocol client 已 disposed，清理 stale entry", {
@@ -3204,6 +3246,8 @@ export function createZCodeAgentService(
     }
     pendingSessionRuntimePreferences.clear();
     activeClientsByWorkspaceKey.clear();
+    runtimeActivityByWorkspace.clear();
+    reportRuntimeActivity();
     cancelAllWaitingWorkspaceStartups();
     interactionPreferenceSyncByWorkspaceKey.clear();
     cuaOperationTurnTracker?.clearAll();
@@ -5856,8 +5900,8 @@ export function createZCodeAgentService(
         else if (envelope.type === "deleteSession" && envelope.sessionId)
           sessionEngineCache.delete(sessionEventKey({ ...params, sessionId: envelope.sessionId }));
       }
-      // Prompt command 在 committed TurnStarted 或 committed WorkspaceHookReviewRequested
-      // 任一 authority 到达后即返回；人工审核不能占用 Host RPC，因此继续使用统一默认
+      // Prompt ACK 只证明 Core admission，可能早于 TurnStarted；运行事实由独立完整快照维护。
+      // 人工审核不能占用 Host RPC，因此继续使用统一默认
       // timeout/watchdog。放宽到审核领域 deadline 只会掩盖串行协议队列死锁。
       // duplicate 只证明 commandId 曾处理过，不证明其目标仍是当前 session 配置。
       // 旧 B 命令在用户已切 C 后重放时，不能借 duplicate 把派生缓存再改回 B。

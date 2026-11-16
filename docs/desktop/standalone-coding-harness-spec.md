@@ -67,6 +67,35 @@ flowchart TD
   J --> K[Host 镜像与桌面展示]
 ```
 
+### 本地真实运行会话与应用退出确认
+
+CLI/Core runtime 是 admission、启动预留、前台执行、命令 FIFO、promotion lease 和目标续跑的唯一 owner；Bootstrap 的既有 V4 auto-drain gate 是普通自动队列评估与提升的 owner。通用运行发布器只读合并二者，不增加 admission、调度队列、Core activity lease 或 retry timer。CUA sideband 保持原用途。ACK 可以先于首个 TurnStarted；TurnComplete 后仍有 command 收尾、续跑或自动队列交接时仍 busy。held/error-paused 和 idle requireQueue 本身不计运行，guide 不增加 session 数，独立 child runtime 按实际 session 计数。
+
+通用严格通知为 `process/runtimeActivity`，携带 `{revision,sessions:[{sessionId,instanceId,busy}]}` 完整快照。revision 在本 CLI 进程内单调递增；instanceId 在实际 runtime 构造时单调分配，同 session close→resume 不复用。发布器只接受该 session 当前实例的事实；关闭移除当前实例，旧实例的迟到 release/终态不能清新实例。绑定 notification sink 时同步发送当前完整快照，绑定前保存事实；Host client 在发送任何业务命令之前装配校验与快照缓存，同版本幂等、旧版本忽略，禁止用增减重放猜状态。通知不携带正文、路径或凭据。
+
+Bootstrap 自动队列活动只覆盖既有 continuation/gate 的真实未决评估与提升交接，不能以队列非空、autoDrain=true、reserved/promoting 或 timer 存在单独置 busy。普通 completion 的 afterStateMutation await、TargetChanged complete 的 detached continuation 和相关 queue/target projection commit 必须在 Core idle 候选之前可观察。异步评估绑定实际 record、实例、队首和相关事实水位；旧 readTarget/finally 不覆盖更新事实。target active/paused/budget_limited、readTarget 失败、关闭授权、held 或空队列结束该次活动，不等待未来 target 完成。既有100ms retry与真实Core lease/admission接棒保持原调度，只有仍有效的自动工作可以保持busy。无关内容流不触发队列重评，不用轮询或延时清零。
+
+Host 按可信 workspaceIdentity/path fallback、source/remoteSessionId、实际 chat client 与 generation 投影；插件/MCP lane 不计入。当前 session close、client unavailable/release 与 Host dispose 只清对应实例/代际；旧 client 回调不得按 workspace 裸清新代。发布失败沿既有 NDJSON transport unavailable/权威重同步边界收口，不吞掉末次通知继续宣称健康。窗口 Host 将本地 busy session 数加上现有远端与 legacy 分量，只在总量变化时报告既有 AgentRunningTaskCountChanged；Main 继续只聚合实际 Host 报告。
+
+```mermaid
+sequenceDiagram
+  participant C as Core执行owner
+  participant B as Bootstrap自动队列owner/只读publisher
+  participant H as Host当前chat client投影
+  participant M as Main原退出确认
+  C-->>B: reservation/command busy
+  B-->>H: 完整activity快照 revision n
+  C-->>H: V4 ACK（不代表终态）
+  C-->>B: turn完成，command收尾/continuation仍busy
+  B->>B: 观察原continuation与projection commit
+  C-->>B: Core idle候选
+  B->>B: 原gate评估/自动提升，或明确held收口
+  B-->>H: 当前合并快照 revision n+1
+  H-->>M: 本地+远端+legacy既有总量
+```
+
+生产菜单退出保留原确认框、默认取消、生产条件与Host清理预算。切设置/连接远端/ACK不改变真实本地运行事实。真实取消保持会话与Host运行；再次确认后沿原屏障完整退出，旧树归零才可清理隔离夹具精确锁。验收覆盖真实V4 ACK早于TurnStarted、终态后续跑、自动队列与held、projection延迟/旧评估、close→resume、child、身份/代际隔离及本地与远端合计；UT不能替代Task16匹配新包的原生取消/再次确认验收。
+
 ## 数据兼容
 
 不删除或重建数据库、旧列、正文、附件、项目或分组。旧官方凭据留在磁盘但不读取；普通模型、SSH 和 MCP 凭据不变。旧套餐模型仍可展示历史，执行时要求手动换模型，不自动回退。普通自动化保存了失效模型时阻止执行。旧闲时记录不再调度，已生成的会话保留为历史。必要配置写入复用 Repository 的锁、备份和原子更新。

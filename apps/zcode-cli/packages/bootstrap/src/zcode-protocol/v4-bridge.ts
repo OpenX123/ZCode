@@ -595,86 +595,133 @@ export function createConversationV4Gateway(
   });
   let nativeExecutor: V4CommandExecutor;
   const autoDrainRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const queueFactVersions = new WeakMap<ZCodeProtocolSessionRecord, number>();
+  const retryActivity = new WeakMap<ZCodeProtocolSessionRecord, { finish(): void }>();
   const autoDrainV4QueueIfReady = async (record: ZCodeProtocolSessionRecord): Promise<void> => {
-    const head = context.v4Gateway?.getQueueHead(record.app.sessionId);
-    if (!head) {
-      // 外层恢复 FIFO 已消费到空；guide 仍只由 core tool-batch 边界行内消费。
-      record.app.completeExternalQueueDrain();
-      return;
-    }
-    const coreForegroundBusy = record.app.runtime.getActiveForegroundExecutionId() !== undefined;
-    if (
-      head.autoDrain &&
-      head.dispatchState === "queued" &&
-      (record.activeAbortController !== undefined || coreForegroundBusy)
-    ) {
-      // Bootstrap controller 不覆盖 model-only notification；旧 auto-drain
-      // 只看外层锁，因而把“空闲后消费”错误执行成抢占。busy 时不碰 reservation。
-      scheduleAutoDrainRetry(record);
-      return;
-    }
-    let targetStatus: GoalStatus | null = null;
-    if (head.autoDrain && head.dispatchState === "queued" && !record.activeAbortController) {
-      try {
-        targetStatus = (await record.app.readTarget())?.status ?? null;
-      } catch (error) {
-        // target 读取失败时按“未知且未完成”处理；直接提升会让
-        // goal verification 的持久终态尚未可证时普通 queue 偷跑。
-        context.logger?.warn("v4 auto-drain held because target state could not be read", {
-          error: error instanceof Error ? error.message : String(error),
-          queueItemId: head.queueItemId,
-          sessionId: record.app.sessionId,
-        });
-        return;
-      }
-    }
-    if (
-      !shouldAutoDrainV4QueueHead({
-        autoDrain: head.autoDrain,
-        dispatchState: head.dispatchState,
-        sessionBusy: Boolean(record.activeAbortController) || coreForegroundBusy,
-        targetStatus,
-      })
-    ) {
-      return;
-    }
-    // 暂停队列恢复后，旧项只存在于投影而不在新 activeTurn 内存中；普通文本也必须
-    // 和 typed /goal、/compact 一样走完整投影的队首，避免新输入越过旧暂停项。
+    // Core 空闲不是 Bootstrap gate 已完成；观察同一实际 record 的既有交接，不能另建 lease。
+    const activity = context.runtimeActivity?.observe(record);
+    const inheritedRetry = retryActivity.get(record);
+    let retryScheduled = false;
     try {
-      await nativeExecutor.execute(
-        {
-          baseRevision: 0,
-          clientId: "v4-auto-drain",
-          commandId: `auto-${head.kind}-${Date.now()}-${head.queueItemId}`,
-          issuedAt: Date.now(),
-          payload: { queueItemId: head.queueItemId },
-          sessionId: record.app.sessionId,
-          type: "sendQueuedNow",
-        },
-        undefined,
-        { autoDrainPromotion: true },
-      );
-    } catch (error) {
-      if (error instanceof V4QueuePromotionLeaseUnavailableError) {
-        // precheck 与 handler 之间可能新入队 notification；idle-only 是最终原子判据。
-        scheduleAutoDrainRetry(record);
+      for (;;) {
+        await context.v4Gateway?.waitForAutoQueueProjection(record.app.sessionId);
+        if (context.sessions.get(record.app.sessionId) !== record) return;
+        const factVersion = queueFactVersions.get(record) ?? 0;
+        const head = context.v4Gateway?.getQueueHead(record.app.sessionId);
+        if (!head) {
+          // 外层恢复 FIFO 已消费到空；guide 仍只由 core tool-batch 边界行内消费。
+          record.app.completeExternalQueueDrain();
+          return;
+        }
+        if (head.autoDrain && head.dispatchState === "queued") activity?.activate();
+        const coreForegroundBusy =
+          record.app.runtime.getActiveForegroundExecutionId() !== undefined;
+        if (
+          head.autoDrain &&
+          head.dispatchState === "queued" &&
+          (record.activeAbortController !== undefined || coreForegroundBusy)
+        ) {
+          // Bootstrap controller 不覆盖 model-only notification；旧 auto-drain
+          // 只看外层锁，因而把“空闲后消费”错误执行成抢占。busy 时不碰 reservation。
+          scheduleAutoDrainRetry(record);
+          retryScheduled = true;
+          return;
+        }
+        let targetStatus: GoalStatus | null = null;
+        if (head.autoDrain && head.dispatchState === "queued" && !record.activeAbortController) {
+          try {
+            targetStatus = (await record.app.readTarget())?.status ?? null;
+          } catch (error) {
+            if (context.sessions.get(record.app.sessionId) !== record) return;
+            if ((queueFactVersions.get(record) ?? 0) !== factVersion) continue;
+            if (
+              context.v4Gateway?.getQueueHead(record.app.sessionId)?.queueItemId !==
+              head.queueItemId
+            )
+              continue;
+            // target 读取失败时按“未知且未完成”处理；直接提升会让
+            // goal verification 的持久终态尚未可证时普通 queue 偷跑。
+            context.logger?.warn("v4 auto-drain held because target state could not be read", {
+              error: error instanceof Error ? error.message : String(error),
+              queueItemId: head.queueItemId,
+              sessionId: record.app.sessionId,
+            });
+            return;
+          }
+        }
+        // 相同队首也可能已经换过 target/autoDrain 水位；旧异步读只结算自己，重新读取当前事实。
+        if (context.sessions.get(record.app.sessionId) !== record) return;
+        if ((queueFactVersions.get(record) ?? 0) !== factVersion) continue;
+        if (context.v4Gateway?.getQueueHead(record.app.sessionId)?.queueItemId !== head.queueItemId)
+          continue;
+        if (
+          !shouldAutoDrainV4QueueHead({
+            autoDrain: head.autoDrain,
+            dispatchState: head.dispatchState,
+            sessionBusy: Boolean(record.activeAbortController) || coreForegroundBusy,
+            targetStatus,
+          })
+        ) {
+          return;
+        }
+        // 暂停队列恢复后，旧项只存在于投影而不在新 activeTurn 内存中；普通文本也必须
+        // 和 typed /goal、/compact 一样走完整投影的队首，避免新输入越过旧暂停项。
+        try {
+          await nativeExecutor.execute(
+            {
+              baseRevision: 0,
+              clientId: "v4-auto-drain",
+              commandId: `auto-${head.kind}-${Date.now()}-${head.queueItemId}`,
+              issuedAt: Date.now(),
+              payload: { queueItemId: head.queueItemId },
+              sessionId: record.app.sessionId,
+              type: "sendQueuedNow",
+            },
+            undefined,
+            { autoDrainPromotion: true },
+          );
+        } catch (error) {
+          if (error instanceof V4QueuePromotionLeaseUnavailableError) {
+            // precheck 与 handler 之间可能新入队 notification；idle-only 是最终原子判据。
+            scheduleAutoDrainRetry(record);
+            retryScheduled = true;
+            return;
+          }
+          // 自动提升失败不能继续越过该 FIFO barrier；重新暂停并保留原项，交用户重试。
+          await record.app.setQueueAutoDrain(false);
+          context.logger?.warn("v4 auto-drain failed and queue was paused", {
+            error: error instanceof Error ? error.message : String(error),
+            queueItemId: head.queueItemId,
+            sessionId: record.app.sessionId,
+          });
+        }
         return;
       }
-      // 自动提升失败不能继续越过该 FIFO barrier；重新暂停并保留原项，交用户重试。
-      await record.app.setQueueAutoDrain(false);
-      context.logger?.warn("v4 auto-drain failed and queue was paused", {
-        error: error instanceof Error ? error.message : String(error),
-        queueItemId: head.queueItemId,
-        sessionId: record.app.sessionId,
-      });
+    } finally {
+      if (!retryScheduled) {
+        if (retryActivity.get(record) === inheritedRetry) {
+          inheritedRetry?.finish();
+          retryActivity.delete(record);
+        }
+      }
+      activity?.finish();
     }
   };
   const scheduleAutoDrainRetry = (record: ZCodeProtocolSessionRecord): void => {
     const sessionId = record.app.sessionId;
+    const previous = retryActivity.get(record);
+    const activity = context.runtimeActivity?.observe(record);
+    activity?.activate();
+    if (activity) retryActivity.set(record, activity);
+    previous?.finish();
     if (autoDrainRetryTimers.has(sessionId)) return;
     const timer = setTimeout(() => {
       autoDrainRetryTimers.delete(sessionId);
-      if (context.sessions.get(sessionId) !== record) return;
+      if (context.sessions.get(sessionId) !== record) {
+        retryActivity.get(record)?.finish();
+        retryActivity.delete(record);
+        return;
+      }
       void autoDrainV4QueueIfReady(record).catch((error: unknown) => {
         context.logger?.warn("v4 auto-drain idle reevaluation failed", {
           error: error instanceof Error ? error.message : String(error),
@@ -686,6 +733,8 @@ export function createConversationV4Gateway(
     autoDrainRetryTimers.set(sessionId, timer);
   };
   const coreHost: V4CommandCoreHost = {
+    observeRuntimeActivity: (record) =>
+      context.runtimeActivity?.observe(record as ZCodeProtocolSessionRecord) ?? { finish() {} },
     // 同一注册表对象引用：view 是旧 record 的结构化窄视图，字段变更双向可见。
     getRecord: (sessionId) => context.sessions.get(sessionId),
     // 同一登记表实例：broker（旧目录）注册反向请求 deferred，
@@ -1081,8 +1130,13 @@ export function createConversationV4Gateway(
       return { available: true };
     },
     afterLegacyStateMutation: async (record, reason) => {
-      await afterStateMutation(context, record as ZCodeProtocolSessionRecord, reason);
-      await autoDrainV4QueueIfReady(record as ZCodeProtocolSessionRecord);
+      const activity = context.runtimeActivity?.observe(record as ZCodeProtocolSessionRecord);
+      try {
+        await afterStateMutation(context, record as ZCodeProtocolSessionRecord, reason);
+        await autoDrainV4QueueIfReady(record as ZCodeProtocolSessionRecord);
+      } finally {
+        activity?.finish();
+      }
     },
     // deleteSession 的执行面：先由 CLI 持久化软删除事实，再内联旧 closeSession op 的
     // 4 步释放运行实例（不 import 旧 op；随波次 2 会话注册表归 v4 后收编）。
@@ -1464,6 +1518,33 @@ export function createConversationV4Gateway(
     }
   };
   return new ConversationV4Gateway({
+    observeAutoQueueProjection: (sessionId, event) => {
+      const record = context.sessions.get(sessionId);
+      if (!record) return undefined;
+      const version = (queueFactVersions.get(record) ?? 0) + 1;
+      queueFactVersions.set(record, version);
+      const activity = context.runtimeActivity?.observe(record);
+      const inheritedRetry = retryActivity.get(record);
+      return () => {
+        const head = context.v4Gateway?.getQueueHead(sessionId);
+        const targetStatus = (event.payload as { target?: { status?: string } | null }).target
+          ?.status;
+        const targetHeld =
+          event.type === SessionEventType.TargetChanged &&
+          targetStatus !== undefined &&
+          targetStatus !== "complete";
+        if (
+          context.sessions.get(sessionId) === record &&
+          queueFactVersions.get(record) === version &&
+          (!head || !head.autoDrain || targetHeld) &&
+          retryActivity.get(record) === inheritedRetry
+        ) {
+          inheritedRetry?.finish();
+          retryActivity.delete(record);
+        }
+        activity?.finish();
+      };
+    },
     cliVersion: context.deps.version,
     sessionExists: (sessionId) => context.sessions.has(sessionId),
     reconcileSessions: async ({ workspaceId, sessionIds }) => {
@@ -1507,11 +1588,15 @@ export function createConversationV4Gateway(
     onTargetCompleted: (sessionId) => {
       const record = context.sessions.get(sessionId);
       if (!record) return;
+      const activity = context.runtimeActivity?.observe(record);
+      const head = context.v4Gateway?.getQueueHead(sessionId);
+      if (head?.autoDrain && head.dispatchState === "queued") activity?.activate();
       // background task-notification 的 goal verifier 不经过 v4 prompt 的
       // finally/afterLegacyStateMutation；TargetChanged(complete) 虽已提交，future queue
       // 因而没有下一次 mutation 来重评。这里只 detached 触发既有 gate，不能阻塞投影。
       void Promise.resolve()
         .then(() => autoDrainV4QueueIfReady(record))
+        .finally(() => activity?.finish())
         .catch((error: unknown) => {
           context.logger?.warn("v4 auto-drain reevaluation after target completion failed", {
             error: error instanceof Error ? error.message : String(error),

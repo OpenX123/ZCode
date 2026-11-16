@@ -1,8 +1,5 @@
 import type { AiSdkModelAdapter } from "@zcode/adapters/model";
-import type {
-  ExternalEngineConfigCatalog,
-  ExternalEngineProcessPool,
-} from "@zcode/adapters/exec";
+import type { ExternalEngineConfigCatalog, ExternalEngineProcessPool } from "@zcode/adapters/exec";
 import type {
   AutomationPort,
   BackgroundTaskCancelResult,
@@ -200,6 +197,7 @@ export interface ZCodeAppOptions {
   mcpPortFactory?: (input: { workingDirectory?: string }) => McpPort;
   permissionBroker?: PermissionBrokerPort;
   eventSink?: SessionEventSink;
+  runtimeActivitySink?: import("@zcode/core").AgentRuntimeDeps["runtimeActivitySink"];
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform | string;
   projectConfigPath?: string;

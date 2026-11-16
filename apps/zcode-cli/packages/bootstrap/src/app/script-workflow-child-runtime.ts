@@ -213,6 +213,7 @@ function createRuntimeDeps(
     // 必须在**构造期**装：`ensureSessionPersistedForExternalActivity` 把 SessionTitleUpdated
     // 写成 sequenceNumber 1，而 v4 网关只排水连续 seq——构造之后才挂的订阅从 seq 2 起，
     // 会永远等一个再也不会来的 seq 1（这正是旧 subscribeEvents 通道从未直播成功的原因）。
+    runtimeActivitySink: deps.appOptions.runtimeActivitySink,
     eventSink: {
       onSessionEvent: async (event) => {
         await deps.runtime.notifyExternalChildSessionEvent({

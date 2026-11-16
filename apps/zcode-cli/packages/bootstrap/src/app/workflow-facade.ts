@@ -337,6 +337,7 @@ function createWorkflowChildRuntime(
           : undefined,
       mcpPort: deps.mcpPort,
       eventSink: deps.eventSink,
+      runtimeActivitySink: deps.appOptions.runtimeActivitySink,
       modelFactory: deps.modelFactory,
       resolveEffectiveModelSelection: deps.appOptions.resolveEffectiveModelSelection,
       // 对外交互端口由父 runtime 派生（permissionBroker + providerRuntimeHeadersPort）：

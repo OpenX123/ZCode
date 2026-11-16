@@ -873,6 +873,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           : undefined,
       mcpPort,
       eventSink: options.eventSink,
+      runtimeActivitySink: options.runtimeActivitySink,
       modelFactory,
       modelIoDir,
       providerRuntimeHeadersPort: options.providerRuntimeHeadersPort,

@@ -11,7 +11,7 @@ import {
   type TraceContext,
 } from "@zcode/contracts";
 import type { McpTelemetryTracker } from "@zcode/adapters";
-import type { WorkspaceHookPolicyProvider } from "@zcode/core";
+import type { RuntimeActivityState, WorkspaceHookPolicyProvider } from "@zcode/core";
 import {
   zcodeProtocolErrorCodes,
   type AppToolSearchMode,
@@ -125,6 +125,14 @@ export interface ZCodeProtocolClientRequestOptions {
 }
 
 export interface ZCodeProtocolAgentServerContext {
+  /** 只观察执行与既有 Bootstrap continuation，不参与 admission 或队列调度。 */
+  runtimeActivity?: {
+    updateCore(state: RuntimeActivityState): void;
+    observe(record: Pick<ZCodeProtocolSessionRecord, "app">): {
+      activate(): void;
+      finish(): void;
+    };
+  };
   /** 进程退出期间，迟到的异步物化不能重新登记 session。 */
   assertServing?: () => void;
   deps: ZCodeProtocolAgentResolvedDependencies;

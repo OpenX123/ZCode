@@ -154,6 +154,7 @@ async function startPromptTurnAfterPreflight(
   record.activeBotDeliveryTarget = params.botDeliveryTarget;
 
   let admission: SendInputResult;
+  const activity = host.observeRuntimeActivity?.(record);
   try {
     admission = await record.app.sendInput(
       {
@@ -188,11 +189,16 @@ async function startPromptTurnAfterPreflight(
     );
   } catch (error) {
     clearPromptRecordState(record, previousAutomationId, previousBotDeliveryTarget);
-    await host.afterLegacyStateMutation?.(record, "prompt_failed");
+    try {
+      await host.afterLegacyStateMutation?.(record, "prompt_failed");
+    } finally {
+      activity?.finish();
+    }
     throw error;
   }
 
   if (admission.kind === "rejected") {
+    activity?.finish();
     clearPromptRecordState(record, previousAutomationId, previousBotDeliveryTarget);
     throw new V4PromptRejectedError(
       "activePrompt",
@@ -201,6 +207,7 @@ async function startPromptTurnAfterPreflight(
   }
 
   if (admission.kind === "queued") {
+    activity?.finish();
     clearPromptRecordState(record, previousAutomationId, previousBotDeliveryTarget);
     return { admission, turnStarted: Promise.resolve() };
   }
@@ -218,7 +225,11 @@ async function startPromptTurnAfterPreflight(
       });
     } finally {
       clearPromptRecordState(record, previousAutomationId, previousBotDeliveryTarget);
-      await host.afterLegacyStateMutation?.(record, mutationReason);
+      try {
+        await host.afterLegacyStateMutation?.(record, mutationReason);
+      } finally {
+        activity?.finish();
+      }
     }
   });
   void completion.catch(() => undefined);

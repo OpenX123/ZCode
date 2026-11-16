@@ -1791,6 +1791,7 @@ export function createLocalServices(options: {
       })
     : undefined;
   const zcodeAgentService = createZCodeAgentService({
+    taskRuntimeReporter: options?.taskRuntimeReporter,
     externalEngineService,
     externalEnginesSupported: Boolean(externalEngineService),
     ...(externalEngineSpareSelection

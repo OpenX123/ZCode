@@ -134,7 +134,10 @@ import { createHostRemoteWorkspaceProxyState } from "./hostRemoteWorkspaceProxyS
 import { startHostSelfResourceTelemetry } from "./hostSelfResourceTelemetry.js";
 import { runHostShutdownPhases, type HostShutdownResult } from "./hostShutdownPhases.js";
 import { createHostUncaughtExceptionHandler } from "./hostUncaughtExceptionGuard.js";
-import { createHostWorkspaceTaskTracker } from "./hostWorkspaceTaskTracker.js";
+import {
+  createHostRunningTaskCountReporter,
+  createHostWorkspaceTaskTracker,
+} from "./hostWorkspaceTaskTracker.js";
 import {
   createRemotePromptAttachmentTransferService,
   type RemotePromptAttachmentTransferService,
@@ -786,16 +789,15 @@ const runtimeProcessLifecycleReporter = {
   },
 } satisfies NonNullable<Parameters<typeof createLocalServices>[0]>["processLifecycleReporter"];
 
+const hostRunningTaskCountReporter = createHostRunningTaskCountReporter((runningTaskCount) => {
+  parentPort?.postMessage({
+    type: HostResponseTypes.AgentRunningTaskCountChanged,
+    runningTaskCount,
+  });
+});
 const runtimeTaskReporter = {
   onRunningTaskCountChanged(event) {
-    if (!parentPort) {
-      return;
-    }
-
-    parentPort.postMessage({
-      type: HostResponseTypes.AgentRunningTaskCountChanged,
-      runningTaskCount: event.runningTaskCount,
-    });
+    hostRunningTaskCountReporter.updateLocal(event.runningTaskCount);
   },
 } satisfies NonNullable<Parameters<typeof createLocalServices>[0]>["taskRuntimeReporter"];
 
@@ -813,9 +815,9 @@ const cuaOperationStateReporter = {
 
 let untrackedPromptRpcCount = 0;
 function reportHostRunningTaskCount(): void {
-  runtimeTaskReporter.onRunningTaskCountChanged({
-    runningTaskCount: workspaceTaskTracker.getTotalRunningTaskCount() + untrackedPromptRpcCount,
-  });
+  hostRunningTaskCountReporter.updateLegacyAndRemote(
+    workspaceTaskTracker.getTotalRunningTaskCount() + untrackedPromptRpcCount,
+  );
 }
 
 const workspaceTaskTracker = createHostWorkspaceTaskTracker((event) => {

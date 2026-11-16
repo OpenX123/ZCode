@@ -86,6 +86,8 @@ export interface AgentRuntimeInternal
   appVersion: string;
   logger?: Logger;
   eventSinks: Set<SessionEventSink>;
+  runtimeActivitySink?: AgentRuntimeDeps["runtimeActivitySink"];
+  publishRuntimeActivity?(): void;
   now: () => Date;
   isRemoteWorkspace: () => boolean;
   registry: ToolRegistry;

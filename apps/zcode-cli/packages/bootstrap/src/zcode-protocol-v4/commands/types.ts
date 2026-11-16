@@ -205,6 +205,8 @@ export interface V4CommandCoreHost {
    * 归宿：core app 层自持模型解析后，由其取代本钩子。
    */
   ensureModelReady?(record: V4SessionRecordView): Promise<void>;
+  /** 只读保留当前执行到既有 mutation/gate 收尾的交接；idle requireQueue 不会激活它。 */
+  observeRuntimeActivity?(record: V4SessionRecordView): { finish(): void };
   /**
    * 切模型前由 Agent 进程 Registry 校验目标 Provider。普通模型命令只携带 Selection，
    * 因此这里不能接收或安装 Host 运行快照。

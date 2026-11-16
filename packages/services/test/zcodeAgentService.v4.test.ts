@@ -35,6 +35,10 @@ const fs = require("node:fs");
 const logPath = process.argv[2];
 let buf = "";
 function send(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+let activityRevision = 0;
+const activityEnabled = process.argv[4] === "activity";
+function activity(sessions, revision = ++activityRevision) { send({ method: "process/runtimeActivity", params: { revision, sessions } }); }
+if (activityEnabled) activity([{sessionId:"initial-parent",instanceId:1,busy:true}]);
 process.stdin.on("data", (chunk) => {
   buf += chunk.toString("utf8");
   let idx;
@@ -47,6 +51,16 @@ process.stdin.on("data", (chunk) => {
     if (logPath && msg.method) fs.appendFileSync(logPath, line + "\\n");
     if (msg.method === "provider/refreshRegistry" && msg.id !== undefined) {
       send({ id: msg.id, result: { refreshed: true } });
+      continue;
+    }
+    if (msg.method === "mcp/list" && msg.id !== undefined) {
+      if (activityEnabled) activity([{sessionId:"control-plane",instanceId:3,busy:true}]);
+      send({ id: msg.id, result: { statuses: {} } });
+      continue;
+    }
+    if (msg.method === "plugins/list" && msg.id !== undefined) {
+      if (activityEnabled) activity([{sessionId:"control-plane",instanceId:3,busy:true}]);
+      send({ id: msg.id, result: { plugins: [], diagnostics: [] } });
       continue;
     }
     if (msg.method === "session/list" && msg.id !== undefined) {
@@ -296,6 +310,10 @@ process.stdin.on("data", (chunk) => {
       else reply();
     }
     if (msg.method === "v4/command" && msg.id !== undefined) {
+      if (activityEnabled && msg.params.commandId === "activity-start") activity([{sessionId:"initial-parent",instanceId:1,busy:true},{sessionId:"actual-child",instanceId:2,busy:true}]);
+      if (activityEnabled && msg.params.commandId === "activity-child-only") activity([{sessionId:"initial-parent",instanceId:1,busy:false},{sessionId:"actual-child",instanceId:2,busy:true}]);
+      if (activityEnabled && msg.params.commandId === "activity-idle") activity([]);
+      if (activityEnabled && msg.params.commandId === "activity-old") activity([], 1);
       const status = "accepted";
       const acceptedInput = {
         delivery: "startNow",
@@ -378,6 +396,10 @@ describe("zcodeAgentService v4 conversation channel", () => {
   function setupService(
     options: {
       providerReady?: boolean;
+      runtimeActivity?: boolean;
+      taskRuntimeReporter?: NonNullable<
+        Parameters<typeof createZCodeAgentService>[0]
+      >["taskRuntimeReporter"];
       authorizeLocalMediaPreviewPath?: (path: string) => Promise<string>;
       prepareSessionCreation?: NonNullable<
         Parameters<typeof createZCodeAgentService>[0]
@@ -404,10 +426,11 @@ describe("zcodeAgentService v4 conversation channel", () => {
     writeFileSync(sessionsPath, JSON.stringify(options.storedSessions?.(workspacePath) ?? []));
     const commandResolver = vi.fn(() => ({
       command: process.execPath,
-      args: [scriptPath, logPath, sessionsPath],
+      args: [scriptPath, logPath, sessionsPath, options.runtimeActivity ? "activity" : ""],
     }));
     const service = createZCodeAgentService({
       commandResolver,
+      taskRuntimeReporter: options.taskRuntimeReporter,
       prepareSessionCreation: options.prepareSessionCreation,
       resolveSessionDirectories: options.resolveSessionDirectories,
       repoSnapshotCaptureIntentScheduler: options.repoSnapshotCaptureIntentScheduler,
@@ -442,6 +465,69 @@ describe("zcodeAgentService v4 conversation channel", () => {
     });
     return { service, workspacePath, logPath, commandResolver };
   }
+
+  it("keeps actual chat activity across V4 ACK and absent Renderer observers, with child and client release boundaries", async () => {
+    const reported: number[] = [];
+    const { service, workspacePath } = setupService({
+      runtimeActivity: true,
+      taskRuntimeReporter: {
+        onRunningTaskCountChanged: ({ runningTaskCount }) => reported.push(runningTaskCount),
+      },
+    });
+    const command = (commandId: string, workspaceIdentity = "identity-a") =>
+      service.sendConversationCommandV4({
+        workspacePath,
+        workspaceIdentity,
+        envelope: {
+          commandId,
+          clientId: "activity-test",
+          sessionId: "initial-parent",
+          type: "sendText",
+          payload: { text: "work" },
+          issuedAt: 1,
+        },
+      });
+    try {
+      // 不建立 Renderer conversation subscription；CLI 初始通知仍须被实际 client 缓存并回放。
+      await command("activity-start");
+      expect(reported).toEqual([1, 2]);
+      await command("activity-old");
+      expect(reported).toEqual([1, 2]);
+      await command("activity-child-only");
+      expect(reported).toEqual([1, 2, 1]);
+      await command("activity-idle");
+      expect(reported).toEqual([1, 2, 1, 0]);
+      await service.disposeWorkspace({ workspacePath, workspaceIdentity: "identity-a" });
+      await command("activity-old");
+      expect(reported.at(-1)).toBe(1);
+      await command("activity-old", "identity-b");
+      expect(reported.at(-1)).toBe(2);
+      await service.disposeWorkspace({ workspacePath, workspaceIdentity: "identity-a" });
+      expect(reported.at(-1)).toBe(1);
+    } finally {
+      await service.disposeAllAndWait();
+    }
+    expect(reported.at(-1)).toBe(0);
+  });
+
+  it("excludes plugin and MCP status lane activity from actual chat running counts", async () => {
+    const reported: number[] = [];
+    const { service, workspacePath, commandResolver } = setupService({
+      runtimeActivity: true,
+      taskRuntimeReporter: {
+        onRunningTaskCountChanged: ({ runningTaskCount }) => reported.push(runningTaskCount),
+      },
+    });
+    try {
+      await service.listPlugins({ workspacePath });
+      await service.listMcpServerStatuses({ workspacePath, mode: "status" });
+      expect(commandResolver).toHaveBeenCalledTimes(2);
+      expect(reported).toEqual([]);
+    } finally {
+      await service.disposeAllAndWait();
+    }
+    expect(reported).toEqual([]);
+  });
 
   const childHostId = "remote:server:subagent-view";
   const childWorkspace = (workspacePath: string) => ({

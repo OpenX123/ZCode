@@ -350,6 +350,7 @@ export function beginActiveTurn(
   };
   this.activeTurnStartReservation = undefined;
   this.activeTurn = activeTurn;
+  this.publishRuntimeActivity?.();
   return activeTurn;
 }
 
@@ -370,11 +371,13 @@ export function reserveTurnStart(
     traceContext,
     turnId,
   };
+  this.publishRuntimeActivity?.();
 }
 
 export function releaseTurnStart(this: AgentRuntimeInternal, turnId: TurnId): void {
   if (this.activeTurnStartReservation?.turnId === turnId) {
     this.activeTurnStartReservation = undefined;
+    this.publishRuntimeActivity?.();
   }
 }
 
@@ -384,6 +387,7 @@ export function finishActiveTurn(
 ): void {
   if (activeTurn !== undefined && this.activeTurn === activeTurn) {
     this.activeTurn = undefined;
+    this.publishRuntimeActivity?.();
   }
 }
 

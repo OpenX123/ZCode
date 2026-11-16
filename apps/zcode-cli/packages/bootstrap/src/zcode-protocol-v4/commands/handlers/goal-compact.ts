@@ -135,15 +135,18 @@ export async function startManualCompact(
   // record.activeAbortController 中断。不登记 controller，压缩中的请求会跑到自然结束。
   record.activeAbortController = abortController;
   manualCompactControllers.add(abortController);
+  const activity = host.observeRuntimeActivity?.(record);
   void runWithSessionResidencyFinalization(record, () =>
     runCompactTurnInBackground(host, record, {
       abortController,
       foregroundPromotionLeaseId,
       inputId,
     }),
-  ).catch(() => {
-    // 后台 compact 的错误经事件流（CompactStarted/终态 marker）降级上报；兜底防 unhandled rejection。
-  });
+  )
+    .finally(() => activity?.finish())
+    .catch(() => {
+      // 后台 compact 的错误经事件流（CompactStarted/终态 marker）降级上报；兜底防 unhandled rejection。
+    });
 }
 
 async function runCompactTurnInBackground(
@@ -448,6 +451,7 @@ async function continueGoalAfterChange(
     await host.ensureModelReady?.(record);
     const abortController = new AbortController();
     record.activeAbortController = abortController;
+    const activity = host.observeRuntimeActivity?.(record);
     void runWithSessionResidencyFinalization(record, () =>
       runGoalContinuationInBackground(host, record, {
         abortController,
@@ -455,9 +459,11 @@ async function continueGoalAfterChange(
         inputId: params.inputId,
         intent: params.intent,
       }),
-    ).catch(() => {
-      // 后台 goal continuation 的失败经事件流降级上报；兜底防 unhandled rejection。
-    });
+    )
+      .finally(() => activity?.finish())
+      .catch(() => {
+        // 后台 goal continuation 的失败经事件流降级上报；兜底防 unhandled rejection。
+      });
   }
   // 旧协议路径在续跑起跑后立即 afterStateMutation(goal_set/goal_replaced/goal_resumed)
   // → 钩子等价替代；v4 投影经 TargetChanged 事件自然收口。

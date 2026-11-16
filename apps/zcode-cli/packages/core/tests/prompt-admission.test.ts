@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSessionId } from "@zcode/contracts";
-import { AgentRuntime } from "../src/runtime.js";
+import { AgentRuntime, type AgentRuntimeDeps } from "../src/runtime.js";
 import { createTestSessionEventStore } from "./test-event-store.js";
 import { createTestModelFactory } from "./test-runtime-model.js";
 
@@ -14,7 +14,12 @@ function deferred<T>() {
   return { promise, reject, resolve };
 }
 
-function createRuntime(sessionKey: string, generateText: (input: unknown) => Promise<unknown>) {
+function createRuntime(
+  sessionKey: string,
+  generateText: (input: unknown) => Promise<unknown>,
+  runtimeActivitySink?: (state: { busy: boolean; closed: boolean }) => void,
+  extraDeps?: Partial<AgentRuntimeDeps>,
+) {
   return new AgentRuntime(
     createSessionId(sessionKey),
     {
@@ -24,6 +29,8 @@ function createRuntime(sessionKey: string, generateText: (input: unknown) => Pro
     {
       eventStore: createTestSessionEventStore(),
       modelFactory: createTestModelFactory({ generateText: generateText as never }),
+      runtimeActivitySink,
+      ...extraDeps,
     },
   );
 }
@@ -41,6 +48,162 @@ function admissionOptions(inputId: string) {
 }
 
 describe("AgentRuntime prompt admission", () => {
+  it("keeps shutdown activity until the actual command owner releases", async () => {
+    const modelEntered = deferred<void>();
+    const model = deferred<void>();
+    const closed = deferred<void>();
+    const states: Array<{ busy: boolean; closed: boolean }> = [];
+    const runtime = createRuntime(
+      "activity-shutdown",
+      async () => {
+        modelEntered.resolve();
+        await model.promise;
+        return {
+          finishReason: "stop",
+          text: "done",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      (state) => {
+        states.push(state);
+        if (state.closed) closed.resolve();
+      },
+    );
+    const admission = await runtime.admitPrompt(
+      "work",
+      undefined,
+      admissionOptions("activity-shutdown"),
+    );
+    if (admission.kind !== "started") throw new Error("not admitted");
+    try {
+      await modelEntered.promise;
+      runtime.beginShutdown();
+      expect(states.map(({ busy, closed: done }) => ({ busy, closed: done }))).toEqual([
+        { busy: false, closed: false },
+        { busy: true, closed: false },
+      ]);
+      model.resolve();
+      await admission.completion;
+      await closed.promise;
+      expect(states.at(-1)).toMatchObject({ busy: false, closed: true });
+    } finally {
+      model.resolve();
+      await admission.completion;
+    }
+  });
+
+  it("keeps activity through terminal browser cleanup and the next queued runtime command", async () => {
+    const cleanupEntered = deferred<void>();
+    const cleanup = deferred<void>();
+    const secondEntered = deferred<void>();
+    const secondModel = deferred<void>();
+    const idle = deferred<void>();
+    const activity: boolean[] = [];
+    let calls = 0;
+    let cleaned = 0;
+    const runtime = createRuntime(
+      "activity-cleanup",
+      async () => {
+        calls += 1;
+        if (calls === 2) {
+          secondEntered.resolve();
+          await secondModel.promise;
+        }
+        return {
+          finishReason: "stop",
+          text: "done",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      (state) => {
+        activity.push(state.busy);
+        if (activity.includes(true) && !state.busy) idle.resolve();
+      },
+      {
+        browserControlPort: {
+          turnEnded: async () => {
+            if (++cleaned === 1) {
+              cleanupEntered.resolve();
+              await cleanup.promise;
+            }
+          },
+        } as AgentRuntimeDeps["browserControlPort"],
+      },
+    );
+    const first = await runtime.admitPrompt("one", undefined, admissionOptions("activity-one"));
+    if (first.kind !== "started") throw new Error("not admitted");
+    await cleanupEntered.promise;
+    expect(runtime.getActiveTurnInfo()).toBeUndefined();
+    expect(activity).toEqual([false, true]);
+    const second = runtime.executeTurn("two", undefined, admissionOptions("activity-two"));
+    cleanup.resolve();
+    await secondEntered.promise;
+    expect(activity).toEqual([false, true]);
+    secondModel.resolve();
+    await Promise.all([first.completion, second]);
+    await idle.promise;
+    expect(activity).toEqual([false, true, false]);
+  });
+
+  it("exports admission activity before ACK and keeps command ownership through terminal cleanup", async () => {
+    const model = deferred<unknown>();
+    const idle = deferred<void>();
+    const activity: boolean[] = [];
+    const runtime = createRuntime(
+      "activity-admission",
+      async () => {
+        await model.promise;
+        return {
+          finishReason: "stop",
+          text: "done",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      (state) => {
+        activity.push(state.busy);
+        if (activity.includes(true) && !state.busy) idle.resolve();
+      },
+    );
+    let admission: Awaited<ReturnType<AgentRuntime["admitPrompt"]>> | undefined;
+    try {
+      admission = await runtime.admitPrompt("first", undefined, admissionOptions("activity-first"));
+      expect(admission.kind).toBe("started");
+      expect(activity).toEqual([false, true]);
+      model.resolve(undefined);
+      if (admission.kind === "started") await admission.completion;
+      await idle.promise;
+      expect(activity).toEqual([false, true, false]);
+    } finally {
+      model.resolve(undefined);
+      if (admission?.kind === "started") await admission.completion;
+    }
+  });
+
+  it("does not treat an idle requireQueue input as activity and closes the actual instance", async () => {
+    const activity: Array<{ busy: boolean; closed: boolean }> = [];
+    const runtime = createRuntime(
+      "activity-held",
+      async () => {
+        throw new Error("must remain queued");
+      },
+      (state) => activity.push(state),
+    );
+    expect(
+      (
+        await runtime.admitPrompt("held", undefined, {
+          ...admissionOptions("activity-held"),
+          requireQueue: true,
+        })
+      ).kind,
+    ).toBe("queued");
+    expect(activity).toMatchObject([{ busy: false, closed: false }]);
+    runtime.beginShutdown();
+    expect(activity).toMatchObject([
+      { busy: false, closed: false },
+      { busy: false, closed: true },
+    ]);
+  });
+
   it("keeps requireQueue input queued even when the runtime is idle", async () => {
     let modelCalls = 0;
     const runtime = createRuntime("prompt-admission-require-queue", async () => {

@@ -343,6 +343,8 @@ export interface V4GatewayHost {
   invalidatePersistentCommandFacts?(sessionId: string): void;
   /** canonical goal complete 已进入 projection；宿主副作用必须 detached，禁止阻塞 ingest。 */
   onTargetCompleted?(sessionId: string, event: SessionEvent): void;
+  /** 原始 queue/target 事实到投影提交的只读观察，不依赖 UI 订阅或帧 ACK。 */
+  observeAutoQueueProjection?(sessionId: string, event: SessionEvent): (() => void) | undefined;
   /** 完整 chunk transaction commit 后一次性写 session artifact。 */
   putSessionAttachment?(
     sessionId: string,
@@ -537,6 +539,17 @@ interface ProjectionEventCommitWaiter {
 
 const PROJECTION_EVENT_COMMIT_TIMEOUT_MS = 25_000;
 const MAX_TELEMETRY_EVENT_IDS = 2_000;
+const AUTO_QUEUE_PROJECTION_EVENT_TYPES = new Set<SessionEvent["type"]>([
+  SessionEventType.TurnSteerQueued,
+  SessionEventType.TurnSteerDeliveryChanged,
+  SessionEventType.TurnSteerReordered,
+  SessionEventType.TurnSteerDrained,
+  SessionEventType.TurnSteerDiscarded,
+  SessionEventType.SessionInputPromoted,
+  SessionEventType.TurnSteerDispatchChanged,
+  SessionEventType.QueueAutoDrainChanged,
+  SessionEventType.TargetChanged,
+]);
 /** detached subagent child 终态后无订阅者时，publisher 由低频 tick 释放前的保留时长。 */
 export const DETACHED_CHILD_PUBLISHER_GRACE_MS = 120_000;
 
@@ -626,6 +639,16 @@ function toShareStatFault(error: unknown): unknown {
 }
 
 export class ConversationV4Gateway {
+  private readonly autoQueueProjection = new Map<
+    string,
+    Map<
+      string,
+      {
+        done: Promise<void>;
+        finish(): void;
+      }
+    >
+  >();
   private readonly publishers = new Map<string, ConversationTopicPublisher>();
   /** sessions-index：workspaceId → 列表 publisher（与 conversation 并列，独立 seq/logEpoch）。 */
   private readonly indexPublishers = new SessionsIndexPublisherRegistry();
@@ -861,6 +884,31 @@ export class ConversationV4Gateway {
   /** 权威事件入口：投影推进 + 各订阅者按 profile.flushWindowMs 调度打帧。 */
   ingest(sessionId: string, event: SessionEvent): void {
     if (this.disposed) return;
+    if (AUTO_QUEUE_PROJECTION_EVENT_TYPES.has(event.type)) {
+      const eventId = String(event.id);
+      const state = this.getOrCreateRawSequenceState(sessionId);
+      const pending = this.autoQueueProjection.get(sessionId) ?? new Map();
+      if (
+        !pending.has(eventId) &&
+        !state.seenEventIds.has(eventId) &&
+        !state.appliedEventIds.has(eventId) &&
+        !state.failedEventById.has(eventId)
+      ) {
+        const release = this.host.observeAutoQueueProjection?.(sessionId, event);
+        let finish!: () => void;
+        const done = new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        pending.set(eventId, {
+          done,
+          finish: () => {
+            release?.();
+            finish();
+          },
+        });
+        this.autoQueueProjection.set(sessionId, pending);
+      }
+    }
     const hydrationBuffer = this.hydrationBuffers.get(sessionId);
     if (hydrationBuffer) {
       const eventId = String(event.id);
@@ -1065,7 +1113,7 @@ export class ConversationV4Gateway {
       }
       return;
     }
-    this.resolveProjectionEventCommit(sessionId, String(event.id));
+    this.resolveProjectionEventCommit(sessionId, String(event.id), true);
     // 原因：后台会话没有卡片/订阅时无法创建 guest。只在 live 投影提交后投递，
     // 从同一权威工具行取输入和 UI 描述；历史 hydration 直接写 publisher，不走此入口。
     if (event.type === SessionEventType.ToolCallResult && this.host.emitPluginUiToolResult) {
@@ -1103,6 +1151,7 @@ export class ConversationV4Gateway {
     if (event.type === SessionEventType.TurnComplete || event.type === SessionEventType.TurnError) {
       this.projectionFaultedSessions.delete(sessionId);
     }
+    this.finishAutoQueueProjection(sessionId, String(event.id));
     if (event.type === SessionEventType.TurnSteerQueued) {
       const queueItemId = (event.payload as { pendingInputId?: string }).pendingInputId;
       const item = queueItemId
@@ -2865,6 +2914,24 @@ export class ConversationV4Gateway {
     return this.publishers.get(sessionId)?.getSnapshot().queue.items.length ?? 0;
   }
 
+  /** 等同一现有 gate 关联的 raw facts 提交；不触发 promotion，也不创建轮询或 timer。 */
+  async waitForAutoQueueProjection(sessionId: string): Promise<void> {
+    while (this.autoQueueProjection.get(sessionId)?.size) {
+      await Promise.all(
+        [...this.autoQueueProjection.get(sessionId)!.values()].map((item) => item.done),
+      );
+    }
+  }
+
+  private finishAutoQueueProjection(sessionId: string, eventId: string): void {
+    const pending = this.autoQueueProjection.get(sessionId);
+    const observation = pending?.get(eventId);
+    if (!observation) return;
+    pending!.delete(eventId);
+    if (pending!.size === 0) this.autoQueueProjection.delete(sessionId);
+    observation.finish();
+  }
+
   /** Resident 回收保护：publisher queue 与 CommandInbox pinned facts 任一存在都不可关闭。 */
   hasResidencyBlockingCommands(sessionId: string): boolean {
     return this.getQueueLength(sessionId) > 0 || this.inbox.hasPinnedSessionState(sessionId);
@@ -3083,6 +3150,9 @@ export class ConversationV4Gateway {
 
   dispose(): void {
     this.disposed = true;
+    for (const [sessionId, pending] of this.autoQueueProjection) {
+      for (const eventId of pending.keys()) this.finishAutoQueueProjection(sessionId, eventId);
+    }
     this.localTtft.clear();
     for (const sessionId of this.projectionEventCommitWaiters.keys()) {
       this.rejectProjectionEventWaiters(
@@ -3502,6 +3572,7 @@ export class ConversationV4Gateway {
         "fault.projectionEventCommit.rehydrated",
         `conversation projection rehydrated while waiting for event commit: ${sessionId}`,
       ),
+      true,
     );
     const rehydrateStartedAt = performance.now();
     publisher.rehydrate(loaded.events, {
@@ -3541,6 +3612,15 @@ export class ConversationV4Gateway {
       recentRawEventsById: new Map(),
     };
     this.rawSequenceStates.set(sessionId, sequenceState);
+    for (const eventId of this.autoQueueProjection.get(sessionId)?.keys() ?? []) {
+      const raw = previousSequenceState?.recentRawEventsById.get(eventId);
+      if (
+        sequenceState.appliedEventIds.has(eventId) ||
+        (raw && raw.sequenceNumber > 0 && raw.sequenceNumber <= sourceEventSeq)
+      ) {
+        this.finishAutoQueueProjection(sessionId, eventId);
+      }
+    }
     // 持久读取的 sourceEventSeq 是 load 开始时的水位；hydration buffer
     // 只能记录 load 开始后的事件。若 seq=N 已在 buffer 创建前进入 live publisher，而
     // load 只读到 N-1 时，rehydrate 后不能仅重放 N+1：raw reorder 会永久等待已经被
@@ -3659,7 +3739,11 @@ export class ConversationV4Gateway {
       // SessionResumed 是明确 epoch 边界：丢弃边界前的旧 pending，同时保留可能乱序先到的
       // 新 epoch 后续事件，再从 resume 自身连续 drain。
       for (const pendingSeq of state.pendingByRawSeq.keys()) {
-        if (pendingSeq <= rawSeq) state.pendingByRawSeq.delete(pendingSeq);
+        if (pendingSeq <= rawSeq) {
+          const superseded = state.pendingByRawSeq.get(pendingSeq);
+          state.pendingByRawSeq.delete(pendingSeq);
+          if (superseded) this.finishAutoQueueProjection(sessionId, String(superseded.id));
+        }
       }
       state.sourceEventSeq = rawSeq - 1;
       state.offset = state.lastTransportSeq - state.sourceEventSeq;
@@ -3672,6 +3756,8 @@ export class ConversationV4Gateway {
 
     state.seenEventIds.add(eventId);
     if (!state.pendingByRawSeq.has(rawSeq)) state.pendingByRawSeq.set(rawSeq, event);
+    // 相同 raw seq 的第二个事件不会进入原投影；它的只读观察也必须在该裁决同步结束。
+    else this.finishAutoQueueProjection(sessionId, eventId);
     const ready: SessionEvent[] = [];
     // eventStore 先编号，各事件各自 await 持久化后再 notify，
     // 因此 N+1 可以先于 N 到达。高水位过滤会把迟到 N 错判成 duplicate；
@@ -3718,10 +3804,15 @@ export class ConversationV4Gateway {
     return created;
   }
 
-  private resolveProjectionEventCommit(sessionId: string, eventId: string): void {
+  private resolveProjectionEventCommit(
+    sessionId: string,
+    eventId: string,
+    deferAutoQueue = false,
+  ): void {
     const state = this.getOrCreateRawSequenceState(sessionId);
     state.failedEventById.delete(eventId);
     state.appliedEventIds.add(eventId);
+    if (!deferAutoQueue) this.finishAutoQueueProjection(sessionId, eventId);
     const waiters = this.projectionEventCommitWaiters.get(sessionId)?.get(eventId);
     if (!waiters) return;
     for (const waiter of [...waiters]) waiter.resolve();
@@ -3730,12 +3821,21 @@ export class ConversationV4Gateway {
   private rejectProjectionEventCommit(sessionId: string, eventId: string, error: Error): void {
     const state = this.getOrCreateRawSequenceState(sessionId);
     state.failedEventById.set(eventId, error);
+    this.finishAutoQueueProjection(sessionId, eventId);
     const waiters = this.projectionEventCommitWaiters.get(sessionId)?.get(eventId);
     if (!waiters) return;
     for (const waiter of [...waiters]) waiter.reject(error);
   }
 
-  private rejectProjectionEventWaiters(sessionId: string, error: Error): void {
+  private rejectProjectionEventWaiters(
+    sessionId: string,
+    error: Error,
+    preserveAutoQueue = false,
+  ): void {
+    if (!preserveAutoQueue)
+      for (const eventId of this.autoQueueProjection.get(sessionId)?.keys() ?? []) {
+        this.finishAutoQueueProjection(sessionId, eventId);
+      }
     const byEvent = this.projectionEventCommitWaiters.get(sessionId);
     if (!byEvent) return;
     for (const waiters of byEvent.values()) {

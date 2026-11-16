@@ -157,8 +157,13 @@ import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-
 import { disposeNodeReplSession } from "../tool/handlers/node-repl.js";
 import { cloneModelSelection } from "./model-selection.js";
 
+let runtimeActivityInstanceSequence = 0;
 // oxlint-disable typescript-eslint/no-unsafe-declaration-merging
 export class AgentRuntime {
+  private readonly activityInstanceId = ++runtimeActivityInstanceSequence;
+  private runtimeActivitySink?: AgentRuntimeDeps["runtimeActivitySink"];
+  private publishedActivityBusy?: boolean;
+  private activityClosed = false;
   private sessionId: SessionId;
   private turnNumber: number;
   private config: AgentRuntimeConfig;
@@ -280,6 +285,7 @@ export class AgentRuntime {
   constructor(sessionId: SessionId, config: AgentRuntimeConfig, deps: AgentRuntimeDeps) {
     const runtime = this as unknown as AgentRuntimeInternal;
     this.sessionId = sessionId;
+    this.runtimeActivitySink = deps.runtimeActivitySink;
     this.turnNumber = 0;
     // 3.12.2：兼容旧 Host/内部调用传入 legacy，但本版本 Runtime、日志和子 Agent 只使用 preflight。
     this.config = {
@@ -368,6 +374,25 @@ export class AgentRuntime {
     // 进程（连接 p50 8.2s、约 15s CPU 满载）。草稿推迟到首次需要工具（initializeMcp）再启动。
     if (!isExternalSessionEngine(this.config.engine) && !this.config.deferMcpStartupUntilFirstUse)
       runtime.startMcpStartup(this.rootTraceContext);
+    this.publishRuntimeActivity();
+  }
+
+  /** ACK/TurnComplete不拥有空闲裁决；只从现有Core执行owner导出当前值。 */
+  publishRuntimeActivity(): void {
+    if (this.activityClosed) return;
+    const executing = this.hasActiveOrQueuedTurnWork();
+    // shutdown 只是停止接纳；仍在取消/清理的 command 必须由原 drain 真正释放，不能提前归零。
+    const closed = this.shuttingDown && !executing;
+    const busy = !closed && executing;
+    if (!closed && this.publishedActivityBusy === busy) return;
+    this.publishedActivityBusy = busy;
+    this.activityClosed = closed;
+    this.runtimeActivitySink?.({
+      sessionId: String(this.sessionId),
+      instanceId: this.activityInstanceId,
+      busy,
+      closed,
+    });
   }
 
   getSessionEngine(): SessionEngine {
@@ -534,6 +559,7 @@ export class AgentRuntime {
     // ExecutionPort.close() 会把后台 Bash 收口为 cancelled；若允许
     // teardown terminal event 再唤醒模型，并与随后关闭的 session store 竞态。
     this.shuttingDown = true;
+    this.publishRuntimeActivity();
     // 同一条理由：会话在关，提醒钟不能再到点唤起一轮。
     this.workflowBlockedReminder.stop();
     // 关闭单个 session 后进程仍存活，

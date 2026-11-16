@@ -92,6 +92,36 @@ const snapshot = {
 };
 
 describe("ZCodeProtocolClient", () => {
+  it("caches strict runtime activity before service binding and rejects stale revisions", () => {
+    const transport = new FakeZCodeTransport();
+    const client = new ZCodeProtocolClient(transport);
+    const notify = (params: unknown) =>
+      transport.receive({ method: "process/runtimeActivity", params });
+    notify({ revision: 1, sessions: [{ sessionId: "actual-child", instanceId: 3, busy: true }] });
+    expect(client.runtimeActivitySnapshot).toEqual({
+      revision: 1,
+      sessions: [{ sessionId: "actual-child", instanceId: 3, busy: true }],
+    });
+    const changed = vi.fn();
+    client.onRuntimeActivityChanged(changed);
+    notify({ revision: 1, sessions: [] });
+    notify({ revision: 0, sessions: [] });
+    notify({ revision: 2, sessions: [], extra: true });
+    notify({
+      revision: 2,
+      sessions: [
+        { sessionId: "duplicate", instanceId: 1, busy: true },
+        { sessionId: "duplicate", instanceId: 2, busy: false },
+      ],
+    });
+    expect(changed).not.toHaveBeenCalled();
+    notify({ revision: 2, sessions: [] });
+    expect(client.runtimeActivitySnapshot).toEqual({ revision: 2, sessions: [] });
+    expect(changed).toHaveBeenCalledOnce();
+    client.dispose();
+    expect(client.runtimeActivitySnapshot).toBeUndefined();
+  });
+
   it("dispose 批量拒绝不会把 fire-and-forget 请求的外层 Promise 判为 unhandled", async () => {
     // CR 复现：request() 返回的外层 Promise 才是 unhandledRejection 判定对象；
     // 调用方在启动后、挂靠 .catch 前 dispose，内外两层都必须已有兜底 handler。

@@ -155,6 +155,7 @@ export type {
   ActiveTurnInfo,
   AgentRuntimeConfig,
   AgentRuntimeDeps,
+  RuntimeActivityState,
   ConversationRewindResult,
   ExecuteTurnOptions,
   ModelExecutionContext,

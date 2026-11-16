@@ -1,7 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
-import { createHostWorkspaceTaskTracker } from "../src/host/hostWorkspaceTaskTracker.js";
+import {
+  createHostRunningTaskCountReporter,
+  createHostWorkspaceTaskTracker,
+} from "../src/host/hostWorkspaceTaskTracker.js";
 
 describe("createHostWorkspaceTaskTracker", () => {
+  it("merges local runtime facts with existing remote and legacy counts without overwriting", () => {
+    const report = vi.fn();
+    const aggregate = createHostRunningTaskCountReporter(report);
+    const remote = createHostWorkspaceTaskTracker(() =>
+      aggregate.updateLegacyAndRemote(remote.getTotalRunningTaskCount() + 1),
+    );
+    const workspace = { workspacePath: "/same", workspaceIdentity: "ssh:one" };
+    remote.begin("remote", workspace);
+    aggregate.updateLocal(2);
+    aggregate.updateLocal(2);
+    aggregate.updateLocal(0);
+    expect(report.mock.calls).toEqual([[2], [4], [2]]);
+    remote.finish("remote", workspace);
+    aggregate.updateLegacyAndRemote(0);
+    expect(report.mock.calls.slice(3)).toEqual([[1], [0]]);
+  });
   it("reports workspace running task transitions independently", () => {
     const report = vi.fn();
     const tracker = createHostWorkspaceTaskTracker(report);

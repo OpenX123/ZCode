@@ -356,6 +356,7 @@ export function createDefaultSubagentPort(
           skillPort: childSkillPort,
           artifactStore: deps.artifactStore,
           appVersion: this.appVersion,
+          runtimeActivitySink: deps.runtimeActivitySink,
           eventSink: {
             onSessionEvent: async (event) => {
               request.reportActivity?.();
@@ -1026,7 +1027,9 @@ function buildExternalSubagentRuntime(
       taskType: "subagent_child",
       workingDirectory: root.workingDirectory,
       ...(root.config.workspacePath ? { workspacePath: root.config.workspacePath } : {}),
-      ...(root.config.workspaceIdentity ? { workspaceIdentity: root.config.workspaceIdentity } : {}),
+      ...(root.config.workspaceIdentity
+        ? { workspaceIdentity: root.config.workspaceIdentity }
+        : {}),
       mode: root.config.mode,
       agentName: root.config.agentName,
       subagents: { enabled: false },
@@ -1036,6 +1039,7 @@ function buildExternalSubagentRuntime(
       ...(root.sessionStore ? { sessionStore: root.sessionStore } : {}),
       ...(root.logger ? { logger: root.logger } : {}),
       appVersion: root.appVersion,
+      runtimeActivitySink: root.runtimeActivitySink,
       // 载体从不跑模型；误入模型路径时明确失败，而不是借用父会话的 Provider。
       modelFactory: () => {
         throw new Error("External subagent sessions never run a YCode model");

@@ -9,6 +9,32 @@ export interface HostWorkspaceTaskCountEvent extends HostWorkspaceTaskContext {
   runningTaskCount: number;
 }
 
+/** 本地 CLI 快照与既有远端/legacy 分量必须相加，独立 reporter 会相互覆盖 Main 的 Host 总数。 */
+export function createHostRunningTaskCountReporter(report: (count: number) => void): {
+  updateLocal(count: number): void;
+  updateLegacyAndRemote(count: number): void;
+} {
+  let local = 0;
+  let legacyAndRemote = 0;
+  let reported = 0;
+  const publish = () => {
+    const total = local + legacyAndRemote;
+    if (total === reported) return;
+    reported = total;
+    report(total);
+  };
+  return {
+    updateLocal(count) {
+      local = count;
+      publish();
+    },
+    updateLegacyAndRemote(count) {
+      legacyAndRemote = count;
+      publish();
+    },
+  };
+}
+
 export function createHostWorkspaceTaskTracker(
   report: (event: HostWorkspaceTaskCountEvent) => void,
 ): {

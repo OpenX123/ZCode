@@ -11,6 +11,7 @@ import {
   networkCaptureControlSchema,
   zcodeProtocolNotifications,
   type ZCodeResidentSessionsNotification,
+  type ZCodeRuntimeActivitySnapshot,
 } from "@zcode/shared";
 import {
   zcodeExternalEngineCancelConnectionTestParamsSchema,
@@ -34,7 +35,7 @@ import type {
   McpServerNotification,
 } from "@zcode/contracts";
 import { requestMcpElicitation } from "./interaction-broker.js";
-import { InMemoryWorkspaceHookPolicyProvider } from "@zcode/core";
+import { InMemoryWorkspaceHookPolicyProvider, type RuntimeActivityState } from "@zcode/core";
 import {
   V4_METHODS,
   V4_NOTIFICATIONS,
@@ -252,7 +253,89 @@ interface PendingClientRequest<T> {
   abortHandler?: () => void;
 }
 
+/**
+ * 退出保护的唯一进程快照：Core 决定执行事实，Bootstrap 只保留其已有异步收尾。
+ * observer 不持有调度 lease；旧 app/实例的 finally 永远不能清掉恢复后的实例。
+ */
+class ProtocolRuntimeActivity {
+  private revision = 0;
+  private readonly sessions = new Map<
+    string,
+    {
+      state: RuntimeActivityState;
+      app?: ZCodeProtocolSessionRecord["app"];
+      observers: Set<{ active: boolean }>;
+    }
+  >();
+  private lastPublished = "";
+
+  constructor(private readonly emit: (snapshot: ZCodeRuntimeActivitySnapshot) => void) {}
+
+  updateCore(state: RuntimeActivityState): void {
+    let entry = this.sessions.get(state.sessionId);
+    if (
+      entry &&
+      (entry.state.instanceId > state.instanceId ||
+        (entry.state.instanceId === state.instanceId && entry.state.closed))
+    )
+      return;
+    if (!entry || entry.state.instanceId !== state.instanceId) {
+      entry = { state, observers: new Set() };
+      this.sessions.set(state.sessionId, entry);
+    }
+    entry.state = state;
+    if (state.closed) {
+      entry.observers.clear();
+      entry.app = undefined;
+    } else if (state.busy) for (const observer of entry.observers) observer.active = true;
+    this.publish();
+  }
+
+  observe(record: Pick<ZCodeProtocolSessionRecord, "app">): { activate(): void; finish(): void } {
+    const sessionId = String(record.app.sessionId);
+    const entry = this.sessions.get(sessionId);
+    if (!entry || entry.state.closed || (entry.app && entry.app !== record.app)) {
+      return { activate() {}, finish() {} };
+    }
+    entry.app = record.app;
+    const observer = {
+      active: entry.state.busy || [...entry.observers].some((item) => item.active),
+    };
+    entry.observers.add(observer);
+    return {
+      activate: () => {
+        if (this.sessions.get(sessionId) !== entry || entry.state.closed) return;
+        observer.active = true;
+        this.publish();
+      },
+      finish: () => {
+        if (this.sessions.get(sessionId) !== entry) return;
+        entry.observers.delete(observer);
+        this.publish();
+      },
+    };
+  }
+
+  publish(force = false): void {
+    const sessions = [...this.sessions.values()]
+      .filter(({ state }) => !state.closed)
+      .map(({ state, observers }) => ({
+        sessionId: state.sessionId,
+        instanceId: state.instanceId,
+        busy: state.busy || [...observers].some((observer) => observer.active),
+      }))
+      .sort((a, b) => a.sessionId.localeCompare(b.sessionId));
+    const serialized = JSON.stringify(sessions);
+    if (!force && serialized === this.lastPublished) return;
+    this.lastPublished = serialized;
+    this.emit({ revision: ++this.revision, sessions });
+  }
+}
+
 export class ZCodeProtocolAgentServer {
+  private readonly runtimeActivity = new ProtocolRuntimeActivity((snapshot) => {
+    this.messageSink?.({ method: zcodeProtocolNotifications.runtimeActivity, params: snapshot });
+  });
   private readonly networkCapture = createNodeNetworkCapture("cli", (batch) => {
     this.messageSink?.({
       method: zcodeProtocolNotifications.processNetworkRequests,
@@ -355,6 +438,7 @@ export class ZCodeProtocolAgentServer {
         : {}),
     });
     this.context = {
+      runtimeActivity: this.runtimeActivity,
       assertServing: () => this.runtimeResources.assertServing(),
       deps: resolvedDeps,
       logger: this.logger,
@@ -458,6 +542,7 @@ export class ZCodeProtocolAgentServer {
     this.messageSink = sink;
     // 初始快照：Host 收到第一条之前按“未知”失败关闭，连接建立即给出当前值。
     this.notifyResidentSessions();
+    this.runtimeActivity.publish(true);
   }
 
   private notifyResidentSessions(): void {

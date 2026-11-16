@@ -3212,6 +3212,9 @@ export function onSessionEvent(
   record: ZCodeProtocolSessionRecord,
   event: SessionEvent,
 ): void {
+  const currentRecord = context.sessions.get(record.app.sessionId);
+  // 旧 runtime 的异步 sink 可能在 close/resume 后才返回；它不能推进新实例的 queue/target 水位。
+  if (currentRecord && currentRecord !== record) return;
   const computerUseOperationEvent = mapComputerUseOperationEvent(event);
   if (computerUseOperationEvent) {
     try {
@@ -3568,6 +3571,7 @@ async function createRecord(
   const app = await createWorkspaceZCodeApp(context, workspace, {
     env: context.deps.env,
     eventStore,
+    runtimeActivitySink: (state) => context.runtimeActivity?.updateCore(state),
     resume,
     additionalDirectories: params.additionalDirectories ?? startupPreferences.additionalDirectories,
     runtimeConfig: {

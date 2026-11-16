@@ -329,7 +329,16 @@ export interface MemoryRuntimeConfig {
   workspaceIdentity?: string;
 }
 
+export interface RuntimeActivityState {
+  sessionId: string;
+  instanceId: number;
+  busy: boolean;
+  closed: boolean;
+}
+
 export interface AgentRuntimeDeps {
+  /** 只读执行事实出口；继承到真实child runtime，不拥有调度或admission。 */
+  runtimeActivitySink?: (state: RuntimeActivityState) => void;
   externalEnginePort?: ExternalEnginePort;
   /** 只读目录入口；必须同步读取内存，不在请求收集阶段进行 I/O。 */
   getAgentDefinitions?: GetAgentDefinitions;

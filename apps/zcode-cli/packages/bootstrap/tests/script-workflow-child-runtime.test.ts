@@ -163,6 +163,59 @@ describe("script workflow child runtime — actor transcript 直播通道", () =
     expect(await sessionStore.getSession(actorSessionId)).toBeDefined();
   });
 
+  it("activity sink 保留真实 child 身份，父 turn 完成不清 child，重建不复用实例", async () => {
+    const states: Array<{ sessionId: string; instanceId: number; busy: boolean; closed: boolean }> =
+      [];
+    let releaseModel!: () => void;
+    const modelGate = new Promise<void>((resolve) => {
+      releaseModel = resolve;
+    });
+    let entered!: () => void;
+    const modelEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const deps = makeDeps();
+    deps.appOptions.runtimeActivitySink = (state) => states.push(state);
+    deps.modelFactory = createTestModelFactoryFromAdapter({
+      async generateText() {
+        entered();
+        await modelGate;
+        return {
+          finishReason: "stop",
+          text: "child done",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        } as ModelResult;
+      },
+    });
+    const create = () =>
+      createScriptWorkflowAgentRuntime({
+        childSessionId: actorSessionId,
+        deps,
+        request: { opts: {} } as never,
+        traceContext: createRootTraceContext({ sessionId: parentSessionId }),
+      });
+    const child = create();
+    const running = child.executeTurn("child");
+    try {
+      await modelEntered;
+      await parentRuntime.executeTurn("parent ends first");
+      expect(states.map((state) => state.busy)).toEqual([false, true]);
+      expect(states.every((state) => state.sessionId === actorSessionId)).toBe(true);
+      releaseModel();
+      await running;
+      expect(states.map((state) => state.busy)).toEqual([false, true, false]);
+      child.beginShutdown();
+      const next = create();
+      expect(states.at(-1)?.instanceId).toBeGreaterThan(states[0]!.instanceId);
+      expect(states.at(-2)?.closed).toBe(true);
+      next.beginShutdown();
+    } finally {
+      releaseModel();
+      await running;
+      child.beginShutdown();
+    }
+  });
+
   it("转发流从 sequenceNumber 1（SessionTitleUpdated）起，保留 actor 的 sessionId", async () => {
     const actorRuntime = await makeActorRuntime();
 

@@ -5,6 +5,8 @@ import {
   zcodeProtocolMethods,
   zcodeProtocolNotifications,
   zcodeResidentSessionsNotificationSchema,
+  zcodeRuntimeActivitySnapshotSchema,
+  type ZCodeRuntimeActivitySnapshot,
 } from "@zcode/shared";
 import type {
   ZCodeProtocolMethod,
@@ -165,6 +167,8 @@ export class ZCodeProtocolClient implements IDisposable {
   // 业务请求归零时触发；观测完成不能给被观察进程续命。
   private readonly pendingDrainedEmitter = new Emitter<void>();
   private readonly residentSessionsEmitter = new Emitter<number>();
+  private readonly runtimeActivityEmitter = new Emitter<ZCodeRuntimeActivitySnapshot>();
+  private runtimeActivity: ZCodeRuntimeActivitySnapshot | undefined;
   private readonly closeEmitter = new Emitter<void>();
   private readonly disposables: IDisposable[] = [];
   private nextRequestId = 1;
@@ -189,6 +193,10 @@ export class ZCodeProtocolClient implements IDisposable {
   readonly onPendingRequestsDrained = this.pendingDrainedEmitter.event;
   /** 常驻会话数变化（只在被接受的通知改变计数时触发）。 */
   readonly onResidentSessionsChanged = this.residentSessionsEmitter.event;
+  readonly onRuntimeActivityChanged = this.runtimeActivityEmitter.event;
+  get runtimeActivitySnapshot(): ZCodeRuntimeActivitySnapshot | undefined {
+    return this.runtimeActivity;
+  }
   readonly onClose = this.closeEmitter.event;
 
   /** 当前尚未收到响应的请求数。 */
@@ -228,6 +236,7 @@ export class ZCodeProtocolClient implements IDisposable {
     this.disposables.push(
       transport.onMessage((message) => this.handleMessage(message)),
       transport.onClose((event) => {
+        this.runtimeActivity = undefined;
         this.storageStartup.dispose();
         const suffix = event.reason ? `: ${event.reason}` : "";
         this.rejectAll(new Error(`ZCode agent transport closed${suffix}`));
@@ -460,6 +469,16 @@ export class ZCodeProtocolClient implements IDisposable {
       if (message.method === zcodeProtocolNotifications.processResidentSessions) {
         this.acceptResidentSessions((message as ZCodeProtocolNotification).params);
       }
+      if (message.method === zcodeProtocolNotifications.runtimeActivity) {
+        const parsed = zcodeRuntimeActivitySnapshotSchema.safeParse(
+          (message as ZCodeProtocolNotification).params,
+        );
+        if (parsed.success && parsed.data.revision > (this.runtimeActivity?.revision ?? 0)) {
+          // 必须在 client 构造期缓存：service 绑定晚于 CLI 的初始通知，不能从零猜测运行态。
+          this.runtimeActivity = parsed.data;
+          this.runtimeActivityEmitter.fire(parsed.data);
+        }
+      }
       this.notificationEmitter.fire(message as ZCodeProtocolNotification);
     }
   }
@@ -544,6 +563,7 @@ export class ZCodeProtocolClient implements IDisposable {
   }
 
   private disposeLocalResources(): void {
+    this.runtimeActivity = undefined;
     this.rejectAll(new Error("ZCode Protocol client disposed"));
     for (const disposable of this.disposables) {
       disposable.dispose();
@@ -555,6 +575,7 @@ export class ZCodeProtocolClient implements IDisposable {
     this.requestTimeoutEmitter.dispose();
     this.pendingDrainedEmitter.dispose();
     this.residentSessionsEmitter.dispose();
+    this.runtimeActivityEmitter.dispose();
     this.closeEmitter.dispose();
   }
 

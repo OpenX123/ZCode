@@ -45,6 +45,7 @@ export async function drainRuntimeCommandQueue(this: AgentRuntimeInternal): Prom
   if (this.runtimeCommandDrainActive) return;
 
   this.runtimeCommandDrainActive = true;
+  this.publishRuntimeActivity?.();
   try {
     let commands: readonly RuntimeCommand[];
     // 将同批后台通知合并到一个模型轮，避免每条通知都单独发起请求。
@@ -70,6 +71,7 @@ export async function drainRuntimeCommandQueue(this: AgentRuntimeInternal): Prom
     }
   } finally {
     this.runtimeCommandDrainActive = false;
+    this.publishRuntimeActivity?.();
   }
 
   if (this.runtimeCommandQueue.hasPending() && this.foregroundPromotionLease === undefined) {
@@ -148,6 +150,7 @@ export function acquireForegroundPromotionLease(
     leaseId: options.leaseId,
     promotedInputId: options.promotedInputId,
   };
+  this.publishRuntimeActivity?.();
   return { kind: "acquired", leaseId: options.leaseId };
 }
 

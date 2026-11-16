@@ -491,7 +491,30 @@ export const zcodeProtocolNotifications = {
   // CLI 会话注册表的常驻会话数（Host 回收工作区 CLI 的守卫事实）；规则见
   // apps/zcode-cli/docs/design/v2/zcode-protocol-agent-server.md「常驻会话数通知」。
   processResidentSessions: "process/residentSessions",
+  runtimeActivity: "process/runtimeActivity",
 } as const;
+
+/** 完整运行事实快照；版本属于当前CLI进程，不能与turn或V4帧序号混用。 */
+export const zcodeRuntimeActivitySnapshotSchema = z
+  .object({
+    revision: z.number().int().positive(),
+    sessions: z
+      .array(
+        z
+          .object({
+            sessionId: nonEmptyString,
+            instanceId: z.number().int().positive(),
+            busy: z.boolean(),
+          })
+          .strict(),
+      )
+      .refine(
+        (sessions) =>
+          new Set(sessions.map((session) => session.sessionId)).size === sessions.length,
+      ),
+  })
+  .strict();
+export type ZCodeRuntimeActivitySnapshot = z.infer<typeof zcodeRuntimeActivitySnapshotSchema>;
 
 /**
  * `process/residentSessions`：连接建立时发一次当前值，此后注册表 record 数每变化一次发一次。
