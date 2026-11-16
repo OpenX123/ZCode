@@ -51,9 +51,26 @@ describe("R1 window Host control protocol", () => {
     );
   });
   it("连接结果可携带严格校验的复用目标", () => {
-    const result = { type: HostResponseTypes.RemoteWorkspaceConnected, requestId: "reused", descriptor: { remoteSessionId: "session", target: sshTarget, generation: 1, reusedConnectionTarget: sshTarget } };
+    const result = {
+      type: HostResponseTypes.RemoteWorkspaceConnected,
+      requestId: "reused",
+      descriptor: {
+        remoteSessionId: "session",
+        target: sshTarget,
+        generation: 1,
+        reusedConnectionTarget: sshTarget,
+      },
+    };
     expect(hostResponseMessageSchema.parse(result)).toEqual(result);
-    expect(hostResponseMessageSchema.safeParse({ ...result, descriptor: { ...result.descriptor, reusedConnectionTarget: { kind: "ssh", host: "dev.internal" } } }).success).toBe(false);
+    expect(
+      hostResponseMessageSchema.safeParse({
+        ...result,
+        descriptor: {
+          ...result.descriptor,
+          reusedConnectionTarget: { kind: "ssh", host: "dev.internal" },
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("validates monotonic-shape CUA PiP focus facts", () => {
@@ -264,37 +281,27 @@ describe("R1 window Host control protocol", () => {
   });
 
   it("严格校验 Remote Environment Provisioning 的执行与结果消息", () => {
-    expect(
-      hostIncomingMessageSchema.safeParse({
-        type: HostMessageTypes.ProviderProvisioningExecute,
-        requestId: "provisioning-1",
-        environmentKey: "ssh:dev.internal:developer",
-        remoteSessionId: "remote-session-1",
-        trigger: "environment-online",
-      }).success,
-    ).toBe(true);
-    expect(
-      hostIncomingMessageSchema.safeParse({
-        type: HostMessageTypes.ProviderProvisioningExecute,
-        requestId: "provisioning-1",
-        environmentKey: "",
-        remoteSessionId: "remote-session-1",
-        trigger: "manual",
-      }).success,
-    ).toBe(false);
-
-    expect(
-      hostResponseMessageSchema.safeParse({
-        type: HostResponseTypes.ProviderProvisioningSourceChanged,
-        trigger: "credential",
-      }).success,
-    ).toBe(true);
-    expect(
-      hostResponseMessageSchema.safeParse({
-        type: HostResponseTypes.ProviderProvisioningSourceChanged,
-        trigger: "environment-online",
-      }).success,
-    ).toBe(false);
+    const execute = {
+      type: HostMessageTypes.ProviderProvisioningExecute,
+      requestId: "provisioning-1",
+      environmentKey: "ssh:dev.internal:developer",
+      remoteSessionId: "remote-session-1",
+      trigger: "environment-online",
+    };
+    expect(hostIncomingMessageSchema.parse(execute)).toEqual(execute);
+    for (const key of ["requestId", "environmentKey", "remoteSessionId"] as const) {
+      for (const value of ["", " "]) {
+        expect(hostIncomingMessageSchema.safeParse({ ...execute, [key]: value }).success).toBe(
+          false,
+        );
+      }
+    }
+    expect(hostIncomingMessageSchema.safeParse({ ...execute, trigger: "manual" }).success).toBe(
+      false,
+    );
+    expect(hostIncomingMessageSchema.safeParse({ ...execute, unexpected: true }).success).toBe(
+      false,
+    );
 
     expect(
       hostResponseMessageSchema.safeParse({
@@ -313,6 +320,33 @@ describe("R1 window Host control protocol", () => {
       }).success,
     ).toBe(false);
   });
+
+  it.each(["personal-config", "configured-default"])(
+    "SourceChanged 接受保留触发器 %s",
+    (trigger) => {
+      // Source 仅由 Personal 配置和默认选择变化触发，不再恢复官方凭据同步。
+      const sourceChanged = {
+        type: HostResponseTypes.ProviderProvisioningSourceChanged,
+        trigger,
+      };
+      expect(hostResponseMessageSchema.parse(sourceChanged)).toEqual(sourceChanged);
+      expect(
+        hostResponseMessageSchema.safeParse({ ...sourceChanged, unexpected: true }).success,
+      ).toBe(false);
+    },
+  );
+
+  it.each(["credential", "account-settings", "environment-online"])(
+    "SourceChanged 拒绝非 Source 触发器 %s",
+    (trigger) => {
+      expect(
+        hostResponseMessageSchema.safeParse({
+          type: HostResponseTypes.ProviderProvisioningSourceChanged,
+          trigger,
+        }).success,
+      ).toBe(false);
+    },
+  );
 
   it("严格校验 host 自采资源样本（cpu / rss / heap 三项齐全且为数值）", () => {
     expect(

@@ -36,8 +36,6 @@ const WEB_REMOTE_REPLAYABLE_ALLOWED_CHANNELS = new Set<string>([
   ServiceChannels.WindowProject,
   ServiceChannels.WindowRemoteProjects,
   ServiceChannels.WindowProjectChanges,
-  // ConversationShare 由 scopeConversationShareServiceForAttachment 按 clientMode 包装：手机只保留
-  // getCapabilities/getPreview 只读透传，publish/import/continuation 一律 feature_disabled。
   ServiceChannels.FileWatcher,
   ServiceChannels.ProviderSettings,
   ServiceChannels.ModelSelection,

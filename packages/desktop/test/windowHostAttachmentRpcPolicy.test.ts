@@ -30,7 +30,51 @@ describe("Window Host attachment RPC policy", () => {
     expect([...policy!.allowedChannels].every((channel) => registeredChannels.has(channel))).toBe(
       true,
     );
-    expect(policy?.allowedChannels.size).toBe(46);
+    // 旧数量断言未随退役频道更新；独立完整集合同时防止漏放行与意外扩权。
+    expect([...policy!.allowedChannels].sort()).toEqual(
+      [
+        ServiceChannels.File,
+        ServiceChannels.MediaPreview,
+        ServiceChannels.System,
+        ServiceChannels.Git,
+        ServiceChannels.GitCheckpoint,
+        ServiceChannels.Setting,
+        ServiceChannels.OnboardingRecord,
+        ServiceChannels.Credential,
+        ServiceChannels.CuaPermission,
+        ServiceChannels.CuaPipSession,
+        ServiceChannels.Broadcast,
+        ServiceChannels.ZCodeTask,
+        ServiceChannels.WindowController,
+        ServiceChannels.ZCodeAgent,
+        ServiceChannels.ZCodeSession,
+        ServiceChannels.Project,
+        ServiceChannels.TaskGroups,
+        ServiceChannels.RemoteProjects,
+        ServiceChannels.WindowProject,
+        ServiceChannels.WindowRemoteProjects,
+        ServiceChannels.WindowProjectChanges,
+        ServiceChannels.FileWatcher,
+        ServiceChannels.ProviderSettings,
+        ServiceChannels.ModelSelection,
+        ServiceChannels.SourceServerWorkspace,
+        ServiceChannels.UsageStats,
+        ServiceChannels.Skills,
+        ServiceChannels.SkillSync,
+        ServiceChannels.McpSync,
+        ServiceChannels.PluginSync,
+        ServiceChannels.Plugins,
+        ServiceChannels.PluginManagement,
+        ServiceChannels.Subagents,
+        ServiceChannels.Commands,
+        ServiceChannels.Hooks,
+        ServiceChannels.Memory,
+        ServiceChannels.OutputStyle,
+        ServiceChannels.SettingsSync,
+        ServiceChannels.Bots,
+        ServiceChannels.PromptAttachmentTransfer,
+      ].sort(),
+    );
   });
 
   it("keeps the complete service surface for desktop attachments", () => {
