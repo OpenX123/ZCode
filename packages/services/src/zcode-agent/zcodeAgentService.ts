@@ -66,6 +66,10 @@ import {
   ZCODE_PROTOCOL_NAME,
   ZCODE_PROTOCOL_VERSION,
   zcodeMcpListResultSchema,
+  zcodeBrowserListParamsSchema,
+  zcodeBrowserListResultSchema,
+  zcodeBrowserExecuteParamsSchema,
+  zcodeBrowserExecuteResultSchema,
   zcodePermissionRequestParamsSchema,
   zcodePluginsConfigureResultSchema,
   zcodePluginsInstallResultSchema,
@@ -2472,6 +2476,80 @@ export function createZCodeAgentService(
             workspaceKey: resolveWorkspaceKey(workspace),
           });
           sessionRuntimePreferencesRequestEmitter.fire(dynamicRequest);
+          return;
+        }
+
+        // 缺少这两个分派会让合法的浏览器反向 RPC 落到 method-not-found，执行器完全收不到请求。
+        // 这里只复用 Main executor 的能力与隔离边界，不建立权限会话事件或第二套 pending 状态。
+        if (
+          request.method === zcodeProtocolMethods.interactionBrowserList ||
+          request.method === zcodeProtocolMethods.interactionBrowserExecute
+        ) {
+          const reportResponseFailure = (error: unknown): void => {
+            logger.debug(undefined, "浏览器 RPC 响应发送失败", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          };
+          const isList = request.method === zcodeProtocolMethods.interactionBrowserList;
+          const parsed = isList
+            ? zcodeBrowserListParamsSchema.safeParse(request.params)
+            : zcodeBrowserExecuteParamsSchema.safeParse(request.params);
+          if (!parsed.success) {
+            void client
+              .respondError(request.id, {
+                code: -32602,
+                message: "Invalid browser request params",
+                data: parsed.error.flatten(),
+              })
+              .catch(reportResponseFailure);
+            return;
+          }
+          void (async () => {
+            let result;
+            try {
+              const executor = options?.browserControlExecutor;
+              if (isList) {
+                const input = zcodeBrowserListParamsSchema.parse(parsed.data);
+                result = zcodeBrowserListResultSchema.parse({
+                  browsers: executor ? await executor.list(input) : [],
+                });
+              } else {
+                const input = zcodeBrowserExecuteParamsSchema.parse(parsed.data);
+                const workspaceIdentity = input.workspaceIdentity ?? workspace.workspaceIdentity;
+                const remoteSessionId = input.remoteSessionId ?? workspace.remoteSessionId;
+                const target = {
+                  workspacePath: input.workspacePath ?? workspace.workspacePath,
+                  ...(workspaceIdentity ? { workspaceIdentity } : {}),
+                  ...(remoteSessionId ? { remoteSessionId } : {}),
+                };
+                result = zcodeBrowserExecuteResultSchema.parse(
+                  executor
+                    ? await executor.execute({
+                        ...input,
+                        ...target,
+                        workspaceKey: input.workspaceKey ?? resolveWorkspaceKey(target),
+                        clientMode: input.clientMode ?? "desktop-continuous",
+                        sessionContext: input.sessionContext ?? "live",
+                      })
+                    : {
+                        ok: false,
+                        error: {
+                          code: "backend_unavailable",
+                          message: "Browser executor is not configured",
+                        },
+                        elapsedMs: 0,
+                      },
+                );
+              }
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32000,
+                message: error instanceof Error ? error.message : "Browser request failed",
+              });
+              return;
+            }
+            await client.respond(request.id, result);
+          })().catch(reportResponseFailure);
           return;
         }
 

@@ -237,6 +237,8 @@ process.stdin.on("data", (chunk) => {
 `;
 
 const BROWSER_DISCOVERY_FAKE_AGENT = `
+const fs = require("node:fs");
+const logPath = process.argv[2];
 let buf = "";
 function send(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
 function context(sessionId) {
@@ -273,6 +275,9 @@ process.stdin.on("data", (chunk) => {
       });
       continue;
     }
+    if (msg.id === "browser-list-1" || msg.id === "browser-execute-1") {
+      fs.appendFileSync(logPath, JSON.stringify(msg) + "\\n");
+    }
     if (msg.id === "browser-list-1" && msg.result?.browsers?.[0]?.id) {
       send({
         id: "browser-execute-1",
@@ -285,6 +290,31 @@ process.stdin.on("data", (chunk) => {
           command: { method: "getState" },
         },
       });
+    }
+  }
+});
+`;
+
+const BROWSER_RPC_CONTRACT_FAKE_AGENT = `
+const fs = require("node:fs");
+const request = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const logPath = process.argv[3];
+let buf = "";
+function send(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+process.stdin.on("data", (chunk) => {
+  buf += chunk.toString("utf8");
+  let idx;
+  while ((idx = buf.indexOf("\\n")) >= 0) {
+    const line = buf.slice(0, idx);
+    buf = buf.slice(idx + 1);
+    if (!line.trim()) continue;
+    let msg;
+    try { msg = JSON.parse(line); } catch { continue; }
+    if (msg.method === "session/subscribe" && msg.id !== undefined) {
+      send({ id: msg.id, result: { sessionId: msg.params.sessionId, eventSeq: 0, events: [] } });
+      send(request);
+    } else if (msg.id === request.id) {
+      fs.appendFileSync(logPath, JSON.stringify(msg) + "\\n");
     }
   }
 });
@@ -369,6 +399,10 @@ process.stdin.on("data", (chunk) => {
     if (!line.trim()) continue;
     let msg;
     try { msg = JSON.parse(line); } catch { continue; }
+    if (msg.method === "provider/refreshRegistry" && msg.id !== undefined) {
+      send({ id: msg.id, result: { refreshed: true } });
+      continue;
+    }
     if (msg.method === "session/create" && msg.id !== undefined) {
       record(msg);
       pendingCreate = msg;
@@ -505,6 +539,10 @@ process.stdin.on("data", (chunk) => {
     if (!line.trim()) continue;
     let msg;
     try { msg = JSON.parse(line); } catch { continue; }
+    if (msg.method === "provider/refreshRegistry" && msg.id !== undefined) {
+      send({ id: msg.id, result: { refreshed: true } });
+      continue;
+    }
     if (msg.method === "session/create" && msg.id !== undefined) {
       // Worker 进程已经自持 Registry，runtime preferences 在 session 创建时物化。
       pendingCreate = msg;
@@ -678,6 +716,10 @@ process.stdin.on("data", (chunk) => {
     if (!line.trim()) continue;
     let msg;
     try { msg = JSON.parse(line); } catch { continue; }
+    if (msg.method === "provider/refreshRegistry" && msg.id !== undefined) {
+      send({ id: msg.id, result: { refreshed: true } });
+      continue;
+    }
     if (msg.method === "session/create" && msg.id !== undefined) {
       const rejectedKeys = [];
       if (Object.prototype.hasOwnProperty.call(msg.params, "persistence")) {
@@ -1264,8 +1306,29 @@ describe("createZCodeAgentService", () => {
   });
 
   const createdDirs: string[] = [];
+  const testCleanups: Array<() => Promise<void>> = [];
 
-  afterEach(() => {
+  function registerFakeTimerCleanup(dispose: () => Promise<void>): () => Promise<void> {
+    let cleanupPromise: Promise<void> | undefined;
+    const cleanup = () =>
+      (cleanupPromise ??= (async () => {
+        try {
+          await dispose();
+        } finally {
+          vi.useRealTimers();
+        }
+      })());
+    testCleanups.push(cleanup);
+    return cleanup;
+  }
+
+  async function runTestCleanups(): Promise<void> {
+    for (const cleanup of testCleanups.splice(0).reverse()) await cleanup();
+  }
+
+  afterEach(async () => {
+    // 测试级超时不会取消挂起的测试体；先执行预登记的资源收口，再恢复时钟和删除目录。
+    await runTestCleanups();
     setDataBaseDir(null);
     for (const dir of createdDirs.splice(0).reverse()) {
       // 根因同 zcodeAgentService.v4.test.ts：Windows 上仍有打开句柄的目录删不掉，
@@ -1605,6 +1668,7 @@ describe("createZCodeAgentService", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "zcode-agent-service-browser-"));
     createdDirs.push(workspacePath);
     const scriptPath = join(workspacePath, "browser-agent.cjs");
+    const logPath = join(workspacePath, "browser-responses.jsonl");
     writeFileSync(scriptPath, BROWSER_DISCOVERY_FAKE_AGENT);
     const list = vi.fn(async () => [
       {
@@ -1626,7 +1690,7 @@ describe("createZCodeAgentService", () => {
       elapsedMs: 1,
     }));
     const service = createReadyZCodeAgentService({
-      commandResolver: () => ({ command: process.execPath, args: [scriptPath] }),
+      commandResolver: () => ({ command: process.execPath, args: [scriptPath, logPath] }),
       browserControlExecutor: { list, execute },
     });
     const subscription = service.onDynamicSessionEvent({
@@ -1637,35 +1701,186 @@ describe("createZCodeAgentService", () => {
       includeSnapshot: false,
     })(() => {});
 
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1), {
-      timeout: 5000,
-      interval: 25,
-    });
-    expect(list).toHaveBeenCalledWith(
-      expect.objectContaining({
+    try {
+      await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1), {
+        timeout: 5000,
+        interval: 25,
+      });
+      expect(list).toHaveBeenCalledWith({
+        requestId: "browser-request-context",
+        sessionId: "sess-browser",
+        turnId: "turn-browser-1",
+        workspacePath: "/workspace/app",
+        sessionContext: "live",
         workspaceKey: "remote:ssh:dev:/workspace/app",
         workspaceIdentity: "remote:ssh:dev:/workspace/app",
         remoteSessionId: "remote-session-1",
         clientMode: "web-remote-replayable",
-      }),
-    );
-    expect(execute).toHaveBeenCalledWith(
-      expect.objectContaining({
+      });
+      expect(execute).toHaveBeenCalledWith({
         requestId: "browser-execute-request",
         browserId: "iab-runtime-1",
         browserGeneration: 1,
         sessionId: "sess-browser",
         turnId: "turn-browser-1",
         workspaceKey: "remote:ssh:dev:/workspace/app",
+        workspacePath: "/workspace/app",
         workspaceIdentity: "remote:ssh:dev:/workspace/app",
         remoteSessionId: "remote-session-1",
         clientMode: "web-remote-replayable",
+        sessionContext: "live",
         command: { method: "getState" },
-      }),
-    );
+      });
+      await vi.waitFor(() => {
+        const responses = readFileSync(logPath, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line));
+        expect(responses).toEqual([
+          {
+            id: "browser-list-1",
+            result: {
+              browsers: [
+                {
+                  id: "iab-runtime-1",
+                  generation: 1,
+                  type: "iab",
+                  name: "ZCode In-app Browser",
+                  capabilities: {},
+                },
+              ],
+            },
+          },
+          {
+            id: "browser-execute-1",
+            result: {
+              ok: true,
+              state: {
+                url: "https://example.com",
+                title: "Example",
+                canGoBack: false,
+                canGoForward: false,
+              },
+              elapsedMs: 1,
+            },
+          },
+        ]);
+      });
+    } finally {
+      subscription.dispose();
+      await service.disposeAllAndWait();
+    }
+  });
 
-    subscription.dispose();
-    await service.disposeAllAndWait();
+  it.each([
+    ["browserList", "unavailable"],
+    ["browserExecute", "unavailable"],
+    ["browserList", "invalid-params"],
+    ["browserExecute", "invalid-params"],
+    ["browserList", "executor-error"],
+    ["browserExecute", "executor-error"],
+    ["browserList", "invalid-result"],
+    ["browserExecute", "invalid-result"],
+    ["browserExecute", "legacy-defaults"],
+  ] as const)("answers browser reverse RPC %s for %s", async (method, scenario) => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "zcode-browser-rpc-contract-"));
+    createdDirs.push(workspacePath);
+    const scriptPath = join(workspacePath, "browser-rpc.cjs");
+    const requestPath = join(workspacePath, "request.json");
+    const logPath = join(workspacePath, "response.jsonl");
+    const params =
+      scenario === "legacy-defaults"
+        ? {
+            requestId: "request-contract",
+            sessionId: "sess-contract",
+            command: { method: "getState" },
+          }
+        : {
+            requestId: "request-contract",
+            sessionId: "sess-contract",
+            turnId: "turn-contract",
+            workspaceKey: "remote:ssh:contract:/workspace/app",
+            workspacePath: "/workspace/app",
+            workspaceIdentity: "remote:ssh:contract:/workspace/app",
+            remoteSessionId: "remote-contract",
+            clientMode: "web-remote-replayable",
+            sessionContext: "cached",
+            ...(method === "browserExecute"
+              ? { browserId: "iab-contract", browserGeneration: 3, command: { method: "getState" } }
+              : {}),
+            ...(scenario === "invalid-params" ? { unknown: true } : {}),
+          };
+    writeFileSync(scriptPath, BROWSER_RPC_CONTRACT_FAKE_AGENT);
+    writeFileSync(
+      requestPath,
+      JSON.stringify({ id: "rpc-contract", method: `interaction/${method}`, params }),
+    );
+    const list = vi.fn(async () => {
+      if (scenario === "executor-error") throw new Error("browser executor failed");
+      return [{ id: "invalid-descriptor" }];
+    });
+    const execute = vi.fn(async () => {
+      if (scenario === "executor-error") throw new Error("browser executor failed");
+      return scenario === "invalid-result"
+        ? { ok: true, elapsedMs: 0, unknown: true }
+        : { ok: true, elapsedMs: 0 };
+    });
+    const service = createReadyZCodeAgentService({
+      commandResolver: () => ({
+        command: process.execPath,
+        args: [scriptPath, requestPath, logPath],
+      }),
+      ...(scenario !== "unavailable" ? { browserControlExecutor: { list, execute } as never } : {}),
+    });
+    const events: ZCodeAgentServiceEvent[] = [];
+    const subscription = service.onDynamicSessionEvent({
+      workspacePath,
+      sessionId: "sess-contract",
+      includeSnapshot: false,
+    })((event) => events.push(event));
+    try {
+      await vi.waitFor(() => expect(existsSync(logPath)).toBe(true));
+      const response = JSON.parse(readFileSync(logPath, "utf8").trim());
+      expect(response.id).toBe("rpc-contract");
+      if (scenario === "unavailable") {
+        if (method === "browserList") expect(response.result).toEqual({ browsers: [] });
+        else
+          expect(response.result).toMatchObject({
+            ok: false,
+            error: { code: "backend_unavailable" },
+            elapsedMs: 0,
+          });
+      } else if (scenario === "invalid-params") {
+        expect(response.error.code).toBe(-32602);
+      } else if (scenario === "legacy-defaults") {
+        expect(response.result).toEqual({ ok: true, elapsedMs: 0 });
+        expect(execute).toHaveBeenCalledWith({
+          requestId: "request-contract",
+          sessionId: "sess-contract",
+          workspaceKey: workspacePath,
+          workspacePath,
+          clientMode: "desktop-continuous",
+          sessionContext: "live",
+          command: { method: "getState" },
+        });
+      } else {
+        expect(response.error.code).toBe(-32000);
+        if (scenario === "executor-error")
+          expect(response.error.message).toBe("browser executor failed");
+      }
+      if (scenario === "invalid-params") {
+        expect(list).not.toHaveBeenCalled();
+        expect(execute).not.toHaveBeenCalled();
+      }
+      expect(
+        events.some(
+          (event) => event.type === "permission.request" || event.type === "userInput.request",
+        ),
+      ).toBe(false);
+    } finally {
+      subscription.dispose();
+      await service.disposeAllAndWait();
+    }
   });
 
   it("reserves native create ownership before sending the assigned session ID", async () => {
@@ -2270,13 +2485,21 @@ describe("createZCodeAgentService", () => {
   });
 
   it("expires unanswered external runtime preference requests without replaying them", async () => {
+    let service: ReturnType<typeof createReadyZCodeAgentService> | undefined;
+    const subscriptions: Array<{ dispose(): void }> = [];
+    let createSettled: Promise<unknown> | undefined;
+    const cleanup = registerFakeTimerCleanup(async () => {
+      for (const subscription of subscriptions) subscription.dispose();
+      await service?.disposeAllAndWait();
+      await createSettled;
+    });
     vi.useFakeTimers({ toFake: ["clearTimeout", "setTimeout"] });
     const workspacePath = mkdtempSync(join(tmpdir(), "zcode-agent-preferences-timeout-"));
     createdDirs.push(workspacePath);
     const scriptPath = join(workspacePath, "runtime-preferences-agent.cjs");
     const logPath = join(workspacePath, "protocol.log");
     writeFileSync(scriptPath, RUNTIME_PREFERENCES_FAKE_AGENT);
-    const service = createReadyZCodeAgentService({
+    service = createReadyZCodeAgentService({
       commandResolver: () => ({ command: process.execPath, args: [scriptPath, logPath] }),
       sessionRuntimePreferencesAuthority: "external",
     });
@@ -2287,9 +2510,11 @@ describe("createZCodeAgentService", () => {
     const subscription = service.onDynamicSessionRuntimePreferencesRequest()(() => {
       markRequestSeen();
     });
+    subscriptions.push(subscription);
 
     try {
       const createPromise = service.createSession({ workspacePath });
+      createSettled = createPromise.catch(() => undefined);
       await requestSeen;
 
       await vi.advanceTimersByTimeAsync(ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS);
@@ -2319,12 +2544,64 @@ describe("createZCodeAgentService", () => {
       const replaySubscription = service.onDynamicSessionRuntimePreferencesRequest()((request) => {
         replayedRequests.push(request);
       });
+      subscriptions.push(replaySubscription);
       expect(replayedRequests).toEqual([]);
       replaySubscription.dispose();
     } finally {
-      subscription.dispose();
-      vi.useRealTimers();
-      await service.disposeAllAndWait();
+      await cleanup();
+    }
+    expect(vi.isFakeTimers()).toBe(false);
+  });
+
+  it("cleans up an in-flight runtime preference create before restoring fake timers after setup failure", async () => {
+    let service: ReturnType<typeof createReadyZCodeAgentService> | undefined;
+    let subscription: { dispose(): void } | undefined;
+    let createSettled: Promise<unknown> | undefined;
+    const cleanup = registerFakeTimerCleanup(async () => {
+      subscription?.dispose();
+      await service?.disposeAllAndWait();
+      await createSettled;
+    });
+    vi.useFakeTimers({ toFake: ["clearTimeout", "setTimeout"] });
+    const workspacePath = mkdtempSync(join(tmpdir(), "zcode-agent-preferences-cleanup-"));
+    createdDirs.push(workspacePath);
+    const scriptPath = join(workspacePath, "runtime-preferences-agent.cjs");
+    const logPath = join(workspacePath, "protocol.log");
+    writeFileSync(scriptPath, RUNTIME_PREFERENCES_FAKE_AGENT);
+    const onExit = vi.fn();
+    service = createReadyZCodeAgentService({
+      commandResolver: () => ({ command: process.execPath, args: [scriptPath, logPath] }),
+      processLifecycleReporter: { onExit },
+      sessionRuntimePreferencesAuthority: "external",
+    });
+    let markRequestSeen!: () => void;
+    const requestSeen = new Promise<void>((resolve) => {
+      markRequestSeen = resolve;
+    });
+    subscription = service.onDynamicSessionRuntimePreferencesRequest()(() => markRequestSeen());
+    const createPromise = service.createSession({ workspacePath });
+    createSettled = createPromise.catch((error: unknown) => error);
+    await requestSeen;
+    // 模拟准入请求尚未回应时测试设置失败；预登记清理必须等待真实进程与在途 create 结束。
+    try {
+      await expect(
+        (async () => {
+          try {
+            throw new Error("fixture setup failed");
+          } finally {
+            // 走与 afterEach 相同的已登记清理入口，覆盖测试体未到达自身 finally 的情况。
+            await runTestCleanups();
+          }
+        })(),
+      ).rejects.toThrow("fixture setup failed");
+      expect(vi.isFakeTimers()).toBe(false);
+      expect(await createSettled).toBeInstanceOf(Error);
+      expect(onExit).toHaveBeenCalledTimes(1);
+      await cleanup();
+      expect(onExit).toHaveBeenCalledTimes(1);
+    } finally {
+      // 登记机制回归时仍要收口本测试的真实子进程，不能让 RED 再污染后继用例。
+      await cleanup();
     }
   });
 
