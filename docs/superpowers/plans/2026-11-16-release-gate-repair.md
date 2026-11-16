@@ -82,6 +82,46 @@ expect(await service.readDirectory()).toEqual({ path: ownerPath, entries: [] });
 - [ ] **Step 3: 输出证据矩阵。** 每行包含规格、失败数量/标题、直接错误、源文件与行、spec 依据、确认程度、最小修复和精确验证命令；不打印秘密或真实内部地址。
 - [ ] **Step 4: 提供后续实施分组。** 同 owner/同形小修成一组；需要单独产品判断、测试周期与 review 的单独成组。清单是调查交付，不作为源码已修或门禁通过证据。
 
+### Task 3: 修复 Windows 失效资源锁回收
+
+**Files:**
+
+- Modify: `packages/desktop/src/host/sourceServerReleaseResolver.ts`
+- Test: `packages/desktop/test/sourceServerReleaseResolver.test.ts`
+- Spec: `docs/desktop/standalone-coding-harness-spec.md` 的资源缓存锁合同。
+
+**Interfaces:**
+
+- Consumes: 现有 `resolveSourceServerReleaseAsset` 公开入口、`.lock/owner.json` 与独占 `.reaping` 标记；不改变其签名和缓存身份。
+- Produces: Windows 可安全回收已退出进程的锁；现有 SHA、互斥、取消与清理边界保持。
+
+- [ ] **Step 1: 定向 RED。** 固定 Node 下运行现有“回收已退出进程的锁后可以重新下载”规格并记录 `rename` 的 EPERM 与源位置；若原始错误已不出现，核对文件状态及真实平台，不通过猜测修改。
+
+```powershell
+pnpm exec vitest run packages/desktop/test/sourceServerReleaseResolver.test.ts -t '回收已退出进程的锁后可以重新下载' --reporter=json --outputFile=<本任务 scratch>/task-3-red.json
+```
+
+- [ ] **Step 2: 最小句柄生命周期修复。** 在 `reclaimExitedLock` 中确保 `.reaping` 内容完成写入并关闭文件句柄，再进行旧 owner/token 复核和 `rename(lockDir, retiredLockDir)`。使用 `try/finally` 保证写入失败也关闭句柄；保留磁盘标记作为回收互斥，不能为了重命名先删除标记。保留原 owner 存活、token 不匹配与中断回收提示，不扩大重试或超时。以中文注释解释 Windows 打开句柄阻止父目录重命名的根因。
+
+```ts
+try {
+  await reaper.writeFile(JSON.stringify({ pid: process.pid, token: randomUUID() }));
+} finally {
+  await reaper.close();
+}
+// 在保留.reaping互斥标记的前提下，再复核owner并执行原子重命名。
+```
+
+上例只说明顺序；须与原 `retiredLockDir` finally 清理组合，避免漏关句柄、双重关闭或清理后来者的新锁。
+
+- [ ] **Step 3: GREEN 与并发边界。** 运行整个精确测试文件，保留失败锁回收、遗留回收标记两分支、同SHA并发只下载一次、不同SHA不覆盖、校验失败清理、取消后重试覆盖。增加聚焦回归：两个并发请求竞争同一个已退出 owner 锁，最终只下载一次并只剩当前归档；原实现下应暴露 Windows 回收失败，不用增加 sleep 或放宽时限。
+
+```powershell
+pnpm exec vitest run packages/desktop/test/sourceServerReleaseResolver.test.ts --reporter=json --outputFile=<本任务 scratch>/task-3-green.json
+```
+
+- [ ] **Step 4: 架构、格式与提交。** 修改前执行架构检查，阅读已有 resolver 与当前 spec，属于局部既有合同修复无需制造新模块；修改后重跑架构、定向格式与diff检查。自审后只提交本任务源码/测试/对应spec，完整报告写本计划scratch，controller独立派任务审查。根typecheck/lint在整批后执行。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
