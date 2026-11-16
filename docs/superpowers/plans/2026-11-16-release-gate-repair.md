@@ -395,6 +395,16 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 3: 退出后恢复。** 先复制安全固定步骤并保留文件管理器窗口，至少一次真实托盘/菜单正常退出并验证退出确认/Host清理；与helper强制fallback区分。精确A lock的夹具清理仅放 `afterElectronProcessExit`，旧进程树未归零不得删或建新session。保持同隔离profile/cache重启，通过原retry/update验证A恢复成功、B与归档未误改、成功后旧locator消失。禁止裸reload/rm、sleep或只等main PID。
 - [ ] **Step 4: GREEN/报告与生命周期。** 按实际package命令运行精确候选spec，保存run/summary/脱敏证据与系统层结果；恢复环境，只清理本次fixture。桌面e2e类型、定向lint/format/diff/架构通过；报告task-16-report.md并独立审查。若发现产品缺陷先报具体证据给controller，不通过削断言修绿。macOS/Linux未实机测则如实列出，根门禁继续由controller统一。
 
+### Task 17: 只读补齐严格 PTY 输入异常的定位证据
+
+**Files:** 只读原T11报告/诊断、现有终端输入组件/去重逻辑、TerminalService写入及MODE02/03实际E2E；证据与临时诊断仅存本计划scratch，不改正式代码/spec/index/HEAD。
+
+**Interfaces:** 原T11-I3仍是独立验证事项，本任务不授权终端产品重设计或阈值变更。固定Node24.14.0与pnpm10.33.2，保持原严格完整哨兵和timeout；不将mock UT替代真实PTY。
+
+- [ ] **Step 1: 复用已有证据。** 先读原T11-I3报告与带时间戳trace，仅列尚未回答的具体问题；不重跑已完成的缩放或Markdown修复，不重做全仓调查。
+- [ ] **Step 2: 一次聚焦因果定位。** 以受控隔离fixture和实际E2E入口，在不改正式源码的前提下补齐 renderer键盘/composition/input/onData、平台write接纳、Service write及PTY回显的关联事件，分清重复UI输入、传输写入和仅显示异常。必要临时诊断用独立scratch配置/运行时观测，不能引入新测试门禁、宽松匹配或改产品路径。只为具体证据缺口运行，不高频重复碰运气。
+- [ ] **Step 3: 交付与边界。** 报告task-17-report.md，记录真实命令、脱敏有序证据、确认根因/仍待证假设、最小后续建议和未覆盖条件。若严谨定位仍未完成如实报告，不改终端阈值/生产逻辑，不以推测宣布修复。禁止派子代理；不与dist构建并行，不碰用户正在使用的稳定版。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
