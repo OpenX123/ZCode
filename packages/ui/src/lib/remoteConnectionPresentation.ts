@@ -38,6 +38,7 @@ export interface RemoteConnectionPresentationInput {
   recoveryLimit?: number;
   recoveryBudgetExhausted?: boolean;
   errorCode?: string;
+  cacheRecovery?: SourceServerConnectionStateSnapshot["cacheRecovery"];
   error?: string;
   /** 项目错误可能已本地化，不能覆盖设备权威错误用于分类的原文。 */
   projectError?: string;

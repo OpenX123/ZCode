@@ -18,6 +18,8 @@ import {
   DEFAULT_REMOTE_ASSET_INSTALL_MODE,
   resolveWorkspaceKey,
   ZCODE_VERSION,
+  parseSourceServerCacheRecovery,
+  type SourceServerCacheRecovery,
   type ConnectionProfile,
   type SourceServerRunningTask,
   type RemoteTarget,
@@ -154,7 +156,13 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   const [refreshingIntent, setRefreshingIntent] = useState(false);
   const consumedOpenIntentIdRef = useRef<number | undefined>(undefined);
   const [cancelled, setCancelled] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setErrorState] = useState("");
+  const [cacheRecovery, setCacheRecovery] = useState<SourceServerCacheRecovery>();
+  // 修复依据：恢复定位只是当前错误的投影；任何其他错误覆盖都必须同步撤销旧定位权限。
+  const setError = useCallback((message: string) => {
+    setCacheRecovery(undefined);
+    setErrorState(message);
+  }, []);
   const [errorCode, setErrorCode] = useState<string>();
   const [rawError, setRawError] = useState<string>();
   // 0 表示尚未提交；每次提交校验失败递增，表单据此显示内联错误并聚焦第一个出错字段（RDUX-27）。
@@ -584,6 +592,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       const epoch = entryEpochRef.current;
       const isCurrent = () => entryEpochRef.current === epoch;
       setUpgradeLoading(true);
+      setCacheRecovery(undefined);
       try {
         const next = await runSourceServerUpdate({
           management: sourceManagement,
@@ -615,6 +624,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
         const failure = updateError as {
           code?: unknown;
           retryable?: unknown;
+          data?: { cacheRecovery?: unknown };
         };
         if (failure.code === "remote-target-changed") {
           setUpgradeProfileId(null);
@@ -633,6 +643,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
             formatMessage: intl.formatMessage,
           }),
         );
+        setCacheRecovery(parseSourceServerCacheRecovery(failure.code, failure.data?.cacheRecovery));
         return false;
       } finally {
         if (isCurrent()) setUpgradeLoading(false);
@@ -906,6 +917,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
         retryable?: unknown;
         profileId?: unknown;
         resolvedWslTarget?: Required<Extract<RemoteTarget, { kind: "wsl" }>>;
+        cacheRecovery?: unknown;
       };
       const reasonCode = typeof failure.code === "string" ? failure.code : undefined;
       const errorMessage = formatRemoteConnectionError({
@@ -917,6 +929,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       setErrorCode(reasonCode);
       setRawError(getErrorMessage(connectError));
       setError(errorMessage);
+      setCacheRecovery(parseSourceServerCacheRecovery(reasonCode, failure.cacheRecovery));
       setCurrentStep(completionState.step);
       if (!minimizedRef.current) applyOpenState(completionState.open);
 
@@ -1282,6 +1295,9 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
         reasonCode: initialFailure.code,
         formatMessage: intl.formatMessage,
       }),
+    );
+    setCacheRecovery(
+      parseSourceServerCacheRecovery(initialFailure.code, initialFailure.cacheRecovery),
     );
     if (initialFailure.code === "source-server-install-required")
       setPendingInstallConfirmation(target);
@@ -2002,6 +2018,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       errorMessage: error,
       errorCode: errorCode,
       rawError: rawError,
+      cacheRecovery,
       upgradeTarget: sourceManagementSnapshot?.states.find(
         (state) =>
           state.profileId === upgradeProfileId ||
@@ -2078,6 +2095,10 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
         });
       },
       onRetry: () => {
+        if (cacheRecovery && upgradeProfileId) {
+          void handleUpgradeRequiredServer();
+          return;
+        }
         if (errorCode !== "source-server-identity-change-pending") {
           handleStartPendingRemoteConnection();
           return;
@@ -2102,7 +2123,13 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
             setUpgradeLoading(false);
             handleStartPendingRemoteConnection();
           } catch (cause) {
-            if (entryEpochRef.current === epoch) setError(getErrorMessage(cause));
+            if (entryEpochRef.current !== epoch) return;
+            const failure = cause as { code?: unknown; data?: { cacheRecovery?: unknown } };
+            const code = typeof failure.code === "string" ? failure.code : undefined;
+            setErrorCode(code);
+            setRawError(getErrorMessage(cause));
+            setError(getErrorMessage(cause));
+            setCacheRecovery(parseSourceServerCacheRecovery(code, failure.data?.cacheRecovery));
           } finally {
             if (entryEpochRef.current === epoch) setUpgradeLoading(false);
           }

@@ -28,7 +28,8 @@ import {
   Copy,
   Trash2,
 } from "lucide-react";
-import { resolveWorkspaceKey } from "@zcode/shared";
+import { resolveWorkspaceKey, parseSourceServerCacheRecovery } from "@zcode/shared";
+import { SourceServerCacheRecoveryActions } from "@/remote-connection/RemoteConnectionConnectingStep.js";
 import type {
   ConnectionProfile,
   AppSettings,
@@ -258,7 +259,10 @@ export function SourceServerManagementPanel({
     card.scrollIntoView({ block: "center" });
     card.focus({ preventScroll: true });
     const failedProfileId = snapshot?.states.find(
-      (state) => state.sourceServerId === targetSourceServerId && state.state === "failed",
+      (state) =>
+        state.sourceServerId === targetSourceServerId &&
+        (state.state === "failed" ||
+          Boolean(parseSourceServerCacheRecovery(state.errorCode, state.cacheRecovery))),
     )?.profileId;
     const failedProfile = snapshot?.profiles.find(
       (profile) => profile.profileId === failedProfileId,
@@ -657,6 +661,16 @@ export function SourceServerManagementPanel({
             </Button>
           ) : null}
           {identityChangePending ? renderIdentityConfirmation(profile, "xs") : null}
+          {parseSourceServerCacheRecovery(state?.errorCode, state?.cacheRecovery) ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={() => setErrorDetailsProfile(profile)}
+            >
+              {intl.formatMessage({ id: "remote.action.details" })}
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
@@ -840,7 +854,11 @@ export function SourceServerManagementPanel({
                 (state.updateAvailability && state.updateAvailability !== "none") ||
                 state.state === "updating",
             );
-          const updateFailed = serverState?.state === "failed";
+          const updateFailed =
+            serverState?.state === "failed" ||
+            Boolean(
+              parseSourceServerCacheRecovery(serverState?.errorCode, serverState?.cacheRecovery),
+            );
           const updateKey = sourceServerUpdateKey(
             server.sourceServerId,
             serverState?.availableVersion ?? "",
@@ -1698,6 +1716,42 @@ export function SourceServerManagementPanel({
                         {state?.error ?? errorDetailsProfile.lastConnectError}
                       </pre>
                     </details>
+                    <SourceServerCacheRecoveryActions
+                      errorCode={state?.errorCode}
+                      cacheRecovery={state?.cacheRecovery}
+                      errorIdentity={`${errorDetailsProfile.profileId}:${state?.updatedAt}`}
+                    />
+                    {parseSourceServerCacheRecovery(state?.errorCode, state?.cacheRecovery) ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={
+                          busyScopes.has(profileOperationScope(errorDetailsProfile)) ||
+                          state?.state === "updating"
+                        }
+                        onClick={() => {
+                          const lastOperation =
+                            logsByProfileId[errorDetailsProfile.profileId]?.at(-1)?.operation;
+                          // 更新的错误仍回原更新路径；未完成安装连接不能被详情的重试偷换成更新。
+                          if (
+                            state?.state === "online" ||
+                            (state?.updateAvailability && state.updateAvailability !== "none") ||
+                            lastOperation === "update"
+                          )
+                            void updateProfile(errorDetailsProfile);
+                          else
+                            handleProfileAction(
+                              errorDetailsProfile,
+                              resolveRemoteConnectionPresentation({
+                                ...state,
+                                target: errorDetailsProfile.target,
+                              }),
+                            );
+                        }}
+                      >
+                        {intl.formatMessage({ id: "remote.action.retry" })}
+                      </Button>
+                    ) : null}
                     <SourceServerUpdateActivity
                       active={false}
                       recent

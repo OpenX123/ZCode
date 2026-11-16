@@ -4,6 +4,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { IServiceAccessor } from "@zcode/services";
 import type { IPlatformService, SourceServerManagementSnapshot } from "@zcode/shared";
+import { ZCODE_VERSION } from "@zcode/shared";
 import { useRemoteWorkspaceHistory } from "@/root/useRemoteWorkspaceHistory.js";
 import { createTabStore } from "@/store/tabStore.js";
 
@@ -55,6 +56,60 @@ const snapshot: SourceServerManagementSnapshot = {
   migrationCounts: [],
 };
 const unmounts: Array<() => void> = [];
+it("缓存恢复项目交接只携带当前默认 owner，另一项目和迟到成员不继承", async () => {
+  const cacheRecovery = {
+    kind: "source-server-cache-lock" as const,
+    version: ZCODE_VERSION,
+    target: "linux-x64" as const,
+    sha256: "a".repeat(64),
+  };
+  const openWizard = vi.fn();
+  let retained = true;
+  let delayed = false;
+  const pending = Promise.withResolvers<SourceServerManagementSnapshot>();
+  const current = {
+    ...snapshot,
+    states: [
+      {
+        profileId: "profile-1",
+        sourceServerId: "source-1",
+        state: "failed" as const,
+        errorCode: "source-server-cache-lock-interrupted",
+        error: "safe",
+        cacheRecovery,
+        updatedAt: 1,
+      },
+    ],
+  };
+  const input = {
+    workspaceKey: identity,
+    openWizard,
+    service: {
+      readDirectory: async () => ({ hosts: [host], entries: retained ? [entry] : [] }),
+      connectHost: vi.fn(),
+    } as never,
+    getSnapshot: async () => (delayed ? pending.promise : current),
+  };
+  await requestRetainedRemoteProjectConnection(input);
+  expect(openWizard).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      preferredProjectEntryId: entry.id,
+      initialFailure: expect.objectContaining({ cacheRecovery }),
+    }),
+  );
+  current.states = [{ ...current.states[0]!, profileId: "other-owner" }];
+  openWizard.mockClear();
+  await requestRetainedRemoteProjectConnection(input);
+  expect(openWizard).not.toHaveBeenCalled();
+  current.states = [{ ...current.states[0]!, profileId: "profile-1" }];
+  delayed = true;
+  const request = requestRetainedRemoteProjectConnection(input);
+  await Promise.resolve();
+  retained = false;
+  pending.resolve(current);
+  await request;
+  expect(openWizard).not.toHaveBeenCalled();
+});
 afterEach(() => {
   for (const unmount of unmounts.splice(0)) unmount();
 });

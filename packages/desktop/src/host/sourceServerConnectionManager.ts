@@ -1,6 +1,7 @@
 import { sourceServerRunningTasksSchema, type SourceServerRunningTask } from "@zcode/shared";
 /* eslint-disable max-lines -- Source 连接状态机、重试、更新和单连接归并必须共享同一代际状态。 */
 import { SourceServerOperationLogs } from "./sourceServerOperationLogs.js";
+import { readSourceServerCacheRecovery } from "./sourceServerReleaseResolver.js";
 import { Emitter, type Event } from "@zcode/rpc";
 import type {
   ConnectionProfile,
@@ -629,6 +630,7 @@ export class SourceServerConnectionManager {
       // running-tasks 读取同样会让出执行权，断开可能发生在错误收尾期间。
       controller.signal.throwIfAborted();
       const normalized = normalizeRemoteConnectionError(error);
+      const cacheRecovery = readSourceServerCacheRecovery(error);
       const errorCode = isPublicZCodeErrorCode(normalized.code) ? normalized.code : undefined;
       const retryable =
         error && typeof error === "object" && "retryable" in error
@@ -649,6 +651,7 @@ export class SourceServerConnectionManager {
             ...(errorCode ? { errorCode } : {}),
             retryable: typeof retryable === "boolean" ? retryable : true,
             error: normalized.message,
+            ...(cacheRecovery ? { cacheRecovery } : {}),
           });
         }
       } else {
@@ -661,6 +664,7 @@ export class SourceServerConnectionManager {
           ...(errorCode ? { errorCode } : {}),
           retryable: typeof retryable === "boolean" ? retryable : true,
           error: normalized.message,
+          ...(cacheRecovery ? { cacheRecovery } : {}),
         });
       }
       throw error;
@@ -1189,6 +1193,7 @@ export class SourceServerConnectionManager {
       )
         throw error;
       const normalized = normalizeRemoteConnectionError(error);
+      const cacheRecovery = readSourceServerCacheRecovery(error);
       const errorCode = isPublicZCodeErrorCode(normalized.code) ? normalized.code : undefined;
       const retryable =
         error && typeof error === "object" && "retryable" in error
@@ -1197,6 +1202,7 @@ export class SourceServerConnectionManager {
       this.setState(profile.profileId, {
         state: "failed",
         error: normalized.message,
+        ...(cacheRecovery ? { cacheRecovery } : {}),
         ...(errorCode ? { errorCode } : {}),
         ...(typeof retryable === "boolean" ? { retryable } : {}),
       });
@@ -1376,6 +1382,7 @@ export class SourceServerConnectionManager {
     const input = this.reconnectInputs.get(sourceServerId);
     const ownerState = input ? this.states.get(input.profile.profileId) : undefined;
     const normalized = normalizeRemoteConnectionError(error);
+    const cacheRecovery = readSourceServerCacheRecovery(error);
     if (
       readErrorRetryable(error) !== false &&
       !isAutomaticRecoveryUserActionCode(normalized.code) &&
@@ -1394,6 +1401,7 @@ export class SourceServerConnectionManager {
         error: normalized.message,
         ...(isPublicZCodeErrorCode(normalized.code) ? { errorCode: normalized.code } : {}),
         retryable: false,
+        ...(cacheRecovery ? { cacheRecovery } : {}),
       });
     }
     if (input) {

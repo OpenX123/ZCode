@@ -163,7 +163,10 @@ import {
   type SourceServerManagementService,
 } from "./sourceServerManagementService.js";
 import { createSourceServerRecoveryCloseEvent } from "./sourceServerRecoveryPolicy.js";
-import { resolveSourceServerReleaseAsset } from "./sourceServerReleaseResolver.js";
+import {
+  resolveSourceServerReleaseAsset,
+  readSourceServerCacheRecovery,
+} from "./sourceServerReleaseResolver.js";
 import { runStartupReconnectBatch } from "./sourceServerStartupReconnect.js";
 import {
   createSourceSettingsServiceCollection,
@@ -2841,11 +2844,13 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
       })
       .catch((error) => {
         const failure = normalizeRemoteConnectionError(error);
+        const cacheRecovery = readSourceServerCacheRecovery(error);
         parentPort.postMessage({
           type: HostResponseTypes.RemoteWorkspaceConnectFailed,
           requestId: msg.requestId,
           error: sanitizeRemoteConnectionLog(failure.message) || "Remote connection failed",
           reasonCode: failure.code,
+          ...(cacheRecovery ? { cacheRecovery } : {}),
           ...(error instanceof SourceServerUpgradeRequiredError ||
           error instanceof SourceServerInstallRequiredError
             ? { profileId: error.profileId }

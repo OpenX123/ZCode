@@ -371,6 +371,17 @@ const zhCN: Record<string, string> = {
   "remote.action.security": "查看安全说明",
   "remote.action.details": "查看详情",
   "remote.action.retry": "重试",
+  "remote.error.cacheLockInterrupted": "本机缓存锁回收中断",
+  "remote.error.cacheLockInterrupted.reason":
+    "需要在运行此桌面应用的电脑上处理缓存锁，然后回到原入口重试。",
+  "remote.cacheRecovery.locate": "定位本机锁文件夹",
+  "remote.cacheRecovery.copySteps": "复制操作步骤",
+  "remote.cacheRecovery.steps":
+    "1. 先定位本机锁文件夹，保留文件管理器窗口，并复制本说明。\n2. 保存工作，从托盘选择“退出”，或在 macOS 使用 Cmd+Q / 应用菜单完整退出全部应用实例。取消退出确认、关闭窗口或隐藏应用不算退出。\n3. 等待 Host 清理完成后，仅手动删除已定位目录中的 .tar.gz.lock 文件夹，保留其他归档和 SHA 目录。\n4. 重启应用，从原入口显式重试连接或更新。",
+  "remote.cacheRecovery.opened": "已打开锁所在目录，请保留文件管理器窗口并按步骤操作。",
+  "remote.cacheRecovery.failed": "无法定位本机锁文件夹，请重新连接后重试。",
+  "remote.cacheRecovery.desktopRequired":
+    "请在运行桌面应用的电脑上打开此错误详情并处理本机缓存锁。",
   "remote.action.none": "",
   "remote.error.authentication": "SSH 认证失败",
   "remote.error.details": "详细信息",
@@ -6542,7 +6553,8 @@ const zhCN: Record<string, string> = {
   "cuaPermission.ready.sessionValidationHint":
     "首个会话启动时，YCode 会针对该会话精确验证电脑控制工具。",
   "settings.mobileRemote.title": "手机远控",
-  "settings.mobileRemote.description": "用手机浏览器实时查看和操作这台电脑上的会话。通信经你自己部署的中继服务器转发，全程端到端加密。",
+  "settings.mobileRemote.description":
+    "用手机浏览器实时查看和操作这台电脑上的会话。通信经你自己部署的中继服务器转发，全程端到端加密。",
   "settings.mobileRemote.enable": "启用手机远控",
   "settings.mobileRemote.relay.disabled": "未开启",
   "settings.mobileRemote.relay.connecting": "正在连接中继…",
@@ -6554,7 +6566,8 @@ const zhCN: Record<string, string> = {
   "settings.mobileRemote.relayTokenSaved": "已保存，留空则不修改",
   "settings.mobileRemote.save": "保存",
   "settings.mobileRemote.pairTitle": "配对新手机",
-  "settings.mobileRemote.pairHint": "用手机打开中继地址，在网页中输入配对码或扫码即可完成配对。配对码 10 分钟内有效且只能使用一次。",
+  "settings.mobileRemote.pairHint":
+    "用手机打开中继地址，在网页中输入配对码或扫码即可完成配对。配对码 10 分钟内有效且只能使用一次。",
   "settings.mobileRemote.pairButton": "生成配对码",
   "settings.mobileRemote.pairCodeLabel": "配对码",
   "settings.mobileRemote.qrAlt": "手机配对二维码",
@@ -6564,7 +6577,8 @@ const zhCN: Record<string, string> = {
   "settings.mobileRemote.noDevices": "还没有配对的设备",
   "settings.mobileRemote.devicePaired": "配对于 {date}",
   "settings.mobileRemote.remove": "移除",
-  "settings.mobileRemote.trustNote": "中继只转发加密数据，但手机网页由中继提供，请只使用你自己部署和信任的中继服务器。",
+  "settings.mobileRemote.trustNote":
+    "中继只转发加密数据，但手机网页由中继提供，请只使用你自己部署和信任的中继服务器。",
   "settings.computerUse.title": "电脑控制",
   "settings.computerUse.toggleLabel": "启用电脑控制",
   "settings.computerUse.toggleDescription": "开启后将启用电脑控制及其 MCP 与技能。",

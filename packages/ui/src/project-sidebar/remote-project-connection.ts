@@ -4,6 +4,7 @@ import {
   buildServerRemoteWorkspaceIdentity,
 } from "@/project-sidebar/contract.js";
 import type { SourceServerManagementSnapshot } from "@zcode/shared";
+import { parseSourceServerCacheRecovery } from "@zcode/shared";
 import type { RemoteConnectionOpenPreference } from "@/app-shell/types.js";
 import { getWorkspaceSourceServerId } from "@/conversation-workspace-target/sourceIdentity.js";
 import {
@@ -108,6 +109,7 @@ export async function requestRetainedRemoteProjectConnection(input: {
     }),
     failure: {
       code: state?.errorCode,
+      cacheRecovery: parseSourceServerCacheRecovery(state?.errorCode, state?.cacheRecovery),
       message: state?.error ?? (profile ? "" : (host.lastConnectionError ?? "")),
     },
     reconnect: async () => {

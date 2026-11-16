@@ -6,6 +6,7 @@ import { getErrorMessage } from "@/lib/errorMessage.js";
 import {
   getSourceServerUpdateTarget,
   hostRemoteWorkspaceConnectFailedResponseSchema,
+  parseSourceServerCacheRecovery,
 } from "@zcode/shared";
 
 /** 只分派用户意图；连接状态、失败和日志仍归 Root/Host，向导仅接管需要交互的流程。 */
@@ -49,6 +50,7 @@ export async function requestRemoteProjectConnection({
         ...(code === "source-server-upgrade-required" && failedTarget ? { failedTarget } : {}),
         ...failure,
         code,
+        cacheRecovery: parseSourceServerCacheRecovery(code, failure?.cacheRecovery),
       },
     });
     return;

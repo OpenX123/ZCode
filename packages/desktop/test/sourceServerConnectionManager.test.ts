@@ -2,6 +2,7 @@ import { createSourceServerManagementService } from "../src/host/sourceServerMan
 import { SourceServerDirectory } from "../src/host/sourceServerDirectory.js";
 import { connectSourceServerTarget } from "../src/host/connectSourceServerTarget.js";
 import { appSettingsSchema } from "@zcode/shared";
+import { interruptedCacheLockFixture } from "./helpers/sourceServerCacheLockFixture.js";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import type { ConnectionProfile, RemoteTarget, ServerRemoteInfo } from "@zcode/shared";
@@ -92,6 +93,167 @@ function createAdapter(
 }
 
 describe("SourceServerConnectionManager", () => {
+  it("缓存恢复在线更新失败只授权失败 Profile，成功重连和断开清除", async () => {
+    const fixture = await interruptedCacheLockFixture();
+    const bound = { ...profile, sourceServerId };
+    const sibling = { ...bound, profileId: "3d317149-48a0-4f50-81bd-021273d0aa48" };
+    const manager = new SourceServerConnectionManager({
+      directory: { recordHandshake: vi.fn(async () => ({ identityChanged: false })) },
+      createAdapter: () => createAdapter(),
+      connectServer: async () => ({
+        serverInfo,
+        services: {} as IServiceAccessor,
+        dispose: vi.fn(),
+      }),
+      resolveRelease: fixture.resolveRelease,
+      compatibilityManifest: serverInfo.compatibility!,
+    });
+    try {
+      await manager.connect({ profile: bound, target });
+      await manager.connect({ profile: sibling, target });
+      await expect(manager.updateServer({ profile: sibling, target })).rejects.toMatchObject({
+        code: "source-server-cache-lock-interrupted",
+      });
+      expect(manager.getStateByProfile(sibling.profileId)).toMatchObject({
+        state: "online",
+        cacheRecovery: fixture.recovery,
+      });
+      expect(manager.getStateByProfile(profileId)).not.toHaveProperty("cacheRecovery");
+      await manager.connect({ profile: sibling, target });
+      expect(manager.getStateByProfile(sibling.profileId)).not.toHaveProperty("cacheRecovery");
+      await expect(manager.updateServer({ profile: sibling, target })).rejects.toThrow();
+      manager.disconnect(sourceServerId);
+      expect(manager.listStates().every((state) => !state.cacheRecovery)).toBe(true);
+    } finally {
+      manager.dispose();
+      await fixture.dispose();
+    }
+  });
+  it("缓存恢复自动终态只有物理 owner 持有定位，sibling 不借用且停止计时器", async () => {
+    const fixture = await interruptedCacheLockFixture();
+    const adapter = createAdapter();
+    const closeHandlers: Array<(event: { code: number; reason: string }) => void> = [];
+    const bound = { ...profile, sourceServerId };
+    const sibling = { ...bound, profileId: "3d317149-48a0-4f50-81bd-021273d0aa48" };
+    const manager = new SourceServerConnectionManager({
+      directory: { recordHandshake: vi.fn(async () => ({ identityChanged: false })) },
+      createAdapter: () => adapter,
+      connectServer: async (options) => {
+        closeHandlers.push(options.onClose ?? (() => {}));
+        return { serverInfo, services: {} as IServiceAccessor, dispose: vi.fn() };
+      },
+      compatibilityManifest: serverInfo.compatibility!,
+    });
+    vi.useFakeTimers();
+    try {
+      await manager.connect({ profile: bound, target });
+      await manager.connect({ profile: sibling, target });
+      adapter.probe = vi.fn(async () => {
+        throw fixture.error;
+      });
+      closeHandlers[0]?.({ code: 1006, reason: "lost" });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(manager.getStateByProfile(profileId)).toMatchObject({
+        state: "failed",
+        cacheRecovery: fixture.recovery,
+        retryable: false,
+      });
+      expect(manager.getStateByProfile(sibling.profileId)).toMatchObject({
+        state: "offline",
+        retryable: false,
+      });
+      expect(manager.getStateByProfile(sibling.profileId)).not.toHaveProperty("cacheRecovery");
+      await vi.advanceTimersByTimeAsync(4_000 + 8_000 + 2 * 60_000);
+      expect(adapter.probe).toHaveBeenCalledOnce();
+    } finally {
+      manager.dispose();
+      vi.useRealTimers();
+      await fixture.dispose();
+    }
+  });
+  it.each(["remove", "disconnect"])("缓存恢复更新的迟到失败不能越过 %s 终态", async (action) => {
+    const fixture = await interruptedCacheLockFixture();
+    const pending = Promise.withResolvers<ServerReleaseAsset>();
+    const resolveRelease = vi.fn(() => pending.promise);
+    const manager = new SourceServerConnectionManager({
+      directory: { recordHandshake: vi.fn() },
+      createAdapter: () => createAdapter(false),
+      resolveRelease,
+    });
+    try {
+      const request = manager.updateServer({ profile: { ...profile, sourceServerId }, target });
+      const rejected = expect(request).rejects.toThrow();
+      await vi.waitFor(() => expect(resolveRelease).toHaveBeenCalledOnce());
+      if (action === "remove") manager.removeProfile(profileId);
+      else manager.disconnect(sourceServerId);
+      pending.reject(fixture.error);
+      await rejected;
+      expect(manager.getStateByProfile(profileId)).not.toHaveProperty("cacheRecovery");
+      expect(manager.getStateByProfile(profileId).state).toBe(
+        action === "remove" ? "absent" : "offline",
+      );
+    } finally {
+      manager.dispose();
+      await fixture.dispose();
+    }
+  });
+  it("缓存恢复只投影真实失败 owner，新连接与删除不继承旧 locator", async () => {
+    const fixture = await interruptedCacheLockFixture();
+    const adapter = createAdapter(false);
+    const manager = new SourceServerConnectionManager({
+      directory: { recordHandshake: vi.fn() },
+      createAdapter: () => adapter,
+      resolveRelease: fixture.resolveRelease,
+    });
+    try {
+      await expect(manager.connect({ profile, target, allowInstall: true })).rejects.toMatchObject({
+        code: "source-server-cache-lock-interrupted",
+      });
+      expect(manager.getStateByProfile(profileId)).toMatchObject({
+        state: "failed",
+        cacheRecovery: fixture.recovery,
+        retryable: false,
+      });
+      const forged = Object.assign(new Error("remote failed"), {
+        code: "source-server-cache-lock-interrupted",
+        cacheRecovery: fixture.recovery,
+        data: { cacheRecovery: fixture.recovery },
+      });
+      adapter.probe = vi.fn(async () => {
+        throw forged;
+      });
+      await expect(manager.connect({ profile, target, allowInstall: true })).rejects.toThrow(
+        "remote failed",
+      );
+      expect(manager.getStateByProfile(profileId)).not.toHaveProperty("cacheRecovery");
+      manager.removeProfile(profileId);
+      expect(manager.getStateByProfile(profileId)).not.toHaveProperty("cacheRecovery");
+    } finally {
+      manager.dispose();
+      await fixture.dispose();
+    }
+  });
+  it("缓存恢复更新失败状态与管理快照保留同一 owner locator", async () => {
+    const fixture = await interruptedCacheLockFixture();
+    const manager = new SourceServerConnectionManager({
+      directory: { recordHandshake: vi.fn() },
+      createAdapter: () => createAdapter(false),
+      resolveRelease: fixture.resolveRelease,
+    });
+    try {
+      await expect(manager.updateServer({ profile, target })).rejects.toMatchObject({
+        code: "source-server-cache-lock-interrupted",
+      });
+      expect(manager.listStates()).toContainEqual(
+        expect.objectContaining({ profileId, cacheRecovery: fixture.recovery, retryable: false }),
+      );
+      manager.removeProfile(profileId);
+      expect(manager.listStates()).toEqual([]);
+    } finally {
+      manager.dispose();
+      await fixture.dispose();
+    }
+  });
   it("does not recreate profile state when membership admission rejects after removal", async () => {
     let rejectAdmission!: (error: Error) => void;
     const admission = new Promise<never>((_resolve, reject) => {

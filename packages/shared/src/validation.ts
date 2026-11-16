@@ -19,7 +19,11 @@ import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import type { WebRemoteControlAppPayload } from "./web-remote-control.js";
 import { PROTOCOL_V4_LIMITS } from "./zcode-protocol-v4/core.js";
-import { sourceServerArtifactPolicySchema } from "./source-server/release.js";
+import {
+  sourceServerArtifactPolicySchema,
+  sourceServerCacheRecoverySchema,
+} from "./source-server/release.js";
+import { SOURCE_SERVER_CACHE_LOCK_INTERRUPTED_ERROR_CODE } from "./source-server/errorCodes.js";
 import {
   webRemoteControlRpcTransportAckSchema,
   webRemoteControlRpcTransportFrameSchema,
@@ -979,6 +983,7 @@ export const hostRemoteWorkspaceConnectFailedResponseSchema = z
     error: nonEmptyStringSchema,
     reasonCode: nonEmptyStringSchema.optional(),
     retryable: z.boolean().optional(),
+    cacheRecovery: sourceServerCacheRecoverySchema.optional(),
     profileId: z.string().uuid().optional(),
     resolvedWslTarget: z
       .object({
@@ -989,7 +994,13 @@ export const hostRemoteWorkspaceConnectFailedResponseSchema = z
       .strict()
       .optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      value.cacheRecovery === undefined ||
+      value.reasonCode === SOURCE_SERVER_CACHE_LOCK_INTERRUPTED_ERROR_CODE,
+    { path: ["cacheRecovery"], message: "Cache recovery requires its dedicated reason code" },
+  );
 
 export const hostRemoteWorkspaceClosedResponseSchema = z
   .object({

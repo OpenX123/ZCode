@@ -1,5 +1,7 @@
 /* eslint-disable max-lines -- 桌面平台 IPC 集中装配，拆散会让权限边界更难审计；行数随平台能力增长。 */
 import { BrowserWindow, dialog, ipcMain, nativeTheme } from "electron";
+import { lstat, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { readZCodeStdioTapDevState } from "@zcode/services/node";
 import {
   appSettingsPatchSchema,
@@ -7,6 +9,8 @@ import {
   localeSchema,
   nonEmptyStringSchema,
   PlatformChannels,
+  sourceServerCacheRecoverySchema,
+  ZCODE_VERSION,
   rendererLogPayloadSchema,
   stringArraySchema,
   type DesktopCommandId,
@@ -59,6 +63,8 @@ import { registerDesktopCommandIpcHandler } from "./desktopCommandIpc.js";
 import { registerCuaPipActiveSessionIpc } from "./desktopCuaPipIpc.js";
 
 export function registerPlatformIpcHandlers(options: {
+  /** 与窗口 Host 的 remoteAssets 使用同一个配置入口，不回落默认 root。 */
+  resolveRemoteAssetDirs?: () => { remoteCacheDir?: string };
   logger: {
     info: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
@@ -335,6 +341,55 @@ export function registerPlatformIpcHandlers(options: {
 
   ipcMain.handle(PlatformChannels.OpenInFileManager, async (_event, rawPath: string) =>
     openPathInFileManager(rawPath, options.logger),
+  );
+
+  ipcMain.handle(
+    PlatformChannels.OpenSourceServerCacheRecoveryDirectory,
+    async (_event, payload: unknown) => {
+      const failure = { success: false, error: "无法定位本机缓存锁文件夹，请重新连接后重试。" };
+      const parsed = sourceServerCacheRecoverySchema.safeParse(payload);
+      if (!parsed.success || parsed.data.version !== ZCODE_VERSION) return failure;
+      try {
+        const configuredRoot = options.resolveRemoteAssetDirs?.().remoteCacheDir;
+        if (!configuredRoot) return failure;
+        // 配置 root 本身可以是用户选择的 canonical 位置；其下每层都不得再经链接重定向。
+        const root = await realpath(resolve(configuredRoot));
+        if (!(await lstat(root)).isDirectory()) return failure;
+        const { version, target, sha256 } = parsed.data;
+        const contentDir = join(root, "source-server", version, target, sha256);
+        const descendant = relative(root, contentDir);
+        if (
+          !descendant ||
+          descendant === ".." ||
+          descendant.startsWith(`..${sep}`) ||
+          isAbsolute(descendant)
+        )
+          return failure;
+        let directory = root;
+        for (const segment of [
+          "source-server",
+          version,
+          target,
+          sha256,
+          `zcode-server-${target}.tar.gz.lock`,
+        ]) {
+          directory = join(directory, segment);
+          const info = await lstat(directory);
+          if (!info.isDirectory() || info.isSymbolicLink()) return failure;
+          if (relative(directory, await realpath(directory)) !== "") return failure;
+        }
+        // 原生 helper 会把 path/error 交给 logger；这个窄动作只允许固定事件，返回也不含原生正文。
+        const safeLogger = {
+          info: () => options.logger.info("[source-server-cache-recovery] native open event"),
+          warn: () => options.logger.warn("[source-server-cache-recovery] native open failed"),
+        };
+        const result = await openPathInFileManager(contentDir, safeLogger);
+        return result.success ? { success: true } : failure;
+      } catch {
+        options.logger.warn("[source-server-cache-recovery] directory unavailable");
+        return failure;
+      }
+    },
   );
 
   registerCuaPermissionIpcHandlers({

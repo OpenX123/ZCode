@@ -18,6 +18,7 @@ import type {
 } from "@zcode/shared";
 import zhCN from "@/i18n/locales/zh-CN.js";
 import enUS from "@/i18n/locales/en-US.js";
+import { ZCODE_VERSION } from "@zcode/shared";
 import { createCanonicalWslTargetResolver } from "@desktop/main/desktopWslTargetResolver.js";
 
 const ports = vi.hoisted(() => ({
@@ -143,6 +144,165 @@ async function drain() {
     await new Promise((resolve) => setTimeout(resolve, 5));
   });
 }
+
+it("缓存恢复连接与项目交接只保留当前错误，重试和新 epoch 清除", async () => {
+  const cacheRecovery = {
+    kind: "source-server-cache-lock" as const,
+    version: ZCODE_VERSION,
+    target: "linux-x64" as const,
+    sha256: "a".repeat(64),
+  };
+  const error = Object.assign(new Error("safe cache failure"), {
+    code: "source-server-cache-lock-interrupted",
+    cacheRecovery,
+  });
+  const onConnect = vi
+    .fn()
+    .mockRejectedValueOnce(error)
+    .mockRejectedValueOnce(new Error("next error"));
+  const props = defaults({ onConnect, openIntentId: 1 });
+  const { result, rerender } = renderHook((options) => useRemoteConnectionFlow(options), {
+    initialProps: props,
+  });
+  act(() => result.current.selectionStep.onSelectTarget(targetA));
+  await waitFor(() => expect(result.current.connectingStep.errorCode).toBe(error.code));
+  expect(result.current.connectingStep.cacheRecovery).toEqual(cacheRecovery);
+  await act(async () => result.current.connectingStep.onRetry());
+  expect(onConnect).toHaveBeenCalledTimes(2);
+  expect(result.current.connectingStep.cacheRecovery).toBeUndefined();
+  rerender({
+    ...props,
+    openIntentId: 2,
+    preferredTarget: targetA,
+    initialFailure: { code: error.code, message: error.message, cacheRecovery },
+  });
+  await waitFor(() => expect(result.current.connectingStep.cacheRecovery).toEqual(cacheRecovery));
+  await act(async () => result.current.connectingStep.onBack());
+  expect(result.current.connectingStep.cacheRecovery).toBeUndefined();
+});
+
+it("缓存恢复向导更新消费真实 RPC data，显式重试再次更新而非普通重连", async () => {
+  const props = prepareProjectUpgrade();
+  const cacheRecovery = {
+    kind: "source-server-cache-lock" as const,
+    version: ZCODE_VERSION,
+    target: "linux-x64" as const,
+    sha256: "b".repeat(64),
+  };
+  ports.management.updateSource.mockRejectedValue(
+    Object.assign(new Error("safe update failure"), {
+      code: "source-server-cache-lock-interrupted",
+      retryable: false,
+      data: { cacheRecovery },
+    }),
+  );
+  const { result } = renderHook(() => useRemoteConnectionFlow(props));
+  await waitFor(() =>
+    expect(result.current.connectingStep.errorCode).toBe("source-server-cache-lock-interrupted"),
+  );
+  expect(result.current.connectingStep.cacheRecovery).toEqual(cacheRecovery);
+  const before = ports.management.updateSource.mock.calls.length;
+  await act(async () => result.current.connectingStep.onRetry());
+  expect(ports.management.updateSource.mock.calls.length).toBe(before + 1);
+});
+
+it("缓存恢复身份确认失败显式消费 RPC data，替换旧身份错误", async () => {
+  const cacheRecovery = {
+    kind: "source-server-cache-lock" as const,
+    version: ZCODE_VERSION,
+    target: "linux-x64" as const,
+    sha256: "a".repeat(64),
+  };
+  ports.snapshot.profiles = [
+    { profileId: "profile", transport: "docker", target: targetA, createdAt: 1 },
+  ];
+  ports.management.confirmIdentityChange.mockRejectedValue(
+    Object.assign(new Error("safe"), {
+      code: "source-server-cache-lock-interrupted",
+      data: { cacheRecovery },
+    }),
+  );
+  const { result } = renderHook(() =>
+    useRemoteConnectionFlow(
+      defaults({
+        openIntentId: 1,
+        preferredTarget: targetA,
+        preferredProfileId: "profile",
+        initialFailure: { code: "source-server-identity-change-pending", message: "identity" },
+      }),
+    ),
+  );
+  await waitFor(() =>
+    expect(result.current.connectingStep.errorCode).toBe("source-server-identity-change-pending"),
+  );
+  await act(async () => result.current.connectingStep.onRetry());
+  expect(result.current.connectingStep.errorCode).toBe("source-server-cache-lock-interrupted");
+  expect(result.current.connectingStep.cacheRecovery).toEqual(cacheRecovery);
+});
+
+it.each(["cancel", "new-intent"])("缓存恢复迟到连接失败不越过 %s 的 epoch", async (action) => {
+  const cacheRecovery = {
+    kind: "source-server-cache-lock" as const,
+    version: ZCODE_VERSION,
+    target: "linux-x64" as const,
+    sha256: "a".repeat(64),
+  };
+  const pending = Promise.withResolvers<string>();
+  const props = defaults({ openIntentId: 1, onConnect: vi.fn(() => pending.promise) });
+  const { result, rerender } = renderHook((p) => useRemoteConnectionFlow(p), {
+    initialProps: props,
+  });
+  act(() => result.current.selectionStep.onSelectTarget(targetA));
+  if (action === "cancel") act(() => result.current.connectingStep.onCancelConnection());
+  else
+    rerender({
+      ...props,
+      openIntentId: 2,
+      preferredTarget: { kind: "docker", container: "b" },
+      initialFailure: { code: "remote-host-unreachable", message: "new error" },
+    });
+  await act(async () =>
+    pending.reject(
+      Object.assign(new Error("old"), {
+        code: "source-server-cache-lock-interrupted",
+        cacheRecovery,
+      }),
+    ),
+  );
+  expect(result.current.connectingStep.cacheRecovery).toBeUndefined();
+  expect(result.current.connectingStep.rawError).not.toBe("old");
+});
+
+it("缓存恢复显式重试成功与完整关闭都撤销旧定位", async () => {
+  const cacheRecovery = {
+    kind: "source-server-cache-lock" as const,
+    version: ZCODE_VERSION,
+    target: "linux-x64" as const,
+    sha256: "a".repeat(64),
+  };
+  const props = defaults({
+    openIntentId: 1,
+    onConnect: vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("safe"), {
+          code: "source-server-cache-lock-interrupted",
+          cacheRecovery,
+        }),
+      )
+      .mockResolvedValue("session-a"),
+  });
+  const { result, rerender } = renderHook((p) => useRemoteConnectionFlow(p), {
+    initialProps: props,
+  });
+  act(() => result.current.selectionStep.onSelectTarget(targetA));
+  await waitFor(() => expect(result.current.connectingStep.cacheRecovery).toEqual(cacheRecovery));
+  await act(async () => result.current.connectingStep.onRetry());
+  expect(result.current.connectingStep.cacheRecovery).toBeUndefined();
+  expect(result.current.currentStep).toBe("directory");
+  rerender({ ...props, open: false });
+  expect(result.current.connectingStep.cacheRecovery).toBeUndefined();
+});
 
 const upgradeFailure = {
   code: "source-server-upgrade-required",

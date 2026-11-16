@@ -70,7 +70,7 @@ declare global {
           workspaceIdentity?: string;
           connectTrigger?: import("@zcode/shared").RemoteWorkspaceConnectTrigger;
         },
-      ): Promise<{ success: boolean; error?: string; sessionId?: string }>;
+      ): ReturnType<import("@zcode/shared").IPlatformService["connectRemote"]>;
       requestSourceSettingsAttachment?(sourceServerId: string): Promise<{ attachmentId: string }>;
       /** 取消当前窗口尚未建立完成的远程连接 */
       cancelPendingRemoteConnection?(requestId?: string): Promise<void>;
@@ -234,6 +234,7 @@ declare global {
       openExternal(url: string): void;
       /** 在系统文件管理器中打开指定路径 */
       openInFileManager(path: string): Promise<{ success: boolean; error?: string }>;
+      openSourceServerCacheRecoveryDirectory?: import("@zcode/shared").IPlatformService["openSourceServerCacheRecoveryDirectory"];
       /** 使用系统默认应用打开本地文件 */
       openExternalFile(path: string): Promise<{ success: boolean; error?: string }>;
       /** 打开 ZCode Computer Use 完整权限引导 */

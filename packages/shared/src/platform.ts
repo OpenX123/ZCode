@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- 跨端 platform contract 集中声明 renderer 能力；OAuth 与 browser lifecycle 必须保持 desktop/web 类型合同，本 MR 不拆分平台边界。 */
 import type { BrowserViewportSize } from "./browser-use/command-metadata.js";
+import type { SourceServerCacheRecovery } from "./source-server/release.js";
 import type { SessionLocator } from "./session-navigation/contract.js";
 import type {
   CuaAccessibilitySettingsResult,
@@ -760,6 +761,7 @@ export interface IPlatformService {
     error?: string;
     reasonCode?: string;
     retryable?: boolean;
+    cacheRecovery?: SourceServerCacheRecovery;
     sessionId?: string;
     /** 本次直接复用的在线连接目标，凭据不参与认证也不得持久化。 */
     reusedConnectionTarget?: RemoteTarget;
@@ -826,6 +828,10 @@ export interface IPlatformService {
 
   /** 在系统文件管理器中打开指定路径 */
   openInFileManager(path: string): Promise<{ success: boolean; error?: string }>;
+  /** 仅本机 Desktop：校验发行身份后打开唯一内容目录，不返回路径或清理文件。 */
+  openSourceServerCacheRecoveryDirectory?(
+    recovery: SourceServerCacheRecovery,
+  ): Promise<{ success: boolean; error?: string }>;
 
   /** 使用系统默认应用打开本地文件；普通 Web 平台返回 unsupported。 */
   openExternalFile?(path: string): Promise<{ success: boolean; error?: string }>;
@@ -1008,7 +1014,9 @@ export interface IPlatformService {
     input: import("./mobile-remote/contract.js").MobileRemoteConfigInput,
   ): Promise<import("./mobile-remote/contract.js").MobileRemoteStatus>;
   /** 手机远控：生成一次性配对链接（作废上一张） */
-  createMobileRemotePairing?(): Promise<import("./mobile-remote/contract.js").MobileRemotePairingTicket>;
+  createMobileRemotePairing?(): Promise<
+    import("./mobile-remote/contract.js").MobileRemotePairingTicket
+  >;
   /** 手机远控：移除设备并断开其连接 */
   revokeMobileRemoteDevice?(
     deviceId: string,

@@ -1,4 +1,9 @@
-import { InternalChannels, PlatformChannels, type UpdateStatePayload } from "@zcode/shared";
+import {
+  InternalChannels,
+  PlatformChannels,
+  ZCODE_VERSION,
+  type UpdateStatePayload,
+} from "@zcode/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseRemoteWorkspaceServicePortMessage } from "../src/renderer/src/remoteWorkspaceServicePortBridge.js";
 
@@ -82,6 +87,34 @@ describe("preload IPC disposer", () => {
     await import("../src/preload/index.js");
     return exposedApi;
   }
+
+  it("缓存恢复 preload 使用专用 channel 与严格 locator，连接结果原样交接", async () => {
+    const api = await loadPreload();
+    const cacheRecovery = {
+      kind: "source-server-cache-lock",
+      version: ZCODE_VERSION,
+      target: "linux-x64",
+      sha256: "a".repeat(64),
+    };
+    mockIpcRenderer.invoke.mockResolvedValue({ success: true });
+    await expect(api.openSourceServerCacheRecoveryDirectory!(cacheRecovery)).resolves.toEqual({
+      success: true,
+    });
+    expect(mockIpcRenderer.invoke).toHaveBeenLastCalledWith(
+      PlatformChannels.OpenSourceServerCacheRecoveryDirectory,
+      cacheRecovery,
+    );
+    const failure = {
+      success: false,
+      reasonCode: "source-server-cache-lock-interrupted",
+      error: "safe",
+      cacheRecovery,
+    };
+    mockIpcRenderer.invoke.mockResolvedValue(failure);
+    await expect(api.connectRemote!({ kind: "docker", container: "dev" })).resolves.toEqual(
+      failure,
+    );
+  });
 
   it("preload 初始化时会上报当前窗口控制区 zoom 信息", async () => {
     stubProcessPlatform("darwin");

@@ -1,7 +1,9 @@
 import { SourceServerConnectionManager } from "../src/host/sourceServerConnectionManager.js";
 import type { SourceServerTransportAdapter } from "@zcode/server/source-server";
 import { describe, expect, it, vi } from "vitest";
-import { Emitter } from "@zcode/rpc";
+import { Emitter, ChannelServer, ChannelClient, ProxyChannel, createQueuePair } from "@zcode/rpc";
+import { interruptedCacheLockFixture } from "./helpers/sourceServerCacheLockFixture.js";
+import { SourceServerOperationLogs } from "../src/host/sourceServerOperationLogs.js";
 import type { SourceServerConnectionStateSnapshot } from "@zcode/shared";
 import { createSourceServerManagementService } from "../src/host/sourceServerManagementService.js";
 
@@ -9,6 +11,123 @@ const profileId = "17ef20b3-622d-4a53-98c1-0cdff29f3e6d";
 const sourceServerId = "3cd4f9da-cd79-426c-9d70-75f36e9f6a87";
 
 describe("SourceServerManagementService", () => {
+  it.each(["connectProfile", "confirmIdentityChange", "updateSource"] as const)(
+    "缓存恢复 %s 经真实管理 RPC 只序列化可信 resolver locator",
+    async (method) => {
+      const fixture = await interruptedCacheLockFixture();
+      const emitter = new Emitter<SourceServerConnectionStateSnapshot>();
+      const fail = async () => {
+        throw fixture.error;
+      };
+      const service = createSourceServerManagementService({
+        directory: {
+          snapshot: async () => ({
+            profiles: [
+              {
+                profileId,
+                transport: "docker",
+                target: { kind: "docker", container: "isolated" },
+                createdAt: 1,
+              },
+            ],
+            servers: [],
+            workspaceHistory: [],
+          }),
+          resolveProfileTarget: async () => ({ kind: "docker", container: "isolated" }),
+        } as never,
+        manager: {
+          listStates: () => [],
+          onDidChangeState: emitter.event,
+          getOnlineConnection: () => undefined,
+          connect: fail,
+          updateServer: fail,
+        } as never,
+      });
+      const [serverProtocol, clientProtocol] = createQueuePair();
+      const server = new ChannelServer(serverProtocol, "cache-recovery");
+      const client = new ChannelClient(clientProtocol);
+      server.registerChannel("management", ProxyChannel.fromService(service));
+      const remote = ProxyChannel.toService<typeof service>(client.getChannel("management"));
+      try {
+        const request =
+          method === "updateSource"
+            ? remote.updateSource({ profileId })
+            : remote[method](profileId);
+        await expect(request).rejects.toMatchObject({
+          code: "source-server-cache-lock-interrupted",
+          retryable: false,
+          data: { cacheRecovery: fixture.recovery },
+        });
+        // 远端同码、同形状字段不能伪装成 resolver 私有事实；其它业务 data 不受影响。
+        const forged = Object.assign(new Error("safe remote failure"), {
+          code: "source-server-cache-lock-interrupted",
+          retryable: false,
+          cacheRecovery: fixture.recovery,
+          data: { cacheRecovery: fixture.recovery, safe: "retained" },
+        });
+        fixture.error = forged;
+        const rejected = await (
+          method === "updateSource" ? remote.updateSource({ profileId }) : remote[method](profileId)
+        ).catch((error: unknown) => error);
+        expect(rejected).not.toHaveProperty("cacheRecovery");
+        expect(rejected).toHaveProperty("data", { safe: "retained" });
+      } finally {
+        client.dispose();
+        server.dispose();
+        service.dispose();
+        await fixture.dispose();
+      }
+    },
+  );
+
+  it.each(["sha256", "target"] as const)(
+    "缓存恢复与秘密 %s 碰撞时原日志仍脱敏，私有定位不丢失",
+    async (field) => {
+      const fixture = await interruptedCacheLockFixture();
+      const logs = new SourceServerOperationLogs(() => 1);
+      const target = {
+        kind: "ssh" as const,
+        host: "example.test",
+        username: "test",
+        password: fixture.recovery[field],
+      };
+      const profile = {
+        profileId,
+        transport: "ssh" as const,
+        target: { kind: "ssh" as const, host: "example.test", username: "test" },
+        createdAt: 1,
+      };
+      try {
+        const error = await logs
+          .run("connect", profile, target, undefined, async (context) => {
+            context.onLog?.({ phase: "download", message: `archive ${fixture.recovery[field]}` });
+            throw fixture.error;
+          })
+          .catch((cause: unknown) => cause);
+        const { readSourceServerCacheRecovery } =
+          await import("../src/host/sourceServerReleaseResolver.js");
+        expect(readSourceServerCacheRecovery).toBeTypeOf("function");
+        expect(readSourceServerCacheRecovery(error)).toEqual(fixture.recovery);
+        expect(JSON.stringify(logs.read(profile))).not.toContain(fixture.recovery[field]);
+        expect(String(error)).not.toContain(fixture.recovery[field]);
+        expect(JSON.stringify(logs.read(profile))).not.toContain(fixture.root);
+        const forged = Object.assign(new Error("remote failure"), {
+          cacheRecovery: fixture.recovery,
+          data: { cacheRecovery: fixture.recovery, safe: "retained" },
+        });
+        const rejected = await logs
+          .run("connect", profile, target, undefined, async () => {
+            throw forged;
+          })
+          .catch((cause: unknown) => cause);
+        expect(rejected).not.toHaveProperty("cacheRecovery");
+        expect(rejected).toHaveProperty("data", { safe: "retained" });
+      } finally {
+        logs.dispose();
+        await fixture.dispose();
+      }
+    },
+  );
   it("routes a retained-member reconnect without saving a new membership", async () => {
     const emitter = new Emitter<SourceServerConnectionStateSnapshot>();
     const target = { kind: "docker" as const, container: "dev" };

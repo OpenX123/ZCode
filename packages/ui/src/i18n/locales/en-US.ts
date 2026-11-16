@@ -407,6 +407,18 @@ const enUS: Record<string, string> = {
   "remote.action.security": "View security information",
   "remote.action.details": "View details",
   "remote.action.retry": "Retry",
+  "remote.error.cacheLockInterrupted": "Local cache lock recovery interrupted",
+  "remote.error.cacheLockInterrupted.reason":
+    "Handle the cache lock on the computer running this desktop app, then retry from the original entry point.",
+  "remote.cacheRecovery.locate": "Locate local lock folder",
+  "remote.cacheRecovery.copySteps": "Copy recovery steps",
+  "remote.cacheRecovery.steps":
+    "1. Locate the local lock folder, keep the file manager window open, and copy these instructions.\n2. Save your work. Choose Quit from the system tray, or use Cmd+Q / the app menu on macOS, to fully quit every app instance. Canceling the quit confirmation, closing a window, or hiding the app does not quit it.\n3. Wait for Host cleanup to finish. Manually delete only the .tar.gz.lock folder in the located directory. Keep all other archives and SHA directories.\n4. Restart the app and explicitly retry the connection or update from the original entry point.",
+  "remote.cacheRecovery.opened":
+    "Opened the lock's directory. Keep the file manager open and follow the steps.",
+  "remote.cacheRecovery.failed": "Unable to locate the local lock folder. Reconnect and retry.",
+  "remote.cacheRecovery.desktopRequired":
+    "Open these error details on the computer running the desktop app to handle its local cache lock.",
   "remote.action.none": "",
   "remote.error.authentication": "SSH authentication failed",
   "remote.error.details": "Details",
@@ -6353,7 +6365,8 @@ const enUS: Record<string, string> = {
   "chat.elicitation.review": "Review",
   "chat.elicitation.send": "Send",
   "chat.elicitation.waitingAnswer": "Waiting for your answer",
-  "chat.elicitation.explicitKeyboardHint": "Numbers select, arrows navigate; Tab to Next or Send, then Enter to confirm",
+  "chat.elicitation.explicitKeyboardHint":
+    "Numbers select, arrows navigate; Tab to Next or Send, then Enter to confirm",
   "chat.elicitation.submit": "Submit",
   "chat.elicitation.previousQuestion": "Previous question",
   "chat.elicitation.nextQuestion": "Next question",
@@ -6864,14 +6877,16 @@ const enUS: Record<string, string> = {
   "cuaPermission.ready.sessionValidationHint":
     "YCode will verify the Computer Use tools against the exact session when your first session starts.",
   "settings.mobileRemote.title": "Mobile Remote",
-  "settings.mobileRemote.description": "View and control the sessions on this computer from your phone browser. Traffic goes through your own self-hosted relay and is end-to-end encrypted.",
+  "settings.mobileRemote.description":
+    "View and control the sessions on this computer from your phone browser. Traffic goes through your own self-hosted relay and is end-to-end encrypted.",
   "settings.mobileRemote.enable": "Enable Mobile Remote",
   "settings.mobileRemote.relay.disabled": "Off",
   "settings.mobileRemote.relay.connecting": "Connecting to relay…",
   "settings.mobileRemote.relay.online": "Relay connected",
   "settings.mobileRemote.relay.offline": "Relay disconnected",
   "settings.mobileRemote.relayUrl": "Relay URL",
-  "settings.mobileRemote.relayUrlHint": "HTTPS address of your self-hosted relay, which also serves the phone web app.",
+  "settings.mobileRemote.relayUrlHint":
+    "HTTPS address of your self-hosted relay, which also serves the phone web app.",
   "settings.mobileRemote.relayToken": "Relay token",
   "settings.mobileRemote.relayTokenSaved": "Saved. Leave empty to keep it.",
   "settings.mobileRemote.save": "Save",
@@ -6887,7 +6902,8 @@ const enUS: Record<string, string> = {
   "settings.mobileRemote.noDevices": "No paired devices yet",
   "settings.mobileRemote.devicePaired": "Paired {date}",
   "settings.mobileRemote.remove": "Remove",
-  "settings.mobileRemote.trustNote": "The relay only forwards encrypted data, but it also serves the phone web app. Only use a relay you deploy and trust.",
+  "settings.mobileRemote.trustNote":
+    "The relay only forwards encrypted data, but it also serves the phone web app. Only use a relay you deploy and trust.",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Enable Computer Use",
   "settings.computerUse.toggleDescription":

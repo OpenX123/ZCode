@@ -1,4 +1,8 @@
 import { createSourceServerMigrationCounts } from "./sourceServerMigrationCounts.js";
+import {
+  readSourceServerCacheRecovery,
+  stripUntrustedSourceServerCacheRecovery,
+} from "./sourceServerReleaseResolver.js";
 import { Emitter, type Event } from "@zcode/rpc";
 import {
   sourceServerManagementSnapshotSchema,
@@ -73,6 +77,20 @@ interface SourceServerManagementManager {
 
 export interface SourceServerManagementService extends ISourceServerManagementService {
   dispose(): void;
+}
+
+function toSourceServerManagementError(error: unknown): unknown {
+  stripUntrustedSourceServerCacheRecovery(error);
+  const cacheRecovery = readSourceServerCacheRecovery(error);
+  if (cacheRecovery && error instanceof Error) {
+    // RPC 已有 data 通道；只在这个源服务器出口序列化 resolver 私有事实。
+    const failure = error as Error & { data?: Record<string, unknown> };
+    failure.data = {
+      ...(failure.data && typeof failure.data === "object" ? failure.data : {}),
+      cacheRecovery,
+    };
+  }
+  return error;
 }
 
 export function createSourceServerManagementService(options: {
@@ -180,7 +198,7 @@ export function createSourceServerManagementService(options: {
           !("code" in error) ||
           error.code !== "source-server-identity-change-pending"
         ) {
-          throw error;
+          throw toSourceServerManagementError(error);
         }
       }
       return await getSnapshot();
@@ -190,12 +208,16 @@ export function createSourceServerManagementService(options: {
         readProfile(profileId),
         options.directory.resolveProfileTarget(profileId),
       ]);
-      await options.manager.connect({
-        profile,
-        target,
-        confirmIdentityChange: true,
-        ...(options.onConnectionLog ? { context: { onLog: options.onConnectionLog } } : {}),
-      });
+      await options.manager
+        .connect({
+          profile,
+          target,
+          confirmIdentityChange: true,
+          ...(options.onConnectionLog ? { context: { onLog: options.onConnectionLog } } : {}),
+        })
+        .catch((error: unknown) => {
+          throw toSourceServerManagementError(error);
+        });
       return await getSnapshot();
     },
     async disconnectSource(sourceServerId) {
@@ -234,12 +256,16 @@ export function createSourceServerManagementService(options: {
       assertTarget(profile.target);
       const target = await options.directory.resolveProfileTarget(profile);
       assertTarget(target);
-      await options.manager.updateServer({
-        profile,
-        target,
-        force,
-        resolveRelease: options.resolveRelease,
-      });
+      await options.manager
+        .updateServer({
+          profile,
+          target,
+          force,
+          resolveRelease: options.resolveRelease,
+        })
+        .catch((error: unknown) => {
+          throw toSourceServerManagementError(error);
+        });
       return await getSnapshot();
     },
     async renameSource(sourceServerId, displayName) {

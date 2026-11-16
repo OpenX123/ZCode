@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UpdateStatePayload } from "@zcode/shared";
+import { ZCODE_VERSION } from "@zcode/shared";
 import { createDesktopPlatform } from "../src/renderer/src/desktopPlatform.js";
 
 // 浏览器桥在模块初始化时读取独立 preload；本测试只验证更新的实际平台适配器。
@@ -9,6 +10,26 @@ vi.mock("../src/renderer/src/desktopBrowserPlatformBridge.js", () => ({
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Desktop 更新平台适配器", () => {
+  it("缓存恢复真实适配器只在 preload 支持时提供动作，原样传 locator", async () => {
+    const cacheRecovery = {
+      kind: "source-server-cache-lock" as const,
+      version: ZCODE_VERSION,
+      target: "linux-x64" as const,
+      sha256: "a".repeat(64),
+    };
+    const open = vi.fn(async () => ({ success: true }));
+    vi.stubGlobal("window", { zcode: { openSourceServerCacheRecoveryDirectory: open } });
+    const platform = createDesktopPlatform({ isLocalDevelopmentRuntime: false });
+    await expect(platform.openSourceServerCacheRecoveryDirectory?.(cacheRecovery)).resolves.toEqual(
+      { success: true },
+    );
+    expect(open).toHaveBeenCalledWith(cacheRecovery);
+    vi.stubGlobal("window", { zcode: {} });
+    expect(
+      createDesktopPlatform({ isLocalDevelopmentRuntime: false })
+        .openSourceServerCacheRecoveryDirectory,
+    ).toBeUndefined();
+  });
   it("真实适配器透传全部更新命令和事件，注销函数保持原桥身份", async () => {
     const state: UpdateStatePayload = { kind: "update-available", enabled: true, version: "1.0.1" };
     let eventListener: ((state: UpdateStatePayload) => void) | undefined;

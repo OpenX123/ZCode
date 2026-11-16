@@ -1,4 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { PlatformChannels, ZCODE_VERSION } from "@zcode/shared";
+const ipc = vi.hoisted(() => ({
+  handlers: new Map<string, (...args: unknown[]) => Promise<unknown>>(),
+}));
+vi.mock("electron", () => ({
+  BrowserWindow: { fromWebContents: () => ({ id: 1 }) },
+  ipcMain: {
+    on: vi.fn(),
+    handle: (name: string, handler: (...args: unknown[]) => Promise<unknown>) =>
+      ipc.handlers.set(name, handler),
+  },
+  shell: {},
+}));
+vi.mock("../src/main/desktopNotifications.js", () => ({ dispatchTaskNotification: vi.fn() }));
+vi.mock("../src/main/desktopOAuthDeepLink.js", () => ({ deliverPendingDeepLink: vi.fn() }));
 import {
   hostRemoteWorkspaceConnectFailedResponseSchema,
   publicZCodeErrorCodeSchema,
@@ -6,6 +21,46 @@ import {
 } from "@zcode/shared";
 
 describe("连接失败的 Host/App 契约", () => {
+  it("缓存恢复实际连接 IPC 显式搬运严格字段且不通用透传 metadata", async () => {
+    const { registerRemoteIpcHandlers } = await import("../src/main/desktopMainIpcRemote.js");
+    const cacheRecovery = {
+      kind: "source-server-cache-lock",
+      version: ZCODE_VERSION,
+      target: "linux-x64",
+      sha256: "a".repeat(64),
+    };
+    let error = Object.assign(new Error("safe failure"), {
+      code: "source-server-cache-lock-interrupted",
+      retryable: false,
+      cacheRecovery,
+      unrelated: "must-not-pass",
+    });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    registerRemoteIpcHandlers({
+      logger,
+      createRemoteWorkspaceSession: async () => {
+        throw error;
+      },
+    } as never);
+    const handler = ipc.handlers.get(PlatformChannels.ConnectRemote)!;
+    const request = { target: { kind: "docker", container: "fixture" }, requestId: "cache" };
+    await expect(handler({ sender: { id: 1 } }, request)).resolves.toEqual({
+      success: false,
+      error: "safe failure",
+      reasonCode: error.code,
+      retryable: false,
+      cacheRecovery,
+    });
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain(cacheRecovery.sha256);
+    error = Object.assign(new Error("safe failure"), { ...error, code: "remote-download-failed" });
+    expect(await handler({ sender: { id: 1 } }, request)).not.toHaveProperty("cacheRecovery");
+    error = Object.assign(new Error("safe failure"), {
+      ...error,
+      code: "source-server-cache-lock-interrupted",
+      cacheRecovery: { ...cacheRecovery, path: "/private" },
+    });
+    expect(await handler({ sender: { id: 1 } }, request)).not.toHaveProperty("cacheRecovery");
+  });
   it("携带未知 cause 的公开认证码不被预检阶段覆盖", () => {
     const error = Object.assign(new Error("SSH 认证失败", { cause: new Error("opaque cause") }), {
       code: "remote-authentication-failed",

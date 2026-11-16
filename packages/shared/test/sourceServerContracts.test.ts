@@ -19,12 +19,104 @@ import {
   sourceServerOperationLogSchema,
   sourceServerInstallProgressSchema,
   sourceServerReleaseDescriptorSchema,
+  ZCODE_VERSION,
+  hostRemoteWorkspaceConnectFailedResponseSchema,
+  sourceServerManagementStateDeltaSchema,
 } from "../src/index.js";
 
 const profileId = "17ef20b3-622d-4a53-98c1-0cdff29f3e6d";
 const sourceServerId = "3cd4f9da-cd79-426c-9d70-75f36e9f6a87";
 
 describe("R3 Source Server contracts", () => {
+  it("本机缓存恢复只接受成对的严格发行 locator，不接受路径或扩展字段", () => {
+    const cacheRecovery = {
+      kind: "source-server-cache-lock",
+      version: ZCODE_VERSION,
+      target: "linux-x64",
+      sha256: "a".repeat(64),
+    };
+    const state = {
+      profileId,
+      state: "failed",
+      updatedAt: 1,
+      errorCode: "source-server-cache-lock-interrupted",
+      retryable: false,
+      cacheRecovery,
+    };
+    expect(sourceServerConnectionStateSnapshotSchema.safeParse(state).success).toBe(true);
+    const snapshot = {
+      generation: 1,
+      profiles: [],
+      servers: [],
+      workspaceHistory: [],
+      states: [state],
+      failedPathCount: 0,
+      abandonedPathCount: 0,
+      migrationCounts: [],
+    };
+    expect(sourceServerManagementSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    expect(sourceServerManagementStateDeltaSchema.safeParse({ generation: 1, state }).success).toBe(
+      true,
+    );
+    const reply = {
+      type: "remote-workspace-connect-failed",
+      requestId: "cache",
+      error: "safe failure",
+      reasonCode: state.errorCode,
+      cacheRecovery,
+    };
+    expect(hostRemoteWorkspaceConnectFailedResponseSchema.safeParse(reply).success).toBe(true);
+    for (const malformed of [
+      { ...cacheRecovery, path: "/private/cache" },
+      { ...cacheRecovery, root: "C:\\private" },
+      { ...cacheRecovery, version: "../1.4.1" },
+      { ...cacheRecovery, version: "https://example.test/" },
+      { ...cacheRecovery, version: "\\\\host\\share" },
+      { ...cacheRecovery, version: "C:\\cache" },
+      { ...cacheRecovery, target: "linux/../x64" },
+      { ...cacheRecovery, sha256: "A".repeat(64) },
+      { ...cacheRecovery, sha256: "a".repeat(63) },
+      { ...cacheRecovery, kind: "other" },
+      null,
+      {},
+      { ...cacheRecovery, version: "" },
+    ]) {
+      expect(
+        sourceServerConnectionStateSnapshotSchema.safeParse({ ...state, cacheRecovery: malformed })
+          .success,
+      ).toBe(false);
+      expect(
+        hostRemoteWorkspaceConnectFailedResponseSchema.safeParse({
+          ...reply,
+          cacheRecovery: malformed,
+        }).success,
+      ).toBe(false);
+      expect(
+        sourceServerManagementStateDeltaSchema.safeParse({
+          generation: 1,
+          state: { ...state, cacheRecovery: malformed },
+        }).success,
+      ).toBe(false);
+      expect(
+        sourceServerManagementSnapshotSchema.safeParse({
+          ...snapshot,
+          states: [{ ...state, cacheRecovery: malformed }],
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      sourceServerConnectionStateSnapshotSchema.safeParse({
+        ...state,
+        errorCode: "remote-download-failed",
+      }).success,
+    ).toBe(false);
+    expect(
+      hostRemoteWorkspaceConnectFailedResponseSchema.safeParse({
+        ...reply,
+        reasonCode: "remote-download-failed",
+      }).success,
+    ).toBe(false);
+  });
   it("negotiates optional virtualProjects without changing the legacy wire version", () => {
     const legacy = {
       serverId: sourceServerId,

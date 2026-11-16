@@ -11,6 +11,8 @@ import {
   type SourceServerInstallPreview,
   type SourceServerOperationLog,
   type SourceServerRunningTask,
+  type SourceServerCacheRecovery,
+  parseSourceServerCacheRecovery,
 } from "@zcode/shared";
 /* eslint-disable max-lines -- 连接阶段清单、日志和错误恢复共享同一视图状态，保持原子交互。 */
 import { useCallback, useEffect, useId, useRef, useState } from "react";
@@ -28,6 +30,7 @@ import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import type { RemoteConnectionLogEntry } from "@/hooks/useRemoteConnectionLogs.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import {
   formatRemoteLinkRailTarget,
   formatRemoteLinkRailDevice,
@@ -46,6 +49,97 @@ const REMOTE_CONNECTION_PHASES = [
 ] as const;
 
 export type RemoteConnectionPhaseStatus = "pending" | "active" | "complete" | "failed";
+
+/** 仅投影当前错误的本机能力；向导和设备详情共用同一组离线操作说明。 */
+export function SourceServerCacheRecoveryActions({
+  errorCode,
+  cacheRecovery,
+  errorIdentity,
+}: {
+  errorCode?: string;
+  cacheRecovery?: SourceServerCacheRecovery;
+  errorIdentity: string;
+}) {
+  const platform = useOptionalPlatform();
+  const { intl } = useZCodeIntl();
+  const recovery = parseSourceServerCacheRecovery(errorCode, cacheRecovery);
+  const identity = JSON.stringify([errorIdentity, errorCode, recovery]);
+  const currentError = useRef({ identity, recovery: cacheRecovery, generation: 0 });
+  if (
+    currentError.current.identity !== identity ||
+    currentError.current.recovery !== cacheRecovery
+  ) {
+    currentError.current = {
+      identity,
+      recovery: cacheRecovery,
+      generation: currentError.current.generation + 1,
+    };
+  }
+  const generation = currentError.current.generation;
+  const alive = useRef(true);
+  const [feedback, setFeedback] = useState<{
+    generation: number;
+    status: "pending" | "opened" | "failed";
+  }>();
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  if (!recovery) return null;
+  const open = platform?.openSourceServerCacheRecoveryDirectory;
+  if (!open)
+    return (
+      <p className="text-ui-xs text-remote-foreground-muted">
+        {intl.formatMessage({ id: "remote.cacheRecovery.desktopRequired" })}
+      </p>
+    );
+  const status = feedback?.generation === generation ? feedback.status : undefined;
+  const steps = intl.formatMessage({ id: "remote.cacheRecovery.steps" });
+  return (
+    <div className="space-y-2 text-ui-xs text-remote-foreground-muted">
+      <p className="whitespace-pre-line">{steps}</p>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          disabled={status === "pending"}
+          onClick={() => {
+            setFeedback({ generation, status: "pending" });
+            void (async () => {
+              let success = false;
+              try {
+                success = (await open(recovery)).success;
+              } catch {
+                /* 原生错误可能含路径，只显示固定安全反馈。 */
+              }
+              // 修复依据：异步文件管理器结果不得覆盖另一错误、另一 owner 或已关闭的详情。
+              if (alive.current && currentError.current.generation === generation)
+                setFeedback({ generation, status: success ? "opened" : "failed" });
+            })();
+          }}
+        >
+          {intl.formatMessage({ id: "remote.cacheRecovery.locate" })}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            void navigator.clipboard.writeText(steps);
+          }}
+        >
+          {intl.formatMessage({ id: "remote.cacheRecovery.copySteps" })}
+        </Button>
+      </div>
+      {status === "opened" || status === "failed" ? (
+        <p role="status">{intl.formatMessage({ id: `remote.cacheRecovery.${status}` })}</p>
+      ) : null}
+    </div>
+  );
+}
 
 function normalizeRemoteConnectionPhase(rawPhase: string): string | null {
   if (rawPhase === "probe") return "channel";
@@ -220,6 +314,7 @@ export function RemoteConnectionConnectingStep({
   errorMessage,
   errorCode,
   rawError,
+  cacheRecovery,
   upgradeTarget,
   loading,
   installConfirmation,
@@ -258,6 +353,7 @@ export function RemoteConnectionConnectingStep({
   errorMessage: string;
   errorCode?: string;
   rawError?: string;
+  cacheRecovery?: SourceServerCacheRecovery;
   upgradeTarget?: "controller" | "server";
   loading: boolean;
   installConfirmation?: {
@@ -348,7 +444,7 @@ export function RemoteConnectionConnectingStep({
           ? "needs-install"
           : loading
             ? "bootstrapping"
-            : upgradeRequired
+            : upgradeRequired && !parseSourceServerCacheRecovery(errorCode, cacheRecovery)
               ? "needs-upgrade"
               : errorMessage
                 ? "failed"
@@ -495,6 +591,11 @@ export function RemoteConnectionConnectingStep({
                 {intl.formatMessage({ id: "chat.toolCall.copyError" })}
               </Button>
             </details>
+            <SourceServerCacheRecoveryActions
+              errorCode={errorCode}
+              cacheRecovery={cacheRecovery}
+              errorIdentity={rawError ?? errorMessage}
+            />
           </>
         ) : null}
         {credentials ? (

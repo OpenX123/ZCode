@@ -1460,6 +1460,7 @@ app.whenReady().then(async () => {
 
   registerPlatformIpcHandlers({
     logger,
+    resolveRemoteAssetDirs: () => resolveRemoteAssetDirs({}, hostProcessLocalEnv),
     // CDP-on-guest pivot：renderer `<webview>` dom-ready 上报 guest webContentsId → attach。
     attachBrowserGuest: (key, webContentsId, options) => {
       const result = browserGuestManager.attachGuest(key, webContentsId, options);

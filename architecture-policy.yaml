@@ -469,6 +469,8 @@ modules:
   - id: remote-connection-flow
     roots:
       - packages/ui/src/remote-connection-flow
+      - packages/ui/src/lib/remoteConnectionPresentation.ts
+      - packages/ui/src/lib/remoteConnectionPresentationErrors.ts
     managed: true
     requires:
       - shared
@@ -477,10 +479,25 @@ modules:
       - packages/ui/src/remote-connection-flow/index.ts
       - packages/ui/src/remote-connection-flow/contract.ts
       - packages/ui/src/remote-connection-flow/ui/RemoteConnectionProgress.tsx
+      - packages/ui/src/lib/remoteConnectionPresentation.ts
+      - packages/ui/src/lib/remoteConnectionPresentationErrors.ts
     layers:
       app: .
       ui: ui
     layerOrder: [app, ui]
+    owner: remote
+  # source-server-operation-logs：保留 Host 既有唯一日志 owner 与公开类路径
+  - id: source-server-operation-logs
+    roots:
+      - packages/desktop/src/host/source-server-operation-logs-contract
+      - packages/desktop/src/host/sourceServerOperationLogs.ts
+    managed: true
+    requires: [desktop, rpc, server, shared]
+    publicEntrypoints:
+      - packages/desktop/src/host/sourceServerOperationLogs.ts
+      - packages/desktop/src/host/source-server-operation-logs-contract/contract.ts
+    layers:
+      adapters: .
     owner: remote
   # project-workflow：由 architecture:adopt 登记
   - id: project-workflow

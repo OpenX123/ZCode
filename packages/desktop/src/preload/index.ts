@@ -2,6 +2,7 @@ import {
   databaseStartupControlSchema,
   databaseStartupPortPayloadSchema,
   databaseStartupStateSchema,
+  type SourceServerCacheRecovery,
 } from "@zcode/shared";
 import { installPluginSandboxHostBridge } from "./pluginSandbox/hostBridge.js";
 /* eslint-disable max-lines -- preload bridge 集中暴露桌面平台 IPC，拆散会让 contextBridge 权限边界更难审计。 */
@@ -78,7 +79,9 @@ import {
 import { unwrapRemoteWorkspaceBindResult } from "./remoteWorkspaceBindBridge.js";
 const openWorkspacePathCallbacks = new Set<(path: string) => void>();
 const pendingOpenWorkspacePaths: string[] = [];
-const openSessionCallbacks = new Set<(target: import("@zcode/shared/session-navigation").SessionLocator) => void>();
+const openSessionCallbacks = new Set<
+  (target: import("@zcode/shared/session-navigation").SessionLocator) => void
+>();
 const pendingOpenSessions: import("@zcode/shared/session-navigation").SessionLocator[] = [];
 const MACOS_WINDOW_CONTROLS_BASE_LEFT_PADDING_PX = 96;
 const WINDOWS_WINDOW_CONTROLS_BASE_RIGHT_PADDING_PX = 136;
@@ -154,10 +157,13 @@ ipcRenderer.on(
   },
 );
 
-ipcRenderer.on(PlatformChannels.OpenSession, (_event: unknown, target: import("@zcode/shared/session-navigation").SessionLocator) => {
-  if (!openSessionCallbacks.size) pendingOpenSessions.push(target);
-  else for (const callback of openSessionCallbacks) callback(target);
-});
+ipcRenderer.on(
+  PlatformChannels.OpenSession,
+  (_event: unknown, target: import("@zcode/shared/session-navigation").SessionLocator) => {
+    if (!openSessionCallbacks.size) pendingOpenSessions.push(target);
+    else for (const callback of openSessionCallbacks) callback(target);
+  },
+);
 
 ipcRenderer.on(PlatformChannels.OpenWorkspacePath, (_event: unknown, path: string) => {
   if (openWorkspacePathCallbacks.size === 0) {
@@ -516,7 +522,9 @@ contextBridge.exposeInMainWorld("zcode", {
     }
     return () => openWorkspacePathCallbacks.delete(callback);
   },
-  onOpenSession: (callback: (target: import("@zcode/shared/session-navigation").SessionLocator) => void): (() => void) => {
+  onOpenSession: (
+    callback: (target: import("@zcode/shared/session-navigation").SessionLocator) => void,
+  ): (() => void) => {
     openSessionCallbacks.add(callback);
     while (pendingOpenSessions.length) callback(pendingOpenSessions.shift()!);
     return () => openSessionCallbacks.delete(callback);
@@ -604,6 +612,8 @@ contextBridge.exposeInMainWorld("zcode", {
   openExternal: (url: string) => ipcRenderer.send(PlatformChannels.OpenExternal, url),
   /** 在系统文件管理器中打开指定路径 */
   openInFileManager: (path: string) => ipcRenderer.invoke(PlatformChannels.OpenInFileManager, path),
+  openSourceServerCacheRecoveryDirectory: (recovery: SourceServerCacheRecovery) =>
+    ipcRenderer.invoke(PlatformChannels.OpenSourceServerCacheRecoveryDirectory, recovery),
   /** 使用系统默认应用打开本地文件 */
   openExternalFile: (path: string) => ipcRenderer.invoke(PlatformChannels.OpenExternalFile, path),
   /** 打开 ZCode Computer Use 完整权限引导 */

@@ -11,6 +11,9 @@ import {
   ZCODE_VERSION,
   normalizeRemoteAssetInstallMode,
   sourceServerReleaseDescriptorSchema,
+  sourceServerCacheRecoverySchema,
+  SOURCE_SERVER_CACHE_LOCK_INTERRUPTED_ERROR_CODE,
+  type SourceServerCacheRecovery,
   type RemoteTarget,
   type SourceServerReleaseArchive,
   type SourceServerReleaseDescriptor,
@@ -29,6 +32,50 @@ import type { WindowRemoteAssetDirs } from "./windowRemoteConnectionRegistry.js"
 const ARCHIVE_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const LOCK_WAIT_TIMEOUT_MS = 6 * 60_000;
 const ORPHAN_LOCK_TIMEOUT_MS = 60_000;
+
+class SourceServerCacheLockInterruptedError extends Error {
+  readonly code = SOURCE_SERVER_CACHE_LOCK_INTERRUPTED_ERROR_CODE;
+  readonly retryable = false;
+  #recovery: SourceServerCacheRecovery;
+
+  constructor(archive: SourceServerReleaseArchive) {
+    // 错误在日志清洗前即进入 manager snapshot，正文不能携带可能与秘密重合的发行标识。
+    super("本机资源缓存锁回收中断；请在本机定位锁文件夹并按步骤清理后重试");
+    this.#recovery = sourceServerCacheRecoverySchema.parse({
+      kind: "source-server-cache-lock",
+      version: ZCODE_VERSION,
+      target: archive.target,
+      sha256: archive.sha256,
+    });
+  }
+
+  static read(error: unknown): SourceServerCacheRecovery | undefined {
+    return error instanceof SourceServerCacheLockInterruptedError &&
+      #recovery in error &&
+      error.code === SOURCE_SERVER_CACHE_LOCK_INTERRUPTED_ERROR_CODE
+      ? { ...error.#recovery }
+      : undefined;
+  }
+}
+
+/** 只接受本 resolver 产生的私有事实，远端同码/同形状 Error 不构成本机来源。 */
+export function readSourceServerCacheRecovery(
+  error: unknown,
+): SourceServerCacheRecovery | undefined {
+  return SourceServerCacheLockInterruptedError.read(error);
+}
+
+/** 源服务器专用出口保留原业务 data，但不能替远端异常认领本机恢复保留名。 */
+export function stripUntrustedSourceServerCacheRecovery(error: unknown): void {
+  if (readSourceServerCacheRecovery(error) || !error || typeof error !== "object") return;
+  const record = error as Record<string, unknown>;
+  delete record.cacheRecovery;
+  if (record.data && typeof record.data === "object" && !Array.isArray(record.data)) {
+    const data = { ...record.data } as Record<string, unknown>;
+    delete data.cacheRecovery;
+    record.data = data;
+  }
+}
 
 interface ResolveOptions {
   metadataOnly?: boolean;
@@ -163,7 +210,10 @@ function isExitedProcess(pid: number): boolean {
   }
 }
 
-async function reclaimExitedLock(lockDir: string): Promise<void> {
+async function reclaimExitedLock(
+  lockDir: string,
+  archive: SourceServerReleaseArchive,
+): Promise<void> {
   const owner = await readLockOwner(lockDir);
   const modified = await stat(lockDir).catch(() => null);
   if (
@@ -187,7 +237,7 @@ async function reclaimExitedLock(lockDir: string): Promise<void> {
       (owner ? current?.token === owner.token && isExitedProcess(owner.pid) : !current)
     ) {
       // 回收者本身也可能崩溃；直接报告可恢复错误，不能永久轮询或争抢删除标记误伤新锁。
-      throw new Error(`远程资源缓存锁回收中断；请删除锁目录后重试：${lockDir}`);
+      throw new SourceServerCacheLockInterruptedError(archive);
     }
     return;
   }
@@ -224,7 +274,7 @@ async function acquireArchiveLock(
       await mkdir(lockDir);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      await reclaimExitedLock(lockDir);
+      await reclaimExitedLock(lockDir, archive);
       if (Date.now() >= deadline)
         throw new Error(`Source Server archive lock timed out: ${archive.fileName}`);
       await delay(50, undefined, { signal });

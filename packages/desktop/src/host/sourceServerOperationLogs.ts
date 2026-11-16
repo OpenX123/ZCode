@@ -9,6 +9,7 @@ import {
   type SourceServerOperationLog,
 } from "@zcode/shared";
 import type { TransportContext } from "@zcode/server/source-server";
+import { stripUntrustedSourceServerCacheRecovery } from "./sourceServerReleaseResolver.js";
 
 type Operation = { sequence: number; logs: SourceServerOperationLog[] };
 
@@ -25,7 +26,9 @@ export class SourceServerOperationLogs {
   read(
     profile: Pick<ConnectionProfile, "profileId" | "sourceServerId">,
   ): SourceServerOperationLog[] {
-    const key = profile.sourceServerId ? `source:${profile.sourceServerId}` : this.profileKeys.get(profile.profileId);
+    const key = profile.sourceServerId
+      ? `source:${profile.sourceServerId}`
+      : this.profileKeys.get(profile.profileId);
     const operation = key ? this.operations.get(key) : undefined;
     return operation?.logs.map((entry) => ({ ...entry })) ?? [];
   }
@@ -44,7 +47,9 @@ export class SourceServerOperationLogs {
     task: (context: TransportContext) => Promise<T>,
   ): Promise<T> {
     const current: Operation = { sequence: ++this.sequence, logs: [] };
-    let key = profile.sourceServerId ? `source:${profile.sourceServerId}` : `profile:${profile.profileId}`;
+    let key = profile.sourceServerId
+      ? `source:${profile.sourceServerId}`
+      : `profile:${profile.profileId}`;
     let ownerProfileId = profile.profileId;
     const previous = this.operations.get(key);
     this.profileKeys.set(ownerProfileId, key);
@@ -104,6 +109,7 @@ export class SourceServerOperationLogs {
       });
       return result;
     } catch (error) {
+      stripUntrustedSourceServerCacheRecovery(error);
       const failure = normalizeRemoteConnectionError(error, phase);
       emit({ phase, message: failure.message }, remoteConnectionFailureLogLevel(failure.code));
       // 保留现有领域 Error 的 instanceof 语义，同时为 RPC 提供可识别的码与非空消息。

@@ -1,6 +1,10 @@
 # Remote connection flow
 
+本机缓存锁回收中断时，flow 只投影当前错误的严格 `cacheRecovery` 发行身份。连接失败消费平台 Error 顶层字段，管理更新消费既有 RPC Error.data；项目 initialFailure 仅带实际失败 Profile 的同一字段。该字段随 reset、成功、关闭、换目标和 entryEpoch 失效清除，不从正文推断、不持久化，也不作为锁 owner。两个既有错误组件通过可选 IPlatformService 精确定位；定位等待/安全失败只属于当前错误，旧结果不能污染后继错误。详见 standalone-coding-harness-spec 的“中断回收的本机恢复出口”。
+
 连接向导的单一 hook owner；控制器在同一闭包持有表单、当前阶段、requestId 与 entryEpoch，不维护第二份连接或项目真值。
+
+`lib/remoteConnectionPresentation.ts` 与 `lib/remoteConnectionPresentationErrors.ts` 以精确文件 roots 归入本模块 remote owner 的 app 层。它们只从 shared 状态派生聚合展示、错误分类与动作，不持有连接、日志或 locator 真值；设备设置、项目入口和向导消费同一公开路径。依赖仍仅 shared 与 ui（原 RemoteConnectionAction 类型），实现不移动，不将整个 lib 纳入模块。
 
 `requestRemoteProjectConnection` 是已有项目向此 owner 交接失败的公共入口，原目录与 Host 确认的升级 `profileId` 一并保留。向导按最新快照核验该线路，并以实际连接参数继续；不从 WSL 的省略用户参数猜测账户。该入口从 Root 移入本模块，侧栏与 Root 共同消费 `contract.ts`。
 

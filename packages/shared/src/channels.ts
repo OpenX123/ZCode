@@ -1,4 +1,5 @@
 import type { WebRemoteControlAuthStateChange } from "./web-remote-control.js";
+import type { SourceServerCacheRecovery } from "./source-server/release.js";
 /* eslint-disable max-lines -- 通信频道和请求响应映射必须集中定义，避免跨进程 channel 字符串散落。 */
 import type { BrowserViewportSize } from "./browser-use/command-metadata.js";
 import type {
@@ -316,6 +317,7 @@ export const PlatformChannels = {
   OpenExternal: "zcode:open-external",
   /** Renderer → Main：在系统文件管理器中打开路径 */
   OpenInFileManager: "zcode:open-in-file-manager",
+  OpenSourceServerCacheRecoveryDirectory: "zcode:open-source-server-cache-recovery-directory",
   /** Renderer → Main：使用系统默认应用打开本地文件 */
   OpenExternalFile: "zcode:open-external-file",
   /** Renderer → Main：打开 ZCode Computer Use 权限引导 */
@@ -711,6 +713,7 @@ export interface PlatformChannelMap {
       error?: string;
       reasonCode?: string;
       retryable?: boolean;
+      cacheRecovery?: SourceServerCacheRecovery;
       sessionId?: string;
     };
   };
@@ -899,6 +902,10 @@ export interface PlatformChannelMap {
   };
   [PlatformChannels.OpenInFileManager]: {
     request: string;
+    response: { success: boolean; error?: string };
+  };
+  [PlatformChannels.OpenSourceServerCacheRecoveryDirectory]: {
+    request: SourceServerCacheRecovery;
     response: { success: boolean; error?: string };
   };
   [PlatformChannels.OpenExternalFile]: {

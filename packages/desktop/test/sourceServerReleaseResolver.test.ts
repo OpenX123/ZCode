@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ZCODE_VERSION } from "@zcode/shared";
+import * as releaseResolver from "../src/host/sourceServerReleaseResolver.js";
 import { resolveSourceServerReleaseAsset } from "../src/host/sourceServerReleaseResolver.js";
 
 const target = { kind: "ssh", host: "example.com", username: "alice" } as const;
@@ -486,12 +487,44 @@ describe("Source Server release resolver", () => {
         const expired = new Date(Date.now() - 120_000);
         await utimes(reaperPath, expired, expired);
       }
+      const ownerBytes = await readFile(join(lockDir, "owner.json"));
+      const markerBytes = await readFile(reaperPath);
+      const otherLock = join(fixture.cacheDir, "..", "b".repeat(64), `${fileName}.lock`);
+      await mkdir(otherLock, { recursive: true });
+      await writeFile(join(otherLock, "owner.json"), "another-sha-owner");
+      await writeFile(join(otherLock, ".reaping"), "another-sha-marker");
       const fetch = vi.fn<typeof globalThis.fetch>();
-      await expect(
-        resolveSourceServerReleaseAsset(probe, fixture.assets, target, { fetch }),
-      ).rejects.toThrow(`远程资源缓存锁回收中断；请删除锁目录后重试：${lockDir}`);
+      const error = await resolveSourceServerReleaseAsset(probe, fixture.assets, target, {
+        fetch,
+      }).then(
+        () => {
+          throw new Error("expected interrupted recovery");
+        },
+        (cause: unknown) => cause,
+      );
+      expect(error).toMatchObject({
+        code: "source-server-cache-lock-interrupted",
+        retryable: false,
+      });
+      expect(String(error)).not.toContain(fixture.root);
+      expect(String(error)).not.toContain(sha256("interrupted-reaper-archive"));
+      const readRecovery = (releaseResolver as Record<string, unknown>)
+        .readSourceServerCacheRecovery;
+      expect(readRecovery).toBeTypeOf("function");
+      const recovery = (readRecovery as (error: unknown) => unknown)(error);
+      expect(recovery).toEqual({
+        kind: "source-server-cache-lock",
+        version: ZCODE_VERSION,
+        target: "linux-x64",
+        sha256: sha256("interrupted-reaper-archive"),
+      });
+      expect(JSON.stringify(error)).not.toContain(sha256("interrupted-reaper-archive"));
       expect(fetch).not.toHaveBeenCalled();
       expect(await readdir(lockDir)).toEqual([".reaping", "owner.json"]);
+      expect(await readFile(join(lockDir, "owner.json"))).toEqual(ownerBytes);
+      expect(await readFile(reaperPath)).toEqual(markerBytes);
+      expect(await readFile(join(otherLock, "owner.json"), "utf8")).toBe("another-sha-owner");
+      expect(await readFile(join(otherLock, ".reaping"), "utf8")).toBe("another-sha-marker");
     },
   );
 

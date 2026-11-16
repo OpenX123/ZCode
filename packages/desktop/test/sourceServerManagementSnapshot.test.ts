@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Emitter } from "@zcode/rpc";
 import type { SourceServerConnectionStateSnapshot } from "@zcode/shared";
+import { ZCODE_VERSION } from "@zcode/shared";
 import type { ManagedSourceServerConnection } from "../src/host/sourceServerConnectionManager.js";
 import { createSourceServerManagementService } from "../src/host/sourceServerManagementService.js";
 
@@ -86,6 +87,53 @@ async function localSnapshot(service: ReturnType<typeof createSourceServerManage
 }
 
 describe("管理快照的远端统计隔离", () => {
+  it("缓存恢复实际管理快照与 delta 投影当前 owner，替换状态后撤销 locator", async () => {
+    const cacheRecovery = {
+      kind: "source-server-cache-lock" as const,
+      version: ZCODE_VERSION,
+      target: "linux-x64" as const,
+      sha256: "a".repeat(64),
+    };
+    let state: SourceServerConnectionStateSnapshot = {
+      profileId: slowSourceId,
+      sourceServerId: slowSourceId,
+      state: "failed",
+      updatedAt: 1,
+      errorCode: "source-server-cache-lock-interrupted",
+      cacheRecovery,
+    };
+    const states = new Emitter<SourceServerConnectionStateSnapshot>();
+    const service = createSourceServerManagementService({
+      directory: {
+        snapshot: async () => ({ profiles: [], servers: [], workspaceHistory: [] }),
+      } as never,
+      manager: {
+        listStates: () => [state],
+        onDidChangeState: states.event,
+        getOnlineConnection: () => undefined,
+      } as never,
+    });
+    const delta = vi.fn();
+    service.onDidChangeState(delta);
+    try {
+      expect((await service.getSnapshot()).states[0]).toMatchObject({ cacheRecovery });
+      states.fire(state);
+      expect(delta).toHaveBeenLastCalledWith(
+        expect.objectContaining({ state: expect.objectContaining({ cacheRecovery }) }),
+      );
+      state = {
+        profileId: slowSourceId,
+        sourceServerId: slowSourceId,
+        state: "offline",
+        updatedAt: 2,
+      };
+      states.fire(state);
+      expect(delta.mock.calls.at(-1)![0].state).not.toHaveProperty("cacheRecovery");
+      expect((await service.getSnapshot()).states[0]).not.toHaveProperty("cacheRecovery");
+    } finally {
+      service.dispose();
+    }
+  });
   it("一项统计失败但另一项仍挂起时不累积请求；显式刷新后可取得新值", async () => {
     const f = fixture();
     const blocked = deferred<number>();

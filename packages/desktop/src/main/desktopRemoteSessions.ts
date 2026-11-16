@@ -17,6 +17,7 @@ import {
   scopedServicePortPayloadSchema,
   type BindRemoteWorkspaceSessionContextResult,
   type RemoteTarget,
+  type SourceServerCacheRecovery,
   type ProviderProvisioningTrigger,
   type WindowHostRemoteWorkspaceDescriptor,
   type WorkspacePurpose,
@@ -943,11 +944,13 @@ export function createRemoteWorkspaceSessionManager(options: {
           retryable?: boolean;
           profileId?: string;
           resolvedWslTarget?: Required<Extract<RemoteTarget, { kind: "wsl" }>>;
+          cacheRecovery?: SourceServerCacheRecovery;
         };
         if (parsed.data.reasonCode) error.code = parsed.data.reasonCode;
         if (parsed.data.retryable !== undefined) error.retryable = parsed.data.retryable;
         if (parsed.data.profileId) error.profileId = parsed.data.profileId;
         if (parsed.data.resolvedWslTarget) error.resolvedWslTarget = parsed.data.resolvedWslTarget;
+        if (parsed.data.cacheRecovery) error.cacheRecovery = parsed.data.cacheRecovery;
         pending.reject(error);
         return;
       }

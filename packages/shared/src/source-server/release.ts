@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SOURCE_SERVER_CACHE_LOCK_INTERRUPTED_ERROR_CODE } from "./errorCodes.js";
 
 export const SOURCE_SERVER_RELEASE_TARGETS = [
   "linux-x64",
@@ -16,6 +17,31 @@ export type SourceServerArtifactPolicy = z.infer<typeof sourceServerArtifactPoli
 
 export const sourceServerReleaseTargetSchema = z.enum(SOURCE_SERVER_RELEASE_TARGETS);
 export type SourceServerReleaseTarget = z.infer<typeof sourceServerReleaseTargetSchema>;
+
+/** 仅包含公开发行身份；不能把本机路径、文件名或任意 metadata 加进恢复动作。 */
+export const sourceServerCacheRecoverySchema = z
+  .object({
+    kind: z.literal("source-server-cache-lock"),
+    version: z
+      .string()
+      .regex(
+        /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/u,
+      ),
+    target: sourceServerReleaseTargetSchema,
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  })
+  .strict();
+export type SourceServerCacheRecovery = z.infer<typeof sourceServerCacheRecoverySchema>;
+
+/** 公开边界只验证成对字段；Host 的来源证明仍由 resolver 私有 Error 独占。 */
+export function parseSourceServerCacheRecovery(
+  code: unknown,
+  value: unknown,
+): SourceServerCacheRecovery | undefined {
+  if (code !== SOURCE_SERVER_CACHE_LOCK_INTERRUPTED_ERROR_CODE) return undefined;
+  const result = sourceServerCacheRecoverySchema.safeParse(value);
+  return result.success ? result.data : undefined;
+}
 
 const releaseUrlSchema = z
   .string()

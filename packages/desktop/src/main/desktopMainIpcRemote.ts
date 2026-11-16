@@ -4,6 +4,7 @@ import { BrowserWindow, ipcMain, shell, type WebContents } from "electron";
 import {
   formatZodError,
   hostRemoteWorkspaceConnectFailedResponseSchema,
+  parseSourceServerCacheRecovery,
   normalizeUnknownError,
   InternalChannels,
   isPublicZCodeErrorCode,
@@ -260,6 +261,12 @@ export function registerRemoteIpcHandlers(options: {
         ? normalizedError.code
         : undefined;
       const retryable = reasonCode ? readRetryable(error) : undefined;
+      const cacheRecovery = parseSourceServerCacheRecovery(
+        reasonCode,
+        error && typeof error === "object" && "cacheRecovery" in error
+          ? error.cacheRecovery
+          : undefined,
+      );
       const profileId = hostRemoteWorkspaceConnectFailedResponseSchema.shape.profileId.safeParse(
         (reasonCode === "source-server-upgrade-required" ||
           reasonCode === "source-server-install-required") &&
@@ -284,6 +291,7 @@ export function registerRemoteIpcHandlers(options: {
         error: normalizedError.message,
         ...(reasonCode ? { reasonCode } : {}),
         ...(retryable !== undefined ? { retryable } : {}),
+        ...(cacheRecovery ? { cacheRecovery } : {}),
         ...(profileId.success && profileId.data ? { profileId: profileId.data } : {}),
         ...(resolvedWslTarget.success && resolvedWslTarget.data
           ? { resolvedWslTarget: resolvedWslTarget.data }

@@ -6,5 +6,11 @@ export const remoteConnectionFlowModule = {
   id: "remote-connection-flow",
   requires: ["shared", "ui"],
   provides: ["remote-connection-flow"],
-  publicEntrypoints: ["index.ts", "contract.ts", "ui/RemoteConnectionProgress.tsx"],
+  publicEntrypoints: [
+    "index.ts",
+    "contract.ts",
+    "ui/RemoteConnectionProgress.tsx",
+    "../lib/remoteConnectionPresentation.ts",
+    "../lib/remoteConnectionPresentationErrors.ts",
+  ],
 } as const;

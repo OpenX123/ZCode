@@ -10,6 +10,7 @@ import type {
   SourceServerManagementStateDelta,
 } from "@zcode/shared";
 import { describe, expect, it, vi } from "vitest";
+import { ZCODE_VERSION } from "@zcode/shared";
 import {
   collectStartupRemoteWorkspaceReconnectGroups,
   useRemoteWorkspaceHistory,
@@ -118,6 +119,63 @@ function managementSnapshot(
 }
 
 describe("useRemoteWorkspaceHistory Source Directory identity projection", () => {
+  it("缓存恢复平台失败经真实 hook 转为当前严格 Error，不接受错码或路径字段", async () => {
+    const cacheRecovery = {
+      kind: "source-server-cache-lock" as const,
+      version: ZCODE_VERSION,
+      target: "linux-x64" as const,
+      sha256: "a".repeat(64),
+    };
+    const connectRemote = vi.fn().mockResolvedValue({
+      success: false,
+      reasonCode: "source-server-cache-lock-interrupted",
+      error: "safe",
+      cacheRecovery,
+    });
+    const tabs = createTabStore();
+    const { result, unmount } = renderHook(() =>
+      useRemoteWorkspaceHistory({
+        intl: { formatMessage: ({ id }: { id: string }) => id } as never,
+        services: { settingService: { get: async () => ({}) }, credentialService: {} } as never,
+        platform: {
+          connectRemote,
+          onRemoteConnectionLog: () => () => {},
+          onRemoteSessionClosed: () => () => {},
+          onRemoteSessionReconnected: () => () => {},
+        } as never,
+        supportsSettings: false,
+        isDesktop: true,
+        tabStoreApi: tabs,
+        activateTabByPath: tabs.getState().activateTabByPath,
+        addTab: tabs.getState().addTab,
+      }),
+    );
+    try {
+      await expect(result.current.handleConnectRemote(remoteTarget())).rejects.toMatchObject({
+        cacheRecovery,
+      });
+      connectRemote.mockResolvedValue({
+        success: false,
+        reasonCode: "remote-download-failed",
+        error: "safe",
+        cacheRecovery,
+      });
+      await expect(result.current.handleConnectRemote(remoteTarget())).rejects.not.toHaveProperty(
+        "cacheRecovery",
+      );
+      connectRemote.mockResolvedValue({
+        success: false,
+        reasonCode: "source-server-cache-lock-interrupted",
+        error: "safe",
+        cacheRecovery: { ...cacheRecovery, path: "/secret" },
+      });
+      await expect(result.current.handleConnectRemote(remoteTarget())).rejects.not.toHaveProperty(
+        "cacheRecovery",
+      );
+    } finally {
+      unmount();
+    }
+  });
   it("RPC 方法重新取值不使导航回调失稳，服务替换仍更新", () => {
     const credential = () =>
       ProxyChannel.toService<IServiceAccessor["credentialService"]>({

@@ -7,6 +7,7 @@ import {
   InternalChannels,
   PlatformChannels,
   type RemoteTarget,
+  ZCODE_VERSION,
 } from "@zcode/shared";
 import { createRemoteWorkspaceSessionManager } from "../src/main/desktopRemoteSessions.js";
 import { ProviderProvisioningEnvironmentCoordinator } from "../src/main/providerProvisioningEnvironmentCoordinator.js";
@@ -273,6 +274,46 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
     expect(onConnected).toHaveBeenCalledWith(
       expect.objectContaining({ reusedConnectionTarget: sshTarget }),
     );
+  });
+
+  it("缓存恢复 Host 失败 reply 经 Main 保留严格 locator，仍按原 request owner 拒绝", async () => {
+    const child = new MockUtilityProcess(1001);
+    const win = createWindow(1, 101);
+    const manager = createManager(new Map([[101, child]]));
+    const cacheRecovery = {
+      kind: "source-server-cache-lock",
+      version: ZCODE_VERSION,
+      target: "linux-x64",
+      sha256: "a".repeat(64),
+    };
+    const connecting = manager.createRemoteWorkspaceSession(
+      win as never,
+      sshTarget,
+      "cache-recovery",
+    );
+    const assertion = expect(connecting).rejects.toMatchObject({
+      code: "source-server-cache-lock-interrupted",
+      retryable: false,
+      cacheRecovery,
+    });
+    await vi.waitFor(() =>
+      expect(child.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: HostMessageTypes.ConnectRemoteWorkspace,
+          requestId: "cache-recovery",
+        }),
+      ),
+    );
+    child.emit("message", {
+      type: HostResponseTypes.RemoteWorkspaceConnectFailed,
+      requestId: "cache-recovery",
+      error: "safe failure",
+      reasonCode: "source-server-cache-lock-interrupted",
+      retryable: false,
+      cacheRecovery,
+    });
+    await assertion;
+    manager.disposeRemoteWorkspaceSessionsForWindow(101);
   });
 
   it.each(["source-server-upgrade-required", "source-server-install-required"])(

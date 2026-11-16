@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { RemoteTarget } from "#src/remoteTarget.js";
 import { publicZCodeErrorCodeSchema } from "./errorCodes.js";
+import { SOURCE_SERVER_CACHE_LOCK_INTERRUPTED_ERROR_CODE } from "./errorCodes.js";
+import { sourceServerCacheRecoverySchema } from "./release.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "../remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "../remoteResourcePackages.js";
 import { wslUserSchema } from "../wslUserValidation.js";
@@ -324,6 +326,7 @@ export const sourceServerConnectionStateSnapshotSchema = z
     minimumVersion: nonEmptyStringSchema.optional(),
     upgradeTarget: z.enum(["controller", "server"]).optional(),
     errorCode: publicZCodeErrorCodeSchema.optional(),
+    cacheRecovery: sourceServerCacheRecoverySchema.optional(),
     retryable: z.boolean().optional(),
     installPreview: sourceServerInstallPreviewSchema.optional(),
     runningTasks: sourceServerRunningTasksSchema.optional(),
@@ -333,7 +336,13 @@ export const sourceServerConnectionStateSnapshotSchema = z
     recoveryBudgetExhausted: z.boolean().optional(),
     updatedAt: timestampSchema,
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      value.cacheRecovery === undefined ||
+      value.errorCode === SOURCE_SERVER_CACHE_LOCK_INTERRUPTED_ERROR_CODE,
+    { path: ["cacheRecovery"], message: "Cache recovery requires its dedicated error code" },
+  );
 export type SourceServerConnectionStateSnapshot = z.infer<
   typeof sourceServerConnectionStateSnapshotSchema
 >;

@@ -55,6 +55,9 @@ export function createDesktopPlatform(options: {
     migrateLegacyCommonMcp: (payload) => window.zcode.migrateLegacyCommonMcp(payload),
     openExternal: (url) => window.zcode.openExternal(url),
     openInFileManager: (path) => window.zcode.openInFileManager(path),
+    openSourceServerCacheRecoveryDirectory: window.zcode.openSourceServerCacheRecoveryDirectory
+      ? (recovery) => window.zcode.openSourceServerCacheRecoveryDirectory!(recovery)
+      : undefined,
     openExternalFile: (path) => window.zcode.openExternalFile(path),
     openCuaPermissionOnboarding: window.zcode.openCuaPermissionOnboarding
       ? (permissionOptions) =>

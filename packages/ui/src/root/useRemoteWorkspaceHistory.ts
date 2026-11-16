@@ -23,12 +23,14 @@ import type {
   SourceServerConnectionState,
   SourceServerManagementSnapshot,
   RemoteWorkspaceSessionEntry,
+  SourceServerCacheRecovery,
 } from "@zcode/shared";
 import {
   buildSshRemoteHostKey,
   createUuid,
   parseRemoteWorkspaceIdentity,
   stripRemoteTargetSecrets,
+  parseSourceServerCacheRecovery,
 } from "@zcode/shared";
 import type { IServiceAccessor } from "@zcode/services";
 import {
@@ -1246,11 +1248,14 @@ export function useRemoteWorkspaceHistory({
           code?: string;
           retryable?: boolean;
           profileId?: string;
+          cacheRecovery?: SourceServerCacheRecovery;
           resolvedWslTarget?: Required<Extract<RemoteTarget, { kind: "wsl" }>>;
         };
         if (result.reasonCode) error.code = result.reasonCode;
         if (result.retryable !== undefined) error.retryable = result.retryable;
         if (result.profileId) error.profileId = result.profileId;
+        const recovery = parseSourceServerCacheRecovery(result.reasonCode, result.cacheRecovery);
+        if (recovery) error.cacheRecovery = recovery;
         if (result.resolvedWslTarget) error.resolvedWslTarget = result.resolvedWslTarget;
         throw error;
       }
@@ -1970,6 +1975,7 @@ export function useRemoteWorkspaceHistory({
         presentation,
         failure: {
           code: device?.errorCode,
+          cacheRecovery: parseSourceServerCacheRecovery(device?.errorCode, device?.cacheRecovery),
           message: device?.error ?? entry.lastConnectionError ?? "",
           logs: reconnectingRemoteWorkspaceLogsByWorkspaceKey[workspaceKey] ?? [],
         },

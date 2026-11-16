@@ -10,6 +10,7 @@ import type {
   IPlatformService,
   RemoteTarget,
   SourceServerUpdateTarget,
+  SourceServerCacheRecovery,
   RemoteWorkspaceSessionEntry,
 } from "@zcode/shared";
 import type { IServiceAccessor } from "@zcode/services";
@@ -125,6 +126,7 @@ export interface RemoteConnectionOpenPreference {
     message: string;
     logs?: RemoteConnectionLogEntry[];
     profileId?: string;
+    cacheRecovery?: SourceServerCacheRecovery;
     /** 交接前固定的非敏感失败身份，不从最新 Profile 重建。 */
     failedTarget?: SourceServerUpdateTarget;
     resolvedWslTarget?: Required<

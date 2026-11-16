@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { sanitizeRemoteConnectionLog } from "../src/source-server/connectionLog.js";
 
 describe("用户连接日志路径边界", () => {
+  it.each(["a".repeat(64), "linux-x64"])(
+    "缓存恢复发行标识与已知秘密重合仍完整脱敏：%s",
+    (secret) => {
+      const raw = `cache archive ${secret} failed`;
+      const safe = sanitizeRemoteConnectionLog(raw, [secret]);
+      expect(safe).toBe("cache archive [redacted] failed");
+      expect(sanitizeRemoteConnectionLog(safe, [secret])).toBe(safe);
+    },
+  );
   it.each([
     ["apiKey: test-key", "apiKey: [redacted]"],
     ['{"api_key":"test-key","status":"failed"}', '{"api_key":[redacted],"status":"failed"}'],

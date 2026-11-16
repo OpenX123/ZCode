@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Emitter } from "@zcode/rpc";
+import { ZCODE_VERSION } from "@zcode/shared";
 import type {
   SourceServerConnectionStateSnapshot,
   SourceServerManagementSnapshot,
@@ -31,6 +32,7 @@ const confirmDialog = vi.hoisted(() => vi.fn(async () => true));
 vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => confirmDialog }));
 beforeEach(() => confirmDialog.mockReset().mockResolvedValue(true));
 const platform = vi.hoisted(() => ({
+  openSourceServerCacheRecoveryDirectory: vi.fn(async () => ({ success: true })),
   listSSHConfigAliases: vi.fn(async () => []),
   selectFile: vi.fn(),
 }));
@@ -84,6 +86,139 @@ afterEach(() => {
 });
 
 describe("SourceServerManagementPanel", () => {
+  it("缓存恢复未完成 Profile 可从实际详情入口定位，并保持原连接重试", async () => {
+    const snapshot = identityPendingSnapshot("installed", "preferred");
+    snapshot.servers = [];
+    delete snapshot.profiles[0]!.sourceServerId;
+    const cacheRecovery = {
+      kind: "source-server-cache-lock" as const,
+      version: ZCODE_VERSION,
+      target: "linux-x64" as const,
+      sha256: "b".repeat(64),
+    };
+    snapshot.states[0] = {
+      profileId: "preferred",
+      state: "failed",
+      errorCode: "source-server-cache-lock-interrupted",
+      error: "safe",
+      cacheRecovery,
+      updatedAt: 1,
+    };
+    const onConnectProfile = vi.fn(async () => {});
+    render(
+      createElement(SourceServerManagementPanel, {
+        management: {
+          getSnapshot: async () => snapshot,
+          onDidChangeState: new Emitter().event,
+        } as never,
+        onConnectProfile,
+      }),
+    );
+    fireEvent.click(await screen.findByText("settings.source.unfinishedConnections"));
+    fireEvent.click(await screen.findByRole("button", { name: "remote.action.details" }));
+    fireEvent.click(await screen.findByRole("button", { name: "remote.cacheRecovery.locate" }));
+    await waitFor(() =>
+      expect(platform.openSourceServerCacheRecoveryDirectory).toHaveBeenCalledWith(cacheRecovery),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "remote.action.retry" }));
+    await waitFor(() => expect(onConnectProfile).toHaveBeenCalledWith("preferred"));
+  });
+  it("缓存恢复设置更新失败从实际 Toast 详情定位当前 owner 并再次更新", async () => {
+    let snapshot = identityPendingSnapshot("installed", "preferred");
+    snapshot.states[0] = {
+      ...snapshot.states[0]!,
+      state: "needs-upgrade",
+      errorCode: "source-server-upgrade-required",
+      updateAvailability: "required",
+      upgradeTarget: "server",
+    };
+    const emitter = new Emitter();
+    const cacheRecovery = {
+      kind: "source-server-cache-lock" as const,
+      version: ZCODE_VERSION,
+      target: "linux-x64" as const,
+      sha256: "a".repeat(64),
+    };
+    const updateSource = vi.fn(async () => {
+      snapshot = {
+        ...snapshot,
+        generation: snapshot.generation + 1,
+        states: [
+          {
+            ...snapshot.states[0]!,
+            state: "online",
+            errorCode: "source-server-cache-lock-interrupted",
+            error: "safe",
+            cacheRecovery,
+            updatedAt: 2,
+          },
+        ],
+      };
+      emitter.fire(undefined);
+      throw new Error("safe");
+    });
+    render(
+      createElement(SourceServerManagementPanel, {
+        management: {
+          getSnapshot: async () => snapshot,
+          onDidChangeState: emitter.event,
+          updateSource,
+        } as never,
+      }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "remote.action.update-server" }));
+    await waitFor(() => expect(showToast).toHaveBeenCalled());
+    act(() => showToast.mock.calls.at(-1)![1].onAction());
+    fireEvent.click(await screen.findByRole("button", { name: "remote.cacheRecovery.locate" }));
+    await waitFor(() =>
+      expect(platform.openSourceServerCacheRecoveryDirectory).toHaveBeenCalledWith(cacheRecovery),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "remote.action.retry" }));
+    await waitFor(() => expect(updateSource).toHaveBeenCalledTimes(2));
+  });
+  it.each(["failed", "online"] as const)(
+    "缓存恢复设备详情使用实际 owner 的 locator，仍保留更新入口：%s",
+    async (state) => {
+      HTMLElement.prototype.scrollIntoView = vi.fn();
+      const snapshot = identityPendingSnapshot("installed", "preferred");
+      const cacheRecovery = {
+        kind: "source-server-cache-lock" as const,
+        version: ZCODE_VERSION,
+        target: "linux-x64" as const,
+        sha256: "a".repeat(64),
+      };
+      snapshot.states[0] = {
+        ...snapshot.states[0]!,
+        state,
+        errorCode: "source-server-cache-lock-interrupted",
+        retryable: false,
+        error: "safe [redacted]",
+        cacheRecovery,
+        updateAvailability: "required",
+        upgradeTarget: "server",
+      };
+      const updateSource = vi.fn().mockRejectedValue(new Error("still failed"));
+      render(
+        createElement(SourceServerManagementPanel, {
+          management: {
+            getSnapshot: async () => snapshot,
+            onDidChangeState: new Emitter().event,
+            updateSource,
+          } as never,
+          targetSourceServerId: "old-source",
+          targetSourceServerDetails: true,
+        }),
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "remote.cacheRecovery.locate" }));
+      await waitFor(() =>
+        expect(platform.openSourceServerCacheRecoveryDirectory).toHaveBeenCalledWith(cacheRecovery),
+      );
+      expect(document.body.textContent).not.toContain(cacheRecovery.sha256);
+      expect(
+        screen.getAllByRole("button", { name: /remote.action.(retry|update-server)/ }).length,
+      ).toBeGreaterThan(0);
+    },
+  );
   it("当前连接在第二行，默认连接留在其他连接；最近项目按打开时间倒序且可展开全部", async () => {
     const snapshot = identityPendingSnapshot("installed", "other");
     snapshot.states[0]!.state = "offline";
