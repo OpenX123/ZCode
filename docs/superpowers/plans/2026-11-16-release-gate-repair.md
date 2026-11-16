@@ -338,6 +338,10 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 4: GREEN与边界。** 完整desktopRemoteSessions文件加mobileRemoteGateway现有suite，确保原47例的有效替代验收及新增竞态全部通过；再按真实变更判断是否需要已有Electron重连接线场景，存在交互变化时实际执行可用场景并记录环境限制，不冒称外部SSH已测。
 - [ ] **Step 5: 静态/自审/提交。** 架构before/after、desktop owning context、格式/lint/diff，报告逐项原失败去向、source所有者、真实命令与统计；独立spec/quality审查，根门禁最终统一。
 
+#### Task 12 Fix 1：释放重连期间尚未换代的 Renderer 关联
+
+独立审查 I1 已用单项真实 manager 回归确认：A 已发布，重连 B 等 ACK 时，合法 `dispose(A)` 因 map 只剩 B 而静默失效，B scope/candidate 未回收。先在所属 spec 明确此关闭入口的映射及唯一所有者，再补正式确定性 RED，复用 route 现有最后已发布 Renderer 关联定位当前 route，并用当前 descriptor sessionId 释放 Host。不得新建无限别名表、第二套 owner 或 pending 队列。覆盖 ACK 前关闭 A、ACK 后通知前关闭 A、A→B→C 时关闭最后已发布关联、重复释放和迟到释放不误删后续独立 owner；旧 candidate 不得再提升或通知。保留所有已有 76 例和首次 Provisioning/手机边界，完整两 suite GREEN、定向静态与自审后提交，原实施者报告追加 Fix1；controller 按 `f28b8ac3` 到修复 HEAD 唯一 scoped 复审 I1 及增量破坏。真实 SSH 自动路径仍待最终统一验收。
+
 ### Task 13: 隐藏只有已结束智能体的空 mini 胶囊
 
 **Files:**
@@ -390,6 +394,8 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 **Files:** 专门的测试lock fixture放在现有 `packages/desktop/test/e2e/helpers/`；候选场景 `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-source-server-cache-lock-recovery.test.ts`；当前case catalog/matrix与必要场景说明。遵守 `.agents/skills/e2e-case-lifecycle/SKILL.md`。不为测试创建新的产品恢复API。
 
 **Interfaces:** 复用Task15真实Host resolver→Main→UI链和既有 `e2e-electron-reload.ts` 的完整旧进程树归零屏障；产品没有删除动作，只有fixture在无writer窗口清理自己的精确锁。
+
+**已核实施边界：** 使用现有 `ZCODE_E2E_PACKAGED_APP_PATH`、隔离 `ZCODE_DESKTOP_DIST_DIR` 和 `ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY=1` 制作本次测试专用 win-unpacked，验证真实 release-versioned 缓存锁链；开发版 content-addressed 直接归档路径不算此验收。仅本次测试产物可用 Main 前置 wrapper 抑制 `app.setAsDefaultProtocolClient` 并记录调用，随后加载原 Main，避免写真实 HKCU 协议关联；不改生产源码或添加产品开关，不替换连接、错误或退出逻辑。正常产品菜单退出可在现有 reload 测试 helper 增加一个可选窄用途回调：完整旧进程树捕获后、deleteSession 前请求真实退出；默认行为和归零后回调/重启顺序不变，必须记录正常退出与 fallback 的区别。
 
 - [ ] **Step 1: 准入与受控夹具。** 先catalog/matrix/spec，再fixture/场景。隔离HOME/USERPROFILE/userData/cache覆盖与descriptor/归档；探测真实目标，建立A/B两SHA和owner/.reaping原字节。两种marker都走实际连接/安装或更新，不Renderer注入Error。秘密碰撞保持为合成受控输入，禁止真实凭据。
 - [ ] **Step 2: 构建与真实交互。** 按目标包当前脚本准备匹配Task15的新桌面产物，不和dist依赖测试并行。三入口均验证当前错误、精确按钮与retry/update；两种marker及秘密碰撞至少各触发一条真实链。记录Main原生打开的A目标一致性布尔证据，并至少一次系统层检查文件管理器实际打开A，不只spy/DOM断言。
