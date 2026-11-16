@@ -1404,6 +1404,148 @@ describe("ConversationStatusPanel", () => {
     expect(html).toBe("");
   });
 
+  it.each([null, undefined])(
+    "does not keep automatic status alive for ended Agents alone with override %s",
+    async (summaryPanelVariantOverride) => {
+      const html = await renderStatusPanel({
+        gitSummary: null,
+        gitWorktreeChangeSummary: null,
+        summaryPanelVariantOverride,
+        endedSubagentCount: 3,
+        parentSessionId: "parent-session",
+        onOpenSubagentDirectory: vi.fn(),
+      });
+
+      // auto 的宽窄形态由 CSS 决定；整壳卸载保证两种容器宽度都不会留下空摘要。
+      expect(html).toBe("");
+    },
+  );
+
+  it("keeps an explicitly expanded panel for the ended Agent directory alone", async () => {
+    const html = await renderStatusPanel({
+      gitSummary: null,
+      gitWorktreeChangeSummary: null,
+      summaryPanelVariantOverride: "panel",
+      endedSubagentCount: 3,
+      parentSessionId: "parent-session",
+      onOpenSubagentDirectory: vi.fn(),
+    });
+
+    expect(html).toContain('data-display-mode="panel"');
+    expect(html).toContain('data-status-section="agent"');
+    expect(html).toContain("chat.statusPanel.endedAgents");
+    expect(html).toContain(">3<");
+    expect(html).toContain('data-running-agent-count="0"');
+  });
+
+  it.each(["mini", "panel", null] as const)(
+    "hides status with no content in mode %s",
+    async (summaryPanelVariantOverride) => {
+      const html = await renderStatusPanel({
+        gitSummary: null,
+        gitWorktreeChangeSummary: null,
+        summaryPanelVariantOverride,
+      });
+
+      expect(html).toBe("");
+    },
+  );
+
+  it.each(["mini", "panel", null] as const)(
+    "does not keep ended Agents without a usable directory in mode %s",
+    async (summaryPanelVariantOverride) => {
+      const props = {
+        gitSummary: null,
+        gitWorktreeChangeSummary: null,
+        summaryPanelVariantOverride,
+        endedSubagentCount: 3,
+      };
+      const withoutSession = await renderStatusPanel({
+        ...props,
+        onOpenSubagentDirectory: vi.fn(),
+      });
+      const withoutCallback = await renderStatusPanel({
+        ...props,
+        parentSessionId: "parent-session",
+      });
+
+      expect(withoutSession).toBe("");
+      expect(withoutCallback).toBe("");
+    },
+  );
+
+  it.each([
+    { summaryPanelVariantOverride: "mini", mode: "mini", hasAgentSection: false },
+    { summaryPanelVariantOverride: "panel", mode: "panel", hasAgentSection: true },
+    { summaryPanelVariantOverride: null, mode: "auto", hasAgentSection: true },
+  ])(
+    "keeps another summary beside ended Agents in mode $mode",
+    async ({ summaryPanelVariantOverride, mode, hasAgentSection }) => {
+      const html = await renderStatusPanel({
+        gitSummary: null,
+        gitWorktreeChangeSummary: null,
+        summaryPanelVariantOverride,
+        plan: planState(),
+        endedSubagentCount: 3,
+        parentSessionId: "parent-session",
+        onOpenSubagentDirectory: vi.fn(),
+      });
+
+      expect(html).toContain(`data-display-mode="${mode}"`);
+      expect(html).toContain("复刻浮层");
+      expect(html.includes('data-status-section="agent"')).toBe(hasAgentSection);
+      expect(html.includes("chat.statusPanel.endedAgents")).toBe(hasAgentSection);
+    },
+  );
+
+  it.each([
+    { summaryPanelVariantOverride: "mini", mode: "mini" },
+    { summaryPanelVariantOverride: "panel", mode: "panel" },
+    { summaryPanelVariantOverride: null, mode: "auto" },
+  ])(
+    "keeps running Agents beside ended Agents in mode $mode",
+    async ({ summaryPanelVariantOverride, mode }) => {
+      const html = await renderStatusPanel({
+        gitSummary: null,
+        gitWorktreeChangeSummary: null,
+        summaryPanelVariantOverride,
+        runningSubagents: [runningSubagent()],
+        endedSubagentCount: 3,
+        parentSessionId: "parent-session",
+        onOpenSubagentDirectory: vi.fn(),
+      });
+
+      expect(html).toContain(`data-display-mode="${mode}"`);
+      expect(html).toContain('data-running-agent-count="1"');
+      expect(html).toContain("chat.statusPanel.runningAgentsCapsule 1");
+    },
+  );
+
+  it.each([
+    { summaryPanelVariantOverride: "mini", mode: "mini" },
+    { summaryPanelVariantOverride: "panel", mode: "panel" },
+    { summaryPanelVariantOverride: null, mode: "auto" },
+  ])(
+    "keeps ended workflows beside ended Agents in mode $mode",
+    async ({ summaryPanelVariantOverride, mode }) => {
+      const html = await renderStatusPanel({
+        gitSummary: null,
+        gitWorktreeChangeSummary: null,
+        summaryPanelVariantOverride,
+        endedSubagentCount: 3,
+        endedWorkflowRunCount: 2,
+        parentSessionId: "parent-session",
+        onOpenSubagentDirectory: vi.fn(),
+        onOpenWorkflowRunDirectory: vi.fn(),
+      });
+
+      expect(html).toContain(`data-display-mode="${mode}"`);
+      expect(html).toContain("chat.statusPanel.endedWorkflows");
+      expect(html).toContain('data-ended-workflow-count="2"');
+      expect(html).toContain('data-running-background-count="0"');
+    },
+  );
+
   it("nests the ended directory row inside the Agent section", async () => {
     const html = await renderStatusPanel({
       gitSummary: null,

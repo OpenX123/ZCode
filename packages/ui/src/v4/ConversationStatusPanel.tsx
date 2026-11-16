@@ -2108,11 +2108,14 @@ function ConversationStatusPanelImpl({
     onVariantChange?.("mini");
   }, [onVariantChange]);
 
-  // `model.hasContent` 只认**活的**内容（模型手上的投影都是活状态），所以「只剩历史」的
-  // 会话会连整个胶囊一起消失——而那正是重启后打开一条旧对话的样子，run 目录的入口于是又没了。
-  // 已结束的 run 因此单独开这道门。（Agents 的已结束行有同一个洞：`endedSubagentCount` 也
-  // 没进 `hasContent`。那是既有行为，不在本轮一起翻。）
-  if (!model.hasContent && !canRenderEndedWorkflows && !canRenderEndedAgents) {
+  // Bug 根因：已结束 Agent 目录过去无条件保留 shell，但 mini 没有对应摘要，auto 窄屏
+  // 因而也会留下空胶囊。仅显式 panel 允许该目录独自保壳；workflow 有终态摘要，保持原门。
+  // 这里只派生摘要可见性，不更改运行事实，也不接管正在查看的 Side Pane 详情。
+  if (
+    !model.hasContent &&
+    !canRenderEndedWorkflows &&
+    !(variant === "panel" && canRenderEndedAgents)
+  ) {
     return null;
   }
 
