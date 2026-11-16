@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { writeFile, rm } from "node:fs/promises";
+import { Key } from "webdriverio";
 import {
   TID_PREVIEW_PANE,
   TID_SIDE_PANE_TOGGLE,
@@ -185,7 +186,9 @@ describe("TWC01/TWC02/TWC04/TWC07 双栏工作台草稿 E2E", () => {
       const sessionId = (await getV4PaneSnapshot(sessionTab)).sessionId!;
       expect(sessionId).not.toBe("draft");
       const before = await readWorkbenchSnapshot();
-      await selectLayoutAction(`workbench-activate-tab-${sessionTab}`);
+      const keyboardSelections = [
+        await selectLayoutActionByKeyboard(`workbench-activate-tab-${sessionTab}`),
+      ];
       await browser.waitUntil(async () => (await readGroups())[1]?.tabId === sessionTab);
       const moved = await readWorkbenchSnapshot();
       expect(moved.tabs[sessionTab]).toEqual(before.tabs[sessionTab]);
@@ -321,13 +324,24 @@ describe("TWC01/TWC02/TWC04/TWC07 双栏工作台草稿 E2E", () => {
       await browser.waitUntil(async () => (await visibleGroupCount()) === 2);
       expect((await readWorkbenchSnapshot()).ratio).toBe(savedRatio);
       await selectLayoutAction("workbench-merge-groups");
-      await selectLayoutAction(`workbench-activate-tab-${draftTab}`);
+      keyboardSelections.push(
+        await selectLayoutActionByKeyboard(`workbench-activate-tab-${draftTab}`),
+      );
+      await browser.waitUntil(async () => (await readGroups())[0]?.tabId === draftTab);
       expect(await readDraft(draftTab)).toBe("UX10_UNSENT_LEFT_DRAFT");
       if (process.env.ZCODE_E2E_ARTIFACT_DIR) {
         await writeFile(
           join(process.env.ZCODE_E2E_ARTIFACT_DIR, "ux10-geometry.json"),
           JSON.stringify(
-            { geometry, savedRatio, savedScroll, sessionTab, sessionId, fileTabId },
+            {
+              geometry,
+              savedRatio,
+              savedScroll,
+              sessionTab,
+              sessionId,
+              fileTabId,
+              keyboardSelections,
+            },
             null,
             2,
           ),
@@ -490,6 +504,36 @@ async function selectLayoutAction(testId: string) {
       (await $('[data-testid="workbench-layout-menu"]').getAttribute("data-state")) !== "open",
     { timeout: 10000, timeoutMsg: "布局动作完成后菜单未收起" },
   );
+}
+
+async function selectLayoutActionByKeyboard(testId: string) {
+  const trigger = await $('[data-testid="workbench-layout-menu"]');
+  await trigger.click();
+  const target = await $(`[data-testid="${testId}"]`);
+  await target.waitForDisplayed({ timeout: 10000 });
+  const items = await $$('[role="menu"] [role="menuitem"]:not([data-disabled])');
+  const itemIds = await items.map((item) => item.getAttribute("data-testid"));
+  const targetIndex = itemIds.indexOf(testId);
+  expect(targetIndex).toBeGreaterThanOrEqual(0);
+  // 验收共享菜单真实键盘路径：逐项观察焦点，不调用 focus() 或点击目标代替导航。
+  await browser.keys(Key.Home);
+  await browser.waitUntil(() => items[0]!.isFocused());
+  for (let index = 1; index <= targetIndex; index++) {
+    await browser.keys(Key.ArrowDown);
+    await browser.waitUntil(() => items[index]!.isFocused());
+  }
+  const focusedBeforeEnter = await target.isFocused();
+  expect(focusedBeforeEnter).toBe(true);
+  await browser.keys(Key.Enter);
+  await browser.waitUntil(async () => (await trigger.getAttribute("data-state")) !== "open", {
+    timeout: 10000,
+    timeoutMsg: "键盘布局动作完成后菜单未收起",
+  });
+  return {
+    testId,
+    keys: ["Home", ...Array<string>(targetIndex).fill("ArrowDown"), "Enter"],
+    focusedBeforeEnter,
+  };
 }
 
 async function readDraft(tabId: string) {
