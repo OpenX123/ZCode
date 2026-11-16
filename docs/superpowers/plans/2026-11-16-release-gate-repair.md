@@ -457,6 +457,34 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 4: 匹配资源交接。** 按新 producer 仅重新 stage 必要匹配归档及 descriptor，记录旧/新 hash、目标、版本与来源；更新本次专用 loopback 资源服务和测试包外置 descriptor 前先核确切路径及 consumer。保留旧资源证据，不重建无关 Main/Renderer/Agent，不碰正式安装或公开 CDN。若需额外重建，先说明实际代码依赖。交接 Task16 新 A/descriptor/CDN 与 B 正确生产入口及可复用验证命令。
 - [ ] **Step 5: 静态/提交/审查。** 完整报告写 `task-18-report.md`，包含 RED/GREEN 命令、真实退出码/日志、权限矩阵、直接依赖/架构决定、产物身份、自审及未覆盖平台。定向 format/lint/diff、默认真实基线架构检查；根 typecheck/lint 由 controller 统一。只提交本任务正式文件，独立 reviewer 审查后再恢复原 Task16，Task16/12/13 仍 OPEN，不把此任务当其 E2E 通过。
 
+### Task 19: 补齐当前在线设备的可信缓存恢复详情入口
+
+**根因证据：** Task16 的 `task16-settings-20261117-012917` 已真实连接 online，并经公开 management RPC 触发真实缓存锁失败；当前状态为 online、updateAvailability=none、严格 cacheRecovery 有效。设备主卡的 serverState 只选更新中或非 none 更新提示，当前线路又被 otherProfiles 排除，导致既有详情 Dialog 不可从主卡进入。这违背 standalone spec 已要求的“包括仍在线”恢复出口，不以 needs-upgrade 场景替代关闭。
+
+**Files:** `packages/ui/src/settings/SourceServerManagementPanel.tsx`、`packages/ui/test/sourceServerManagementPanel.test.ts`；先于实现补 `docs/desktop/standalone-coding-harness-spec.md` 的主卡恢复可达性，必要同步本门禁 spec。Task16 的真实 Settings 场景由原实施者随后重验，本任务不改它的断言或 runner。
+
+**Interfaces:** Host/management snapshot 仍是失败事实唯一 owner；UI 只派生主卡当前显示线路的可信错误入口，复用 errorDetailsProfile 与已有 Dialog、SourceServerCacheRecoveryActions、updateProfile 原重试路径。恢复事实不依赖 updateAvailability；不新增正常 online 更新按钮、不改变版本门槛、serverState 选择、协议、权限或 Host 状态。不把另一 profile 的错误挂到当前线路。
+
+- [ ] **Step 1: 前置与精确 RED。** freshness/默认架构检查，读 DESIGN、已有组件/测试与相关 owning contract。先在单一当前 profile 的 online+updateAvailability=none+有效专用 code/locator 的快照中，从默认设备主卡点击真实“详情”按钮，验证定位/显式重试严格指向该 profile，保留旧实现入口缺失的 RED；不能用 targetSourceServerDetails prop 直接打开 Dialog 绕过入口。
+- [ ] **Step 2: 最小 UI 修复。** 对当前显示线路派生严格 cacheRecovery 入口并复用既有错误详情状态；主动作本就能进入同一详情时避免重复。可提取局部小按钮渲染以避免相同 JSX 逐字复制，不新建通用组件/状态系统。不改无故障 online 的 disconnect、可选更新和其他线路折叠规则；中文注释解释等版在线失败为何不能依赖更新横幅。
+- [ ] **Step 3: 精确边界与 GREEN。** 验证单线路默认主卡真实入口、原 updateSource 重试、精确 locator；无 locator/非法 locator/错误 code 不出现可信恢复入口，且不触发定位；多线路主卡与其他线路不串 owner；snapshot 恢复后入口/定位动作消失或严格失效，遵从既有 Dialog 生命周期。保留现有 Toast 入口、未完成连接入口及所有已有断言，完整运行 sourceServerManagementPanel.test.ts。测试先保存再精确恢复自己改动的 clipboard/scrollIntoView 描述符，不进一步扩大已有污染。
+- [ ] **Step 4: 静态、自审与交接。** 定向 lint/format/diff、修改后默认真实架构检查；不 build/dist/打包/启动 E2E。报告 task-19-report.md，逐项列 RED/GREEN 命令/退出码/统计、owner、实际改动和未验 E2E；提交正式文件后释放 writer，controller 独立 spec/quality 审查。原 Task16/12/13 仍 OPEN，Task19 通过不冒称整体可发布。
+
+
+### Task 20: 防止打包桌面 Agent 被启动目录中的仓库 dist 抢先匹配
+
+**根因证据：** Task16 Settings 真实 Main 日志的 spawn preflight argv 命中仓库 `apps/zcode-cli/packages/cli/dist/zcode.cjs`，虽包内 `resources/glm/zcode.cjs` 存在且摘要正确。WDIO packaged 分支已清除显式 COMMAND/ARGS_JSON/CWD。现 resolver 在 Electron 随包链前调用从 process.cwd 向上找仓库 dist 的分支；Main utility Host 继承启动 cwd，因此打包 app 从仓库启动时也会受影响。未把首次观察时间当引入提交。
+
+**Files:** `packages/services/src/zcode-agent/zcodeAgentProcessManager.ts`、`packages/services/src/runtime-tools/providerRuntimeResolver.ts`（仅必要精确 packaged bundle 查询）、现有 `packages/services/test/zcodeAgentProcessManager.test.ts`、必要的 `providerRuntimeResolver.test.ts`；先补 standalone spec 与本门禁 spec。不改 Main fork cwd、WDIO 清除逻辑、随包协议或 Agent Runtime 内容。
+
+**Interfaces:** 保留显式 `ZCODE_AGENT_SERVER_COMMAND` 的既有优先级。Electron 进程拥有可核验的精确 `process.resourcesPath/glm/zcode.cjs` 时，默认 stdio 与 storagePreparationEntry 使用该同一随包 JS，再考虑 monorepo dev；不能简单把包含用户历史目录的整个 Node bundle fallback 链挪到 dev 前面。无精确随包资源的真实开发态继续 monorepo dist/src 优先，非 Electron SSH/Node 继续原部署 native fallback。保持 surface、workspace identity/path、storage startup、字节码开发开关和错误合同，不新增第二 runtime owner。
+
+- [ ] **Step 1: 前置与精确 RED。** freshness/默认架构及目标受控 context。用真实临时精确 resources bundle 与同时存在的祖先仓库 dist，模拟当前 Electron 资源位置与 cwd，验证默认入口及 storagePreparationEntry 必须选随包资源，旧实现先失败。测试显式控制 HOME/USERPROFILE、cwd、resourcesPath/electron 描述符和相关环境，结束精确恢复，不依赖机器真实 bundle。
+- [ ] **Step 2: 最小解析修复。** 在既有 resolver 链加入精确随包资源优先分支，查询只接受既有固定资源文件而非用户历史/源码候选。复用现有 Electron Node command 构造，不逐字复制整块命令或新增通用解析框架。中文注释记录由启动 cwd 发现仓库导致已打包 app 跑错 Agent 的根因与分支证据。
+- [ ] **Step 3: GREEN 与兼容。** 回归 Electron 精确随包+仓库共存、显式 env 原优先级、精确随包不存在时 dev 仓库优先于历史 bundle、开发字节码及 JS storage 保持、非 Electron不选桌面JS而继续 SSH/native fallback。完整运行两个受影响既有 suite（必要新增回归应合入既有文件），不修改 timeout/skip 或放宽 schema；不能把 mock 路径字符串比较冒称真实 packaged 运行。
+- [ ] **Step 4: 静态、自审与交接。** 定向 lint/format/diff、修改后默认架构，报告 task-20-report.md，包括 RED/GREEN 命令/统计、明确未验 E2E。只提交正式文件、释放 writer，独立 spec/quality 审查；不 build/dist/E2E。随后原 Task16 用匹配新包的 Main 实际 spawn argv+原始协议生命周期+随包 hash 的三者一致性作为准入，Task16/12/13 仍 OPEN。
+
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
