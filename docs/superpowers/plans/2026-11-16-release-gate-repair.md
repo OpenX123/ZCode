@@ -194,6 +194,29 @@ const fileNames = copiedPaths.map((filePath) => basename(filePath));
 - [ ] **Step 3: GREEN。** 重跑两文件，报告每个执行/跳过的参数组合与原意的对应；Windows/root 权限豁免必须如实计入skip且说明是修正既有豁免API，不能写成所有权限分支实测通过。
 - [ ] **Step 4: 静态、自审、提交。** 架构before/after、变更文件格式/diff检查，报告真实命令与统计，只提交两测试文件。controller独立派审；无需改产品spec或生产实现，也不改全局Vitest配置触发全量跳过。
 
+### Task 6: 定位三条 stale plugin/MCP 异步失败
+
+**Files:**
+
+- Read/Test: `packages/services/test/zcodeAgentService.test.ts`
+- Read: `packages/services/src/zcode-agent/zcodeAgentService.ts`、该规格 fake Agent 与直接 process manager/transport 依赖。
+- Create: 本计划 scratch 的 `task-6-report.md` 与脱敏、有序诊断证据；不修改源码、正式测试、spec、index 或 HEAD。
+
+**Interfaces:**
+
+- Consumes: Task 2 标为未确认的三条失败、当前 plugin/mcp-status lane 及 watchdog 合同。
+- Produces: 每条失败的首个未满足事件/ACK、实际请求与 process exit/retry 顺序、确认根因或明确证据缺口，以及可独立实施的最小后续任务建议。
+
+- [ ] **Step 1: 聚焦原失败。** 固定 Node 下只选择三条 stale/watchdog 用例；不要把另 11 条缺少 refreshRegistry ACK 的 native create/send 根因套到这三条。
+
+```powershell
+pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restarts a stale protocol client|mcp/list 超时触发' --reporter=json --outputFile=<本任务 scratch>/task-6-focused.json
+```
+
+- [ ] **Step 2: 建立有序证据。** 核对 fake 请求处理器、真实 lane admission、超时/watchdog 回收及重试前初始化的严格协议；必要时用明确命名的临时复现夹具记录请求/响应/exit 事件到 scratch，结束后清理该任务创建的临时文件。禁止打印完整环境/凭据、扩大超时或改变正式实现来“诊断通过”。不能靠固定 sleep 推断 ready。
+- [ ] **Step 3: 输出每条根因。** 报告明确 fake 是否漏 ACK/响应 schema、产品是否错误选择 lane、旧 generation 是否误回收新 client、以及插件进程是否受到 MCP 回收影响。给出源位置、最小修复文件、应保留断言与精确后续验证，不在本调查改产品或正式测试。
+- [ ] **Step 4: 交付。** 写真实命令/exit/结果与确认程度，最终短回复报告路径与结论；controller独立审查调查后才为代码修复追加 brief。本任务可以与 Task 4 夹具迁移并行调查，两者不共享写入文件，也不进行 dist 构建。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
