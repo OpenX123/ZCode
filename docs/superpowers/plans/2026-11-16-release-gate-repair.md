@@ -371,6 +371,7 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 **Files（复用现有文件，不建通用metadata系统）:**
 
 - shared: `source-server/release.ts`、`source-server/contracts.ts`、`source-server/errorCodes.ts`、`validation.ts`、`platform.ts`、`channels.ts` 及现有公开入口。
+- client: `packages/client/src/globals.d.ts` 中既有 `window.zcode` 平台声明同步新增可选精确动作；不新增其他客户端能力。
 - Host: `sourceServerReleaseResolver.ts`、`sourceServerConnectionManager.ts`、`sourceServerOperationLogs.ts`、`sourceServerManagementService.ts`、`host/index.ts`。
 - Main/bridge: `desktopRemoteSessions.ts`、`desktopMainIpcRemote.ts`、`desktopMainIpcPlatform.ts`、`main/index.ts`、preload、desktopPlatform。
 - UI: `root/useRemoteWorkspaceHistory.ts`、`remote-connection-flow/index.ts`、`app-shell/types.ts`、`requestRemoteProjectConnection.ts`、`project-sidebar/remote-project-connection.ts` 及必要的现有presentation类型；`remoteConnectionPresentationErrors.ts`、`RemoteConnectionConnectingStep.tsx`、`SourceServerManagementPanel.tsx`、中英文文案。
