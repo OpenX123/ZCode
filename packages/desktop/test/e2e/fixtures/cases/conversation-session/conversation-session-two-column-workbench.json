@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-two-column-workbench",
+  "spec": "./test/e2e/conversation-session/conversation-session-two-column-workbench.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/common.json",
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-two-column-workbench.json"
+  ],
+  "fileFixtures": [],
+  "requests": [
+    {
+      "id": "ux10-workbench-title",
+      "description": "E2E_UX10_WORKBENCH 首发的 case-local 标题生成响应。",
+      "kind": "common",
+      "timingPolicy": "controlled-stream",
+      "source": "synthetic",
+      "syntheticReason": "固定真实会话标题；只验收布局导航，不测试生成质量。"
+    },
+    {
+      "id": "ux10-workbench-seed",
+      "description": "UX10真实会话及文件预览链接",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "限定marker创建真实CLI会话，输出固定本地文件链接以验收预览和导航。"
+    }
+  ]
+}

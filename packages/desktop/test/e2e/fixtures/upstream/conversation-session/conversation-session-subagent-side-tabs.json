@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-subagent-side-tabs",
+  "spec": "./test/e2e/conversation-session/conversation-session-subagent-side-tabs.test.ts",
+  "fixtures": [
+    {
+      "id": "ux10-side-tabs-title",
+      "description": "E2E_UX10_SIDE_TABS 首发的 case-local 标题生成响应。",
+      "metadata": {
+        "kind": "common",
+        "timingPolicy": "controlled-stream",
+        "source": "synthetic",
+        "syntheticReason": "固定真实会话标题；只验收布局导航，不测试生成质量。"
+      },
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["Generate a concise title", "E2E_UX10_SIDE_TABS"]
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "delayMs": 0,
+        "body": "{\"id\": \"ux10-side-tabs-generated\", \"type\": \"message\", \"role\": \"assistant\", \"model\": \"deepseek-v4-flash\", \"content\": [{\"type\": \"text\", \"text\": \"{\\\"title\\\": \\\"UX10 子任务详情\\\"}\"}], \"stop_reason\": \"end_turn\", \"stop_sequence\": null, \"usage\": {\"input_tokens\": 64, \"cache_creation_input_tokens\": 0, \"cache_read_input_tokens\": 0, \"output_tokens\": 16}}"
+      }
+    },
+    {
+      "id": "ux10-side-tabs-launch",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-tool-use",
+        "source": "synthetic",
+        "syntheticReason": "限定UX10 marker，经真实Host/CLI创建子任务，验收菜单右移及详情scope保留。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_UX10_SIDE_TABS"],
+        "bodyExcludes": [
+          "Generate a concise title",
+          "CRITICAL: Respond with TEXT ONLY",
+          "toolu_ux10_side_tabs_agent"
+        ]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_ux10_side_tabs_agent",
+          "messageId": "msg_ux10_side_tabs_launch",
+          "name": "Agent",
+          "input": {
+            "description": "UX10 detail child",
+            "prompt": "E2E_UX10_DETAIL_CHILD: reply UX10_DETAIL_CHILD_DONE.",
+            "subagent_type": "Explore"
+          }
+        }
+      }
+    },
+    {
+      "id": "ux10-side-tabs-child",
+      "metadata": {
+        "kind": "subagent",
+        "timingPolicy": "controlled-stream",
+        "source": "synthetic",
+        "syntheticReason": "限定UX10 marker，经真实Host/CLI创建子任务，验收菜单右移及详情scope保留。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_UX10_DETAIL_CHILD"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "delayMs": 8000,
+        "text": {
+          "id": "ux10-side-tabs-child",
+          "text": "UX10_DETAIL_CHILD_DONE\n\nDetail line 1\n\nDetail line 2\n\nDetail line 3\n\nDetail line 4\n\nDetail line 5\n\nDetail line 6\n\nDetail line 7\n\nDetail line 8\n\nDetail line 9\n\nDetail line 10\n\nDetail line 11\n\nDetail line 12\n\nDetail line 13\n\nDetail line 14\n\nDetail line 15\n\nDetail line 16\n\nDetail line 17\n\nDetail line 18\n\nDetail line 19\n\nDetail line 20\n\nDetail line 21\n\nDetail line 22\n\nDetail line 23\n\nDetail line 24\n\nDetail line 25\n\nDetail line 26\n\nDetail line 27\n\nDetail line 28\n\nDetail line 29\n\nDetail line 30\n\nDetail line 31\n\nDetail line 32\n\nDetail line 33\n\nDetail line 34\n\nDetail line 35\n\nDetail line 36\n\nDetail line 37\n\nDetail line 38\n\nDetail line 39\n\nDetail line 40\n\nDetail line 41\n\nDetail line 42\n\nDetail line 43\n\nDetail line 44\n\nDetail line 45\n\nDetail line 46\n\nDetail line 47\n\nDetail line 48\n\nDetail line 49\n\nDetail line 50\n\nDetail line 51\n\nDetail line 52\n\nDetail line 53\n\nDetail line 54\n\nDetail line 55\n\nDetail line 56\n\nDetail line 57\n\nDetail line 58\n\nDetail line 59\n\nDetail line 60\n\nDetail line 61\n\nDetail line 62\n\nDetail line 63\n\nDetail line 64\n\nDetail line 65\n\nDetail line 66\n\nDetail line 67\n\nDetail line 68\n\nDetail line 69\n\nDetail line 70\n\nDetail line 71\n\nDetail line 72\n\nDetail line 73\n\nDetail line 74\n\nDetail line 75\n\nDetail line 76\n\nDetail line 77\n\nDetail line 78\n\nDetail line 79\n\nDetail line 80"
+        }
+      }
+    },
+    {
+      "id": "ux10-side-tabs-done",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "限定UX10 marker，经真实Host/CLI创建子任务，验收菜单右移及详情scope保留。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_UX10_SIDE_TABS", "toolu_ux10_side_tabs_agent"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "ux10-side-tabs-done",
+          "text": "UX10_SIDE_TABS_DONE"
+        }
+      }
+    },
+    {
+      "id": "ux10-side-tabs-compact",
+      "metadata": {
+        "kind": "common",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "限定UX10 marker，经真实Host/CLI创建子任务，验收菜单右移及详情scope保留。"
+      },
+      "maxMatches": 4,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_UX10_SIDE_TABS", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "ux10-side-tabs-compact",
+          "text": "E2E_UX10_SIDE_TABS: one child launched with toolu_ux10_side_tabs_agent. Complete the parent after actual result; do not launch another child."
+        }
+      }
+    }
+  ]
+}

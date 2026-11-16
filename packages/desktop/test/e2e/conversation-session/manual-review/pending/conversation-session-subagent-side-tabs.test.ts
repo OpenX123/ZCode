@@ -3,7 +3,18 @@ import {
   TID_V4_PANE_SHELL,
   TID_V4_SUBAGENT_OPEN_SIDE_PANE,
 } from "@zcode/shared/test-ids";
-import { clearAppData } from "../../../helpers/desktop-app.js";
+import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
+import {
+  clearAppData,
+  setCurrentElectronRendererContentSize,
+} from "../../../helpers/desktop-app.js";
+import {
+  prepareV4ConversationE2E,
+  sendV4Prompt,
+  getV4FocusedPaneId,
+  waitForV4AssistantMessageContaining,
+} from "../../../helpers/v4-conversation.js";
 import {
   prepareConversationE2E,
   sendPrompt,
@@ -24,6 +35,99 @@ describe("子智能体右侧 tabs manual review", () => {
   after(async () => {
     await browser.electron.restoreAllMocks();
     await clearAppData();
+  });
+
+  it("UX10: 会话菜单右移后子任务详情保持身份、正文和焦点scope", async function () {
+    this.timeout(180000);
+    await setCurrentElectronRendererContentSize(1600, 900);
+    await prepareV4ConversationE2E();
+    await ensureToolCrossProductFullAccessMode();
+    await sendV4Prompt(
+      "E2E_UX10_SIDE_TABS: launch one Explore Agent with prompt E2E_UX10_DETAIL_CHILD; after its reply, respond UX10_SIDE_TABS_DONE.",
+    );
+    const parentTab = (await getV4FocusedPaneId())!;
+    const open = await $(
+      `[data-pane-id="${parentTab}"] [data-testid^="${TID_V4_SUBAGENT_OPEN_SIDE_PANE}-"]`,
+    );
+    await open.waitForDisplayed({ timeout: 60000 });
+    await open.click();
+    const detail = await $('[data-side-pane-tab-id^="subagent-session:"]');
+    await detail.waitForDisplayed();
+    const detailId = await detail.getAttribute("data-side-pane-tab-id");
+    const childId = await browser.execute(
+      () =>
+        Array.from(document.querySelectorAll<HTMLElement>("[data-session-id]")).find((node) =>
+          node.dataset.sessionId?.startsWith("sess_subagent_"),
+        )?.dataset.sessionId ?? null,
+    );
+    expect(childId).toBeTruthy();
+    await clickUx10LayoutItem(`workbench-activate-tab-${parentTab}`);
+    await browser.waitUntil(
+      async () => (await readUx10Layout()).groups[1]?.activeTabId === parentTab,
+    );
+    const moved = await readUx10Layout();
+    const draftId = moved.groups[0]!.activeTabId;
+    expect(await detail.getAttribute("data-side-pane-tab-id")).toBe(detailId);
+    await waitForV4AssistantMessageContaining("UX10_SIDE_TABS_DONE", 90000);
+    const child = await $(`[data-session-id="${childId}"]`);
+    await browser.waitUntil(async () => (await child.getText()).includes("UX10_DETAIL_CHILD_DONE"));
+    await observeUx10ChildScroll(childId!);
+    const childLocation = await child.getLocation();
+    const initialScroll = await readUx10ChildScroll(childId!);
+    await browser
+      .action("wheel")
+      .scroll({
+        x: Math.round(childLocation.x + 60),
+        y: Math.round(childLocation.y + 160),
+        deltaX: 0,
+        deltaY: -400,
+        duration: 250,
+      })
+      .perform();
+    await browser.waitUntil(async () => (await readUx10ChildScroll(childId!)) < initialScroll);
+    const savedScroll = await readUx10ChildScroll(childId!);
+    await clickUx10LayoutItem(`workbench-activate-tab-${draftId}`);
+    await browser.waitUntil(async () => !(await detail.isDisplayed()));
+    await clickUx10LayoutItem(`workbench-activate-tab-${parentTab}`);
+    await detail.waitForDisplayed();
+    expect(await detail.getAttribute("data-side-pane-tab-id")).toBe(detailId);
+    expect(await child.getText()).toContain("UX10_DETAIL_CHILD_DONE");
+    try {
+      await browser.waitUntil(async () => (await readUx10ChildScroll(childId!)) === savedScroll, {
+        timeout: 10000,
+        timeoutMsg: `UX10 子任务详情焦点往返后未恢复实际滚动 ${savedScroll}`,
+      });
+    } finally {
+      if (process.env.ZCODE_E2E_ARTIFACT_DIR) {
+        const events = await browser.execute(
+          () => (window as unknown as { __ux10ScrollEvents: unknown[] }).__ux10ScrollEvents,
+        );
+        await writeFile(
+          join(process.env.ZCODE_E2E_ARTIFACT_DIR, "ux10-child-scroll.json"),
+          JSON.stringify(
+            {
+              childId,
+              detailId,
+              initialScroll,
+              savedScroll,
+              finalScroll: await readUx10ChildScroll(childId!),
+              events,
+            },
+            null,
+            2,
+          ),
+        );
+        await browser.saveScreenshot(
+          join(process.env.ZCODE_E2E_ARTIFACT_DIR, "ux10-child-scroll.png"),
+        );
+      }
+    }
+    expect((await readUx10Layout()).groups).toEqual(moved.groups);
+    expect(await countVisibleSubagentTabs()).toBe(1);
+    if (process.env.ZCODE_E2E_ARTIFACT_DIR)
+      await browser.saveScreenshot(
+        join(process.env.ZCODE_E2E_ARTIFACT_DIR, "ux10-subagent-scope-retained.png"),
+      );
   });
 
   it("SAT12: Running subagent 摘要行复用 child 右侧 tab", async function () {
@@ -97,6 +201,60 @@ describe("子智能体右侧 tabs manual review", () => {
     await waitForAssistantMessageContaining(`${PARENT_DONE}_${runId}`);
   });
 });
+
+async function readUx10Layout() {
+  return browser.execute(
+    () =>
+      JSON.parse(localStorage.getItem("zcode-conversation-workbench:v1")!) as {
+        groups: Array<{ id: string; tabIds: string[]; activeTabId: string }>;
+      },
+  );
+}
+
+async function readUx10ChildScroll(id: string) {
+  return browser.execute(
+    (sessionId) =>
+      document.querySelector<HTMLElement>(
+        `[data-session-id="${sessionId}"] [data-testid="v4-timeline"]`,
+      )?.scrollTop ?? -1,
+    id,
+  );
+}
+
+async function observeUx10ChildScroll(id: string) {
+  await browser.execute((sessionId) => {
+    const selector = `[data-session-id="${sessionId}"]`;
+    const child = document.querySelector(selector)!;
+    const scroll = child.querySelector<HTMLElement>('[data-testid="v4-timeline"]')!;
+    const events: unknown[] = [];
+    (window as unknown as { __ux10ScrollEvents: unknown[] }).__ux10ScrollEvents = events;
+    const record = (event: string) =>
+      events.push({
+        at: performance.now(),
+        event,
+        scrollTop: scroll.scrollTop,
+        scrollHeight: scroll.scrollHeight,
+        clientHeight: scroll.clientHeight,
+        clientWidth: scroll.clientWidth,
+        mounted: scroll.isConnected,
+        sameChild: document.querySelector(selector) === child,
+        sameScroll: document.querySelector(`${selector} [data-testid="v4-timeline"]`) === scroll,
+        following: scroll.dataset.following,
+      });
+    scroll.addEventListener("scroll", () => record("scroll"));
+    new ResizeObserver(() => record("resize")).observe(scroll);
+    record("start");
+  }, id);
+}
+
+async function clickUx10LayoutItem(id: string) {
+  const trigger = await $('[data-testid="workbench-layout-menu"]');
+  await trigger.click();
+  const item = await $(`[data-testid="${id}"]`);
+  await item.waitForDisplayed();
+  await item.click();
+  await browser.waitUntil(async () => (await trigger.getAttribute("data-state")) !== "open");
+}
 
 async function waitForSubagentSummaryActions(expected: number, timeout: number): Promise<void> {
   await browser.waitUntil(

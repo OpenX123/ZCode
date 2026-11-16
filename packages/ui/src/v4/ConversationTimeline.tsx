@@ -213,11 +213,12 @@ function canReleasePendingScrollMemoryRestore(
 
 interface ConversationScrollMemoryScopeCaptureProps {
   scopeKey: string | null;
+  paused: boolean;
   capture: (previousKey: string | null) => ConversationScrollMemoryScopeSnapshot | null;
   commit: (snapshot: ConversationScrollMemoryScopeSnapshot | null) => void;
 }
 
-/** React 的 before-mutation snapshot：scope cleanup 时普通 layout effect 已看到新 DOM。 */
+/** scope 切换或隐藏前捕获：layout cleanup 已可能读到零尺寸 DOM，不能丢失用户阅读位置。 */
 class ConversationScrollMemoryScopeCapture extends Component<
   ConversationScrollMemoryScopeCaptureProps,
   unknown,
@@ -226,7 +227,11 @@ class ConversationScrollMemoryScopeCapture extends Component<
   getSnapshotBeforeUpdate(
     previousProps: ConversationScrollMemoryScopeCaptureProps,
   ): ConversationScrollMemoryScopeSnapshot | null {
-    if (previousProps.scopeKey === this.props.scopeKey) return null;
+    if (
+      previousProps.scopeKey === this.props.scopeKey &&
+      (previousProps.paused || !this.props.paused)
+    )
+      return null;
     return this.props.capture(previousProps.scopeKey);
   }
 
@@ -357,8 +362,7 @@ export interface ConversationTimelineProps {
   /** 范围编辑时，左侧 rail 由分享选择面板独占。 */
   hideTurnNavigator?: boolean;
   /**
-   * 所在面板隐藏（docs/desktop/engine-performance-1.1-spec.md「隐藏面板暂停渲染」）：停止运行计时器，
-   * 重新可见时立即以当前时间重算一次。
+   * 所在面板隐藏：暂停运行计时及滚动记忆写入，显示时复用原 scope 记忆恢复。
    */
   paused?: boolean;
 }
@@ -1160,6 +1164,9 @@ function ConversationTimelineImpl({
       }
       const element = scrollRef.current;
       if (!previousKey || !element) return null;
+      // 隐藏面板的 DOM 已被钳成零尺寸；scope 再变化时保留原 owner 的可见快照。
+      const cached = latestScrollMemoryStateRef.current;
+      if (element.clientHeight === 0 && cached?.key === previousKey) return cached;
       return {
         key: previousKey,
         state: buildCurrentScrollMemoryState(element),
@@ -1180,7 +1187,7 @@ function ConversationTimelineImpl({
   // 贴底必须 instant（scrollTop 赋值）：smooth 的中间帧会被 scroll 判定误读为「离底」。
   const scrollToBottom = useCallback(() => {
     const element = scrollRef.current;
-    if (!element) return;
+    if (!element || paused) return;
     markProgrammaticScroll();
     // 草稿安全居中允许内容在低高度下向下溢出；若沿用真实会话吸底，
     // 顶部安全留白会被滚走。草稿始终展示顶部，真实会话继续吸底。
@@ -1196,12 +1203,13 @@ function ConversationTimelineImpl({
     responsiveCenteredEmptyLayout,
     markProgrammaticScroll,
     notifyScrollObserversAfterCommit,
+    paused,
     syncTurnNavigatorViewport,
   ]);
 
   useLayoutEffect(() => {
     const contentColumn = virtualHistoryRef.current;
-    if (!contentColumn || typeof ResizeObserver === "undefined") return;
+    if (paused || !contentColumn || typeof ResizeObserver === "undefined") return;
 
     stableContentWidthRef.current = contentColumn.clientWidth;
     let observedViewportHeight = scrollRef.current?.clientHeight ?? 0;
@@ -1316,6 +1324,7 @@ function ConversationTimelineImpl({
     getActiveUserScrollIntent,
     markLayoutScrollGuard,
     measureElement,
+    paused,
     renderUnits.length === 0,
     scrollToBottom,
     virtualizer,
@@ -1382,11 +1391,11 @@ function ConversationTimelineImpl({
     const state =
       pendingRestore?.key === key
         ? pendingRestore.state
-        : element
+        : element && !paused
           ? cacheCurrentScrollMemoryState(element)
           : cachedState;
     if (state) saveChatSessionScrollMemoryState(key, state);
-  }, [cacheCurrentScrollMemoryState, scrollMemoryKey]);
+  }, [cacheCurrentScrollMemoryState, paused, scrollMemoryKey]);
 
   const restoreScrollMemory = useCallback(
     (state: ChatSessionScrollMemoryState) => {
@@ -1412,7 +1421,8 @@ function ConversationTimelineImpl({
 
   const handleScroll = useCallback(() => {
     const element = scrollRef.current;
-    if (!element) return;
+    // forceMount 隐藏会产生零尺寸 scroll；它不是用户阅读意图，不能覆盖隐藏前记忆。
+    if (!element || paused) return;
     const programmaticScroll =
       programmaticScrollFrameRef.current !== null &&
       Math.abs(element.scrollTop - lastObservedScrollTopRef.current) < 1;
@@ -1484,6 +1494,7 @@ function ConversationTimelineImpl({
   }, [
     commitFollowing,
     getActiveUserScrollIntent,
+    paused,
     saveCurrentScrollMemory,
     syncTurnNavigatorViewport,
     virtualizer,
@@ -1666,6 +1677,7 @@ function ConversationTimelineImpl({
   // 导致残留的 renderer-local 记忆模块彻底断线。这里在清测高并重新 measure 后按 scope
   // 恢复；首个 layout 立即写入防闪动，下一帧再校正异步测高，但必须把滚动权让给用户。
   useLayoutEffect(() => {
+    if (paused) return;
     clearUserScrollIntent();
     heightCacheRef.current?.clear();
     // prepend 锚定基线一并重置：rowId 跨会话可重复，禁止拿旧会话首行比较。
@@ -1722,6 +1734,7 @@ function ConversationTimelineImpl({
     };
   }, [
     clearUserScrollIntent,
+    paused,
     restoreScrollMemory,
     scrollMemoryKey,
     scrollToBottom,
@@ -1731,7 +1744,7 @@ function ConversationTimelineImpl({
 
   useLayoutEffect(() => {
     const pendingRestore = pendingDetachedScrollRestoreRef.current;
-    if (rowCount === 0 || !pendingRestore || pendingRestore.key !== scrollMemoryKey) {
+    if (paused || rowCount === 0 || !pendingRestore || pendingRestore.key !== scrollMemoryKey) {
       return;
     }
 
@@ -1774,6 +1787,7 @@ function ConversationTimelineImpl({
   }, [
     canLoadOlder,
     restoreScrollMemory,
+    paused,
     rowCount,
     rowWindowKey,
     scrollMemoryKey,
@@ -1786,6 +1800,7 @@ function ConversationTimelineImpl({
   // 即恢复锚点（绘制前完成，无闪动）；本效应声明在会话切换效应之后，切换 commit 上
   // 先重置基线再对账，防跨会话 rowId 误判为前插。
   useLayoutEffect(() => {
+    if (paused) return;
     const prev = prependAnchorRef.current;
     const nextFirstRowId = rowsRef.current[0]?.rowId ?? null;
     const nextTotalSize = virtualizer.getTotalSize();
@@ -1851,6 +1866,7 @@ function ConversationTimelineImpl({
   // 触发 virtualizer 多阶段测高；这些 scrollTop 回退属于布局，必须保持 following。
   // 若同帧有用户向上滚动，capture handler 会先登记 awayFromBottom，本 effect 必须让位。
   useLayoutEffect(() => {
+    if (paused) return;
     const element = scrollRef.current;
     markLayoutScrollGuard();
     if (element) {
@@ -1879,6 +1895,7 @@ function ConversationTimelineImpl({
     commitFollowing,
     headerSlotHeight,
     pendingGuideKey,
+    paused,
     rowCount,
     rows,
     scrollToBottom,
@@ -1894,7 +1911,7 @@ function ConversationTimelineImpl({
   // 行清空（如 editUserQuery 大范围 rewind）：重置为跟随并收起按钮，
   // 后续重新出现的行走上面的锚定 effect 贴底。
   useEffect(() => {
-    if (rowCount === 0) {
+    if (!paused && rowCount === 0) {
       if (pendingDetachedScrollRestoreRef.current?.key === scrollMemoryKey) {
         return;
       }
@@ -1903,7 +1920,7 @@ function ConversationTimelineImpl({
         setBackToBottomVisible(false);
       }
     }
-  }, [rowCount, backToBottomVisible, scrollMemoryKey]);
+  }, [rowCount, backToBottomVisible, paused, scrollMemoryKey]);
 
   useEffect(() => {
     return () => {
@@ -1934,6 +1951,7 @@ function ConversationTimelineImpl({
       ) : null}
       <ConversationScrollMemoryScopeCapture
         scopeKey={scrollMemoryKey}
+        paused={paused}
         capture={captureScrollMemoryBeforeScopeMutation}
         commit={commitCapturedScrollMemory}
       />

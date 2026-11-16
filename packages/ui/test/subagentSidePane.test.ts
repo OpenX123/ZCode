@@ -259,7 +259,8 @@ describe("subagent side pane tabs", () => {
     const html = renderToStaticMarkup(
       createElement(SubagentSessionSidePane, {
         tab: tab!,
-        focused: true,
+        focused: false,
+        visible: true,
         onOpenSubagentSession: vi.fn(),
       }),
     );
@@ -276,6 +277,8 @@ describe("subagent side pane tabs", () => {
     );
     expect(paneState.props).toMatchObject({
       allowWorkspaceFileRewind: true,
+      focused: false,
+      paneVisible: true,
       compactForRemoteControl: false,
       readOnly: true,
       sessionId: "child-session",
@@ -285,6 +288,7 @@ describe("subagent side pane tabs", () => {
       createElement(SubagentSessionSidePane, {
         tab: tab!,
         focused: true,
+        visible: false,
         compactForRemoteControl: true,
         onOpenSubagentSession: vi.fn(),
       }),
@@ -292,6 +296,7 @@ describe("subagent side pane tabs", () => {
 
     expect(paneState.props).toMatchObject({
       compactForRemoteControl: true,
+      paneVisible: false,
       readOnly: true,
       sessionId: "child-session",
     });

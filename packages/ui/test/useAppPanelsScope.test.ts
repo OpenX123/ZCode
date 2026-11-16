@@ -44,6 +44,49 @@ describe("侧栏显示、关闭与恢复共用工作区/对话归属", () => {
     clearTaskSidePaneMemoryStateForTest();
   });
 
+  it("焦点切换后新文件跟随新 owner，旧文件与子任务保持原 scope 和对象身份", () => {
+    const h = setup();
+    const source = {
+      type: "file" as const,
+      title: "same.md",
+      path: "/repo/same.md",
+      workspacePath: "/repo",
+      workspaceIdentity: a.workspaceIdentity,
+      workspaceRemoteSessionId: "endpoint-a",
+    };
+    act(() => h.result.current.handleOpenCodeViewer(source));
+    const file = h.result.current.sidePaneState!.tabs[0]!;
+    act(() =>
+      h.result.current.handleOpenSubagentSession({
+        workspacePath: "/repo",
+        workspaceIdentity: a.workspaceIdentity,
+        remoteSessionId: "endpoint-a",
+        rootSessionId: "a",
+        parentSessionId: "a",
+        childSessionId: "child",
+        title: "Child",
+      }),
+    );
+    const child = h.result.current.sidePaneState!.tabs[1]!;
+    h.rerender(b);
+    expect(h.result.current.sidePaneState!.tabs[0]).toBe(file);
+    expect(h.result.current.sidePaneState!.tabs[1]).toBe(child);
+    act(() =>
+      h.result.current.handleOpenCodeViewer({ ...source, path: "/repo/b.md", title: "b.md" }),
+    );
+    const next = h.result.current.sidePaneState!.tabs.at(-1)!;
+    expect(next).toMatchObject({ workspaceKey: a.workspaceIdentity, ownerTaskId: "b" });
+    h.rerender(a);
+    expect(h.result.current.sidePaneState!.tabs[0]).toBe(file);
+    expect(h.result.current.sidePaneState!.tabs[1]).toBe(child);
+    expect(file).toMatchObject({ source, ownerTaskId: "a", workspaceKey: a.workspaceIdentity });
+    expect(child).toMatchObject({
+      remoteSessionId: "endpoint-a",
+      workspaceIdentity: a.workspaceIdentity,
+      rootSessionId: "a",
+    });
+  });
+
   it.each(["", "ssh://two/repo"])(
     "跨工作区文件请求只在目标 %s 的 owner 中创建，返回后仍可见",
     (identity) => {

@@ -226,6 +226,8 @@ export function PreviewPaneContent({
           sourceTitle={source.path ?? source.title}
           sourcePath={source.path}
           content={source.content}
+          onScroll={onScroll}
+          scrollContainerRef={scrollContainerRef}
           workspacePath={workspacePath}
           theme={theme}
           codePreviewSettings={codePreviewSettings}
@@ -460,6 +462,8 @@ export function PreviewPaneContent({
         sourceTitle={source.path ?? source.title}
         sourcePath={source.path}
         content={filePreview.content}
+        onScroll={onScroll}
+        scrollContainerRef={scrollContainerRef}
         workspacePath={workspacePath}
         onOpenBrowserUrl={onOpenBrowserUrl}
       />

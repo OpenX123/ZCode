@@ -3,7 +3,7 @@ import {
   registerSelectionSideChatOpener,
 } from "@/lib/selectionSideChatRuntime.js";
 // @vitest-environment jsdom
-import { createElement } from "react";
+import { createElement, createRef } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
@@ -64,6 +64,22 @@ afterEach(() => {
   setConversationSelectionReferenceScope(null, target.workspaceKey, []);
 });
 describe("Markdown preview selections", () => {
+  it("Markdown真实滚动容器向PreviewPane owner报告滚动并交接ref", () => {
+    const scrollContainerRef = createRef<HTMLDivElement>();
+    const onScroll = vi.fn();
+    const props = { content: "Long preview", scrollContainerRef, onScroll };
+    const view = render(createElement(MarkdownPreviewContent, props));
+    const container = view.container.querySelector<HTMLDivElement>(
+      '[data-markdown-preview="true"]',
+    )!;
+    expect(scrollContainerRef.current).toBe(container);
+    container.scrollTop = 640;
+    fireEvent.scroll(container);
+    expect(onScroll).toHaveBeenCalledOnce();
+    expect(scrollContainerRef.current?.scrollTop).toBe(640);
+    view.unmount();
+    expect(scrollContainerRef.current).toBeNull();
+  });
   it("区分 Markdown 来源，去重并发送路径与选中文字", () => {
     expect(
       appendConversationSelectionReference([reference], { ...reference, id: "md-2" }),

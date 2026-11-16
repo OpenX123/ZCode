@@ -16,6 +16,7 @@ import { V4PaneConversationProvider } from "@/v4/V4ConversationContext.js";
 export const SubagentSessionSidePane = memo(function SubagentSessionSidePane({
   tab,
   focused,
+  visible = true,
   compactForRemoteControl = false,
   onOpenBrowserUrl,
   onOpenCodeViewer,
@@ -25,6 +26,7 @@ export const SubagentSessionSidePane = memo(function SubagentSessionSidePane({
 }: {
   tab: SubagentSessionSidePaneTab;
   focused: boolean;
+  visible?: boolean;
   compactForRemoteControl?: boolean;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
@@ -57,6 +59,7 @@ export const SubagentSessionSidePane = memo(function SubagentSessionSidePane({
             allowWorkspaceFileRewind
             compactForRemoteControl={compactForRemoteControl}
             focused={focused}
+            paneVisible={visible}
             workspacePath={tab.workspacePath}
             workspaceIdentity={tab.workspaceIdentity}
             remoteSessionId={tab.remoteSessionId}

@@ -4,6 +4,29 @@
 
 桌面和宽屏 Web 保持侧栏，将原本共用外框的会话与 Side Pane 拆成独立面板；窗口根背景、侧栏保持原语义。
 
+## 会话向右打开与侧栏上下文（UX10）
+
+工作台 store 唯一持有会话栏位、焦点与比例；`useAppPanels` 与现有 workspace memory 持有 SidePane 标签及每个 owner 的活动/折叠偏好。会话向右打开只提交工作台导航，不关闭 SidePane 标签、不重新解释旧文件路径。新工具操作使用焦点会话的完整 scope；旧文件和子任务仍使用创建时 scope、稳定标签及原 Host 服务，保留实际预览模式、滚动及既有未提交草稿。工作区 identity 隔离优先于相同路径，断连不回落本地。
+
+当前 Markdown/代码预览为只读，编辑器入口委派外部应用；本项只保证实际预览模式、滚动及身份与既有未提交 composer 草稿，不声明外部编辑器 buffer 的保存能力。Markdown 真实 overflow 容器须接入 PreviewPane 已有滚动回调和 ref，缩放/隐藏重内容后仍由同一 PreviewPane owner 恢复位置，不新增滚动状态 owner。
+
+子任务详情的可见性由 SidePane 的面板可见状态与活动标签决定，独立传入既有 `SessionPane.paneVisible`，不能用键盘焦点替代。Timeline 复用既有滚动记忆：隐藏前在 DOM mutation 之前捕获位置，隐藏期间不把零尺寸滚动或布局变化写回记忆，重新可见时按原 scope 恢复。此过程不新建缓存、定时补偿或会话实例。
+
+```mermaid
+sequenceDiagram
+  participant U as 菜单点击
+  participant W as 工作台 store
+  participant S as Shell 焦点桥接
+  participant P as SidePane owner
+  U->>W: 重读目标 Tab 与栏位资格
+  W->>W: 原子右移 / 右栏激活 / 草稿原位激活
+  W->>S: 完整 scope 与稳定会话身份
+  S->>P: 后续工具操作使用新焦点 scope
+  P->>P: 保留旧标签 scope、预览模式与滚动
+```
+
+验收包括单份会话、单会话右移后左栏独立草稿、后台草稿找回、同路径不同 identity 与断连边界。实际会话容器 759/760/761px 及文件预览展开/收起跨阈值均不重置双栏比例、草稿或子任务详情；实体 SSH 与其他平台未测时单独记录，不用本地 fixture 代替。
+
 ## 分栏布局持久化有效性（2026-11-12）
 
 - `ResizablePanelGroup` 是布局持久化的唯一接入点，继续复用 `useDefaultLayout` 的 key、恢复和防抖写入。

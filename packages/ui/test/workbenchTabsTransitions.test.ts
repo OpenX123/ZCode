@@ -8,6 +8,31 @@ function fixture() {
 }
 
 describe("工作台草稿改选与批量移动状态转换", () => {
+  it("单会话显式右移只发一次完整快照，保留原绑定与独立左草稿", () => {
+    const store = fixture();
+    const remote = {
+      ...scope,
+      workspaceIdentity: "ssh://one/project",
+      remoteSessionId: "endpoint",
+    };
+    store.getState().initialize(remote, "session", { projectId: "project", taskGroupId: "group" });
+    const original = getFocusedWorkbenchTab(store.getState())!;
+    const snapshots: Array<ReturnType<typeof store.getState>> = [];
+    store.subscribe((state) => snapshots.push(state));
+    store.getState().openSession(original, "right");
+    expect(snapshots).toHaveLength(1);
+    const after = snapshots[0]!;
+    expect(after.groups).toHaveLength(2);
+    expect(after.groups.every((group) => group.tabIds.includes(group.activeTabId))).toBe(true);
+    expect(after.tabs[original.id]).toBe(original);
+    expect(after.tabs[after.groups[0]!.activeTabId]).toMatchObject({
+      sessionId: null,
+      workspaceScope: remote,
+      projectId: "project",
+      taskGroupId: "group",
+    });
+    expect(Object.values(after.tabs).filter((tab) => tab.sessionId === "session")).toHaveLength(1);
+  });
   it("原地改选草稿项目保留输入身份、栏位和焦点，不改写其他本地或SSH视图", () => {
     const store = fixture();
     store.getState().initialize(scope, null, { projectId: "old", taskGroupId: "old-group" });

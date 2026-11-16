@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { act, createElement } from "react";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { createElement } from "react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceWorkbenchLayoutButton } from "@/project-sidebar/WorkbenchLayoutButton.js";
 import { useWorkbenchTabsStore } from "@/v4/workbench-tabs/index.js";
@@ -41,6 +41,130 @@ function setup() {
 }
 
 describe("右上工作台布局入口", () => {
+  it("真实会话由菜单原子右移且全局单份，左侧保留同归属独立草稿", () => {
+    const current = useWorkbenchTabsStore.getState();
+    const original = Object.values(current.tabs)[0]!;
+    useWorkbenchTabsStore.setState({
+      tabs: { [original.id]: { ...original, projectId: "project-a", taskGroupId: "group-a" } },
+    });
+    const binding = useWorkbenchTabsStore.getState().tabs[original.id]!;
+    const view = setup();
+    const updates: unknown[] = [];
+    const unsubscribe = useWorkbenchTabsStore.subscribe((state) => updates.push(state));
+    view.menu();
+    fireEvent.click(view.getByTestId(`workbench-activate-tab-${original.id}`));
+    unsubscribe();
+    const state = useWorkbenchTabsStore.getState();
+    expect(updates).toHaveLength(1);
+    expect(state.groups).toHaveLength(2);
+    expect(state.groups[1]!.tabIds).toEqual([original.id]);
+    expect(state.focusedGroupId).toBe(state.groups[1]!.id);
+    expect(state.tabs[original.id]).toBe(binding);
+    expect(Object.values(state.tabs).filter((tab) => tab.sessionId === "session-a")).toHaveLength(
+      1,
+    );
+    const draft = state.tabs[state.groups[0]!.activeTabId]!;
+    expect(draft).toMatchObject({
+      sessionId: null,
+      draftId: draft.id,
+      workspaceScope: scope,
+      projectId: "project-a",
+      taskGroupId: "group-a",
+    });
+    expect(draft.id).not.toBe(original.id);
+    view.menu();
+    fireEvent.click(view.getByTestId(`workbench-activate-tab-${draft.id}`));
+    expect(useWorkbenchTabsStore.getState().groups).toEqual(state.groups);
+    expect(useWorkbenchTabsStore.getState().focusedGroupId).toBe(state.groups[0]!.id);
+  });
+
+  it("已在右栏的真实会话只聚焦，不重排右栏已有草稿", () => {
+    const store = useWorkbenchTabsStore.getState();
+    const id = Object.keys(store.tabs)[0]!;
+    store.openSession(store.tabs[id]!, "right");
+    const draftId = useWorkbenchTabsStore.getState().newDraft(scope);
+    const before = useWorkbenchTabsStore.getState();
+    const view = setup();
+    view.menu();
+    fireEvent.click(view.getByTestId(`workbench-activate-tab-${id}`));
+    const state = useWorkbenchTabsStore.getState();
+    expect(state.groups[1]!.tabIds).toEqual([id, draftId]);
+    expect(state.groups[1]!.activeTabId).toBe(id);
+    expect(state.tabs).toBe(before.tabs);
+  });
+
+  it("菜单打开后的 endpoint 换代以点击时完整绑定右移，同路径本地会话保持独立", () => {
+    const remote = { ...scope, workspaceIdentity: "ssh://remote/project", remoteSessionId: "old" };
+    const remoteId = useWorkbenchTabsStore
+      .getState()
+      .openSession({ workspaceScope: remote, sessionId: "session-a" });
+    const view = setup();
+    view.menu();
+    const item = view.getByTestId(`workbench-activate-tab-${remoteId}`);
+    act(() => {
+      useWorkbenchTabsStore.getState().refreshWorkspaceScope({ ...remote, remoteSessionId: "new" });
+      fireEvent.click(item);
+    });
+    const state = useWorkbenchTabsStore.getState();
+    expect(state.groups[1]?.activeTabId).toBe(remoteId);
+    expect(state.tabs[remoteId]!.workspaceScope.remoteSessionId).toBe("new");
+    expect(Object.values(state.tabs).filter((tab) => tab.sessionId === "session-a")).toHaveLength(
+      2,
+    );
+    expect(
+      Object.values(state.tabs).find((tab) => !tab.workspaceScope.workspaceIdentity)
+        ?.workspaceScope,
+    ).toEqual(scope);
+  });
+
+  it("菜单目标已经关闭或失去栏位时不复活会话", () => {
+    const view = setup();
+    const id = Object.keys(useWorkbenchTabsStore.getState().tabs)[0]!;
+    view.menu();
+    const item = view.getByTestId(`workbench-activate-tab-${id}`);
+    let afterClose: ReturnType<typeof useWorkbenchTabsStore.getState>;
+    act(() => {
+      useWorkbenchTabsStore.getState().closeTab(id);
+      afterClose = useWorkbenchTabsStore.getState();
+      fireEvent.click(item);
+    });
+    expect(useWorkbenchTabsStore.getState()).toBe(afterClose!);
+  });
+
+  it("菜单旧条目失去 group 归属后不创建右栏", () => {
+    const view = setup();
+    const id = Object.keys(useWorkbenchTabsStore.getState().tabs)[0]!;
+    view.menu();
+    const item = view.getByTestId(`workbench-activate-tab-${id}`);
+    let invalidated: ReturnType<typeof useWorkbenchTabsStore.getState>;
+    act(() => {
+      useWorkbenchTabsStore.setState({ groups: [], focusedGroupId: "" });
+      invalidated = useWorkbenchTabsStore.getState();
+      fireEvent.click(item);
+    });
+    expect(useWorkbenchTabsStore.getState()).toBe(invalidated!);
+  });
+
+  it("远端离线菜单保留原 identity、endpoint 与只读资格，不借用同路径本地绑定", () => {
+    const remote = {
+      ...scope,
+      workspaceIdentity: "ssh://offline/project",
+      remoteSessionId: "offline-endpoint",
+    };
+    const id = useWorkbenchTabsStore.getState().openSession({
+      workspaceScope: remote,
+      sessionId: "session-a",
+      readOnly: true,
+      restoredUnvalidated: true,
+    });
+    const original = useWorkbenchTabsStore.getState().tabs[id];
+    const view = setup();
+    view.menu();
+    fireEvent.click(view.getByTestId(`workbench-activate-tab-${id}`));
+    expect(useWorkbenchTabsStore.getState().tabs[id]).toBe(original);
+    expect(useWorkbenchTabsStore.getState().groups[1]?.activeTabId).toBe(id);
+  });
+
   it("菜单缺缓存时显示完整事实标题，不显示截短会话 ID", () => {
     const title = "UX09 一个完整的目录事实标题";
     fixture.tasks = [{ taskId: "session-a", workspacePath: "/project", title, updatedAt: 2 }];

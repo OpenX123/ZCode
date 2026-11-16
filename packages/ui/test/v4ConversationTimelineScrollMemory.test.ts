@@ -310,6 +310,7 @@ function renderTimeline(
     onLoadOlder?: () => void;
     rows?: readonly ConversationRow[];
     withComposerDock?: boolean;
+    paused?: boolean;
   } = {},
 ): void {
   const timelineRows = options.rows ?? [row];
@@ -326,6 +327,7 @@ function renderTimeline(
         sessionKey,
         scrollMemoryKey,
         rowContext,
+        paused: options.paused,
         // composer dock。它上方那条浮层带随浮岛一起删除，圆钮回到自己的居中定位。
         ...(options.withComposerDock
           ? {
@@ -366,6 +368,69 @@ afterEach(() => {
 });
 
 describe("ConversationTimeline renderer-local scroll memory", () => {
+  it("隐藏前捕获未派发滚动，忽略隐藏零尺寸事件并在显示后恢复同一位置", () => {
+    const container = installMinimalDom();
+    mountedRoot = createRoot(container);
+    const key = "workspace::pane:child::session:1";
+    const grownRows = [row, { ...row, rowId: 2, turnId: "turn-2" }];
+    act(() => renderTimeline(mountedRoot!, "session-1", key));
+    const timeline = findByTestId(container, TID_V4_TIMELINE)!;
+    act(() => {
+      flushAnimationFrame();
+      flushAnimationFrame();
+      dispatchWheel(timeline, -120);
+      timeline.scrollTop = 240;
+      dispatchScroll(timeline);
+      timeline.scrollTop = 520;
+      renderTimeline(mountedRoot!, "session-1", key, undefined, { paused: true });
+    });
+    expect(readChatSessionScrollMemoryState(key)?.scrollTop).toBe(520);
+    act(() => {
+      layout.clientHeight = 0;
+      layout.scrollHeight = 0;
+      timeline.scrollTop = 0;
+      dispatchScroll(timeline);
+      renderTimeline(mountedRoot!, "session-1", key, undefined, { paused: true, rows: grownRows });
+      flushAnimationFrame();
+    });
+    expect(readChatSessionScrollMemoryState(key)?.scrollTop).toBe(520);
+    act(() => {
+      layout.clientHeight = 300;
+      layout.scrollHeight = 1600;
+      renderTimeline(mountedRoot!, "session-1", key, undefined, { paused: false, rows: grownRows });
+      flushAnimationFrame();
+    });
+    expect(timeline.scrollTop).toBe(520);
+  });
+
+  it("贴底面板隐藏期间增长内容，恢复后继续贴底而不使用零尺寸位置", () => {
+    const container = installMinimalDom();
+    mountedRoot = createRoot(container);
+    const key = "workspace::pane:parent::session:1";
+    act(() => renderTimeline(mountedRoot!, "session-1", key));
+    const timeline = findByTestId(container, TID_V4_TIMELINE)!;
+    act(() => {
+      flushAnimationFrame();
+      flushAnimationFrame();
+      renderTimeline(mountedRoot!, "session-1", key, undefined, { paused: true });
+    });
+    expect(readChatSessionScrollMemoryState(key)?.wasPinnedToBottom).toBe(true);
+    act(() => {
+      layout.clientHeight = 0;
+      layout.scrollHeight = 0;
+      timeline.scrollTop = 0;
+      dispatchScroll(timeline);
+      renderTimeline(mountedRoot!, "session-1", key, undefined, { paused: true, rows: [] });
+    });
+    act(() => {
+      layout.clientHeight = 300;
+      layout.scrollHeight = 1600;
+      renderTimeline(mountedRoot!, "session-1", key, undefined, { paused: false });
+      flushAnimationFrame();
+    });
+    expect(timeline.scrollTop).toBe(1300);
+  });
+
   it("跟随时先提交新行高再吸底，用户离底后 resize 不抢回滚动权", () => {
     const container = installMinimalDom();
     const observations: Array<{ target: Element; callback: ResizeObserverCallback }> = [];

@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-subagent-side-tabs",
+  "spec": "./test/e2e/conversation-session/conversation-session-subagent-side-tabs.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/common.json",
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-subagent-side-tabs.json"
+  ],
+  "fileFixtures": [],
+  "requests": [
+    {
+      "id": "ux10-side-tabs-title",
+      "description": "ux10-side-tabs-title",
+      "kind": "common",
+      "timingPolicy": "controlled-stream",
+      "source": "synthetic",
+      "syntheticReason": "固定真实会话标题；只验收布局导航，不测试生成质量。"
+    },
+    {
+      "id": "ux10-side-tabs-launch",
+      "description": "ux10-side-tabs-launch",
+      "kind": "main",
+      "timingPolicy": "fast-tool-use",
+      "source": "synthetic",
+      "syntheticReason": "限定UX10 marker，经真实Host/CLI创建子任务，验收菜单右移及详情scope保留。"
+    },
+    {
+      "id": "ux10-side-tabs-child",
+      "description": "ux10-side-tabs-child",
+      "kind": "subagent",
+      "timingPolicy": "controlled-stream",
+      "source": "synthetic",
+      "syntheticReason": "限定UX10 marker，经真实Host/CLI创建子任务，验收菜单右移及详情scope保留。"
+    },
+    {
+      "id": "ux10-side-tabs-done",
+      "description": "ux10-side-tabs-done",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "限定UX10 marker，经真实Host/CLI创建子任务，验收菜单右移及详情scope保留。"
+    },
+    {
+      "id": "ux10-side-tabs-compact",
+      "description": "ux10-side-tabs-compact",
+      "kind": "common",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "限定UX10 marker，经真实Host/CLI创建子任务，验收菜单右移及详情scope保留。"
+    }
+  ]
+}

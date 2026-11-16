@@ -1217,6 +1217,7 @@ export function AnimatedSidePanePanel({
                         ) : tab.type === "subagent-session" ? (
                           <SubagentSessionSidePane
                             tab={tab}
+                            visible={isVisible && tab.id === contentActiveTabId}
                             focused={isVisible && tab.id === contentActiveTabId}
                             compactForRemoteControl={mobileOverlay}
                             onOpenBrowserUrl={onOpenBrowserUrl}

@@ -26,7 +26,16 @@ function WorkbenchViewItem({ tab, label }: { tab: WorkbenchTab; label: string })
   return (
     <DropdownMenuItem
       data-testid={`workbench-activate-tab-${tab.id}`}
-      onSelect={() => useWorkbenchTabsStore.getState().activateTab(tab.id)}
+      onSelect={() => {
+        const state = useWorkbenchTabsStore.getState();
+        const current = state.tabs[tab.id];
+        const groupIndex = state.groups.findIndex((group) => group.tabIds.includes(tab.id));
+        // 菜单展开期间连接可能换代或视图已关闭；必须重读 owner，不能回写旧 endpoint 或复活旧 Tab。
+        if (!current || groupIndex < 0) return;
+        // 已在右栏只聚焦，避免 openSession 的移动语义将其重排到后台草稿之后。
+        if (current.sessionId && groupIndex !== 1) state.openSession(current, "right");
+        else state.activateTab(current.id);
+      }}
       title={title}
     >
       <span className="shrink-0 text-foreground-subtle">{label}</span>

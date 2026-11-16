@@ -1,4 +1,4 @@
-import { createElement } from "react";
+import { createElement, createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
@@ -6,6 +6,14 @@ import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { PreviewPaneContent } from "@/previewPaneContent.js";
 import { JSDOM } from "jsdom";
 import { prepareHtmlPreviewDocument } from "@/previewPaneCodeContent.js";
+
+const markdown = vi.hoisted(() => ({ props: {} as Record<string, unknown> }));
+vi.mock("@/previewPaneMarkdownContent.js", () => ({
+  MarkdownPreviewContent: (props: Record<string, unknown>) => {
+    markdown.props = props;
+    return createElement("div", null, String(props.content));
+  },
+}));
 
 vi.mock("@pierre/diffs/react", () => ({
   File: ({
@@ -123,6 +131,21 @@ function renderFileContent(overrides: Record<string, unknown> = {}): string {
 }
 
 describe("PreviewPaneContent text files", () => {
+  it.each(["file", "text"] as const)("%s Markdown预览把滚动交给同一PreviewPane owner", (type) => {
+    const onScroll = vi.fn();
+    const scrollContainerRef = createRef<HTMLDivElement>();
+    renderFileContent({
+      source:
+        type === "file"
+          ? { type, path: "/workspace/context.md", title: "context.md" }
+          : { type, title: "context.md", content: "Markdown", language: "markdown" },
+      markdownViewMode: "preview",
+      onScroll,
+      scrollContainerRef,
+    });
+    expect(markdown.props.onScroll).toBe(onScroll);
+    expect(markdown.props.scrollContainerRef).toBe(scrollContainerRef);
+  });
   it.each(["/workspace/site/index.html", "C:/workspace/site/index.html"])(
     "HTML 相对样式和 CSS 图片从原文件目录读取：%s",
     async (path) => {

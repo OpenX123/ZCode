@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-two-column-workbench",
+  "spec": "./test/e2e/conversation-session/conversation-session-two-column-workbench.test.ts",
+  "fixtures": [
+    {
+      "id": "ux10-workbench-title",
+      "description": "E2E_UX10_WORKBENCH 首发的 case-local 标题生成响应。",
+      "metadata": {
+        "kind": "common",
+        "timingPolicy": "controlled-stream",
+        "source": "synthetic",
+        "syntheticReason": "固定真实会话标题；只验收布局导航，不测试生成质量。"
+      },
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["Generate a concise title", "E2E_UX10_WORKBENCH"]
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "delayMs": 0,
+        "body": "{\"id\": \"ux10-workbench-generated\", \"type\": \"message\", \"role\": \"assistant\", \"model\": \"deepseek-v4-flash\", \"content\": [{\"type\": \"text\", \"text\": \"{\\\"title\\\": \\\"UX10 会话布局\\\"}\"}], \"stop_reason\": \"end_turn\", \"stop_sequence\": null, \"usage\": {\"input_tokens\": 64, \"cache_creation_input_tokens\": 0, \"cache_read_input_tokens\": 0, \"output_tokens\": 16}}"
+      }
+    },
+    {
+      "id": "ux10-workbench-seed",
+      "description": "UX10真实会话及文件预览链接",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "限定marker创建真实CLI会话，输出固定本地文件链接以验收预览和导航。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_UX10_WORKBENCH"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "ux10-workbench-seed",
+          "text": "UX10_WORKBENCH_READY\n\n[ux10-context.md](ux10-context.md)"
+        }
+      }
+    }
+  ]
+}
