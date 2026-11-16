@@ -14,12 +14,15 @@ import { MAX_SKILL_SCAN_DEPTH } from "@zcode/shared";
 import type { ISkillsService } from "../src/skills/skills.js";
 
 const originalHome = process.env.HOME;
+const originalUserProfile = process.env.USERPROFILE;
 const originalProcessLabel = process.env.ZCODE_PROCESS_LABEL;
 const tempHomes: string[] = [];
 
 function makeTempHome(): string {
   const home = mkdtempSync(join(tmpdir(), "zcode-skills-home-"));
   tempHomes.push(home);
+  // 临时目录可能位于操作者仓库内；显式限定工作区根，避免祖先扫描读入真实技能。
+  mkdirSync(join(home, "workspace", ".git"), { recursive: true });
   return home;
 }
 
@@ -28,6 +31,7 @@ async function createSkillsServiceInEnv(
   options?: { isDesktopRuntime?: boolean },
 ): Promise<ISkillsService> {
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   vi.resetModules();
   const mod = await import("../src/skills/skillsService.js");
   return mod.createSkillsService(options);
@@ -141,8 +145,14 @@ function writeCliConfig(home: string, config: Record<string, unknown>): void {
 }
 
 afterEach(() => {
-  process.env.HOME = originalHome;
-  process.env.ZCODE_PROCESS_LABEL = originalProcessLabel;
+  for (const [name, value] of [
+    ["HOME", originalHome],
+    ["USERPROFILE", originalUserProfile],
+    ["ZCODE_PROCESS_LABEL", originalProcessLabel],
+  ] as const) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
   vi.doUnmock("node:fs/promises");
   vi.resetModules();
   while (tempHomes.length > 0) {
@@ -267,6 +277,7 @@ agents-body`,
 
   it("Source user scope does not misclassify the home anchor as a workspace", async () => {
     const home = makeTempHome();
+    mkdirSync(join(home, ".git"));
     writeSkill(
       userSkillRoot(home),
       "source-user-skill",
@@ -499,6 +510,11 @@ body`,
       join(home, ".zcode", "skills", "current-review"),
     );
     expect(result.skills.every((skill) => skill.scope === "user")).toBe(true);
+    expect(
+      result.skills.every(
+        (skill) => skill.path.startsWith(`${home}/`) || skill.path.startsWith(`${home}\\`),
+      ),
+    ).toBe(true);
   });
 
   it("桌面 runtime 用户级 ~/.zcode/skills 没有技能时 fallback 到 ~/.agents/skills", async () => {

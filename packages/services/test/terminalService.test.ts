@@ -22,6 +22,10 @@ import {
 
 const originalShell = process.env.SHELL;
 const originalHome = process.env.HOME;
+const originalUserProfile = process.env.USERPROFILE;
+const originalAppData = process.env.APPDATA;
+const originalLocalAppData = process.env.LOCALAPPDATA;
+const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalLang = process.env.LANG;
 const originalLcAll = process.env.LC_ALL;
 const originalLcCtype = process.env.LC_CTYPE;
@@ -31,6 +35,7 @@ const originalCi = process.env.CI;
 const originalPath = process.env.PATH;
 const originalPathExt = process.env.PATHEXT;
 const originalComSpec = process.env.ComSpec;
+const originalPlatform = process.platform;
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 const tempDirs: string[] = [];
 
@@ -99,13 +104,27 @@ function restoreEnv(name: string, value: string | undefined) {
 }
 
 beforeEach(() => {
+  // 终端规格显式选择平台与配置目录，不能继承操作者的 shell 或系统终端配置。
+  setProcessPlatform("win32");
+  const home = makeTempDir("zcode-terminal-profile-");
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  process.env.APPDATA = join(home, "app-data");
+  process.env.LOCALAPPDATA = join(home, "local-app-data");
+  process.env.XDG_CONFIG_HOME = join(home, ".config");
+  delete process.env.SHELL;
+  prependFakeWindowsShells(["powershell.exe", "cmd.exe"]);
   spawnMock.mockReset();
   spawnMock.mockReturnValue(createMockPty());
 });
 
 afterEach(() => {
-  process.env.SHELL = originalShell;
-  process.env.HOME = originalHome;
+  restoreEnv("SHELL", originalShell);
+  restoreEnv("HOME", originalHome);
+  restoreEnv("USERPROFILE", originalUserProfile);
+  restoreEnv("APPDATA", originalAppData);
+  restoreEnv("LOCALAPPDATA", originalLocalAppData);
+  restoreEnv("XDG_CONFIG_HOME", originalXdgConfigHome);
   restoreEnv("LANG", originalLang);
   restoreEnv("LC_ALL", originalLcAll);
   restoreEnv("LC_CTYPE", originalLcCtype);
@@ -127,14 +146,19 @@ afterEach(() => {
 
 describe("terminalService", () => {
   it("原生 Claude Code 在工作区以 auto 权限启动，目录不拼入 shell 命令", async () => {
+    // POSIX 登录参数属于 Linux 分支；使用受控可执行文件，不依赖宿主是否安装 /bin/sh。
+    setProcessPlatform("linux");
     const cwd = makeTempDir("zcode-claude workspace-$-test-");
-    process.env.SHELL = "/bin/sh";
+    const shell = join(makeTempDir("zcode-terminal-posix-shell-"), "sh");
+    writeFileSync(shell, "");
+    chmodSync(shell, 0o755);
+    process.env.SHELL = shell;
     const service = createTestTerminalService();
     const result = await service.create({ cols: 100, rows: 32, cwd, program: "claude-code" });
 
     expect(result.program).toBe("claude-code");
     expect(spawnMock).toHaveBeenCalledWith(
-      "/bin/sh",
+      shell,
       ["-l", "-c", "exec claude --permission-mode auto"],
       expect.objectContaining({ cwd, cols: 100, rows: 32 }),
     );
@@ -243,6 +267,8 @@ describe("terminalService", () => {
   });
 
   it("should add common macOS command paths for GUI-launched terminal environments", () => {
+    // PATH 分隔符来自 node:path，按宿主平台验证原有 macOS 条件分支。
+    setProcessPlatform(originalPlatform);
     const env = resolveTerminalEnv({
       PATH: "/usr/bin:/bin:/usr/bin",
     });
