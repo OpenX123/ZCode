@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { ServiceChannels, type SourceServerManagementSnapshot } from "@zcode/shared";
+import {
+  ServiceChannels,
+  type SourceServerManagementSnapshot,
+  type SourceServerOperationLog,
+} from "@zcode/shared";
+import { TID_SSH_ERROR } from "@zcode/shared/test-ids";
 import { reloadElectronSessionPreservingBrowserProfile } from "#e2e/helpers/e2e-electron-reload";
 import { callHandoffHost, installHandoffRpcProbe } from "#e2e/helpers/remote-project-handoff-probe";
 import {
@@ -263,7 +268,37 @@ describe(`${MARKER}: packaged 缓存锁真实恢复`, () => {
         await clickVisible("详情", "#zcode-toast-host");
         facts.settingsComponentRetryToastDetails = true;
       } else if (scenario === "wizard") {
-        await clickVisible("更新远端", "[data-testid='ssh-dialog']");
+        // 旧版连接自动尝试更新；可信锁错把主动作投影为“重试”，仍直达原update链。
+        // 先记录真实首次失败，再核实点击后产生新的update日志，不能把旧错误当新动作完成。
+        await waitForLockFailure();
+        const initial = await callHandoffHost<SourceServerManagementSnapshot>(
+          ServiceChannels.SourceServerManagement,
+          "getSnapshot",
+        );
+        const profileId = initial.states.find((item) => item.errorCode === ERROR_CODE)?.profileId;
+        if (!profileId) throw new Error("向导自动升级没有产生真实锁失败");
+        const before = await callHandoffHost<SourceServerOperationLog[]>(
+          ServiceChannels.SourceServerManagement,
+          "getRecentOperationLogs",
+          [profileId],
+        );
+        const latestTimestamp = before.at(-1)?.timestamp;
+        if (latestTimestamp === undefined) throw new Error("向导首次更新没有真实操作日志");
+        await clickVisible("重试", "[data-testid='ssh-dialog']");
+        await browser.waitUntil(
+          async () => {
+            const logs = await callHandoffHost<SourceServerOperationLog[]>(
+              ServiceChannels.SourceServerManagement,
+              "getRecentOperationLogs",
+              [profileId],
+            );
+            return logs.some(
+              (entry) => entry.operation === "update" && entry.timestamp > latestTimestamp,
+            );
+          },
+          { timeout: 30_000, timeoutMsg: "向导原重试没有执行新的真实update操作" },
+        );
+        facts.wizardOriginalRetryExecutedUpdate = true;
       }
       await waitForLockFailure();
       const failedSnapshot = await callHandoffHost<SourceServerManagementSnapshot>(
@@ -392,10 +427,53 @@ describe(`${MARKER}: packaged 缓存锁真实恢复`, () => {
       facts.helperFallbackCount = fallbackCount;
       expect(restartedProfile).toBe(identity.userData);
       facts.sameProfile = true;
+      // 重启创建了新的 Renderer/MessagePort；重新安装只读 probe，避免后续失败丢失真实Host快照。
+      await installHandoffRpcProbe();
+      facts.restartedReadOnlyProbeReady = true;
       await prepareSSHConnectionPage(MARKER);
       await openConnection(config, scenario === "settings" ? "settings" : "project");
-      if (scenario === "wizard") await clickVisible("更新远端", "[data-testid='ssh-dialog']");
-      await waitForSSHDirectoryStep(MARKER, 180_000, { allowBoundaryAcknowledgement: true });
+      const directoryDeadline = Date.now() + 180_000;
+      if (scenario === "wizard") {
+        // 自动升级时旧错误容器仍可显示“更新中”；通用目录helper会将其误判为终态失败。
+        // 先等同profile真实Host在线，再消费原180秒期限的剩余预算，不增加等待或改产品状态。
+        let terminalFailure: string | undefined;
+        await browser.waitUntil(
+          async () => {
+            const snapshot = await callHandoffHost<SourceServerManagementSnapshot>(
+              ServiceChannels.SourceServerManagement,
+              "getSnapshot",
+            );
+            const state = snapshot.states.find(
+              (entry) => entry.profileId === actualFailure.profileId,
+            );
+            if (!state) return false;
+            if (
+              !["bootstrapping", "updating", "retrying"].includes(state.state) &&
+              (state.state === "failed" ||
+                state.state === "identity-change-pending" ||
+                state.state === "needs-install" ||
+                state.upgradeTarget === "controller" ||
+                (state.errorCode && state.errorCode !== "source-server-upgrade-required"))
+            ) {
+              terminalFailure = `${state.state}/${state.errorCode ?? "no-public-code"}`;
+              return true;
+            }
+            if (state.state !== "online") return false;
+            // Host在线可先于React最后一帧；同时等旧错误容器不可见，再交还原目录UI验证。
+            return browser.execute((errorId) => {
+              const error = document.querySelector(`[data-testid="${errorId}"]`);
+              return !error?.getClientRects().length;
+            }, TID_SSH_ERROR);
+          },
+          { timeout: 180_000, timeoutMsg: "向导原入口重连未完成真实Host升级并在线" },
+        );
+        if (terminalFailure) throw new Error(`向导原入口重连终态失败：${terminalFailure}`);
+        facts.wizardReconnectedHostOnline = true;
+        facts.wizardTransientErrorGone = true;
+      }
+      await waitForSSHDirectoryStep(MARKER, Math.max(1, directoryDeadline - Date.now()), {
+        allowBoundaryAcknowledgement: true,
+      });
       if (scenario !== "settings") {
         await fixture.assertRecoveredArchive();
         expect(await readArchiveDownloadCount(archive.fileName)).toBeGreaterThan(downloadsBefore);

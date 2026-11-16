@@ -420,7 +420,9 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 
 三入口必须各验证真实UI动作；完整正常退出→树零→同profile/cache→原UI重试恢复总体至少一条由首装或向导证明。等版Settings重启后没有新更新按钮，只计原连接成功与旧locator失效并如实列出限制，不能冒称A下载或新增产品入口。首装必须执行当前连接步骤内联“安装并继续”，再等待专用锁错，不能只寻找已退役的安装ConfirmDialog。
 
-**2026-11-17阶段状态：OPEN。** `task16-install-20261116-234936`已实际通过真实锁错、脱敏、Main/Explorer精确A、产品原生菜单handler退出、完整旧树归零、仅退出后清A与同profile重启，helper fallback为0；尚未通过重启后的真实A安装。A上传完成后远端exec退出126，源A内`bin/zcode`及`runtime/node`均无执行位，合成目录owner/mode正确。归档生产者缺陷候选分离为Task18，禁止在Task16临时chmod修绿；B fixture由Windows重新tar的同一执行位消费边界也需处理。当前仅阶段提交，三入口最终GREEN、真实取消后确认、严格MODE02/03及独立审查仍未完成，详见ignored `task-16-report.md`。
+**2026-11-17恢复后阶段状态：OPEN。** Task18公开POSIX archive producer已独审批准，新的A与B helper不再受旧执行位阻断。`task16-install-20261117-010344`与`task16-wizard-20261117-012455`真实恢复链已通过，包括A恢复、B/source不变、旧locator消失、完整旧树归零及同profile重启，helper fallback均0。Settings真实online锁失败后，当前单线路主卡无可信cacheRecovery详情入口；包括仍在线的合同缺口交独立Task19，不得用needs-upgrade替代关闭，原生取消/确认尚未执行。原MODE-02/03在原哨兵输入前因terminal.create加载conpty.dll的error206失败，深路径仅为候选，未建junction或修改原spec。实际Agent argv命中生产resolver优先发现的仓库dist，真实随包Agent准入仍OPEN；随包文件hash不替代实际启动路径。当前仅阶段提交、不晋升pending，三入口最终GREEN、严格MODE、实际随包Agent及独立审查仍未完成，详见ignored `task-16-report.md`。
+
+**旧版向导当前动作裁决：** needs-upgrade连接会自动尝试受保护更新；已有可信锁错时主动作是“重试”，由同一handleUpgradeRequiredServer重新执行updateSource。候选先等首次真实锁错，再点击原“重试”并验证新一轮update日志timestamp；不得等被当前锁错替换的旧“更新远端”。同profile重启后从原连接入口显式提交并沿既有自动升级链等待成功，不创建额外产品动作。
 
 - [ ] **Step 1: 准入与受控夹具。** 先catalog/matrix/spec，再fixture/场景。隔离HOME/USERPROFILE/userData/cache覆盖与descriptor/归档；探测真实目标，建立A/B两SHA和owner/.reaping原字节。两种marker都走实际连接/安装或更新，不Renderer注入Error。秘密碰撞保持为合成受控输入，禁止真实凭据。
 - [ ] **Step 2: 构建与真实交互。** 按目标包当前脚本准备匹配Task15的新桌面产物，不和dist依赖测试并行。三入口均验证当前错误、精确按钮与retry/update；两种marker及秘密碰撞至少各触发一条真实链。记录Main原生打开的A目标一致性布尔证据，并至少一次系统层检查文件管理器实际打开A，不只spy/DOM断言。
