@@ -26,6 +26,7 @@ import {
   sanitizeZCodeRuntimeEnv,
 } from "@zcode/shared";
 import {
+  findPackagedZCodeAgentRuntimeNodeBundle,
   findZCodeAgentRuntimeBinary,
   findZCodeAgentRuntimeNodeBundle,
 } from "../runtime-tools/providerRuntimeResolver.js";
@@ -421,6 +422,7 @@ function resolveDeployedZCodeAgentBinaryCommand(
 
 function resolveElectronRuntimeZCodeAgentCommand(
   context: ZCodeAgentCommandResolverContext,
+  bundlePath?: string | null,
 ): ZCodeAgentCommand | null {
   // 桌面打包态：host 跑在 Electron utility process 里，process.execPath 指向 Electron Helper，
   // 它内置的 Node runtime 与 zcode-cli 目标版本一致（Electron 41 = Node 24.x）。
@@ -431,14 +433,14 @@ function resolveElectronRuntimeZCodeAgentCommand(
   if (!process.versions.electron) {
     return null;
   }
-  const bundlePath = findZCodeAgentRuntimeNodeBundle();
-  if (!bundlePath) {
+  const entrypoint = bundlePath === undefined ? findZCodeAgentRuntimeNodeBundle() : bundlePath;
+  if (!entrypoint) {
     return null;
   }
   return {
     command: process.execPath,
-    args: [bundlePath, ...ZCODE_AGENT_RUNTIME.spawnArgs],
-    storagePreparationEntry: bundlePath,
+    args: [entrypoint, ...ZCODE_AGENT_RUNTIME.spawnArgs],
+    storagePreparationEntry: entrypoint,
     cwd: context.workspacePath,
     // 关键：必须以纯 Node 模式启动，否则子进程会被当成 Electron/Chromium 子进程卡在 GPU 初始化。
     env: { ELECTRON_RUN_AS_NODE: "1" },
@@ -460,9 +462,11 @@ export function resolveDefaultZCodeAgentCommand(
     );
   }
 
-  // 顺序：env 显式覆盖 → monorepo dev 源码/dist（dev 改源码立刻生效，不会被远端历史装的 native binary
-  // 抢先匹配）→ 桌面打包态 Electron Node runtime 跑 zcode.cjs → 已部署 native binary（远端 SSH 兜底）。
+  // 修复原因：打包 app 从仓库启动时，Host 继承的 cwd 会让上溯发现的 dist 抢先于随包 Agent。
+  // 只提升 Electron 精确 resources/glm/zcode.cjs；无该资源时仍让 dev 源码先于用户历史 fallback。
+  // 顺序：env 显式覆盖 → 精确随包 JS → monorepo dev → Electron JS fallback → 已部署 native。
   const bundled =
+    resolveElectronRuntimeZCodeAgentCommand(context, findPackagedZCodeAgentRuntimeNodeBundle()) ??
     resolveBundledWorkspaceZCodeAgentCommand(context) ??
     resolveElectronRuntimeZCodeAgentCommand(context);
   return applyPresentationSurfaceToCommand(

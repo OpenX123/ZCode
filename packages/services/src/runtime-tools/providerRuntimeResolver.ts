@@ -140,6 +140,24 @@ export function findZCodeAgentRuntimeBinary(): string | null {
 }
 
 /**
+ * 只查询当前 Electron app 的固定随包 JS，不包含用户历史或仓库候选。
+ * 默认 Agent resolver 可将这个精确资源分支放在开发源码前，而不提升整个 fallback 链。
+ */
+export function findPackagedZCodeAgentRuntimeNodeBundle(): string | null {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  const runtime = ZCODE_AGENT_RUNTIME;
+  return resolveExistingPath([
+    typeof resourcesPath === "string" && resourcesPath
+      ? resolvePath(
+          resourcesPath,
+          runtime.bundledResourceDir,
+          ...runtime.resolveNodeBundleSegments(),
+        )
+      : null,
+  ]);
+}
+
+/**
  * 查找 agent 的 JS bundle（resources/glm/zcode.cjs）。
  * 桌面打包态用 app 内置的 Electron Node runtime 直接执行这个 bundle，不再随包内置独立 Node 二进制。
  * 候选目录与 findZCodeAgentRuntimeBinary 完全平行，只是入口换成平台无关的 nodeBundleEntryFile。
@@ -157,7 +175,7 @@ export function findZCodeAgentRuntimeNodeBundle(): string | null {
   const legacyRoots = resolveLegacyBundledResourceRoots(moduleDir);
 
   const candidates = [
-    packagedResourcesPath ? resolvePath(packagedResourcesPath, ...resourceSegments) : null,
+    findPackagedZCodeAgentRuntimeNodeBundle(),
     resolvePath(homedir(), ".zcode", "server", "agents", ...resourceSegments),
     ...platformScopedRoots.map((root) =>
       root ? resolvePath(root, runtime.bundledResourceDir, ...entrySegments) : null,

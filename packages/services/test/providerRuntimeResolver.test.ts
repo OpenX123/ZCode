@@ -6,6 +6,8 @@ import {
   buildCleanEnv,
   resolveProviderConfigDir,
   findBinary,
+  findPackagedZCodeAgentRuntimeNodeBundle,
+  findZCodeAgentRuntimeNodeBundle,
 } from "../src/runtime-tools/providerRuntimeResolver.js";
 import { setDataBaseDir } from "../src/paths.js";
 
@@ -16,6 +18,49 @@ function restoreEnv(name: string, value: string | undefined): void {
     process.env[name] = value;
   }
 }
+
+describe("providerRuntimeResolver exact packaged node bundle", () => {
+  const originalCwd = process.cwd();
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
+  const originalResourcesPath = Object.getOwnPropertyDescriptor(process, "resourcesPath");
+  const createdDirs: string[] = [];
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    restoreEnv("HOME", originalHome);
+    restoreEnv("USERPROFILE", originalUserProfile);
+    if (originalResourcesPath)
+      Object.defineProperty(process, "resourcesPath", originalResourcesPath);
+    else delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+    for (const dir of createdDirs.splice(0).reverse())
+      rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("精确 resources bundle 存在时优先于用户历史与 cwd bundle，否则保留历史 fallback", () => {
+    const root = mkdtempSync(join(tmpdir(), "zcode-exact-packaged-bundle-"));
+    createdDirs.push(root);
+    const resources = join(root, "resources");
+    const home = join(root, "home");
+    const packagedEntry = join(resources, "glm", "zcode.cjs");
+    const historicalEntry = join(home, ".zcode", "server", "agents", "glm", "zcode.cjs");
+    const cwdEntry = join(root, "bundled-resources", "glm", "zcode.cjs");
+    for (const entry of [packagedEntry, historicalEntry, cwdEntry]) {
+      mkdirSync(join(entry, ".."), { recursive: true });
+      writeFileSync(entry, "isolated bundle fixture\n");
+    }
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    process.chdir(root);
+    Object.defineProperty(process, "resourcesPath", { configurable: true, value: resources });
+
+    expect(findPackagedZCodeAgentRuntimeNodeBundle()).toBe(packagedEntry);
+    expect(findZCodeAgentRuntimeNodeBundle()).toBe(packagedEntry);
+    rmSync(packagedEntry);
+    expect(findPackagedZCodeAgentRuntimeNodeBundle()).toBeNull();
+    expect(findZCodeAgentRuntimeNodeBundle()).toBe(historicalEntry);
+  });
+});
 
 describe("providerRuntimeResolver glm workdir discovery", () => {
   const originalCwd = process.cwd();

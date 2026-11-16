@@ -107,6 +107,9 @@ describe("resolveDefaultZCodeAgentCommand", () => {
   const originalNodeEnv = process.env.NODE_ENV;
   const originalRuntimeEnv = process.env[ZCODE_RUNTIME_ENV_KEY];
   const originalBytecodeEnv = process.env.ZCODE_DESKTOP_AGENT_BYTECODE;
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
+  const originalResourcesPath = Object.getOwnPropertyDescriptor(process, "resourcesPath");
   const originalElectronVersion = Object.getOwnPropertyDescriptor(process.versions, "electron");
   const createdDirs: string[] = [];
 
@@ -125,6 +128,10 @@ describe("resolveDefaultZCodeAgentCommand", () => {
     const dataBaseDir = mkdtempSync(join(tmpdir(), "zcode-agent-manager-data-"));
     createdDirs.push(dataBaseDir);
     setDataBaseDir(dataBaseDir);
+    process.env.HOME = dataBaseDir;
+    process.env.USERPROFILE = dataBaseDir;
+    Object.defineProperty(process, "resourcesPath", { configurable: true, value: undefined });
+    Object.defineProperty(process.versions, "electron", { configurable: true, value: undefined });
   });
 
   afterEach(async () => {
@@ -136,6 +143,11 @@ describe("resolveDefaultZCodeAgentCommand", () => {
     restoreEnv("NODE_ENV", originalNodeEnv);
     restoreEnv(ZCODE_RUNTIME_ENV_KEY, originalRuntimeEnv);
     restoreEnv("ZCODE_DESKTOP_AGENT_BYTECODE", originalBytecodeEnv);
+    restoreEnv("HOME", originalHome);
+    restoreEnv("USERPROFILE", originalUserProfile);
+    if (originalResourcesPath)
+      Object.defineProperty(process, "resourcesPath", originalResourcesPath);
+    else delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
     if (originalElectronVersion)
       Object.defineProperty(process.versions, "electron", originalElectronVersion);
     else delete process.versions.electron;
@@ -151,6 +163,112 @@ describe("resolveDefaultZCodeAgentCommand", () => {
         // Windows 有时仍会有权限问题，忽略即可
       }
     }
+  });
+
+  function createPackagedResolutionFixture(devEntry: "dist" | "src" | null = "dist") {
+    delete process.env.ZCODE_AGENT_SERVER_COMMAND;
+    delete process.env.ZCODE_AGENT_SERVER_ARGS_JSON;
+    delete process.env.ZCODE_AGENT_SERVER_CWD;
+    delete process.env[ZCODE_AGENT_RUNTIME.binaryEnvVar];
+    const root = mkdtempSync(join(tmpdir(), "zcode-packaged-agent-resolver-"));
+    createdDirs.push(root);
+    const resources = join(root, "resources");
+    const packagedEntry = join(resources, "glm", "zcode.cjs");
+    const desktopDir = join(root, "repo", "packages", "desktop");
+    const home = join(root, "home");
+    const historicalEntry = join(home, ".zcode", "server", "agents", "glm", "zcode.cjs");
+    for (const path of [packagedEntry, historicalEntry]) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, "// isolated resolver fixture\n");
+    }
+    mkdirSync(desktopDir, { recursive: true });
+    let sourceEntry: string | undefined;
+    let tsxEntry: string | undefined;
+    if (devEntry) {
+      sourceEntry = join(
+        root,
+        "repo/apps/zcode-cli/packages/cli",
+        devEntry === "dist" ? "dist/zcode.cjs" : "src/main.ts",
+      );
+      mkdirSync(dirname(sourceEntry), { recursive: true });
+      writeFileSync(sourceEntry, "// isolated dev fixture\n");
+      if (devEntry === "src") {
+        tsxEntry = join(root, "repo/node_modules/.bin/tsx");
+        mkdirSync(dirname(tsxEntry), { recursive: true });
+        writeFileSync(tsxEntry, "// isolated tsx fixture\n");
+      }
+    }
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    process.chdir(desktopDir);
+    Object.defineProperty(process, "resourcesPath", { configurable: true, value: resources });
+    Object.defineProperty(process.versions, "electron", { configurable: true, value: "41.0.3" });
+    return { root, packagedEntry, historicalEntry, sourceEntry, tsxEntry };
+  }
+
+  it.each([false, true])(
+    "Electron 精确随包资源优先于祖先仓库 dist，stdio 与 storage 绑定同一 JS：bytecode=%s",
+    (bytecode) => {
+      const { root, packagedEntry } = createPackagedResolutionFixture();
+      process.env.ZCODE_DESKTOP_AGENT_BYTECODE = bytecode ? "1" : "0";
+      const command = resolveDefaultZCodeAgentCommand({
+        presentationSurface: "desktop",
+        workspacePath: root,
+        workspaceIdentity: "isolated-workspace-identity",
+        workspaceKey: "isolated-workspace-identity",
+      });
+
+      expect(command).toEqual({
+        command: process.execPath,
+        args: [packagedEntry, "app-server", "--stdio", "--surface", "desktop"],
+        storagePreparationEntry: packagedEntry,
+        supportsStorageStartup: true,
+        cwd: root,
+        env: { ELECTRON_RUN_AS_NODE: "1" },
+      });
+    },
+  );
+
+  it("显式 Agent command 优先于精确随包资源与祖先仓库 dist", () => {
+    const { root } = createPackagedResolutionFixture();
+    process.env.ZCODE_AGENT_SERVER_COMMAND = "custom-agent";
+    process.env.ZCODE_AGENT_SERVER_ARGS_JSON = '["custom-stdio"]';
+    process.env.ZCODE_AGENT_SERVER_CWD = join(root, "custom-cwd");
+
+    expect(resolveDefaultZCodeAgentCommand({ workspacePath: root, workspaceKey: root })).toEqual({
+      command: "custom-agent",
+      args: ["custom-stdio"],
+      cwd: join(root, "custom-cwd"),
+    });
+  });
+
+  it.each(["dist", "src"] as const)(
+    "Electron 无精确随包资源时，开发 %s 优先于用户历史 bundle",
+    (devEntry) => {
+      const { root, packagedEntry, sourceEntry, tsxEntry } =
+        createPackagedResolutionFixture(devEntry);
+      rmSync(packagedEntry);
+      const command = resolveDefaultZCodeAgentCommand({ workspacePath: root, workspaceKey: root });
+
+      expect(command?.command).toBe(devEntry === "dist" ? process.execPath : tsxEntry);
+      expect(command?.args).toEqual([sourceEntry, "app-server", "--stdio"]);
+      expect(command?.storagePreparationEntry).toBe(devEntry === "dist" ? sourceEntry : undefined);
+      expect(command?.supportsStorageStartup).toBe(true);
+    },
+  );
+
+  it("非 Electron 不使用精确桌面 JS 或历史 JS，保留部署 native fallback", () => {
+    const { root } = createPackagedResolutionFixture(null);
+    Object.defineProperty(process.versions, "electron", { configurable: true, value: undefined });
+    const binaryPath = join(root, process.platform === "win32" ? "zcode-agent.exe" : "zcode-agent");
+    writeFileSync(binaryPath, "isolated native fixture\n");
+    process.env[ZCODE_AGENT_RUNTIME.binaryEnvVar] = binaryPath;
+
+    expect(resolveDefaultZCodeAgentCommand({ workspacePath: root, workspaceKey: root })).toEqual({
+      command: binaryPath,
+      args: ZCODE_AGENT_RUNTIME.spawnArgs,
+      cwd: root,
+    });
   });
 
   it("内置 dist zcode-agent 通过 Electron Node 模式启动", () => {
