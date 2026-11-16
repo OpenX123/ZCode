@@ -1,8 +1,11 @@
 import type { Theme } from "@/useTheme.js";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { DesktopCommandIds } from "@zcode/shared";
+import { Maximize, ZoomIn, ZoomOut } from "lucide-react";
 import { resolveTheme } from "@/useTheme.js";
 import { Card, CardContent } from "@/components/ui/card.js";
 import { Input } from "@/components/ui/input.js";
+import { Button } from "@/components/ui/button.js";
 import { Switch } from "@/components/ui/switch.js";
 import {
   Select,
@@ -19,9 +22,96 @@ import {
 } from "@/settings/SettingsPageParts.js";
 import { getCodePreviewTheme } from "@/lib/codePreviewPreferences.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { usePlatform } from "@/hooks/usePlatform.js";
 import type { CodePreviewSettings } from "@/store/index.js";
 import { THEME_MODES } from "@/settings/settingsPageConfig.js";
 import { MAX_UI_FONT_SIZE_PX, MIN_UI_FONT_SIZE_PX } from "@/lib/uiFontSize.js";
+
+const DESKTOP_ZOOM_MIN_LEVEL = -3;
+const DESKTOP_ZOOM_MAX_LEVEL = 5;
+
+export function DesktopZoomSettingsRow({ isDesktop }: { isDesktop: boolean }) {
+  const { intl } = useZCodeIntl();
+  const platform = usePlatform();
+  const [zoomLevel, setZoomLevel] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+
+    let cancelled = false;
+    let receivedEvent = false;
+    const dispose = platform.onDesktopZoomLevelChanged?.((state) => {
+      if (cancelled || !Number.isFinite(state.zoomLevel)) return;
+      receivedEvent = true;
+      setZoomLevel(state.zoomLevel);
+    });
+    void platform.getDesktopZoomLevel?.().then((state) => {
+      // 窗口事件可能先于异步初值返回；旧初值不能覆盖最新缩放级别。
+      if (!cancelled && !receivedEvent && Number.isFinite(state.zoomLevel)) {
+        setZoomLevel(state.zoomLevel);
+      }
+    }).catch(() => {
+      // 平台查询失败时保持操作禁用，等待后续窗口缩放事件给出权威级别。
+    });
+    return () => {
+      cancelled = true;
+      dispose?.();
+    };
+  }, [isDesktop, platform]);
+
+  if (!isDesktop) return null;
+
+  const controls = [
+    {
+      command: DesktopCommandIds.ZoomOut,
+      label: intl.formatMessage({ id: "titleBar.menu.view.zoomOut" }),
+      Icon: ZoomOut,
+      disabled: zoomLevel === null || zoomLevel <= DESKTOP_ZOOM_MIN_LEVEL,
+      testId: "settings-desktop-zoom-out",
+    },
+    {
+      command: DesktopCommandIds.ResetZoom,
+      label: intl.formatMessage({ id: "titleBar.menu.view.actualSize" }),
+      Icon: Maximize,
+      disabled: zoomLevel === null || zoomLevel === 0,
+      testId: "settings-desktop-zoom-reset",
+    },
+    {
+      command: DesktopCommandIds.ZoomIn,
+      label: intl.formatMessage({ id: "titleBar.menu.view.zoomIn" }),
+      Icon: ZoomIn,
+      disabled: zoomLevel === null || zoomLevel >= DESKTOP_ZOOM_MAX_LEVEL,
+      testId: "settings-desktop-zoom-in",
+    },
+  ];
+
+  return (
+    <SettingsRow
+      controlLayout="wide"
+      label={intl.formatMessage({ id: "settings.desktopZoom" })}
+      description={intl.formatMessage({ id: "settings.desktopZoomDescription" })}
+      control={
+        <div className="flex items-center gap-2">
+          {controls.map(({ command, label, Icon, disabled, testId }) => (
+            <Button
+              key={command}
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              data-testid={testId}
+              aria-label={label}
+              title={label}
+              disabled={disabled}
+              onClick={() => void platform.executeDesktopCommand(command)}
+            >
+              <Icon className="size-4" />
+            </Button>
+          ))}
+        </div>
+      }
+    />
+  );
+}
 
 function FontSizeInput({
   value,
@@ -85,6 +175,7 @@ export function AppearanceSectionContent({
   setTheme,
   uiFontSizePx,
   setUiFontSizePx,
+  isDesktop = false,
 }: {
   codePreviewSettings: CodePreviewSettings;
   setCodePreviewSettings: (settings: Partial<CodePreviewSettings>) => void;
@@ -92,6 +183,7 @@ export function AppearanceSectionContent({
   setTheme: (theme: Theme) => void;
   uiFontSizePx: number;
   setUiFontSizePx: (fontSizePx: number) => void;
+  isDesktop?: boolean;
 }) {
   const { intl } = useZCodeIntl();
   const activePreviewMode = resolveTheme(theme);
@@ -118,7 +210,11 @@ export function AppearanceSectionContent({
               })}
               control={
                 <Select value={theme} onValueChange={(value) => setTheme(value as Theme)}>
-                  <SelectTrigger size="lg" className="w-[260px] min-w-0 justify-between">
+                  <SelectTrigger
+                    size="lg"
+                    className="w-[260px] min-w-0 justify-between"
+                    aria-label={intl.formatMessage({ id: "settings.themeMode" })}
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -136,6 +232,7 @@ export function AppearanceSectionContent({
                 </Select>
               }
             />
+            <DesktopZoomSettingsRow isDesktop={isDesktop} />
             <SettingsRow
               label={intl.formatMessage({ id: "settings.uiFontSize" })}
               description={intl.formatMessage({

@@ -8,6 +8,7 @@ import {
   TID_CHAT_MODEL_SELECT_GROUP,
   TID_CHAT_MODEL_SELECT_TRIGGER,
   TID_SETTINGS_BACK_BUTTON,
+  TID_SETTINGS_LOCALE_SELECT_TRIGGER,
   TID_MODEL_PROVIDER_ADD_PROVIDER_BUTTON,
   TID_MODEL_PROVIDER_ADD_MODEL_BUTTON,
   TID_MODEL_PROVIDER_API_KEY_INPUT,
@@ -138,37 +139,28 @@ describe("设置页 UI polish E2E", () => {
     ).toEqual({ right: "6px", bottom: "6px", top: 6 });
   });
 
-  it("UP-01: 设置与快捷偏好入口分明，菜单按 language、theme、zoom 顺序展示", async function () {
+  it("UP-01: 侧栏主题快捷入口与设置页偏好可达", async function () {
     this.timeout(60000);
 
     const entryLabels = await browser.execute(() => {
-      const preferences = [
-        ...document.querySelectorAll<HTMLElement>('[data-testid="sidebar-preferences-trigger"]'),
+      const shortcut = [
+        ...document.querySelectorAll<HTMLElement>('[data-testid="sidebar-theme-shortcut"]'),
       ].find((element) => element.getBoundingClientRect().width > 0);
-      const footer = preferences?.closest("footer");
+      const footer = shortcut?.closest("footer");
       const settings = footer?.querySelector('[data-testid="task-settings-button"]');
       return {
         settings: settings?.textContent?.trim(),
-        preferences: preferences?.getAttribute("aria-label"),
+        shortcut: shortcut?.getAttribute("aria-label"),
         gearCount: footer?.querySelectorAll("svg.lucide-settings").length,
-        hasSliders: !!preferences?.querySelector("svg.lucide-sliders-horizontal"),
+        hasThemeIcon: !!shortcut?.querySelector("svg.lucide-sun, svg.lucide-moon"),
+        hasOldMenu: !!footer?.querySelector('[data-testid="sidebar-preferences-trigger"]'),
       };
     });
     expect(entryLabels.settings).toMatch(/^(设置|Settings)$/);
-    expect(entryLabels.preferences).toMatch(/^(快捷偏好|Quick preferences)$/);
+    expect(entryLabels.shortcut).toMatch(/^(切换到浅色主题|切换到深色主题|Switch to light theme|Switch to dark theme)$/);
     expect(entryLabels.gearCount).toBe(1);
-    expect(entryLabels.hasSliders).toBe(true);
-
-    await clickVisibleTestId("sidebar-preferences-trigger", {
-      timeout: 15000,
-      timeoutMsg: "侧边栏偏好菜单入口没有出现",
-    });
-
-    await browser.waitUntil(async () => (await readVisibleProfileMenuItems()).length >= 3, {
-      timeout: 15000,
-      timeoutMsg: "偏好菜单的偏好入口没有完整展开",
-    });
-    const menuSnapshot = await readVisibleProfileMenuItems();
+    expect(entryLabels.hasThemeIcon).toBe(true);
+    expect(entryLabels.hasOldMenu).toBe(false);
     if (process.platform === "darwin") {
       // macOS 根框架使用 background-alt；比较语义 utility 的运行时主题色，避免绑定具体色值格式。
       const backgrounds = await browser.execute(() => {
@@ -198,45 +190,16 @@ describe("设置页 UI polish E2E", () => {
       expect(shellChrome).toEqual({ radius: "16px", clipPath: "inset(0px round 16px)" });
     }
 
-    // 圆角规范：独立菜单外壳 lg，选项 md；读取计算样式以覆盖实际 CSS 和业务覆盖。
-    const radii = await browser.execute(() => {
-      const menu = Array.from(
-        document.querySelectorAll<HTMLElement>('[data-slot="dropdown-menu-content"]'),
-      ).find((element) => element.getBoundingClientRect().width > 0);
-      if (!menu) throw new Error("偏好菜单浮层没有出现");
-      return {
-        shell: getComputedStyle(menu).borderTopLeftRadius,
-        items: Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).map(
-          (item) => getComputedStyle(item).borderTopLeftRadius,
-        ),
-      };
-    });
-    expect(radii.shell).toBe("8px");
-    expect(radii.items.length).toBeGreaterThanOrEqual(3);
-    expect(radii.items.every((radius) => radius === "6px")).toBe(true);
-
-    const languageIndex = menuSnapshot.findIndex((text) => /界面语言|Language/.test(text));
-    const themeIndex = menuSnapshot.findIndex((text) => /界面主题|App theme/.test(text));
-    const zoomIndex = menuSnapshot.findIndex((text) => /界面缩放|Interface zoom/.test(text));
-
-    if (languageIndex < 0 || themeIndex < 0 || zoomIndex < 0) {
-      throw new Error(`偏好菜单偏好入口不完整：${JSON.stringify(menuSnapshot)}`);
-    }
-    expect(themeIndex).toBeGreaterThan(languageIndex);
-    expect(zoomIndex).toBeGreaterThan(themeIndex);
-    // 本例遗留的模态菜单会屏蔽下一例真实滚轮；DOM click 不受遮挡，曾掩盖该污染。
-    await browser.keys("Escape");
-    await browser.waitUntil(
-      async () =>
-        (await readVisibleProfileMenuItems()).length === 0 &&
-        (await browser.execute(() => getComputedStyle(document.body).pointerEvents)) !== "none",
-      { timeout: 10000, timeoutMsg: "偏好菜单未关闭或指针屏障尚未释放" },
-    );
-
     await clickVisibleTestId(TID_TASK_SETTINGS_BUTTON);
     await $(sel(TID_SETTINGS_PAGE)).waitForDisplayed({ timeout: 15000 });
-    const back = await $(`${sel(TID_SETTINGS_PAGE)} footer ${sel(TID_TASK_SETTINGS_BUTTON)}`);
-    expect(await back.getText()).toMatch(/返回工作区|Back to workspace/);
+    await clickVisibleTestId(testId(TID_SETTINGS_SECTION_NAV, "general"));
+    await $(sel(TID_SETTINGS_LOCALE_SELECT_TRIGGER)).waitForDisplayed();
+    await $('[role="combobox"][aria-label="界面模式"], [role="combobox"][aria-label="Interface mode"]').waitForDisplayed();
+    await clickVisibleTestId(testId(TID_SETTINGS_SECTION_NAV, "appearance"));
+    await $('[role="combobox"][aria-label="界面主题"], [role="combobox"][aria-label="App theme"]').waitForDisplayed();
+    await $('[data-testid="settings-desktop-zoom-in"]').waitForDisplayed();
+    const back = await $(sel(TID_SETTINGS_BACK_BUTTON));
+    expect(await back.getAttribute("aria-label")).toMatch(/返回工作区|Back to workspace/);
     expect(await back.$("svg.lucide-arrow-left").isExisting()).toBe(true);
     await back.click();
     await $(sel(TID_SETTINGS_PAGE)).waitForDisplayed({ reverse: true, timeout: 15000 });
@@ -263,18 +226,6 @@ describe("设置页 UI polish E2E", () => {
       }),
     ).toEqual({ sidebarWidth: 268, contentOffset: 268, gap: 0 });
   });
-
-  async function readVisibleProfileMenuItems() {
-    return browser.execute(() => {
-      const visibleItems = Array.from(
-        document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
-      ).filter((element) => {
-        const rect = element.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      });
-      return visibleItems.map((element) => element.innerText.trim());
-    });
-  }
 
   it("MP-UI-01: 点击新增供应商后原子创建并直接进入普通详情卡", async function () {
     this.timeout(60000);

@@ -1226,6 +1226,7 @@ export function SettingsPage({
                               setCodePreviewSettings={handleCodePreviewSettingsChange}
                               theme={theme}
                               setTheme={(nextTheme) => handleThemeChange(nextTheme)}
+                              isDesktop={Boolean(isDesktop)}
                               uiFontSizePx={uiFontSizePx}
                               setUiFontSizePx={(fontSizePx) => setUiFontSizePx(fontSizePx)}
                             />

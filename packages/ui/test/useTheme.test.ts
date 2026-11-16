@@ -2,6 +2,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyTheme } from "@/useTheme.js";
+import { createZCodeStore } from "@/store/index.js";
+import type { IBroadcastService } from "@zcode/services";
 
 beforeEach(() => {
   document.head.innerHTML = "";
@@ -85,5 +87,33 @@ describe("applyTheme", () => {
 
     expect(() => applyTheme("zai-dark")).not.toThrow();
     expect(toggle).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("主题偏好广播", () => {
+  it("快捷切换只广播一次，其他窗口应用时不回环", () => {
+    const receivers: Array<(message: { channel: string; payload: unknown }) => void> = [];
+    const sent: Array<{ channel: string; payload: unknown }> = [];
+    const broadcast = {
+      send: vi.fn((message: { channel: string; payload: unknown }) => {
+        sent.push(message);
+        for (const receiver of receivers) receiver(message);
+      }),
+      onMessage: vi.fn((receiver: (message: { channel: string; payload: unknown }) => void) => {
+        receivers.push(receiver);
+        return { dispose: () => {} };
+      }),
+    } as unknown as IBroadcastService;
+    const first = createZCodeStore(broadcast);
+    const second = createZCodeStore(broadcast);
+
+    first.getState().setTheme("zai-light");
+
+    expect(first.getState().theme).toBe("zai-light");
+    expect(second.getState().theme).toBe("zai-light");
+    expect(sent.filter((message) => message.channel === "state:theme")).toEqual([
+      { channel: "state:theme", payload: "zai-light" },
+    ]);
+    expect(localStorage.getItem("zcode-theme")).toBe("zai-light");
   });
 });

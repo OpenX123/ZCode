@@ -9,7 +9,6 @@ import { remoteHostIdFromWorkspaceIdentity } from "@/project-sidebar/contract.js
 import type {
   ProjectSidebarProps,
   VirtualProject,
-  Locale,
   Theme,
   RemoteProjectHost,
 } from "@/project-sidebar/contract.js";
@@ -75,7 +74,7 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
   const remoteSync = useProjectRemoteSync(props, directory);
   const diagnostics = useProjectConnectionDiagnostics(directory, props);
   const onSelectTask = useProjectTaskNavigation(props, tree, remoteService);
-  const { intl, localePreference, setLocalePreference } = useZCodeIntl();
+  const { intl } = useZCodeIntl();
   const tabStore = useTabStoreApi();
   const setTheme = useZCodeStore((state) => state.setTheme);
   const { view, setView } = preferences;
@@ -178,10 +177,6 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
   const openSettings = useCallback(() => {
     tabStore.getState().openSettingsTab();
   }, [tabStore]);
-  const changeLocale = useCallback(
-    (value: string) => setLocalePreference(value as Locale | "system"),
-    [setLocalePreference],
-  );
   const changeTheme = useCallback((value: string) => setTheme(value as Theme), [setTheme]);
   return (
     <ProjectTaskListContext.Provider value={taskPresentation}>
@@ -294,14 +289,8 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
               <WorkspaceSidebarFooter
                 className="pr-3"
                 theme={props.theme}
-                localeMenuValue={localePreference}
-                onLocaleChange={changeLocale}
                 onThemeChange={changeTheme}
                 onSettingsButtonClick={openSettings}
-                workspacePath={props.workspacePath}
-                // 项目侧栏不再从 tab 反推身份；远控入口必须沿用当前 attachment 的精确 scope。
-                workspaceIdentity={props.workspaceIdentity}
-                workspaceRemoteSessionId={props.workspaceRemoteSessionId}
                 isDesktop={props.isDesktop}
                 isWindowsDesktop={props.isWindowsDesktop}
               />

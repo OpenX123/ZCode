@@ -23,7 +23,7 @@ describe("办公与编程模式 M1", () => {
     await clearAppData();
   });
 
-  it("MODE-01 设置页与偏好菜单共用偏好，刷新后保留", async () => {
+  it("MODE-01 设置页切换界面模式，刷新后保留", async () => {
     await clickTestIdByDom(TID_TASK_SETTINGS_BUTTON);
     await $(`[data-testid="${TID_SETTINGS_PAGE}"]`).waitForDisplayed();
     // 界面模式已迁到常规设置并更名 office，旧 appearance/general 断言无法进入待测交互。
@@ -36,7 +36,7 @@ describe("办公与编程模式 M1", () => {
     await clickTestIdByDom(TID_SETTINGS_BACK_BUTTON);
     await switchMode("coding");
     await browser.refresh();
-    await $(`[data-testid="sidebar-preferences-trigger"]`).waitForDisplayed({
+    await $(`[data-testid="sidebar-theme-shortcut"]`).waitForDisplayed({
       timeout: 30000,
     });
     await waitForMode("coding");
@@ -79,7 +79,8 @@ describe("办公与编程模式 M1", () => {
     // xterm 的输入 textarea 位于负 z-index，不能作为真实点击目标；点击可见终端后校验焦点。
     await $("[data-workspace-side-frame] .xterm-screen").click();
     await browser.waitUntil(async () => terminalInput.isFocused());
-    await browser.keys("printf 'MODE_%s\\n' PTY_ALIVE");
+    // Windows 默认 PowerShell 不提供 printf；echo 可在目标 PTY 输出固定哨兵行。
+    await browser.keys("echo MODE_PTY_ALIVE");
     await browser.keys("Enter");
     try {
       await browser.waitUntil(async () =>
@@ -118,21 +119,16 @@ describe("办公与编程模式 M1", () => {
 });
 
 async function switchMode(mode: "office" | "coding") {
-  // Radix 的退出动画期间仍有旧菜单层；等待它卸载，避免下一次点击被当作关闭旧层。
-  await browser.waitUntil(
-    async () => !(await $('[data-slot="dropdown-menu-content"]').isExisting()),
-  );
-  await $(`[data-testid="sidebar-preferences-trigger"]`).waitForDisplayed();
-  await $(`[data-testid="sidebar-preferences-trigger"]`).click();
-  await clickText('[role="menuitem"]', "界面模式");
-  await clickText('[role="menuitemradio"]', mode === "office" ? "办公模式" : "编程模式");
-  await browser.keys("Escape");
+  await clickTestIdByDom(TID_TASK_SETTINGS_BUTTON);
+  await $(`[data-testid="${TID_SETTINGS_PAGE}"]`).waitForDisplayed();
+  await clickTestIdByDom(testId(TID_SETTINGS_SECTION_NAV, "general"));
+  const select = '[role="combobox"][aria-label="界面模式"]';
+  await $(select).waitForDisplayed();
+  await $(select).click();
+  await clickText('[role="option"]', mode === "office" ? "办公模式" : "编程模式");
   await waitForMode(mode);
-  await browser.waitUntil(
-    async () =>
-      (await $(`[data-testid="sidebar-preferences-trigger"]`).getAttribute("aria-expanded")) ===
-      "false",
-  );
+  await clickTestIdByDom(TID_SETTINGS_BACK_BUTTON);
+  await $(`[data-testid="sidebar-theme-shortcut"]`).waitForDisplayed();
 }
 
 async function clickText(selector: string, text: string) {
@@ -156,7 +152,7 @@ async function clickText(selector: string, text: string) {
     );
   } catch (error) {
     const diagnostic = await browser.execute(() => ({
-      trigger: document.querySelector('[data-testid="sidebar-preferences-trigger"]')?.outerHTML,
+      select: document.querySelector('[role="combobox"][aria-label="界面模式"]')?.outerHTML,
       menus: [...document.querySelectorAll('[role*="menu"]')].map((item) => ({
         role: item.getAttribute("role"),
         text: item.textContent,
