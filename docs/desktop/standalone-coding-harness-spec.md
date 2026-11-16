@@ -59,6 +59,8 @@ flowchart TD
 
 旧账号设置仅在磁盘读取边界解码并保留回滚字段；缺少组织信息的旧 Team 连接保持原样。设置服务不查询官方账号、不补齐组织，也不自动修复远端连接。
 
+已发布 `config.json` 的普通按量 API Key 首次升级仍由 Personal Repository 的单向导入器负责：`builtin:bigmodel` 和 `builtin:zai` 分别保留稳定 Provider ID `bigmodel-api`、`zai-api`，关联当前随包模板 `bigmodel-standard-api`、`zai-standard-api`。Provider 身份与模板身份是两个字段，不能随模板重命名改写用户选择；只迁入非空用户 Key，不冻结旧模型名单、旧端点、官方账号或套餐配置。旧文件不变，完成首次导入后以当前 Personal 文件为准，后续用户删除或编辑不会再次导入。导入后的实际解析须使用当前随包模板，保留普通模型可执行性、用户自定义启停、原子写入与备份语义。
+
 搜图等依赖官方 Server MCP 的插件不默认启用。旧插件中的官方鉴权声明继续拒绝解析，不匿名降级请求。
 
 插件目录不再声明或透传 `requiresPaidPlan`，卡片和详情不展示套餐徽标或套餐使用建议。旧目录携带该字段时忽略它，插件安装、配置、启停及普通 MCP OAuth 保持原有链路，不改写会话历史。

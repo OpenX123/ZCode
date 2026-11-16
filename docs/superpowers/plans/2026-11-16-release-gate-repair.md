@@ -217,6 +217,42 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 3: 输出每条根因。** 报告明确 fake 是否漏 ACK/响应 schema、产品是否错误选择 lane、旧 generation 是否误回收新 client、以及插件进程是否受到 MCP 回收影响。给出源位置、最小修复文件、应保留断言与精确后续验证，不在本调查改产品或正式测试。
 - [ ] **Step 4: 交付。** 写真实命令/exit/结果与确认程度，最终短回复报告路径与结论；controller独立审查调查后才为代码修复追加 brief。本任务可以与 Task 4 夹具迁移并行调查，两者不共享写入文件，也不进行 dist 构建。
 
+### Task 7: 对齐手机频道与 Provisioning 触发器的精确合同
+
+**Files:**
+
+- Modify/Test: `packages/desktop/test/windowHostAttachmentRpcPolicy.test.ts`
+- Modify/Test: `packages/shared/test/windowHostControlProtocol.test.ts`
+- Modify（仅清理已退役 Share wrapper 注释）: `packages/desktop/src/host/windowHostAttachmentRpcPolicy.ts`
+- Read: `packages/shared/src/provider-provisioning.ts`、`packages/shared/src/validation.ts`、standalone/mobile-remote spec。
+
+**Interfaces:** 当前 mobile exposure allowlist 和严格 Host 消息 schema 是既有唯一 owner；不扩大手机权限，不修改 schema、不恢复官方触发器。
+
+- [ ] **Step 1: 精确 RED。** 固定 Node 运行两个测试文件，保存旧 46 计数和 `credential` 正向触发器失败证据。
+- [ ] **Step 2: 频道集合验收。** 将旧数字改成独立写明的精确集合比较，预期 ServiceChannels 成员为：File、MediaPreview、System、Git、GitCheckpoint、Setting、OnboardingRecord、Credential、CuaPermission、CuaPipSession、Broadcast、ZCodeTask、WindowController、ZCodeAgent、ZCodeSession、Project、TaskGroups、RemoteProjects、WindowProject、WindowRemoteProjects、WindowProjectChanges、FileWatcher、ProviderSettings、ModelSelection、SourceServerWorkspace、UsageStats、Skills、SkillSync、McpSync、PluginSync、Plugins、PluginManagement、Subagents、Commands、Hooks、Memory、OutputStyle、SettingsSync、Bots、PromptAttachmentTransfer。比较排序后的完整集合；不能从被测集合导出预期。保留 Terminal、SourceServerManagement、ProviderProvisioningTarget、未来未知频道拒绝，desktop 全服务面和真实 RPC 拒绝/允许用例。生产文件仅删已不存在的 Share wrapper 注释，不修改权限。
+- [ ] **Step 3: 触发器验收。** SourceChanged 正向分别覆盖 `personal-config`、`configured-default`，负向覆盖 `credential`、`account-settings`、`environment-online`。Execute 仍允许 `environment-online`，保留 scope、非空身份、未知字段严格拒绝及执行结果断言，不放宽 schema。
+- [ ] **Step 4: GREEN/静态/提交。** 重跑两个精确文件；修改前后架构检查，变更文件格式、diff 检查。报告完整集合、正负协议分支与真实统计，自审后仅提交本任务三文件；controller 独立任务审查，根 typecheck/lint 最终统一执行。
+
+### Task 8: 修复普通 Provider 首次升级的模板关联与测试观察器
+
+**Files:**
+
+- Modify: `packages/services/src/model-provider/legacyPersonalProviderConfigImporter.ts`
+- Modify/Test: `packages/services/test/legacyProviderUpgrade.test.ts`
+- Modify/Test: `packages/services/test/legacyPersonalProviderConfigImporter.test.ts`
+- Modify: `packages/desktop/test/e2e/helpers/desktop-app.ts`
+- Test: `packages/desktop/test/customOpenAIProviderStore.test.ts`
+- Spec: `docs/desktop/standalone-coding-harness-spec.md` 的首次升级合同。
+- Read: 当前 `config/provider/zcode-builtin.json`、`packages/shared/src/legacy-model-provider-identity.ts`、`packages/shared/src/model-provider-types.ts`、Provider access 公开类型/谓词。
+
+**Interfaces:** Personal Repository 独占首次导入及持久化；importer 只输出规则，Resolver 消费当前随包模板。E2E helper 只观察既有 Personal 文件，不引入产品写入或账号依赖。
+
+- [ ] **Step 1: RED 与当前模型合同。** 固定 Node 精确运行三个测试文件（两 services 加 customOpenAIProviderStore），保存失败统计。核实当前随包 templateRules 真正 ID；旧稳定 Provider ID 与模板 ID 同名的假设已失效，不能仅改断言使不可执行 Provider 过关。
+- [ ] **Step 2: 拆开稳定身份与模板关联。** importer 将旧 `builtin:bigmodel` 映射到 providerId=`bigmodel-api`、templateId=`bigmodel-standard-api`，旧 `builtin:zai` 映射到 providerId=`zai-api`、templateId=`zai-standard-api`。不修改共享 `BUILTIN_PROVIDER_TEMPLATE_IDS` 或旧选择迁移函数来改写稳定 Provider ID；在导入边界明确两个字段。只迁非空 Key，保留自定义 Provider、启停、成员及 context 意图；不导入官方账号、旧端点/模型名单或套餐。中文注释说明同一变量同时充当 Provider/模板身份导致当前模板解析丢失的根因。
+- [ ] **Step 3: 回归真实解析。** 更新直接 importer 合同断言，并使升级集成测试使用当前随包模板，分别精确验证稳定 ID、当前 templateId、真实模板端点、GLM-5.3 可执行、四种启停、空 Key 不可执行、后续编辑/删除不再导入、旧 config.json 原文不变。新增/改动测试须先展示旧实现 RED，再改实现；不依靠 undefined===undefined 的端点比较。
+- [ ] **Step 4: 观察手动 Key 兼容。** E2E helper 使用 Provider 包现有公开类型/谓词识别普通 api-key 与存量 `zhipu-coding-plan-api-key` 两种手动 Key；仍将账号等非手动 Key 投影为空，不恢复账号注入。保留现有普通 seed、旧文件不读取与兼容 Key 回归；不输出 Key，报告仅脱敏统计。
+- [ ] **Step 5: GREEN/静态/提交。** 精确重跑三文件，修改前后架构检查；跨 services/provider 边界先读取各 owning context，变更文件格式/diff及定向 lint。报告修复前后、真实命令与统计，只提交本任务文件/必要 spec；独立任务审查。测试 helper 行为无产品 UI 变化，不额外制造 UI E2E。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
