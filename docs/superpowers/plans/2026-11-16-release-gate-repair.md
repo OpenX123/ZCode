@@ -122,6 +122,47 @@ pnpm exec vitest run packages/desktop/test/sourceServerReleaseResolver.test.ts -
 
 - [ ] **Step 4: 架构、格式与提交。** 修改前执行架构检查，阅读已有 resolver 与当前 spec，属于局部既有合同修复无需制造新模块；修改后重跑架构、定向格式与diff检查。自审后只提交本任务源码/测试/对应spec，完整报告写本计划scratch，controller独立派任务审查。根typecheck/lint在整批后执行。
 
+### Task 4: 迁移已退役商业服务的测试边界
+
+**Files（仅测试，不恢复生产功能）:**
+
+| 文件                                                           | 具体迁移与保留验收                                                                                                                                                           |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/client/test/remoteServiceAccess.test.ts`             | client-config 旧读取 case 改为保留的 ProviderSettings RPC 调用；Source management 可选与 window-project 显式能力用例保留；确认不构造 client-config 频道。                    |
+| `packages/desktop/test/hostRemoteWorkspaceServices.test.ts`    | 删除旧订阅/client-config 标识与注入；保留所有真实远端执行服务、模型/Provider 所有者、普通凭据、本地控制端分组与广播边界。                                                    |
+| `packages/desktop/test/remoteConversationShareWiring.test.ts`  | 不再导入已删除 attachment Share wrapper；改验证当前远端服务装配不发布 conversation-share、普通文件/会话服务仍来自 Source；覆盖 SSH/WSL/Docker/server，不能要求已删 wrapper。 |
+| `packages/desktop/test/remoteWorkspaceSessionServices.test.ts` | 移除虚构 conversationShareService fixture 及对应 remote override 断言；保留现有 file/hooks/Provider 远端覆盖与普通全局服务本地 fallback、真实 RPC 闭环。                     |
+| `packages/services/test/conversationShareComposition.test.ts`  | 迁为当前 createLocalServices 装配不含云发布服务，保留普通模型视图与 desktop-attached-remote 的权威模式差异；保留异步 dispose 与独立配置夹具。                                |
+| `packages/services/test/servicesEntryBoundary.test.ts`         | root/node 入口均不再导出官方 Share interface/runtime/error/mock；同时对实际仍存在的 Node-only 服务检查 browser-safe 边界，不能整文件删除。                                   |
+| `packages/services/test/telemetryUserIdLoader.test.ts`         | 验证不再导出/装配旧账号遥测 loader；原“凭据解密失败不删除存量凭据”有独立价值，迁到现有 credential suite，使用临时密文夹具而非恢复旧遥测调用。                                |
+| `packages/shared/test/officialMcpAuthProtocol.test.ts`         | 改为拒绝已退役官方身份注入协议/声明的边界验收；普通 MCP HTTP/OAuth 协议继续由 `packages/shared/test/mcp.test.ts` 的正向用例验证。                                            |
+| `packages/zcode-server-cli/test/coreHttp.test.ts`              | Share 专属 case 改测当前未注册该频道；保留 Host capability/普通 Web 不可伪造/Provisioning 真实 RPC 安全边界，不再装配官方发布服务。                                          |
+| `packages/services/test/credentialService.test.ts`             | 仅在缺少通用覆盖时迁入前述解密失败不删除凭据断言，设置本次临时目录，结束后恢复环境；不读真实凭据。                                                                           |
+
+**Interfaces:**
+
+- Consumes: 当前 services root/node 公开入口、RemoteServiceAccess、远端 service collection、Core HTTP 与 MCP schema 的既有合同。依据 `docs/desktop/standalone-coding-harness-spec.md` 的退役/数据保留规则与 Task 2 清单 R1 对应条目。
+- Produces: 九个原失败规格迁到当前产品边界；迁入普通凭据与保留能力有实际定向运行证据。旧文件名可暂保留作为退役合同测试，不新增生产导出、兼容空实现或 mock 出不存在的模块。
+
+- [ ] **Step 1: RED 与直接 owning source。** 固定 Node 运行九个精确旧规格，JSON/原始日志写本任务 scratch；记录失败标题与导入错误，核当前公开入口/spec。不要将找不到测试文件当作成功，不使用 passWithNoTests。
+- [ ] **Step 2: 按表逐项迁移夹具和断言。** 对退出的公开 surface 用动态 namespace 的存在性验证；对保留功能使用真实 service 注册、RPC 或现有转换函数，不仅修改测试标题。例：
+
+```ts
+const [rootEntry, nodeEntry] = await Promise.all([
+  import("@zcode/services"),
+  import("@zcode/services/node"),
+]);
+for (const entry of [rootEntry, nodeEntry]) {
+  expect(entry).not.toHaveProperty("IConversationShareService");
+  expect(entry).not.toHaveProperty("ConversationShareService");
+}
+```
+
+上述负向断言配合表内普通服务和 RPC 正向验收，不能作为删除整个混合 suite 的理由。若当前生产装配不符合既有退役合同，报告具体证据，controller 单列源码任务；本任务不制造新生产 API。
+
+- [ ] **Step 3: GREEN 与迁入验证。** 运行上述九规格，加上 `packages/services/test/credentialService.test.ts`、`packages/services/test/standaloneProviderRuntime.test.ts`、`packages/shared/test/mcp.test.ts`、`packages/desktop/test/windowHostAttachmentRpcPolicy.test.ts`。最后一个规格的旧 46 数字计数已知另有 R3 任务，若仍失败保留明确独立结果；本任务新增/迁移断言与其余保留 suite 必须实际通过。不触碰其计数、不新增 skip、不修改 timeout。迁入历史读取由 standaloneProviderRuntime 的 `getImportedConversation` 正向/缺失用例覆盖，不恢复云 API。
+- [ ] **Step 4: 静态、自审与提交。** 修改前后运行架构检查、变更测试文件格式/diff 检查。报告逐文件旧失败→新覆盖/原保留覆盖映射、真实命令与统计、潜在未覆盖边界，并只提交本任务测试/必要 spec；独立 controller 派审。真实 UI 未变不为本任务额外添加 E2E；根类型/lint 与完整门禁仍在整批结束执行。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
