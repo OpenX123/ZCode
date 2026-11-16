@@ -253,6 +253,41 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 4: 观察手动 Key 兼容。** E2E helper 使用 Provider 包现有公开类型/谓词识别普通 api-key 与存量 `zhipu-coding-plan-api-key` 两种手动 Key；仍将账号等非手动 Key 投影为空，不恢复账号注入。保留现有普通 seed、旧文件不读取与兼容 Key 回归；不输出 Key，报告仅脱敏统计。
 - [ ] **Step 5: GREEN/静态/提交。** 精确重跑三文件，修改前后架构检查；跨 services/provider 边界先读取各 owning context，变更文件格式/diff及定向 lint。报告修复前后、真实命令与统计，只提交本任务文件/必要 spec；独立任务审查。测试 helper 行为无产品 UI 变化，不额外制造 UI E2E。
 
+### Task 9: 迁移其余退役入口、更新桥与普通模型投影测试
+
+**Files:**
+
+- Remove（有效边界迁入下列 gateway suite）: `packages/client/test/webRemoteControlWindowDirectoryReadiness.test.ts`、`packages/desktop/test/webRemoteControlStatusEvents.test.ts`
+- Modify/Test: `packages/desktop/test/mobileRemoteGateway.test.ts`
+- Modify/Test: `packages/desktop/test/preloadDisposer.test.ts`
+- Modify/Test: `packages/shared/test/processResourceTelemetry.test.ts`
+- Modify/Test: `packages/ui/test/modelSelectionGroups.test.ts`
+- Test: `packages/desktop/test/desktopPlatformUpdates.test.ts`、`packages/shared/test/process-diagnostic.test.ts`、`packages/services/test/standaloneProviderRuntime.test.ts`
+- Read: 当前 mobile client `connect.ts`/`contract.ts`、mobile gateway、preload 更新桥及 standalone/mobile/GitHub update spec。
+
+**Interfaces:** 只迁移测试到现有产品入口，无生产行为变更。手机是用户自托管 Noise 通道，窗口 Host 管 attachment；更新快照由 Main `getUpdateState` 管理，preload 只转发 `onUpdateState` 事件。
+
+- [ ] **Step 1: 精确 RED。** 运行原五个失败规格，保存两个导入失败及旧更新/文档/账号 UI 断言失败；不得 mock 不存在的旧模块。
+- [ ] **Step 2: 手机入口迁移。** 移除两个只针对已删除原厂 helper 的测试文件，逐项写出旧→新覆盖映射。现有 gateway suite 保留真实中继/加密/RPC、设备撤销断连接、窗口关闭、重连等测试；增加 Initialize 接收端创建先于 attach/Host 输出、窗口目录已就绪后选窗口、明确不存在的窗口不创建 Host attachment 三个当前合同验收。复用现有 relay/Noise 夹具和公开 `connectMobileRemoteLink`，不恢复旧 frame ACK/replay helper、原厂 relay 或跨 SSH 手机切换。原取消/迟到“不得发布过期服务”对应现 client 的 pending chooseWindow：在受控远端关闭后才完成选择，验证不会创建 attachment/返回成功；以明确关闭事件同步，不增加 sleep。旧重放机制已退役，当前断线以新链路重连覆盖，不制造等价旧协议。现有选窗/撤销与状态断言要明确指向目标窗口，不把旧 IPC status sender 改名恢复。
+- [ ] **Step 3: 当前更新 bridge。** 把旧 onUpdateReady disposer 覆盖迁到 `onUpdateState`/`PlatformChannels.UpdateState`，实测后续消息停止触发且 removeListener 精确匹配；快照验证 `getUpdateState` 返回 Main 响应，preload 不缓存或立即回放旧状态。断言已退役 onUpdateReady/onUpdateStateChanged/onPostUpdateReleaseNotes/ack 接口不在实际暴露桥中，保留原混合 suite 的其他 IPC disposer。运行 desktopPlatformUpdates 的命令/订阅透传覆盖。
+- [ ] **Step 4: 文档与普通 Provider。** 只替换 processResourceTelemetry 的退役 ARMS 文档属性表要求：文档明确 retired，旧共享兼容纯校验测试保留，另运行 process-diagnostic 对本地异常诊断正负协议验收，不恢复上报器。modelSelectionGroups 旧账号 Team 用例改为 Registry 普通 Personal Provider 自定义名称、API badge、完整原模型成员投影；不按 Family 重裁，不恢复账号 badge/directItems。旧账号历史不可执行另由 standaloneProviderRuntime 覆盖。
+- [ ] **Step 5: GREEN/静态/提交。** 精确运行所有保留/迁入 suite，报告删除文件与实际新断言/旧保留断言的逐项映射，不能把缺测试当通过。架构 before/after、变更文件格式/diff/定向 lint；无生产交互变化无需新 UI E2E。独立任务审查后 controller 统一根门禁。
+
+### Task 10: 迁移文件树的旧手机切换夹具
+
+**Files:**
+
+- Modify/Test: `packages/ui/test/projectFileNavigation.test.ts`
+- Modify/Test: `packages/ui/test/projectFileTree.test.ts`
+- Read: `packages/ui/src/project-sidebar/project-file-navigation.ts`、`useProjectFileTree.ts`、`remote-navigation.ts` 与 mobile-remote spec。
+
+**Interfaces:** 现有 project-sidebar 解析器仅通过已绑定 identity session 或现有 desktop connector 访问远端；hook 的 request generation 是异步打开文件树唯一过期保护。无生产改动，不恢复 webRemoteControlWorkspaceSwitcher。
+
+- [ ] **Step 1: 精确 RED。** 运行两文件，保留旧 switchWorkspace 从未被当前 owner 调用导致的三条失败证据。
+- [ ] **Step 2: 当前入口验收。** navigation 旧 mobile switch 用例替换为绑定 identity session 的目标返回和未绑定无 connector 的 fail-closed；保留本地同名路径不可借用、foreign root 零副作用、desktop 真实 connector/bind 精确参数。当前手机一期只 local-window attachment，不宣称新跨 SSH 能力。
+- [ ] **Step 3: 真正异步 generation 验收。** 将旧 late task switch 用例迁为 hook `openFiles` 通过现有 remote connector 的受控延迟 Promise：连接请求发出后 unmount，再完成连接，断言不能重新打开；另覆盖更新一轮文件请求先完成时旧异步结果不得覆盖。旧 handoff 用例改为同窗口 identity 索引绑定后直接 `openTaskFiles`，无旧切换、无重复 metadata；未绑定拒绝且不能读取同路径本地文件。保留其他 task identity/已绑定/本地/混合场景。使用明确 deferred 完成信号，不固定 sleep、清空有效断言或改生产 timing。
+- [ ] **Step 4: GREEN/静态/提交。** 重跑两文件并保留精确调用/拒绝/过期结果断言，架构 before/after、格式/diff/定向 lint。报告根因及三条旧断言去向，独立审查；本任务无产品行为修改不追加新 UI E2E。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
