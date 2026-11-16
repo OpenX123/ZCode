@@ -193,14 +193,18 @@ async function reclaimExitedLock(lockDir: string): Promise<void> {
   }
   const retiredLockDir = `${lockDir}.${randomUUID()}.stale`;
   try {
-    await reaper.writeFile(JSON.stringify({ pid: process.pid, token: randomUUID() }));
+    try {
+      await reaper.writeFile(JSON.stringify({ pid: process.pid, token: randomUUID() }));
+    } finally {
+      // Windows 会阻止重命名仍有打开文件句柄的目录；先关闭句柄，保留磁盘标记维持回收互斥。
+      await reaper.close();
+    }
     const current = await readLockOwner(lockDir);
     if (owner ? current?.token !== owner.token || !isExitedProcess(owner.pid) : current !== null)
       return;
     // 先原子移走失效锁，再只清理旧目录；新持有者创建同名锁后不会被 finally 误删。
     await rename(lockDir, retiredLockDir);
   } finally {
-    await reaper.close();
     await rm(retiredLockDir, { recursive: true, force: true });
   }
 }

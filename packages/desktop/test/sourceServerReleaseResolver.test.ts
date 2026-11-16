@@ -430,6 +430,41 @@ describe("Source Server release resolver", () => {
     expect(await readdir(fixture.cacheDir)).toEqual([fileName]);
   });
 
+  it("两个并发请求回收同一已退出进程的锁后只下载一次", async () => {
+    const contents = "concurrent-orphaned-lock-archive";
+    const fixture = await bundledRelease(contents);
+    const lockDir = `${fixture.cachePath}.lock`;
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(
+      join(lockDir, "owner.json"),
+      JSON.stringify({ pid: 2147483647, token: "exited-owner" }),
+    );
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(contents));
+    const controller = new AbortController();
+    const requests = Array.from({ length: 2 }, () =>
+      resolveSourceServerReleaseAsset(
+        probe,
+        fixture.assets,
+        target,
+        { fetch },
+        { signal: controller.signal },
+      ),
+    );
+    try {
+      const releases = await Promise.all(requests);
+      expect(releases.map((release) => release.localArchivePath)).toEqual([
+        fixture.cachePath,
+        fixture.cachePath,
+      ]);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(await readFile(fixture.cachePath, "utf8")).toBe(contents);
+      expect(await readdir(fixture.cacheDir)).toEqual([fileName]);
+    } finally {
+      controller.abort();
+      await Promise.allSettled(requests);
+    }
+  });
+
   it.each(["exited-reaper", "old-empty-marker"])(
     "遗留回收标记 %s 立即给出清理提示，保留锁内容且不触发下载",
     async (markerKind) => {
