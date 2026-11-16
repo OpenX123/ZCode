@@ -25,7 +25,23 @@
 
 2026-11-15 已完成：读取当前 `main@1af30808`、基线检查、3 个只读调查子任务，以及 Q1—Q9 产品选择。用户均选择推荐方案，详见设计说明第 2 节。
 
-本轮仅交付设计和计划。未修改应用实现，未启动真实应用复现，未运行类型检查、Lint 或产品回归；以下命令是实施时的执行入口，不是已通过记录。
+设计阶段仅交付本文；用户随后授权按计划实施、验证后推送 GitHub、发布 1.4.1 并更新本机 YCode。实施在独立分支 `codex/conversation-experience-1.4.1` 完成，原调查基线不变。下文复选框保留最初验收清单，不表示所有平台均已实测；当前结果与限制以本节记录为准。
+
+| 任务 | 当前实施结果                                        | 验证边界                                                                                  |
+| ---- | --------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| T01  | 未复现供应商改名闪退，保留生产实现并补回归          | 63 项单测、6 项真实浏览器用例通过；不宣称已修复未复现问题。                               |
+| T02  | 真实 ACP 目录存在 effort 配置，补配置提交与恢复回归 | 116 项单测通过、1 项既有跳过，4 项相关 Electron 场景通过；不伪造模型支持能力。            |
+| T03  | 子任务最终结果落库、取消及失败冷恢复一致            | 相关 core、bootstrap、UI 与 2 项 Electron 场景通过。                                      |
+| T04  | 关键原文与成果常显，历史前插保持成果身份            | 定向单测及真实 Electron 展示、链接操作通过。                                              |
+| T05  | 助手媒体持久化、同 Host 读取及行内展示              | schema、writer、投影和 UI 定向回归及 Electron 场景通过；真实账号及 SSH 未覆盖。           |
+| T06  | 连续 MCP 服务树及尊重手动操作的折叠                 | 179 项最终定向单测及相关 Electron 场景通过；不同来源格式保守断组。                        |
+| T07  | 问题卡显式发送、可收起及按完整请求身份保存草稿      | 84 项最终定向单测、正式 Electron 交互通过；IME 为事件模拟，未实测实体第二设备。           |
+| T08  | 子任务完成摘要与活动入口退场，保留已开详情          | 140 项定向单测及相关 Electron 场景通过；缺真实结果时显示诚实回退。                        |
+| T09  | 同源标题解析与紧凑顶栏占位修复                      | 定向单测及正式标题生成、重命名、恢复与窄窗 Electron 场景通过。                            |
+| T10  | 会话菜单右移与独立文件侧栏保持                      | 193 项定向单测、正式双栏和子任务详情场景通过，另补真实方向键与 Enter；文件侧栏当前只读。  |
+| T11  | 太阳/月亮主题入口与设置页整体窗口缩放               | 23 项单测、新增 3 项 Windows Electron 场景通过；旧 PTY 回归仍有尾随字符失败，独立审查中。 |
+
+T01—T10 已完成逐项独立审查；T11 与整分支审查、最终检查、发布和本机更新尚未完成。已有根格式差异、CLI 未改文件 lint 超限及验证工具告警保留记录，不记作通过。实际运行平台为 Windows；macOS、Linux 和真实 SSH 人工验收未执行。
 
 ## 2. 交付批次与依赖
 
@@ -270,7 +286,7 @@ pnpm exec vitest run packages/ui/test/conversationTurnDeliverables.test.ts packa
 - 原生输入：`apps/zcode-cli/packages/core/src/external-engine/transcript-writer.ts`。
 - 持久化合同：`apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts` 的既有 FilePart/AttachmentStorageMetadata。
 - 投影：`apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts` 与既有流式事件/冷恢复投影入口。
-- 新增输出引用：`packages/shared/src/zcode-protocol-v4/assistant-media.ts`，更新同目录公开入口、`rows.ts` 与 `packages/shared/src/zcode-protocol/index.ts` 的相关运行时合同。
+- 输出引用：在既有 `packages/shared/src/zcode-protocol-v4/rows.ts` 定义同源 AssistantMediaRef schema/type，经既有 V4 公开入口消费；不新增未受管的 `assistant-media.ts` 或第二个协议所有者。
 - 事件合同：`apps/zcode-cli/packages/contracts/src/events/session.events.ts` 的 ModelStreamingPayload 增加同源可选媒体引用，由同一 writer 先落库再通知；不增加另一条媒体推送通道。
 - 测试：现有图片/画廊/preview cards 单测；新增 `packages/ui/test/assistantMediaRendering.test.ts`、`packages/shared/test/assistantMediaRef.test.ts`、`apps/zcode-cli/packages/core/tests/external-engine-media.test.ts`、`apps/zcode-cli/packages/bootstrap/tests/product-projection-assistant-media.test.ts`。
 - 规范：`docs/ui/assistant-preview-cards.md`、`docs/desktop/external-agent-engines-spec.md`；发生协议扩展时同步共享 schema 与 CLI 合同。
@@ -313,7 +329,7 @@ pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/conversation-session/
 
 **文件与责任**
 
-- 新增：`packages/ui/src/v4/conversationMcpGroups.ts`（纯连续分组）。
+- 新增：受管目录 `packages/ui/src/v4/conversation-presentation/conversationMcpGroups.ts`（纯连续分组），经该模块公开入口消费。
 - 新增测试：`packages/ui/test/conversationMcpGroups.test.ts`。
 - 修改：`packages/ui/src/v4/conversationAssistantWorkItems.ts`、`packages/ui/src/ToolCallBlocks/renderers/mcp.tsx`、`packages/ui/src/ToolCallBlocks/ToolLayout.tsx`。
 - 复用并保护：`packages/ui/src/ToolCallBlocks/resolveRenderer.ts` 的专用 renderer 优先级。
@@ -400,7 +416,7 @@ pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/conversation-session/
 
 **文件与责任**
 
-- 修改：`packages/ui/src/subagent-display/SubagentWorkCard.tsx`、`SubagentActivityButton.tsx`、`model.ts`、`contract.ts` 及公开入口。
+- 修改：`packages/ui/src/subagent-display/SubagentWorkCard.tsx`、`SubagentActivityButton.tsx`、`contract.ts` 及公开入口；只读复用 T03 已接通的 `model.ts` 结果摘要与活动状态判定。
 - 必要接线：`packages/ui/src/v4/SessionPane.tsx`，只传既有 manifest/liveIndex，不加第二套运行状态。
 - 详情：`packages/ui/src/app-shell/SubagentSessionSidePane.tsx`，复用现有只读会话。
 - 测试：`packages/ui/test/subagentWorkCard.test.ts`、`subagentDisplayModel.test.ts`、`v4ConversationTurnSubagentCardCollapse.test.ts`；新增 `packages/ui/test/subagentActivityButton.test.ts`。
@@ -476,7 +492,7 @@ if (tab.sessionId) {
 }
 ```
 
-- [ ] 保留 Side Pane 已开文件/子任务 tab 和各自 scope、滚动、编辑状态；工具新操作跟随焦点会话，旧 tab 不切到另一 Host 重新解释路径。
+- [ ] 保留 Side Pane 已开文件/子任务 tab 和各自 scope、预览模式与实际滚动；当前文件预览只读，不新增内置编辑器或宣称覆盖外部编辑器未保存缓冲。会话草稿单独保持；工具新操作跟随焦点会话，旧 tab 不切到另一 Host 重新解释路径。
 - [ ] 以会话容器宽度测试 759/760/761px，并测试文件预览展开导致容器跨阈值；窄屏仅切可见焦点栏，恢复后双栏/比例/草稿/运行均保留。
 - [ ] 覆盖本地与 SSH 相同路径不同 identity、远端断连后点菜单、切焦点后打开文件、关闭预览恢复双栏；不新增 CLI、不自动发消息、不取消运行。
 - [ ] 执行：
@@ -558,6 +574,6 @@ pnpm --dir apps/zcode-cli/packages/bootstrap run typecheck
 - [x] 计划明确区分被折叠、投影丢失和上游未提供；区分静态可解释路径与真实根因。
 - [x] 计划约束不伪造 MCP 执行父子、不复制会话运行状态、不新增标题 owner、不抢用户正在查看的面板。
 - [x] 任务已列出需更新的新旧冲突规范和测试，尤其是单选即提交、子任务入口常驻和终态强制折叠；实施时执行更新。
-- [ ] 每批次可以独立演示，按真实验证填写结果；当前计划中的任务保持未完成。
+- [ ] 每批次可以独立演示，按真实验证填写结果；实施与剩余门槛见第 1 节，不将原始清单视为全平台通过证明。
 
-评审时优先核对设计说明中的用户可见结果与此处任务分界。进入实施可选当前会话逐项执行，或按独立任务交由子代理实现并逐项评审；本次计划交付不自动开始实现。
+评审时优先核对设计说明中的用户可见结果与此处任务分界。设计交付未自动开始实施；后续用户明确授权后，已采用独立工作树、逐任务实施与独立审查。1.4.1 正式版本继续由仓库发布工作流依据远端标签分配，发布前须复核未被占用。
