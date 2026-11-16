@@ -1229,9 +1229,16 @@ export function createRemoteWorkspaceSessionManager(options: {
   }
 
   function disposeRemoteWorkspaceSession(sessionId: string, _reason?: string): void {
-    const route = routesBySessionId.get(sessionId);
+    // 重连已把索引换到 B/C，但 ACK/通知前 Renderer 仍用 A 关 tab；沿现有发布关联
+    // 定位同一 route，并只释放当前 Host session，不能按 target/workspace 误删独立 owner。
+    const route =
+      routesBySessionId.get(sessionId) ??
+      Array.from(routesBySessionId.values()).find(
+        (candidate) => candidate.rendererSessionId === sessionId,
+      );
     if (!route) return;
-    routesBySessionId.delete(sessionId);
+    const currentSessionId = route.descriptor.remoteSessionId;
+    routesBySessionId.delete(currentSessionId);
 
     route.providerProvisioningDispose?.();
     const child = options.windowHostProcessMap.get(route.webContentsId);
@@ -1240,7 +1247,7 @@ export function createRemoteWorkspaceSessionManager(options: {
       clearTimeout(pending.timeout);
       route.pendingRendererAttachment = undefined;
       if (child) detachServicePort(child, pending.attachmentId, "session-disposed");
-      pending.reject(new Error(`远程 workspace session 已释放，sessionId=${sessionId}`));
+      pending.reject(new Error(`远程 workspace session 已释放，sessionId=${currentSessionId}`));
     }
     if (!child) return;
     if (route.rendererAttachmentId) {
@@ -1252,7 +1259,7 @@ export function createRemoteWorkspaceSessionManager(options: {
     child.postMessage({
       type: HostMessageTypes.DisposeRemoteWorkspaceSession,
       requestId: randomUUID(),
-      remoteSessionId: sessionId,
+      remoteSessionId: currentSessionId,
     });
   }
 

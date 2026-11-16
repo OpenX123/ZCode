@@ -32,6 +32,7 @@
 - CLI 拥有会话正文和执行事实，Host 拥有组织态和调度。workspaceIdentity 用于身份，workspacePath 用于文件操作。
 - Source 自动重连保留 Host 的 session/generation 唯一所有权；Main 同步换代 descriptor/转发 route 与 Provisioning 登记，复用 `attachRendererPort` 恢复已有 Desktop。Renderer 注册 services 并以当前窗口、sessionId、attachmentId ACK 后，Main 才提升 candidate、拆旧 attachment 并发送 `RemoteSessionReconnected`；迟到 ACK、连续重连、关闭和 Host 退出不得提交旧代。重连配置重下发与 Desktop 恢复并行，首次连接的 Provisioning 成功屏障保持不变；失败明确清理对应 candidate 并告警，不影响更新的 route。详见 [Provider Provisioning 的 owner/ACK 时序](../remote/provider-provisioning.md#自动触发)。
 - `mobileOnly` scope 重连不自动创建 Desktop attachment，显式桌面 adoption 才沿既有 ACK 提交；保留合法 scope join、取消和 target/owner 隔离，不恢复旧官方手机 `replaceRemoteSession` 桥。自托管手机一期仍只接本地窗口，不扩展跨 SSH。
+- 重连候选尚未通知时，Renderer 的旧 session 关闭请求通过现有 `rendererSessionId` 精确关联到当前 route，以当前 descriptor session 释放 Host scope、配置登记和 attachment。重复或迟到释放不按 target/workspace 匹配后续独立 owner，不保留历史别名表。
 - 删除官方专用 Service、RPC/IPC、preload、WebView、轮询和构建装配；共享安全与执行接口按真实引用保留。
 - 内置目录和运行时随本仓库构建发布。Built-in Source 仅读取明确的随包文件并监听该本地文件，不读写旧 Active/LKG、Endpoint 缓存或刷新控制文件，不提供远端下载、应用 Release、周期检查或刷新接口。Host 向 Agent 传递同一随包路径；Personal 的锁、备份、轮询和原子更新保持原有所有者。默认插件市场使用自托管地址 `https://skill.artai.top/marketplace.json`，沿用 `zcode-plugins-official` 身份与既有安装记录；仅在该身份尚未登记时补种，不覆盖用户已有来源。本地插件与用户显式添加的来源保留，插件分发不依赖原厂账号。
 - Agent 的默认、bootstrap 与 Turbo 源码构建都先清理目标 workspace 包的 dist，再按现有依赖顺序重建；防止已删除源文件的旧 JS 被 Server 整包暂存带入安装包。只清理构建输出，不触及用户数据。

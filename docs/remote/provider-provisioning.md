@@ -69,6 +69,28 @@ Main route 另保留一个有界的“最后已发布给 Renderer 的 sessionId�
 也不得发 A→B。可恢复断线保留该关联供下一代恢复；显式释放、窗口关闭和 Host 退出随 route
 一起清除；`mobileOnly` 不创建该 Desktop 关联。它不保存 Host session 事实或第二份 pending 队列。
 
+Renderer 以旧关联 A 关闭 tab 时，释放入口先按当前 sessionId 精确查 route，未命中才在现有
+route 中按 `rendererSessionId === A` 精确定位。A→B 等 ACK、B ACK 后通知前、A→B→C 尚未发布
+时都释放同一个当前 route：删除当前 descriptor session 的索引、dispose 当前 Provisioning
+登记、回收 pending/active attachment，并向 Host 发送当前 B/C 的 sessionId，不能继续发送 A。
+清除 route 后重复释放为 no-op，旧 ACK/continuation 不再提交或通知；后续独立创建的 route
+不继承这个旧 Renderer 关联，迟到 dispose(A) 不得按 target、workspace 或历史别名误删新 owner。
+
+```mermaid
+sequenceDiagram
+  participant R as Renderer（最后发布关联A）
+  participant M as Main（当前route B/C）
+  participant P as Environment lane
+  participant H as Window Host（会话事实）
+  R->>M: dispose(A)，候选ACK前或通知前
+  M->>M: 仅由当前索引或现有rendererSessionId定位route
+  M->>M: 删除当前B/C索引
+  M->>P: dispose当前登记
+  M->>H: 清理candidate/active attachment
+  M->>H: DisposeRemoteWorkspaceSession(B/C)
+  Note over M,R: 迟到ACK/通知/重复释放不再提交该route
+```
+
 ```mermaid
 sequenceDiagram
   participant H as Window Host（Source/session事实）
