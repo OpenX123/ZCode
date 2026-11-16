@@ -1,11 +1,13 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CREDENTIAL_DECRYPT_ERROR_CODE } from "@zcode/shared";
 import type { ICredentialService } from "../src/credential/credential.js";
 
 const originalHome = process.env.HOME;
+const originalCredentialSecret = process.env.ZCODE_CREDENTIAL_SECRET;
 const tempHomes: string[] = [];
 
 function makeTempHome(): string {
@@ -19,13 +21,17 @@ async function createCredentialServiceInHome(
   onDidMutate?: (event: { operation: "save" | "delete"; key: string }) => void,
 ): Promise<ICredentialService> {
   process.env.HOME = home;
+  process.env.ZCODE_CREDENTIAL_SECRET = "isolated-credential-test-secret";
   vi.resetModules();
   const mod = await import("../src/credential/credentialService.js");
   return mod.createCredentialService({ onDidMutate });
 }
 
 afterEach(() => {
-  process.env.HOME = originalHome;
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
+  if (originalCredentialSecret === undefined) delete process.env.ZCODE_CREDENTIAL_SECRET;
+  else process.env.ZCODE_CREDENTIAL_SECRET = originalCredentialSecret;
 
   while (tempHomes.length > 0) {
     const home = tempHomes.pop();
@@ -78,6 +84,29 @@ describe("credentialService encryption", () => {
     const rawStore = JSON.parse(readFileSync(credentialsFile, "utf-8")) as Record<string, string>;
     expect(rawStore[credentialKey]).toMatch(/^enc:v1:/);
     await expect(service.load(credentialKey)).resolves.toBe("");
+  });
+
+  it("解密失败向调用者报错，保留存量密文和其他普通凭据", async () => {
+    const home = makeTempHome();
+    const onDidMutate = vi.fn();
+    const service = await createCredentialServiceInHome(home, onDidMutate);
+    const credentialKey = "provider:demo:api-key";
+    const credentialsDir = join(home, ".zcode", "v2");
+    const credentialsFile = join(credentialsDir, "credentials.json");
+    await mkdir(credentialsDir, { recursive: true });
+    // 旧遥测用例的通用保护迁到真实凭据服务：损坏密文只能报错，不能隐式删除用户数据。
+    const before = JSON.stringify({
+      [credentialKey]: "enc:v1:invalid",
+      "provider:other:api-key": "isolated-fixture",
+    });
+    await writeFile(credentialsFile, before, "utf8");
+
+    await expect(service.load(credentialKey)).rejects.toMatchObject({
+      code: CREDENTIAL_DECRYPT_ERROR_CODE,
+    });
+    expect(await readFile(credentialsFile, "utf8")).toBe(before);
+    await expect(service.load("provider:other:api-key")).resolves.toBe("isolated-fixture");
+    expect(onDidMutate).not.toHaveBeenCalled();
   });
 
   it("keeps backward compatibility for legacy plaintext values", async () => {

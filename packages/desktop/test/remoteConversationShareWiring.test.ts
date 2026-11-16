@@ -1,76 +1,70 @@
 import { describe, expect, it, vi } from "vitest";
-import { IConversationShareService, type IServiceAccessor } from "@zcode/services";
+import { IFileService, IZCodeSessionService, type IServiceAccessor } from "@zcode/services";
+import { ChannelClient, ChannelServer, createQueuePair } from "@zcode/rpc";
 import { createServerRemoteWorkspaceServiceCollection } from "@desktop/host/remoteWorkspaceServiceCollection.js";
 import { REMOTE_WORKSPACE_RPC_CHANNELS } from "@desktop/host/remoteWorkspaceRpcContract.js";
-import { scopeConversationShareServiceForAttachment } from "@desktop/host/conversationShareAttachmentService.js";
 
-const input = {
-  workspacePath: "/remote/project",
-  workspaceIdentity: "remote:server:device:/remote/project",
-  remoteSessionId: "remote-session",
-  sessionId: "session",
-  selection: { kind: "productTurns" as const, productTurnIds: ["turn"] },
-};
 function fixture() {
-  const preflight = vi.fn(async () => ({ remote: true }));
-  const credential = {
-    load: vi.fn(() => {
-      throw new Error("Desktop 不得读凭据替远端发布");
-    }),
+  const file = {
+    path: "/remote/project/example.txt",
+    content: "source file",
+    offset: 0,
+    bytesRead: 11,
+    totalBytes: 11,
+    truncated: false,
+    isBinary: false,
   };
+  const readTextFile = vi.fn<IFileService["readTextFile"]>(async () => file);
+  const getImportedConversation = vi.fn(async () => ({ title: "本地保留的历史" }));
   const connectionServices = {
     ...Object.fromEntries(REMOTE_WORKSPACE_RPC_CHANNELS.map((key) => [key, {}])),
-    credentialService: credential,
-    conversationShareService: { preflight, publish: vi.fn(), getCapabilities: vi.fn() },
+    fileService: { readTextFile },
+    zcodeSessionService: { getImportedConversation },
   } as unknown as IServiceAccessor;
-  const clientConfigService = { getSnapshot: vi.fn(async () => ({ pluginStoreOrder: null })) };
-  return { clientConfigService, connectionServices, preflight, credential };
+  return { connectionServices, readTextFile, getImportedConversation, file };
 }
 
-describe("R3 远程分享装配", () => {
-  it.each(["ssh", "wsl", "docker"] as const)(
-    "%s 直接使用 Source 分享服务，不读取 Desktop 或远端 Secret",
+describe("退役云分享后的远端服务装配", () => {
+  it.each(["ssh", "wsl", "docker", "server"] as const)(
+    "%s 不发布云分享频道，文件和历史读取仍通过 Source RPC",
     async (targetKind) => {
       const f = fixture();
-      const service = createServerRemoteWorkspaceServiceCollection({ ...f, targetKind }).get(
-        IConversationShareService,
-      );
-      await expect(service.preflight(input)).resolves.toEqual({ remote: true });
-      expect(f.preflight).toHaveBeenCalledWith(input);
-      expect(f.credential.load).not.toHaveBeenCalled();
+      const services = createServerRemoteWorkspaceServiceCollection({ ...f, targetKind });
+      expect(services.get(IFileService)).toBe(f.connectionServices.fileService);
+      expect(services.get(IZCodeSessionService)).toBe(f.connectionServices.zcodeSessionService);
+      const [serverProtocol, clientProtocol] = createQueuePair();
+      const server = new ChannelServer(serverProtocol, "remote-services");
+      const client = new ChannelClient(clientProtocol);
+      const registrations = vi.spyOn(server, "registerChannel");
+      services.exposeOnChannelServer(server);
+      try {
+        expect(registrations.mock.calls.map(([name]) => name)).not.toContain("conversation-share");
+        const file = { path: "/remote/project/example.txt" };
+        await expect(
+          client.getChannel(IFileService.channelName).call("readTextFile", [file]),
+        ).resolves.toEqual(f.file);
+        expect(f.readTextFile).toHaveBeenCalledWith(file);
+        const history = { workspacePath: "/remote/project", contextId: "legacy-context" };
+        await expect(
+          client
+            .getChannel(IZCodeSessionService.channelName)
+            .call("getImportedConversation", [history]),
+        ).resolves.toEqual({ title: "本地保留的历史" });
+        expect(f.getImportedConversation).toHaveBeenCalledWith(history);
+      } finally {
+        client.dispose();
+        server.dispose();
+      }
     },
   );
-  it("server 直连仍禁止分享", async () => {
-    const f = fixture();
-    const service = createServerRemoteWorkspaceServiceCollection({
-      ...f,
-      targetKind: "server",
-    }).get(IConversationShareService);
-    await expect(service.preflight(input)).rejects.toMatchObject({ kind: "feature_disabled" });
-    expect(f.preflight).not.toHaveBeenCalled();
-  });
-  it("手机即使附着可用 Source 也不能发布", async () => {
-    const f = fixture();
-    const raw = createServerRemoteWorkspaceServiceCollection({ ...f, targetKind: "ssh" }).get(
-      IConversationShareService,
-    );
-    const service = scopeConversationShareServiceForAttachment(raw, "web-remote-replayable");
-    await expect(service.preflight(input)).rejects.toMatchObject({ kind: "feature_disabled" });
-    await expect(service.publish({} as never, "op")).rejects.toMatchObject({
-      kind: "feature_disabled",
-    });
-    expect(f.preflight).not.toHaveBeenCalled();
-  });
-  it("重新装配使用新连接，不能保留旧 Source 服务", async () => {
+
+  it("重新装配使用新 Source 文件服务，不保留旧连接", async () => {
     const old = fixture();
     const next = fixture();
     createServerRemoteWorkspaceServiceCollection({ ...old, targetKind: "ssh" });
-    const current = createServerRemoteWorkspaceServiceCollection({
-      ...next,
-      targetKind: "ssh",
-    }).get(IConversationShareService);
-    await current.preflight(input);
-    expect(next.preflight).toHaveBeenCalledOnce();
-    expect(old.preflight).not.toHaveBeenCalled();
+    const current = createServerRemoteWorkspaceServiceCollection({ ...next, targetKind: "ssh" });
+    await current.get(IFileService).readTextFile({ path: "/remote/project/example.txt" });
+    expect(next.readTextFile).toHaveBeenCalledOnce();
+    expect(old.readTextFile).not.toHaveBeenCalled();
   });
 });

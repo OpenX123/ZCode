@@ -35,13 +35,11 @@ async function createProviderFixture(prefix: string): Promise<string> {
   return filePath;
 }
 
-describe("conversation share service composition", () => {
+describe("退役云分享后的本地服务装配", () => {
   beforeEach(() => {
     // 保留真实日志输出，同时让后台初始化错误也能使测试失败。
     vi.spyOn(console, "error");
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      Response.json({ code: 0, data: { configs: {} } }),
-    );
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("装配不得请求官方业务服务"));
   });
 
   afterEach(async () => {
@@ -56,7 +54,7 @@ describe("conversation share service composition", () => {
     }
   });
 
-  it("registers a real API-backed service for a local desktop host", async () => {
+  it("本地 Host 保留模型视图，不注册云发布或账号遥测 loader", async () => {
     const zcodeBuiltinProviderConfigFilePath = await createProviderFixture(
       "zcode-conversation-share-",
     );
@@ -65,15 +63,25 @@ describe("conversation share service composition", () => {
       import("@zcode/services"),
     ]);
 
-    const services = nodeModule.createLocalServices({ zcodeBuiltinProviderConfigFilePath });
+    const services = nodeModule.createLocalServices({
+      zcodeBuiltinProviderConfigFilePath,
+      serviceAuthorityMode: "desktop-local",
+    });
     try {
       await expect(
         services.get(servicesModule.IModelSelectionService).getView(),
       ).resolves.toMatchObject({
         providers: [],
       });
-      const service = services.get(servicesModule.IConversationShareService);
-      expect(typeof service.getCapabilities).toBe("function");
+      expect(
+        services.getOptional(servicesModule.IProviderProvisioningTargetService),
+      ).toBeUndefined();
+      const registerChannel = vi.fn();
+      services.exposeOnChannelServer({ registerChannel });
+      expect(registerChannel.mock.calls.map(([name]) => name)).not.toContain("conversation-share");
+      expect(registerChannel.mock.calls.map(([name]) => name)).not.toContain("telemetry");
+      expect(nodeModule).not.toHaveProperty("createTelemetryUserIdLoader");
+      expect(globalThis.fetch).not.toHaveBeenCalled();
     } finally {
       // 修复原因：同步 dispose 后删 HOME，会让尚未收口的初始化/释放任务晚到写日志，
       // 与 Vitest worker 关闭日志 RPC 竞争；先等待服务释放，再由 afterEach 清理目录。
@@ -81,7 +89,7 @@ describe("conversation share service composition", () => {
     }
   });
 
-  it("keeps desktop-attached remote hosts behind the publishing boundary", async () => {
+  it("desktop-attached-remote 保留模型视图与 Provisioning target 权威差异，不注册云发布", async () => {
     const zcodeBuiltinProviderConfigFilePath = await createProviderFixture(
       "zcode-conversation-share-remote-",
     );
@@ -100,9 +108,14 @@ describe("conversation share service composition", () => {
       ).resolves.toMatchObject({
         providers: [],
       });
-      await expect(
-        services.get(servicesModule.IConversationShareService).getCapabilities(),
-      ).rejects.toMatchObject({ kind: "feature_disabled" });
+      expect(services.get(servicesModule.IProviderProvisioningTargetService).apply).toBeTypeOf(
+        "function",
+      );
+      const registerChannel = vi.fn();
+      services.exposeOnChannelServer({ registerChannel });
+      expect(registerChannel.mock.calls.map(([name]) => name)).not.toContain("conversation-share");
+      expect(registerChannel.mock.calls.map(([name]) => name)).not.toContain("telemetry");
+      expect(globalThis.fetch).not.toHaveBeenCalled();
     } finally {
       await nodeModule.disposeServiceResourcesAndWait(services);
     }

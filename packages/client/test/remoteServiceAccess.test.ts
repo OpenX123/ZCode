@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { IChannel, IChannelClient } from "@zcode/rpc";
-import { ISourceServerManagementService } from "@zcode/services";
+import { IProviderSettingsService, ISourceServerManagementService } from "@zcode/services";
 import { RemoteServiceAccess } from "../src/remoteServiceAccess.js";
 
 const channel: IChannel = {
@@ -9,8 +9,9 @@ const channel: IChannel = {
 };
 
 describe("RemoteServiceAccess", () => {
-  it("公开配置经独立频道 RPC 读取", async () => {
-    const call = vi.fn(async () => ({ pluginStoreOrder: null }));
+  it("Provider 设置经保留频道 RPC 读取，不构造已退役的 client-config", async () => {
+    const view = { revision: 1, providerTemplates: [], providerOrder: [], providers: [] };
+    const call = vi.fn(async () => view);
     const requested: string[] = [];
     const services = new RemoteServiceAccess({
       getChannel: (name) => {
@@ -18,11 +19,11 @@ describe("RemoteServiceAccess", () => {
         return { call, listen: vi.fn() } as IChannel;
       },
     });
-    expect(await services.clientConfigService.getSnapshot({ forceRefresh: true })).toEqual({
-      pluginStoreOrder: null,
-    });
-    expect(requested).toContain("client-config");
-    expect(call.mock.calls[0]?.slice(0, 2)).toEqual(["getSnapshot", [{ forceRefresh: true }]]);
+    expect(await services.providerSettingsService.getView()).toEqual(view);
+    expect(requested).toContain(IProviderSettingsService.channelName);
+    expect(call.mock.calls[0]?.slice(0, 2)).toEqual(["getView", []]);
+    expect(requested).not.toContain("client-config");
+    expect(services).not.toHaveProperty("clientConfigService");
   });
 });
 
