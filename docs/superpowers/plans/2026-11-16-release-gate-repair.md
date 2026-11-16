@@ -358,6 +358,18 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 3: GREEN与交互。** 完整精确UI规格通过；运行现有subagent工作卡Electron场景，必要时增加结束后mini消失但已开详情保持的断言。只按目标包真实入口执行，遵循E2E case lifecycle/spec；不把静态HTML单测当交互E2E通过。原T08无需重新大范围审查。
 - [ ] **Step 4: 静态/自审/提交。** DESIGN.md、架构before/after及UI相关context；定向格式/lint/diff，完整报告真实UT/E2E统计与环境边界，独立审查。
 
+#### Task 13 E2E 阶段：最终包的三配置验收
+
+源码与 UT 已独立通过，真实 E2E 仍 OPEN；Task16 交接最终匹配包并释放执行窗口后，恢复原实施者，不重做源码/UT。先更新所属 spec/catalog/matrix 与缺失的 canonical case manifest，再扩展原 pending 候选，不擅自晋升。
+
+- 原 SAT31–SAT33 显式 mini：Agent 运行时通过真实 UI 切 mini，保留成员详情、流式内容和原停止动作；cancelled 后父 summary shell 卸载，同一 child tab/header 保持并显示 cancelled。
+- 原 UX08 默认 auto：真实菜单选 auto，保留 A/B、部分完成、SQLite/Timeline、刷新及最终正文断言。全部结束且无其他有效摘要后，实测父 conversation 容器 `<1280` 和 `>=1280` 时均无 shell；同一 child tab 和恢复显示后的 header、`UX08_RESULT_B` 保持。
+- 独立 runner 只 grep 原 UX08、显式 panel：测试专用变量严格枚举 `auto|panel`，非法值立即失败；模式仍通过真实 UI 点击。全部结束后保留已结束目录与计数 2，运行计数均 0；再真实点击“收起为胶囊”，mini 卸载，原详情/最终正文保持。
+
+两个 runner 执行上述三个配置：原 spec 两个 it（mini + auto），独立 HOME/runId 仅 UX08（panel）。保留 case replay `maxMatches=1`，不在同一回放生命周期耗尽 matcher、不放宽超时。禁止 Fiber/props/store 写入制造模式，模式 owner 仍为原 UI，运行事实仍来自 CLI。
+
+保存父 pane scope，不能因打开 child 后焦点改变而误读。量测真实 conversation 容器宽度，不用 window 宽度代替；可通过原 Side Pane visibility toggle 取得宽度并保留 child tab，禁止关 tab 换宽度；finally 恢复窗口、侧栏和面板状态。不可达则明确未覆盖，不能造 CSS 尺寸。启动前核包绝对路径/hash、generated wrapper、编译 bridge 与真实随包 Agent，显式 common+case replay、独立 profile/cache，无真实凭据、不重建共享包。报告追加三配置实际结果、宽度、详情身份/正文证据、命令/退出码/产物路径，再独立审查 E2E 增量，整体 Task13 才能关闭。
+
 ### Task 14: 设计可操作的本地资源锁恢复诊断出口
 
 **Files:** Read-only `sourceServerReleaseResolver.ts` 与测试、shared source-server connectionErrors/connectionLog、Host sourceOperationLogs/连接失败出口、Main desktopRemoteSessions、实际Renderer连接错误与日志展示；对应standalone spec。
