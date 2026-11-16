@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createElement } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Emitter } from "@zcode/rpc";
 import { ZCODE_VERSION } from "@zcode/shared";
@@ -30,7 +30,16 @@ const showToast = vi.hoisted(() => vi.fn());
 vi.mock("@/components/ui/toast.js", () => ({ toast: showToast }));
 const confirmDialog = vi.hoisted(() => vi.fn(async () => true));
 vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => confirmDialog }));
-beforeEach(() => confirmDialog.mockReset().mockResolvedValue(true));
+let clipboardDescriptor: PropertyDescriptor | undefined;
+let scrollIntoViewDescriptor: PropertyDescriptor | undefined;
+beforeEach(() => {
+  confirmDialog.mockReset().mockResolvedValue(true);
+  clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "scrollIntoView",
+  );
+});
 const platform = vi.hoisted(() => ({
   openSourceServerCacheRecoveryDirectory: vi.fn(async () => ({ success: true })),
   listSSHConfigAliases: vi.fn(async () => []),
@@ -80,12 +89,245 @@ function identityPendingSnapshot(
   };
 }
 
+function onlineCacheRecoverySnapshot(profileId = "preferred") {
+  const snapshot = identityPendingSnapshot("installed", profileId);
+  const cacheRecovery = {
+    kind: "source-server-cache-lock" as const,
+    version: ZCODE_VERSION,
+    target: "linux-x64" as const,
+    sha256: "c".repeat(64),
+  };
+  const state = snapshot.states.find((candidate) => candidate.profileId === profileId)!;
+  Object.assign(state, {
+    state: "online",
+    updateAvailability: "none",
+    errorCode: "source-server-cache-lock-interrupted",
+    retryable: false,
+    error: "safe",
+    cacheRecovery,
+  });
+  return { snapshot, state, cacheRecovery };
+}
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  if (clipboardDescriptor) Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
+  else Reflect.deleteProperty(navigator, "clipboard");
+  if (scrollIntoViewDescriptor)
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", scrollIntoViewDescriptor);
+  else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
 
 describe("SourceServerManagementPanel", () => {
+  it("缓存恢复当前在线设备从默认主卡详情精确定位并走原更新重试", async () => {
+    const { snapshot, cacheRecovery } = onlineCacheRecoverySnapshot();
+    const updateSource = vi.fn().mockRejectedValue(new Error("safe"));
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(
+      createElement(SourceServerManagementPanel, {
+        management: {
+          getSnapshot: async () => snapshot,
+          onDidChangeState: new Emitter().event,
+          updateSource,
+        } as never,
+      }),
+    );
+    const details = await screen.findByRole("button", { name: "remote.action.details" });
+    expect(screen.getAllByRole("button", { name: "remote.action.details" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "remote.action.update-server" })).toBeNull();
+    fireEvent.click(details);
+    fireEvent.click(await screen.findByRole("button", { name: "remote.cacheRecovery.locate" }));
+    await waitFor(() =>
+      expect(platform.openSourceServerCacheRecoveryDirectory).toHaveBeenCalledExactlyOnceWith(
+        cacheRecovery,
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "remote.cacheRecovery.copySteps" }));
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("remote.cacheRecovery.steps");
+    expect(document.body.textContent).not.toContain(cacheRecovery.sha256);
+    fireEvent.click(screen.getByRole("button", { name: "remote.action.retry" }));
+    await waitFor(() =>
+      expect(updateSource).toHaveBeenCalledExactlyOnceWith({
+        profileId: "preferred",
+        force: false,
+      }),
+    );
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        "sourceServer.updateFailedToast",
+        expect.objectContaining({ actionLabel: "remote.action.details" }),
+      ),
+    );
+  });
+
+  it.each(["缺少 locator", "非法 locator", "错误 code", "正常 online"])(
+    "缓存恢复当前在线设备严格拒绝不可信恢复入口：%s",
+    async (boundary) => {
+      const { snapshot, state } = onlineCacheRecoverySnapshot();
+      if (boundary === "缺少 locator") delete state.cacheRecovery;
+      if (boundary === "非法 locator") state.cacheRecovery!.sha256 = "invalid";
+      if (boundary === "错误 code") state.errorCode = "remote-permission-denied";
+      if (boundary === "正常 online") {
+        delete state.error;
+        delete state.errorCode;
+        delete state.cacheRecovery;
+      }
+      const onDisconnectSource = vi.fn(async () => {});
+      const updateSource = vi.fn();
+      render(
+        createElement(SourceServerManagementPanel, {
+          management: {
+            getSnapshot: async () => snapshot,
+            onDidChangeState: new Emitter().event,
+            updateSource,
+          } as never,
+          onDisconnectSource,
+        }),
+      );
+      await screen.findByText("Reinstalled server");
+      if (boundary === "错误 code") {
+        // 普通权限错误仍用原主动作详情；严格 locator 不能把错误 code 升格为缓存恢复。
+        expect(screen.getAllByRole("button", { name: "remote.action.details" })).toHaveLength(1);
+        fireEvent.click(screen.getByRole("button", { name: "remote.action.details" }));
+        expect(await screen.findByRole("dialog")).toBeTruthy();
+      } else expect(screen.queryByRole("button", { name: "remote.action.details" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "remote.cacheRecovery.locate" })).toBeNull();
+      expect(platform.openSourceServerCacheRecoveryDirectory).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: "remote.action.update-server" })).toBeNull();
+      expect(updateSource).not.toHaveBeenCalled();
+      if (boundary === "正常 online") {
+        fireEvent.click(screen.getByRole("button", { name: "remote.action.disconnect" }));
+        await waitFor(() =>
+          expect(onDisconnectSource).toHaveBeenCalledExactlyOnceWith("old-source"),
+        );
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "缓存恢复多线路主卡与折叠入口严格隔离 owner：当前线路有恢复错误 %s",
+    async (currentHasRecovery) => {
+      const { snapshot, state, cacheRecovery } = onlineCacheRecoverySnapshot("other");
+      const otherRecovery = {
+        ...cacheRecovery,
+        target: "darwin-arm64" as const,
+        sha256: "d".repeat(64),
+      };
+      snapshot.states[0] = {
+        ...snapshot.states[0]!,
+        state: "failed",
+        errorCode: "source-server-cache-lock-interrupted",
+        error: "other safe",
+        cacheRecovery: otherRecovery,
+        updatedAt: 9,
+      };
+      if (!currentHasRecovery) {
+        delete state.errorCode;
+        delete state.error;
+        delete state.cacheRecovery;
+      }
+      const updateSource = vi.fn().mockRejectedValue(new Error("safe"));
+      const { container } = render(
+        createElement(SourceServerManagementPanel, {
+          management: {
+            getSnapshot: async () => snapshot,
+            onDidChangeState: new Emitter().event,
+            updateSource,
+          } as never,
+        }),
+      );
+      await screen.findByText("Reinstalled server");
+      expect(container.querySelector("[data-device-connection]")!.textContent).toContain(
+        "other.example.com",
+      );
+      expect(screen.queryByText("dev@preferred.example.com:22")).toBeNull();
+      if (currentHasRecovery) {
+        fireEvent.click(screen.getByRole("button", { name: "remote.action.details" }));
+        fireEvent.click(await screen.findByRole("button", { name: "remote.cacheRecovery.locate" }));
+        await waitFor(() =>
+          expect(platform.openSourceServerCacheRecoveryDirectory).toHaveBeenCalledExactlyOnceWith(
+            cacheRecovery,
+          ),
+        );
+        fireEvent.click(screen.getByRole("button", { name: "remote.action.retry" }));
+        await waitFor(() =>
+          expect(updateSource).toHaveBeenCalledExactlyOnceWith({
+            profileId: "other",
+            force: false,
+          }),
+        );
+        fireEvent.click(screen.getByRole("button", { name: "common.close" }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      } else expect(screen.queryByRole("button", { name: "remote.action.details" })).toBeNull();
+      fireEvent.click(
+        screen.getByRole("button", { name: "settings.source.otherSavedConnections" }),
+      );
+      const otherLine = screen.getByText("dev@preferred.example.com:22").parentElement!;
+      fireEvent.click(within(otherLine).getByRole("button", { name: "remote.action.details" }));
+      fireEvent.click(await screen.findByRole("button", { name: "remote.cacheRecovery.locate" }));
+      await waitFor(() =>
+        expect(platform.openSourceServerCacheRecoveryDirectory).toHaveBeenLastCalledWith(
+          otherRecovery,
+        ),
+      );
+      expect(platform.openSourceServerCacheRecoveryDirectory).toHaveBeenCalledTimes(
+        currentHasRecovery ? 2 : 1,
+      );
+      if (!currentHasRecovery) expect(updateSource).not.toHaveBeenCalled();
+    },
+  );
+
+  it("缓存恢复当前在线设备快照恢复后清除入口与旧定位并抑制迟到结果", async () => {
+    const fixture = onlineCacheRecoverySnapshot();
+    let snapshot = fixture.snapshot;
+    const emitter = new Emitter();
+    const pending = Promise.withResolvers<{ success: boolean }>();
+    platform.openSourceServerCacheRecoveryDirectory.mockReturnValueOnce(pending.promise);
+    const { container } = render(
+      createElement(SourceServerManagementPanel, {
+        management: {
+          getSnapshot: async () => snapshot,
+          onDidChangeState: emitter.event,
+        } as never,
+      }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "remote.action.details" }));
+    fireEvent.click(await screen.findByRole("button", { name: "remote.cacheRecovery.locate" }));
+    await waitFor(() =>
+      expect(platform.openSourceServerCacheRecoveryDirectory).toHaveBeenCalledExactlyOnceWith(
+        fixture.cacheRecovery,
+      ),
+    );
+    await act(async () => {
+      snapshot = {
+        ...snapshot,
+        generation: 2,
+        states: [
+          { profileId: "preferred", sourceServerId: "old-source", state: "online", updatedAt: 2 },
+        ],
+      };
+      emitter.fire(undefined);
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "remote.cacheRecovery.locate" })).toBeNull(),
+    );
+    expect(
+      container.querySelector('[data-source-server-card="old-source"]')!.textContent,
+    ).not.toContain("remote.action.details");
+    expect(screen.queryByRole("button", { name: "remote.action.retry" })).toBeNull();
+    // 沿用既有 Dialog 生命周期：快照更新不强制关闭，但不得再操作旧 locator。
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    await act(async () => pending.resolve({ success: true }));
+    expect(screen.queryByText("remote.cacheRecovery.opened")).toBeNull();
+    expect(platform.openSourceServerCacheRecoveryDirectory).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "common.close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByRole("button", { name: "remote.action.details" })).toBeNull();
+    expect(screen.getByRole("button", { name: "remote.action.disconnect" })).toBeTruthy();
+  });
+
   it("缓存恢复未完成 Profile 可从实际详情入口定位，并保持原连接重试", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.servers = [];

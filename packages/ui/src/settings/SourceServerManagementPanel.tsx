@@ -576,6 +576,17 @@ export function SourceServerManagementPanel({
     }
   };
 
+  const renderErrorDetailsButton = (profile: ConnectionProfile, size: "xs" | "sm") => (
+    <Button
+      type="button"
+      variant="ghost"
+      size={size}
+      onClick={() => setErrorDetailsProfile(profile)}
+    >
+      {intl.formatMessage({ id: "remote.action.details" })}
+    </Button>
+  );
+
   const renderProfile = (profile: ConnectionProfile, server?: SourceServerRecord) => {
     const state = stateByProfile.get(profile.profileId);
     const isOnline = state?.state === "online";
@@ -661,16 +672,9 @@ export function SourceServerManagementPanel({
             </Button>
           ) : null}
           {identityChangePending ? renderIdentityConfirmation(profile, "xs") : null}
-          {parseSourceServerCacheRecovery(state?.errorCode, state?.cacheRecovery) ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              onClick={() => setErrorDetailsProfile(profile)}
-            >
-              {intl.formatMessage({ id: "remote.action.details" })}
-            </Button>
-          ) : null}
+          {parseSourceServerCacheRecovery(state?.errorCode, state?.cacheRecovery)
+            ? renderErrorDetailsButton(profile, "xs")
+            : null}
           <Button
             type="button"
             variant="ghost"
@@ -839,6 +843,19 @@ export function SourceServerManagementPanel({
           const actionProfile =
             serverProfiles.find((profile) => profile.profileId === presentation.profileId) ??
             preferredProfile;
+          const displayedState = displayedProfile
+            ? stateByProfile.get(displayedProfile.profileId)
+            : undefined;
+          // 等版更新失败仍可在线且没有更新横幅，恢复详情必须跟随当前显示线路的失败事实。
+          const showCacheRecoveryDetails =
+            parseSourceServerCacheRecovery(
+              displayedState?.errorCode,
+              displayedState?.cacheRecovery,
+            ) &&
+            !(
+              actionProfile?.profileId === displayedProfile?.profileId &&
+              ["security", "details"].includes(presentation.primaryAction)
+            );
           const deviceBusy = busyScopes.has(`source:${server.sourceServerId}`);
           const actionBusy =
             busyOperations.has(`disconnect:${server.sourceServerId}`) ||
@@ -1141,6 +1158,9 @@ export function SourceServerManagementPanel({
                       })}
                     </Button>
                   ) : null}
+                  {showCacheRecoveryDetails && displayedProfile
+                    ? renderErrorDetailsButton(displayedProfile, "sm")
+                    : null}
                   {presentation.primaryAction === "update-desktop" && preferredProfile ? (
                     <Button
                       type="button"
