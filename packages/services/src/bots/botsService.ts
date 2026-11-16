@@ -855,6 +855,7 @@ export function createBotsService(
     disposeAllAndWait(): Promise<void>;
   };
   let shutdownPromise: Promise<void> | null = null;
+  let startupPromise: Promise<void> | undefined;
 
   function onDeliveryResult(bot: BotConfig, deliveryError: string | undefined): void {
     // 收消息正常不代表回复已投递，不能把投递错误混成连接错误。
@@ -1590,13 +1591,14 @@ export function createBotsService(
     if (!context.group?.enabled || !context.activeTaskId || shutdownPromise) return;
     const bot = findBot(await repo.readConfig(), context.botId);
     if (
+      shutdownPromise ||
       !bot?.enabled ||
       !isFeishuBotProvider(bot.provider) ||
       bot.providerUserId !== context.group.ownerId
     )
       return;
     // 恢复仅订阅后续事件；远端断开时不建立新连接，也不重放已接收输入。
-    if (!(await isRemoteWorkspaceConnected(context))) return;
+    if (!(await isRemoteWorkspaceConnected(context)) || shutdownPromise) return;
     await watchTaskStream(
       bot,
       {
@@ -6020,6 +6022,9 @@ export function createBotsService(
     ).onDynamicTaskEvent;
     // Bugfix: 远控/共享 host 场景会通过 workspace+task mirror 分发流事件。
     // 这里优先订阅 workspace 级事件，避免只监听本地 taskId relay 时漏掉 channel 回复。
+    // 启动恢复可能已在解析 task service/权限时被释放；taskStreamHub.dispose 不阻止
+    // 后续 add，必须在无 await 的订阅提交点再次检查现有关闭 owner，防止晚到重建。
+    if (shutdownPromise) return;
     const streamDisposable = taskStreamHub.add(
       JSON.stringify([
         getWorkspaceKey(context.workspacePath, context.workspaceIdentity),
@@ -9894,19 +9899,28 @@ export function createBotsService(
         telegramRuntime.dispose(),
         weixinRuntime.dispose(),
         feishuRuntime.dispose(),
+        // 启动读取与 runtime 无活动连接时也会持有 Repo 文件锁；只等 runtime.dispose
+        // 会在这些 IO 尚未完成时返回，使 Host 清理临时目录与锁释放竞争。
+        startupPromise,
       ]).then(() => undefined);
       return shutdownPromise;
     },
   };
   if (runStartupBackgroundTasks) {
     // 私聊恢复轮询不再无条件启动：下方启动对账遇到私聊上下文时经 reconcilePrivateSynchronization 启动。
-    void telegramRuntime.refresh();
-    void weixinRuntime.refresh();
-    void feishuRuntime.refresh();
-    void ensureBotStorageMigrated()
+    const refreshes = [
+      ["Telegram polling", telegramRuntime.refresh()],
+      ["Weixin polling", weixinRuntime.refresh()],
+      ["Feishu WebSocket", feishuRuntime.refresh()],
+    ] as const;
+    const initialization = ensureBotStorageMigrated()
       .then(async () => {
+        if (shutdownPromise) return;
         for (const context of Object.values((await repo.readState()).bots)) {
+          // 释放可能发生在任一次 Repo await 内；晚到的启动投影不能重新接纳恢复工作。
+          if (shutdownPromise) return;
           await restoreGroupSynchronization(context);
+          if (shutdownPromise) return;
           if (!context.group) await reconcilePrivateSynchronization(context.botId);
         }
       })
@@ -9917,6 +9931,17 @@ export function createBotsService(
           `Bot storage initialization failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       });
+    startupPromise = Promise.all([
+      initialization,
+      ...refreshes.map(([name, pending]) =>
+        pending.catch((error: unknown) => {
+          botsLogger.warn(
+            undefined,
+            `refresh ${name} failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }),
+      ),
+    ]).then(() => undefined);
   }
   return service;
 }

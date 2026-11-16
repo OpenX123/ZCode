@@ -103,3 +103,66 @@ pnpm exec vitest run packages/client/test/remoteServiceAccess.test.ts packages/d
 ### coreHttp.test.ts
 
 - standalone Server Core ingress Share RPC 只接受 Host 的可信下游，普通 Web 不能伪造 desktop 身份
+
+# Task 4 Fix 1：完成 Bot 启动与异步关闭的 owner 收口
+
+状态：DONE。独立审查 I1 对应最终 GREEN 缺口已补上确定性回归与通过证据；原报告、原 EPERM 与全部 RED 日志保持不变。Fix BASE 为 215107a2，修复开工 HEAD 为 b9cf0f5d（包含 controller 合同和独立 Task 5）；本次只提交以下两个实现/测试文件和本报告追加。controller 已先在 docs/testing/1.4.1-gate-repair-spec.md 的“服务释放边界”明确唯一 owner、时序和完成语义，本次不重复改该 spec。
+
+## 实现及直接证据
+
+- packages/services/src/bots/botsService.ts：复用现有 shutdownPromise，持有三个真实 startup refresh 及存储初始化/恢复 continuation 的聚合 startupPromise。关闭仍同步调用三个 runtime.dispose 失效刷新代次和停止活动连接，同时等待这些已接纳启动 Promise 完成。并发关闭返回同一 shutdownPromise，不增加公开 API、重复生命周期 owner、计时状态或底层 runtime 队列。
+- 初始化 continuation 在存储读取和每个恢复 await 后检查现有 shutdownPromise；群恢复在配置/连接 await 后检查关闭状态；startTaskStream 的无 await 订阅提交点再检查关闭状态，避免 task service/权限晚到后重新 add 订阅。中文注释说明关闭提前完成与 Repo 文件锁清理竞争，以及 taskStreamHub.dispose 本身不能阻止后续 add。
+- 原有初始化失败 error 日志保留，三个 startup refresh rejection 用与现有 scheduleRefresh 相同的 warn 形态记录并接入完成 Promise，不产生未处理 rejection，也不把初始化失败改成业务成功。正常运行时不修改配置、Provider authority、owner/identity/ACK 或流投递合同。
+- packages/services/test/botsService.status.test.ts：复用当前 memory Repo 与既有服务夹具，新增 6 个回归。空 Bot 配置覆盖 storage/refresh/recovery 三个受控 Repo IO 阶段；另覆盖启动失败可见且关闭幂等，以及群恢复等待 connection/task-service 的两个晚到订阅场景。没有真实网络、sleep、固定次数微任务循环或文件删除重试；composition authorityMode、清理与断言完全未改。
+
+单次 setImmediate 只作为事件循环检查点观测原关闭 Promise 是否已经 settle，不代表 IO 完成屏障。每个阶段的真实入场由 Repo deferred resolve 确认，IO 完成由独立 deferred 释放；唯一完成验收是 await 原 disposeAllAndWait Promise。用例 finally 始终释放本次 deferred 并等待关闭，避免失败回归泄漏测试资源。
+
+## RED → GREEN 的六个回归映射
+
+| 新回归                                                            | RED 所在代码状态 / 真实失败                                                                                                                                         | 最终 GREEN          |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| storage Repo IO 未结束，关闭应保持 pending                        | 原实现；fix1-red.json：disposed 为 true（应 false），证明初始化 IO 未完成时关闭已提前完成                                                                           | status 11/11 中通过 |
+| refresh Repo IO 未结束，关闭应保持 pending                        | 原实现；fix1-red.json：disposed 为 true（应 false），证明已进入 Provider refresh 的 Repo IO 不在原关闭完成范围                                                      | 同上                |
+| recovery Repo IO 未结束，关闭应保持 pending，之后不再读取恢复配置 | 原实现；fix1-red.json：disposed 为 true（应 false），证明 continuation 仍在读状态时已提前完成                                                                       | 同上                |
+| 启动 Repo 失败可见、关闭同 Promise、无未处理 rejection            | 原实现；fix1-red.json：原三个 refresh 没有 warn 日志，预期 3 次实际 0；初始化 error 原本保留。修复后同一错误分别走初始化 error 与三个 refresh warn，runner 成功退出 | 同上                |
+| 群恢复等待 connection 时关闭，晚到不能建订阅                      | 首次 startup owner 补丁后；fix1-recovery-red.json 9/10，及 fix1-recovery-red-2.json：subscribe 实际调用 1 次（应 0）                                                | 同上                |
+| 群恢复等待 task-service 时关闭，晚到不能建订阅                    | 首次 startup owner 补丁后；fix1-recovery-red-2.json：subscribe 实际调用 1 次（应 0）                                                                                | 同上                |
+
+以上确定性回归确认了“已接纳启动任务未被关闭等待”与“关闭后可晚到重建群订阅”两个已有生命周期缺陷，不再仅靠原单次 EPERM 推测。不能反推原文件系统 EPERM 的全部可能原因都已排除；实际 composition 未改夹具并再次通过，为本次 I1 提供闭环验证。
+
+## 执行命令、退出码与统计
+
+全部从仓库根运行，固定 PATH Node bin 与原报告一致，Node 24.14.0 / pnpm 10.33.2。所有原始输出位于 scratch/task-4/fix1-\*，未覆盖原 red/green/EPERM 日志；本节只列脱敏结果。
+
+| 命令 / 日志                                                                                                                                                                      | exit | 结果                                                                                                                             |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------- |
+| node scripts/check-workspace-freshness.mjs                                                                                                                                       | 0    | ahead 42 / behind 0，无远端跟踪分支提示                                                                                          |
+| pnpm architecture:check --changed；fix1-architecture-before.log                                                                                                                  | 0    | violations 0 / baseline 0 / new 0                                                                                                |
+| pnpm architecture:context services；fix1-services-context.log                                                                                                                    | 0    | 当前 services 是 legacy unmanaged；无额外已声明 CONTRACT/依赖，已结合直接 owning source 阅读，不将 context 误写成 managed 保障   |
+| pnpm exec vitest run packages/services/test/botsService.status.test.ts --reporter=json --outputFile=.superpowers/sdd/2026-11-16-release-gate-repair/scratch/task-4/fix1-red.json | 1    | 原实现，9 tests：5 passed / 4 failed；前三个为提前关闭，第四个为 refresh 失败缺少日志。对应 fix1-red.log                         |
+| 同一 status 命令，输出 fix1-green-status.json                                                                                                                                    | 0    | 首次 owner 补丁，9/9；此时尚未新增群订阅晚到回归                                                                                 |
+| 同一 status 命令，输出 fix1-recovery-red.json                                                                                                                                    | 1    | 首补丁 + connection 回归，9 passed / 1 failed；证明仅 await startup 不足                                                         |
+| 同一 status 命令，输出 fix1-recovery-red-2.json                                                                                                                                  | 1    | 首补丁 + connection/task-service 两回归，9 passed / 2 failed                                                                     |
+| pnpm exec oxfmt packages/services/src/bots/botsService.ts packages/services/test/botsService.status.test.ts；fix1-format-write.log                                               | 0    | 仅格式化本次两个变更文件                                                                                                         |
+| 下列 focused 命令；fix1-green-focused.json / .log                                                                                                                                | 0    | 3 文件 34/34：status 11/11（原5 + 新6），botsChannelRuntime 21/21，composition 2/2                                               |
+| 下列原 12 文件命令；fix1-green-final-12.json / .log                                                                                                                              | 0    | 12 文件 78/78；未混入独立 R3 计数测试                                                                                            |
+| 下列 recovery 兼容命令；fix1-green-recovery.json / .log                                                                                                                          | 0    | 2 文件 126/126：groups 112/112，privateSync 14/14；因本次修改最终订阅提交点 guard 扩展这些实际相关场景，未机械重跑所有 Bots 套件 |
+| pnpm architecture:check --changed；fix1-architecture-after.log                                                                                                                   | 0    | violations 0 / baseline 0 / new 0                                                                                                |
+| pnpm exec oxlint packages/services/src/bots/botsService.ts packages/services/test/botsService.status.test.ts；fix1-lint.log                                                      | 0    | 2 文件，0 warning / 0 error                                                                                                      |
+| pnpm exec oxfmt --check packages/services/src/bots/botsService.ts packages/services/test/botsService.status.test.ts；fix1-format-check.log                                       | 0    | 两个变更文件格式通过                                                                                                             |
+| git diff --check；fix1-diff-check.log                                                                                                                                            | 0    | 无差异空白错误                                                                                                                   |
+
+```powershell
+pnpm exec vitest run packages/services/test/botsService.status.test.ts packages/services/test/botsChannelRuntime.test.ts packages/services/test/conversationShareComposition.test.ts --reporter=json --outputFile=.superpowers/sdd/2026-11-16-release-gate-repair/scratch/task-4/fix1-green-focused.json
+pnpm exec vitest run packages/client/test/remoteServiceAccess.test.ts packages/desktop/test/hostRemoteWorkspaceServices.test.ts packages/desktop/test/remoteConversationShareWiring.test.ts packages/desktop/test/remoteWorkspaceSessionServices.test.ts packages/services/test/conversationShareComposition.test.ts packages/services/test/servicesEntryBoundary.test.ts packages/services/test/telemetryUserIdLoader.test.ts packages/shared/test/officialMcpAuthProtocol.test.ts packages/zcode-server-cli/test/coreHttp.test.ts packages/services/test/credentialService.test.ts packages/services/test/standaloneProviderRuntime.test.ts packages/shared/test/mcp.test.ts --reporter=json --outputFile=.superpowers/sdd/2026-11-16-release-gate-repair/scratch/task-4/fix1-green-final-12.json
+pnpm exec vitest run packages/services/test/botsService.groups.test.ts packages/services/test/botsService.privateSync.test.ts --reporter=json --outputFile=.superpowers/sdd/2026-11-16-release-gate-repair/scratch/task-4/fix1-green-recovery.json
+```
+
+## 自审、边界与剩余关注
+
+- 已读取本次两个文件的完整 scoped diff；所有新增回归均有原实现或首补丁 RED，不用首次偶然通过代替最终结果。startup 关闭等待与订阅提交 guard 都有实际触发覆盖，未更改 authorityMode、删除清理、增加超时/skip、吞掉新初始化错误或恢复退役商业服务。
+- 不修改 channelRuntime.ts 或三个 Provider runtime；Service 级真实 startup 引用足以覆盖本次已接纳任务，无需扩大底层队列合同。
+- 已覆盖实际相关正常群聊与私聊恢复、三类 runtime 现有释放和 composition。临时目录锁清理仍走原 await asyncDispose → rm，不加任何额外锁等待、定时等待或重试。
+- 原 R3 的旧频道 46 计数不在本次 Fix1 范围，也没有被声明通过。原 EPERM 日志完整保留；修复后的精确 composition 2/2 和原 12 文件 78/78 作为新运行事实。
+- pnpm 仍提示仓库已有 package.json pnpm 字段忽略信息，Git 仍有 LF/CRLF 提示；oxlint 自身 0 warning / 0 error，不声称全程输出完全无噪声。
+- 根 typecheck/lint、29 规格及完整原始基线 pre-push 仍由 controller 整批统一执行，本次未运行全量 pnpm test/test:unit，也未 push。Task4 本地必要回归与 I1 验收已通过，发布总门禁仍以 controller 最终结果为准。
