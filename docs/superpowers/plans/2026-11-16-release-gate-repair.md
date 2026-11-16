@@ -364,6 +364,37 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 2: 提供最小方案。** 明确本地cache owner/可信lockDir来源、允许的结构化恢复数据/动作、普通日志与复制日志仍脱敏的边界；不能增加远端凭据/路径泄露旁路，不能仅把原路径断言改成redacted。若现有UI已有安全本地打开路径能力优先复用；若需要消息字段，列真实公开接口和迁移边界。给出最小改动文件与先spec后RED/GREEN的具体验收，不实施。
 - [ ] **Step 3: 交付。** 产出task-14-report.md，区分已证实链路、方案权衡、必要的用户可操作步骤/实际组件以及未验证点；用图说明唯一owner与字段/动作流，不跑无关门禁。controller独立审查设计，再生成实施brief。
 
+### Task 15: 实现可信且可精确定位的本机缓存锁恢复
+
+**Spec:** `docs/desktop/standalone-coding-harness-spec.md` 的“中断回收的本机恢复出口”，先于实现生效。Task14 设计 Fix1 的逐层证据与文件定位保存在本计划 scratch 的 `task-14-report.md` F1—F8；其增量已由 `task-14-fix1-rereview.md` 独立审查通过。正文旧方案已被F1结论撤回，不再作为需求。
+
+**Files（复用现有文件，不建通用metadata系统）:**
+
+- shared: `source-server/release.ts`、`source-server/contracts.ts`、`source-server/errorCodes.ts`、`validation.ts`、`platform.ts`、`channels.ts` 及现有公开入口。
+- Host: `sourceServerReleaseResolver.ts`、`sourceServerConnectionManager.ts`、`sourceServerOperationLogs.ts`、`sourceServerManagementService.ts`、`host/index.ts`。
+- Main/bridge: `desktopRemoteSessions.ts`、`desktopMainIpcRemote.ts`、`desktopMainIpcPlatform.ts`、`main/index.ts`、preload、desktopPlatform。
+- UI: `root/useRemoteWorkspaceHistory.ts`、`remote-connection-flow/index.ts`、`app-shell/types.ts`、`requestRemoteProjectConnection.ts`、`project-sidebar/remote-project-connection.ts` 及必要的现有presentation类型；`remoteConnectionPresentationErrors.ts`、`RemoteConnectionConnectingStep.tsx`、`SourceServerManagementPanel.tsx`、中英文文案。
+- Tests: 复用现有 resolver、shared contracts/log、remoteConnectionFailureContract、desktopRemoteSessions、Main平台、manager、management service、flow recovery、presentation、management panel 与 bridge/项目失败交接规格。实施报告必须列确切文件和命令，不用“相关测试”替代。
+
+**Interfaces:** resolver 独占可信恢复事实，manager 只拥有当前失败状态，Main只拥有同配置本机目录动作，UI只保留当前错误的派生投影。严格 `cacheRecovery={kind:"source-server-cache-lock",version,target,sha256}`；可选动作名 `openSourceServerCacheRecoveryDirectory`。不改普通RPC协议、Agent协议或SSH Server接口。
+
+- [ ] **Step 1: RED与精确范围。** 阅读DESIGN与架构context，按F3列逐层出口核当前字段。两原真实marker用例补严格locator、code/retryable、无绝对路径、fetch零次、owner/marker原字节和另SHA未变的回归，先失败；补秘密碰撞、伪造字段、真实RPC序列化、Main实际handler与UI三入口的关键失败证据。不要重做已通过的Task3句柄调查或Task14设计。
+- [ ] **Step 2: 可信错误与明确出口。** 专用Error从已校验descriptor产生私有locator，固定安全正文；原normalize和secrets清洗保持。manager/Host失败reply/管理RPC data/Main/Renderer/flow/项目失败交接显式严格搬运同一字段，源服务器出口剔除非可信伪造保留名。新连接/更新、成功、断开、删除、reset/新epoch清除，不继承另一owner。不得将任意metadata展开到日志或公开响应。
+- [ ] **Step 3: 本机精确动作与实际UI。** Main使用Host同配置root、当前version、native canonical/lstat检查和现有文件管理器helper，仅打开精确SHA父目录；严格拒绝额外/路径字段、版本漂移、junction/symlink越界、前缀碰撞、锁缺失/非普通目录，无root fallback、rm或下载。安全logger adapter处理原生失败，不返回路径。三个真实入口复用两现有组件，通过usePlatform显示定位、固定可复制离线步骤和原retry/update；可见性须code+严格locator+能力，失败/迟到结果不得污染新错误。
+- [ ] **Step 4: 定向GREEN。** 原resolver整个文件（含Task3并发）全绿；shared严格/脱敏、真实RPC、Main IPC精确A/B SHA与覆盖root、伪造拒绝、桥接/失败交接/flow状态清理、UI三入口和按钮实际调用全通过。对主机配置的原参数、workspace identity、owner/lease/ACK不减覆盖。已有Task12改动按当前source复用，不重做其设计。
+- [ ] **Step 5: 静态/报告/提交。** 定向lint/format/diff、架构before/after、相关context，逐字段列生产者/消费者及测试证据。报告task-15-report.md，独立spec/quality审查。根type/lint/完整gate整批controller执行。真实交互由Task16继续；Task15不能以UT宣称E2E或可发布。仅提交正式文件，scratch保留但不跟踪，不push/发布。
+
+### Task 16: 验证缓存锁恢复的真实桌面交互与退出后重试
+
+**Files:** 专门的测试lock fixture放在现有 `packages/desktop/test/e2e/helpers/`；候选场景 `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-source-server-cache-lock-recovery.test.ts`；当前case catalog/matrix与必要场景说明。遵守 `.agents/skills/e2e-case-lifecycle/SKILL.md`。不为测试创建新的产品恢复API。
+
+**Interfaces:** 复用Task15真实Host resolver→Main→UI链和既有 `e2e-electron-reload.ts` 的完整旧进程树归零屏障；产品没有删除动作，只有fixture在无writer窗口清理自己的精确锁。
+
+- [ ] **Step 1: 准入与受控夹具。** 先catalog/matrix/spec，再fixture/场景。隔离HOME/USERPROFILE/userData/cache覆盖与descriptor/归档；探测真实目标，建立A/B两SHA和owner/.reaping原字节。两种marker都走实际连接/安装或更新，不Renderer注入Error。秘密碰撞保持为合成受控输入，禁止真实凭据。
+- [ ] **Step 2: 构建与真实交互。** 按目标包当前脚本准备匹配Task15的新桌面产物，不和dist依赖测试并行。三入口均验证当前错误、精确按钮与retry/update；两种marker及秘密碰撞至少各触发一条真实链。记录Main原生打开的A目标一致性布尔证据，并至少一次系统层检查文件管理器实际打开A，不只spy/DOM断言。
+- [ ] **Step 3: 退出后恢复。** 先复制安全固定步骤并保留文件管理器窗口，至少一次真实托盘/菜单正常退出并验证退出确认/Host清理；与helper强制fallback区分。精确A lock的夹具清理仅放 `afterElectronProcessExit`，旧进程树未归零不得删或建新session。保持同隔离profile/cache重启，通过原retry/update验证A恢复成功、B与归档未误改、成功后旧locator消失。禁止裸reload/rm、sleep或只等main PID。
+- [ ] **Step 4: GREEN/报告与生命周期。** 按实际package命令运行精确候选spec，保存run/summary/脱敏证据与系统层结果；恢复环境，只清理本次fixture。桌面e2e类型、定向lint/format/diff/架构通过；报告task-16-report.md并独立审查。若发现产品缺陷先报具体证据给controller，不通过削断言修绿。macOS/Linux未实机测则如实列出，根门禁继续由controller统一。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。

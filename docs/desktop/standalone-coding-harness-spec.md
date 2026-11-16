@@ -69,7 +69,46 @@ SSH / WSL / Docker 资源由 Host 现有 resolver 唯一管理。正式版优先
 
 Host 下载缓存路径为 `<remoteCacheDir>/source-server/<version>/<target>/<sha256>/<fileName>`，每次复用必须验证 size/SHA；可信随包 descriptor 允许有效缓存完全离线复用。离线首次部署可预先导入独立 Release 的归档到此路径，导入过程同样校验 size/SHA。缓存文件不是版本/地址的权威，不能从旧缓存 descriptor 推导下载地址。不同根目录、目标和 SHA 不共用缓存或锁。
 
-同一缓存内容的跨 Host/进程请求由文件锁串行化，下载先写唯一临时文件，校验后原子提交；等待者校验缓存后复用。失败、取消和超时清理本次临时文件与持有锁，不删除其他 SHA 的资源。已退出进程的锁允许安全回收；若回收进程自身退出留下标记，确认后立即返回包含锁目录的清理提示，不争抢删除回收标记。锁等待和网络请求均有时限。连接取消的信号可传入 resolver，预览元数据不得下载归档。开发态 `development-content-addressed` 仍强制消费本轮本地 descriptor/archive，缺失或损坏不得回退正式版下载。
+同一缓存内容的跨 Host/进程请求由文件锁串行化，下载先写唯一临时文件，校验后原子提交；等待者校验缓存后复用。失败、取消和超时清理本次临时文件与持有锁，不删除其他 SHA 的资源。已退出进程的锁允许安全回收；若回收进程自身退出留下标记，确认后立即返回可精确定位本机锁目录的恢复提示，不争抢删除回收标记。锁等待和网络请求均有时限。连接取消的信号可传入 resolver，预览元数据不得下载归档。开发态 `development-content-addressed` 仍强制消费本轮本地 descriptor/archive，缺失或损坏不得回退正式版下载。
+
+### 中断回收的本机恢复出口
+
+中断回收使用公开错误码 `source-server-cache-lock-interrupted`、`retryable:false` 和不含路径或发行标识的固定安全正文。日志、普通错误详情及复制内容仍按原规则脱敏；已知秘密即使恰好等于公开 target 或 SHA 也不豁免。恢复定位不解析正文，而由本机 Host resolver 从已校验 descriptor 生成严格的 `cacheRecovery`：`{kind:"source-server-cache-lock",version,target,sha256}`。target 复用既有四值 schema，sha256 为小写64位hex，version 必须是无路径片段的安全版本并在动作入口等于当前构建版本；拒绝额外字段。绝对 root、路径、URL、凭据、PID、owner token、profile 或任意文件名不属于该结构。
+
+resolver 是可信恢复事实的唯一生产者，用本地专用 Error 的类型/私有字段证明来源。连接管理器仅将该实际失败 owner 的 locator 投影到当前失败 snapshot；连接失败 reply 和管理 RPC 的现有 `Error.data` 显式序列化同一严格字段，经过 Main/Renderer 的白名单重建及 flow/项目失败交接抵达现有 UI。不增加通用错误 metadata 透传、恢复数据库或第二个锁 owner。普通远端异常即使伪造相同 code、`cacheRecovery` 或 `data.cacheRecovery`，也不能被认领为本机恢复事实，相关源服务器出口须剔除伪造的保留字段。
+
+locator 仅跟随当前失败/epoch；新连接、更新、成功、断开、删除和 resetFeedback 清除，不持久化或继承为另一 profile/新 flight 的锁事实。普通文本/log中不展示、复制或整包记录 locator，手机/Web 不提供本机打开动作。
+
+只有本机 Desktop 实现可选平台能力 `openSourceServerCacheRecoveryDirectory(recovery)`。Main 严格校验后，使用与 Host 相同的 `resolveRemoteAssetDirs({}, hostProcessLocalEnv)` 配置根重建当前版本、target、SHA父目录及固定归档锁名；以 native path、异步 realpath/lstat 确认严格后代及真实层级，拒绝 root 下 symlink/junction 绕出、非法版本、缺失/已消失锁或非普通目录。仅打开精确 SHA父目录，不回退版本根，不接收任意路径，不创建、下载或删除文件，不返回真实路径。复用既有跨平台文件管理器 helper；该动作的日志仅记录固定安全事件，原生失败的正文也须脱敏。
+
+首次连接/安装失败、向导升级失败、设置设备更新失败（包括仍在线）都在现有错误面板/详情中提供精确定位与原显式重试入口。只有 code、严格 locator 与本机平台能力三者齐备时，才显示可用定位动作；缺少能力时说明需在所属 Desktop 处理，定位失败不能让用户猜测目录。打开结果只影响局部按钮状态，迟到结果不得重新打开旧面板或覆盖新错误。
+
+操作步骤固定显示且可复制，不含 locator 或本机路径：先定位并保留文件管理器窗口和离线说明；保存工作，通过 Windows/Linux 托盘“退出”或 macOS Cmd+Q/应用菜单完整退出所有使用该缓存的实例（Linux无托盘时使用应用正常退出路径）；退出确认取消、关窗或隐藏不算退出；等待现有 Host 清理完成后，手动仅删除已定位目录内目标 `.tar.gz.lock` 文件夹，保留归档、SHA父目录和其他SHA，重启后显式重试。产品不自动删除或强杀其他实例。
+
+```mermaid
+sequenceDiagram
+  participant R as Host resolver（锁owner）
+  participant S as 连接管理器（失败状态owner）
+  participant B as 现有IPC与管理RPC
+  participant F as flow或设备错误投影
+  participant M as Main（本机路径与原生打开）
+  participant U as 用户与文件管理器
+  R->>R: 从可信descriptor确认中断回收并生成私有locator
+  R-->>S: 专用Error、安全正文、retryable:false
+  S->>S: 核验来源，记录当前owner失败投影
+  S-->>B: 显式严格cacheRecovery，日志仍脱敏
+  B-->>F: 现有epoch下的失败字段
+  F->>M: 用户点击精确定位平台动作
+  M->>M: 同配置root、版本、canonical层级与普通锁目录校验
+  M->>U: 打开唯一SHA父目录，不回传路径
+  F-->>U: 可复制的固定离线步骤
+  U->>M: 正常完整退出，保留文件管理器窗口
+  M->>R: 现有异步Host清理屏障
+  U->>U: 完全退出后手动仅清理目标lock
+  U->>M: 重启并通过原入口显式重试
+```
+
+验收必须包含两种残留 marker 的真实文件系统、秘密与SHA/target碰撞、多SHA精确定位、伪造字段拒绝、真实管理RPC序列化、实际Main IPC handler、三条UI入口及旧结果抑制。桌面E2E用专门隔离lock fixture；仅在完整旧进程树归零后的 `afterElectronProcessExit` 清理夹具自己的精确锁，再重启验证恢复，禁止裸reload/rm或以固定等待推测无writer。至少一次系统层确认实际文件管理器打开目标目录，正常退出与helper强制清理结果分别记录；不把Windows实测外推为macOS/Linux实机通过。
 
 回收者以独占创建的 `.reaping` 标记取得本次失效锁的回收权。标记写入后先关闭其文件句柄，再校验旧 owner/token 并原子移走旧锁目录；保留标记本身直到旧目录清理完成，不能在关闭句柄时删除标记。这样兼容 Windows 对打开文件所在目录的重命名限制，同时让其他等待者持续看到唯一回收者。退出、错误与取消只清理本次退休目录，不删除后来者重新创建的同名锁。两个并发请求竞争同一已退出 owner 的锁时，应安全完成回收、只下载一次，并只留下校验通过的当前归档。
 
