@@ -390,6 +390,10 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 4: 定向GREEN。** 原resolver整个文件（含Task3并发）全绿；shared严格/脱敏、真实RPC、Main IPC精确A/B SHA与覆盖root、伪造拒绝、桥接/失败交接/flow状态清理、UI三入口和按钮实际调用全通过。对主机配置的原参数、workspace identity、owner/lease/ACK不减覆盖。已有Task12改动按当前source复用，不重做其设计。
 - [ ] **Step 5: 静态/报告/提交。** 定向lint/format/diff、架构before/after、相关context，逐字段列生产者/消费者及测试证据。修改后退出原样上游准入的三文件按 gate-repair spec 登记：Host 日志精确文件与合同目录组成受控 adapter，两个 UI presentation 精确文件并入已有 flow；先明确合同再登记，真实 run/read/remove/脱敏/迟到日志行为测试，不生成空断言模板。保留3条首次架构失败证据，完整基线复跑通过才关闭。报告task-15-report.md，独立spec/quality审查。根type/lint/完整gate整批controller执行。真实交互由Task16继续；Task15不能以UT宣称E2E或可发布。仅提交正式文件，scratch保留但不跟踪，不push/发布。
 
+#### Task 15 Fix 1：类型完整性与 Linux 无托盘离线步骤
+
+独立审查 I1/I2 阻断：新增日志合同测试的 `ConnectionProfile` 必须补当前 schema 要求的合法 `lifecycleState`，不能以类型强转绕过根 TS2322；中英文固定离线步骤必须补 standalone spec 已规定的 Linux 无托盘正常退出路径，明确关闭全部窗口且未隐藏时仍须等待退出确认与 Host 清理，不能笼统排除该正常路径。保留取消退出、其他实例、归档与其他 SHA 不得删除的全部约束。先补文案语义回归并实际 RED，再只修上述缺口，运行日志合同与 UI 两向导复制行为的相关完整文件、定向静态和真实根 typecheck。原始失败、修复命令和输出追加同一报告；以 `17770499` 至修复 HEAD 唯一 scoped 复审 I1/I2 及增量破坏。原 Minor 保留到最终整体审查，不以此轮补丁关闭 Task16。
+
 ### Task 16: 验证缓存锁恢复的真实桌面交互与退出后重试
 
 **Files:** 专门的测试lock fixture放在现有 `packages/desktop/test/e2e/helpers/`；候选场景 `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-source-server-cache-lock-recovery.test.ts`；当前case catalog/matrix与必要场景说明。遵守 `.agents/skills/e2e-case-lifecycle/SKILL.md`。不为测试创建新的产品恢复API。
