@@ -7,7 +7,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./main": "./src/main.ts"
+    "./main": "./src/main.ts",
+    "./packaging": "./src/packaging/posixArchive/index.ts"
   },
   "scripts": {
     "build": "tsup",
@@ -32,6 +33,7 @@
     "@types/node": "^25.5.0",
     "@types/ws": "^8.18.1",
     "@types/yauzl": "^2.10.3",
+    "tar": "7.5.13",
     "tsup": "^8.4.0",
     "tsx": "^4.19.4",
     "typescript": "^6.0.2",

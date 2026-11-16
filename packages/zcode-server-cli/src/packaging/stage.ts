@@ -11,6 +11,7 @@ import {
   resolveProductionPackageClosure,
 } from "./stageDependencies.js";
 import { createComponentArchive, hashPaths, runPackagingCommand } from "./stageArchives.js";
+import { createPosixReleaseArchive } from "./posixArchive/index.js";
 
 export { collectBareModuleSpecifiers, isNodePtyRuntimePath, resolveProductionPackageClosure };
 
@@ -404,7 +405,7 @@ export async function stageRelease(options: StageOptions): Promise<StagedRelease
     await rm(archivePath, { force: true });
     if (extension === "zip")
       await runPackagingCommand("zip", ["-qr", archivePath, releaseName], outputRoot);
-    else await runPackagingCommand("tar", ["-czf", archivePath, releaseName], outputRoot);
+    else await createPosixReleaseArchive({ releaseDir, archivePath, layout: "release" });
   }
 
   return {

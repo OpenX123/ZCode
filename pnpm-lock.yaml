@@ -988,6 +988,9 @@ importers:
       '@zcode/relay':
         specifier: workspace:*
         version: link:../relay
+      '@zcode/server-cli':
+        specifier: workspace:*
+        version: link:../zcode-server-cli
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -1737,6 +1740,9 @@ importers:
       '@types/yauzl':
         specifier: ^2.10.3
         version: 2.10.3
+      tar:
+        specifier: 7.5.13
+        version: 7.5.13
       tsup:
         specifier: ^8.4.0
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.9)(tsx@4.21.0)(typescript@6.0.2)(yaml@2.9.0)

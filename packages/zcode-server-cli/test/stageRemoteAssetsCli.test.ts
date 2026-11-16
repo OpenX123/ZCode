@@ -17,10 +17,13 @@ const cliModulePath = fileURLToPath(
   new URL("../src/packaging/stageRemoteAssetsCli.ts", import.meta.url),
 );
 const allTargets = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"];
+const pnpmEntry = fileURLToPath(new URL("./fixture-pnpm.cjs", import.meta.url));
 
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
+  // Windows 的 pnpm 由 Node 执行其 JS 入口；测试必须保留这层真实参数边界。
+  vi.stubEnv("npm_execpath", pnpmEntry);
   begin.mockResolvedValue(undefined);
   collect.mockResolvedValue([]);
   spawn.mockImplementation(() => {
@@ -64,9 +67,11 @@ describe("remote asset staging CLI", () => {
   ])("stages only Linux targets with ZCODE_ENV=%s", async (input, expected) => {
     vi.stubEnv("ZCODE_ENV", input);
     await runCli(["--linux"]);
+    expect(spawn.mock.calls.map((call) => call[0])).toEqual(Array(3).fill(process.execPath));
     expect(spawn.mock.calls.map((call) => call[1])).toEqual([
-      ["--filter", "@zcode/server-cli", "build"],
+      [pnpmEntry, "--filter", "@zcode/server-cli", "build"],
       [
+        pnpmEntry,
         "--filter",
         "@zcode/server-cli",
         "exec",
@@ -77,6 +82,7 @@ describe("remote asset staging CLI", () => {
         "--skip-component-archives",
       ],
       [
+        pnpmEntry,
         "--filter",
         "@zcode/server-cli",
         "exec",
@@ -104,8 +110,10 @@ describe("remote asset staging CLI", () => {
     vi.stubEnv("ZCODE_ENV", undefined);
     await runCli([]);
     expect(spawn).toHaveBeenCalledTimes(5);
-    expect(spawn.mock.calls.slice(1).map((call) => call[1][6])).toEqual(allTargets);
+    expect(spawn.mock.calls.slice(1).map((call) => call[1][7])).toEqual(allTargets);
     for (const call of spawn.mock.calls) {
+      expect(call[0]).toBe(process.execPath);
+      expect(call[1][0]).toBe(pnpmEntry);
       expect(call[1]).not.toContain("--skip-component-archives");
     }
     expect(spawn.mock.calls[0]![2].env?.ZCODE_ENV).toBeUndefined();
@@ -128,6 +136,13 @@ describe("remote asset staging CLI", () => {
     });
     await expect(runCli(["--linux"])).rejects.toThrow(/exited with code 1/);
     expect(begin).toHaveBeenCalledOnce();
+    expect(collect).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing pnpm JS entry without spawning a command", async () => {
+    vi.stubEnv("npm_execpath", undefined);
+    await expect(runCli(["--linux"])).rejects.toThrow(/npm_execpath is available/u);
+    expect(spawn).not.toHaveBeenCalled();
     expect(collect).not.toHaveBeenCalled();
   });
 });

@@ -325,6 +325,15 @@ staging 由 `packages/zcode-server-cli/src/packaging/stage.ts` 实现，
 - staging 实现六个目标：`darwin-x64/arm64`、`linux-x64/arm64`、`win32-x64/arm64`；POSIX
   产出 `tar.gz`，Windows 产出 `zip` 和 `zcode.cmd`。Windows 不打包 `bfs`，使用 `rg.exe`、
   `ugrep.exe`，并保留系统/Git Bash fallback。
+- POSIX 完整包、组件包与测试派生包统一由 `@zcode/server-cli/packaging` 的
+  `createPosixReleaseArchive` 生成权限，不依赖宿主 chmod/stat 的可执行位。归档目录为 `0755`；
+  `bin/zcode`、`runtime/node`、`runtime/tools/{bfs/bfs,ripgrep/rg,ugrep/ugrep}` 与
+  `runtime/node_modules/node-pty/prebuilds/darwin-{x64,arm64}/spawn-helper` 为 `0755`；
+  其他普通文件（含 `.node` 动态库、JS、配置、许可证）为 `0644`，不保留 setuid/setgid/sticky。
+  build-time producer 使用 portable tar header，既不收集 xattr，也不生成 AppleDouble 元数据；
+  路径与文件字节、组件 `hashPaths` 内容身份不变，归档字节 SHA/size 必须重算。
+  `./packaging` 仅暴露此发行包归档能力与参数类型，不成为通用归档框架；consumer 仍原样校验、
+  解压与执行，不增加 chmod fallback。Windows zip 继续使用既有宿主归档路径。
 - Agent bundle 的外置依赖以运行时入口扫描和官方插件定义为事实源；不再只扫描 Server CLI/Core，
   因而 `@zcode/tui`、`playwright-core` 等 bundle 运行时依赖不会被遗漏。
 - `runtime/tools` 由 `scripts/prepare-native-search-tools.mjs` 按目标 release plan 准备到

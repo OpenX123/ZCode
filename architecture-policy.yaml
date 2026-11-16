@@ -57,6 +57,15 @@ modules:
   - id: zcode-server-cli
     roots: [packages/zcode-server-cli/src]
     managed: false
+  - id: posix-release-archive
+    roots: [packages/zcode-server-cli/src/packaging/posixArchive]
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/zcode-server-cli/src/packaging/posixArchive/index.ts
+      - packages/zcode-server-cli/src/packaging/posixArchive/contract.ts
+    layers: { adapters: . }
+    owner: release
   - id: ui
     roots: [packages/ui/src]
     managed: false

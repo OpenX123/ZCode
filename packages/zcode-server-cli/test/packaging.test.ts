@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { gunzipSync } from "node:zlib";
+import { t as listTar } from "tar";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   collectBareModuleSpecifiers,
@@ -16,11 +17,23 @@ import {
 } from "../src/packaging/stage.js";
 import { resolveHostTarCommand } from "../src/packaging/tarCommand.js";
 
-import { runPackagingCommand } from "../src/packaging/stageArchives.js";
+import { hashPaths, runPackagingCommand } from "../src/packaging/stageArchives.js";
 
 const execFileAsync = promisify(execFile);
 async function runTar(args: string[]): Promise<void> {
   await execFileAsync(resolveHostTarCommand(), args);
+}
+
+async function archiveModes(file: string, prefix: string): Promise<Map<string, number>> {
+  const modes = new Map<string, number>();
+  await listTar({
+    file,
+    onReadEntry(entry) {
+      const path = entry.path.replace(/^\.\//u, "").replace(/\/$/u, "");
+      modes.set(path.startsWith(prefix) ? path.slice(prefix.length) : path, entry.mode ?? 0);
+    },
+  });
+  return modes;
 }
 
 const temporaryDirs: string[] = [];
@@ -380,6 +393,74 @@ describe("stageRelease", () => {
     ).resolves.toBeTruthy();
     await expect(stat(join(staged.releaseDir, "runtime", "tools", "bfs"))).rejects.toThrow();
   });
+
+  it.each(["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"] as const)(
+    "按显式文件角色写入 %s 完整包与组件的 POSIX mode，不依赖宿主 stat",
+    async (target) => {
+      const fixture = await makeStageFixture();
+      // Linux arm64 的 native fixture 由其平台包提供，不借用 x64 二进制。
+      await writeFakePackage(fixture.workspaceNodeModulesDir, "@lydell/node-pty-linux-arm64", {
+        files: { "prebuilds/linux-arm64/pty.node": "linux-arm64-binary" },
+      });
+      await writeFile(
+        join(fixture.workspaceNodeModulesDir, "node-pty/prebuilds/darwin-arm64/spawn-helper"),
+        "#!/bin/sh\nexit 0\n",
+      );
+      await mkdir(join(fixture.workspaceNodeModulesDir, "node-pty/prebuilds/darwin-x64"), {
+        recursive: true,
+      });
+      for (const file of ["pty.node", "spawn-helper"]) {
+        await writeFile(
+          join(fixture.workspaceNodeModulesDir, "node-pty/prebuilds/darwin-x64", file),
+          file,
+        );
+      }
+      const toolsDir = join(await makeTempDir(), "tools");
+      await writeFakeNativeTools(toolsDir, { bfs: "bfs", ripgrep: "rg", ugrep: "ugrep" });
+      const staged = await stageRelease({
+        ...fixture,
+        target,
+        appVersion: "9.9.9-test",
+        nativeToolsDir: toolsDir,
+      });
+      const full = await archiveModes(staged.archivePath!, `zcode-server-${target}/`);
+      const executable = [
+        "bin/zcode",
+        "runtime/node",
+        "runtime/tools/bfs/bfs",
+        "runtime/tools/ripgrep/rg",
+        "runtime/tools/ugrep/ugrep",
+      ];
+      if (target.startsWith("darwin-"))
+        executable.push(`runtime/node_modules/node-pty/prebuilds/${target}/spawn-helper`);
+      for (const path of executable) expect(full.get(path), path).toBe(0o755);
+      for (const path of [
+        "runtime/server-cli.js",
+        "runtime/package.json",
+        "runtime/THIRD-PARTY-NOTICES.md",
+        `runtime/node_modules/node-pty/prebuilds/${target}/pty.node`,
+      ]) {
+        expect(full.get(path), path).toBe(0o644);
+      }
+      expect(full.get("runtime")).toBe(0o755);
+      const manifest = JSON.parse(
+        await readFile(join(staged.releaseDir, "manifest.json"), "utf8"),
+      ) as {
+        components: Array<{ paths: string[]; archivePath: string; sha256: string }>;
+      };
+      for (const component of manifest.components) {
+        const modes = await archiveModes(join(fixture.outputDir, component.archivePath), "");
+        for (const path of executable.filter((path) => modes.has(path))) {
+          expect(modes.get(path), `${component.archivePath}: ${path}`).toBe(0o755);
+        }
+        for (const [path, mode] of modes) {
+          if (!path || path === ".") continue;
+          expect(mode, `${component.archivePath}: ${path}`).toBe(full.get(path));
+        }
+        expect((await hashPaths(staged.releaseDir, component.paths)).sha256).toBe(component.sha256);
+      }
+    },
+  );
 
   it("每个可独立下载的组件归档都携带适用的第三方声明", async () => {
     const fixture = await makeStageFixture();

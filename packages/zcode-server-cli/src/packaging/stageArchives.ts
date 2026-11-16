@@ -4,6 +4,7 @@ import { access, cp, mkdir, readFile, readdir, rm, stat } from "node:fs/promises
 import { dirname, join } from "node:path";
 import type { ServerTarget } from "../runtime/manifest.js";
 import { isTarCommand, resolveHostTarCommand } from "./tarCommand.js";
+import { createPosixReleaseArchive } from "./posixArchive/index.js";
 
 export async function runPackagingCommand(
   command: string,
@@ -123,7 +124,11 @@ export async function createComponentArchive(
   if (extension === "zip") {
     await runPackagingCommand("zip", ["-qr", archivePath, "."], componentRoot);
   } else {
-    await runPackagingCommand("tar", ["-czf", archivePath, "."], componentRoot);
+    await createPosixReleaseArchive({
+      releaseDir: componentRoot,
+      archivePath,
+      layout: "component",
+    });
   }
   await rm(componentRoot, { force: true, recursive: true });
   return { archivePath, ...info };

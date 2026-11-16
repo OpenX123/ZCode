@@ -15,6 +15,7 @@ import {
 import { dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { sourceServerReleaseDescriptorSchema } from "@zcode/shared";
+import { createPosixReleaseArchive } from "@zcode/server-cli/packaging";
 
 const run = promisify(execFile);
 export type CacheRecoveryMarker = "exited-reaper" | "aged-empty-reaper";
@@ -86,7 +87,13 @@ export async function createCacheRecoveryArchiveB(options: {
     }
   }
   const archiveB = join(options.artifactDir, `cache-recovery-b-${randomUUID()}.tar.gz`);
-  await run("tar", ["-czf", archiveB, "-C", work, top], { timeout: 300_000 });
+  // Windows 解压后没有 POSIX 执行位；派生 B 必须复用 producer，不能按宿主 stat 重包。
+  await createPosixReleaseArchive({
+    releaseDir: join(work, top),
+    archivePath: archiveB,
+    layout: "release",
+    signal: AbortSignal.timeout(300_000),
+  });
   await rm(work, { recursive: true, force: true });
   return archiveB;
 }

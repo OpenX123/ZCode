@@ -427,6 +427,12 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 
 ### Task 18: 修复跨宿主 POSIX 归档的执行权限
 
+**实现前裁决（A）:** 新增最小 `@zcode/server-cli/packaging` 公共 build-time producer，完整包、组件包和 B 直接 await 复用同一权限 owner；仅纳管 POSIX archive 小模块，tar 固定已有锁定版本。权限分类见 R2 §7.1，普通文件 0644、目录和明确执行角色 0755，不依赖 Windows stat。代价为新增公共 surface 与窄治理维护，边界不当需返工；不扩成通用归档框架，不全包迁移 legacy，不启动构建器或增加 consumer chmod。
+
+**精确 suite 修复裁决:** `stageRemoteAssetsCli.test.ts` 旧断言遗漏既有 `Node + npm_execpath` 前缀；只在该 suite stub 合成入口并严格验证实际 command/完整 args，保留 target、env、顺序及失败拒绝，新增入口缺失不 spawn 的负向覆盖。此为测试合同对齐，生产命令逻辑不变；代价是 Task18 额外承担一处既有测试修复，不能恢复裸 pnpm 或弱化失败。
+
+**取消边界:** B caller保留原300000ms预算，可选AbortSignal仅传递取消；producer的原生pipeline须等待tar/输出流销毁完成后才拒绝，拒绝后不再写。以受控输出进度和destroy屏障验证在途abort，不加长timeout、不用Promise.race。此为API-only收紧，不改变已生成归档算法/hash。
+
 **Files:** `packages/zcode-server-cli/src/packaging/stage.ts`、`stageArchives.ts`、现有 packaging CLI 和对应 `packages/zcode-server-cli/test/`；必要的最小公开 packaging 边界、直接依赖与架构登记；`packages/desktop/test/e2e/helpers/source-server-cache-lock-recovery-fixture.ts` 的 B 重包消费边界。Spec 先更新 `docs/testing/1.4.1-gate-repair-spec.md` 及实际拥有归档合同的既有 spec，不扩成 installer 权限修补。
 
 **Interfaces:** producer 是完整归档与组件归档的唯一权限所有者；consumer 原样校验/解压/执行，不增加远端 chmod fallback。Windows 宿主不能依赖本地 chmod 后 stat 推导 POSIX 可执行性。完整包、组件包及测试 B 重包必须通过同一明确的 portable 权限合同；跨包消费使用公开入口或 CLI，不私导实现。`hashPaths` 的内容 hash 合同保持；实际 tar.gz 字节变化必须重算归档 SHA/descriptor。
