@@ -493,11 +493,13 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 
 **Interfaces:** CLI/runtime 仍是 accepted/running/terminal 事实 owner，Host 为窗口内事实投影 owner，Main 只聚合现有 Host 报告并沿原生产退出确认/清理路径。不能用 Renderer canStop/optimistic store、注入计数或轮询推断事实，不能新增第二 admission。保留 workspaceIdentity/path fallback、owner/lease、source/session/generation 与 stale-run 防护。现有远端、legacy sendPrompt、runtime 释放和正常 idle 退出不退化。未知所有者或必须新增状态/事件时，先只读给最小选项与代价供 controller 裁决，不私建通用状态框架。
 
+**方案裁决（B）：** 已只读核对 Core admission reservation、runtime command/foreground owner 和严格 V4 ACK 测试。新增最小通用 runtime activity 快照，直接导出既有 busy owner；不扩展 CUA sideband 为通用事实、不复刻调度状态机。正式实现前在 standalone owning spec 补充严格通知/初始化/版本和实例重建语义，再同步 shared schema、CLI producer、现有 Agent service/client 与 Host 聚合，窄 helper 按架构要求登记。启动预留、执行、自动队列/foreground/目标续跑交接连续 busy；held/error-paused 和 idle requireQueue 不单独计数。按实际 child session 计数，guide 不增 session 数。绑定先于命令且能给当前快照，同版本幂等、旧版本/旧实例及旧 release 不覆盖新代，含同进程 close→resume 同 session。非 chat lane 隔离；发送失败走既有 unavailable/权威同步边界，不加轮询或延迟。Main 生产逻辑不改。
+
 - [ ] **Step 1: 精确只读归因。** 固定 Node24.14.0/pnpm10.33.2，freshness/规定架构检查，读取目标受控 context。沿真实 V4 本地提交、运行事件、Host projection 和 Main map 的实际路径，逐段给源码/已有日志证据；明确已证与待证，不重跑桌面、build、emit、网络/SSH 或操作 UI。先在报告写入最小修复方案与真实调用路径；不以文件名或时间接近推断引入提交。
-- [ ] **Step 2: owning spec 与精确 RED。** 先补产品合同、唯一状态所有者与事件次序图，再写覆盖实际 V4 命令路径的定向 RED。验证真实 accepted/running 跨过 RPC ACK/设置视图切换仍保留退出所需计数，直到 completed/failed/cancelled/release 的真实终态才清除。受控 deferred/真实事件驱动，不固定 sleep 或延长 timeout，不只测脱离调用者的纯加减计数器。
+- [ ] **Step 2: owning spec 与精确 RED。** 先补产品合同、唯一状态所有者与事件次序图，再写覆盖实际 V4 命令路径的定向 RED。验证 ACK 先于首个 TurnStarted、TurnComplete 后仍持有 command/continuation、自动队列交接、held/error-paused/idle requireQueue、parent/child、初始化和 close→resume 版本边界。真实 accepted/busy 跨过 RPC ACK/设置视图切换仍保留退出所需计数，只有 runtime owner 实际收口或当前 client 生命周期释放才清除。受控 deferred/真实事件驱动，不固定 sleep 或延长 timeout，不只测脱离调用者的纯加减计数器。
 - [ ] **Step 3: 最小 owner 修复与兼容。** 复用既有运行态事件与 report 接口，修复已证断点，不改确认框文案/默认取消、生产环境限制或退出预算。queued/busy admission、重复事件、迟到旧 run 终态、独立 workspace identity/Host、异常释放和幂等清理均不得误增/误减；保留当前合法远端和 legacy 链路。修 bug 的中文注释说明根因及依据，不以 catch 吞错或附加超时掩盖同步。
 - [ ] **Step 4: GREEN、静态与独立审查。** 完整跑实际受影响既有 suite，精确 RED→GREEN；类型/格式/lint/diff/真实架构执行并保留输出。报告 `task-21-report.md` 包含根因证据、owner/事件图、命令/退出码/统计、兼容范围、未覆盖项与后续构建依赖。只提交本任务正式文件并释放 writer，controller 派独立 spec/quality 审查；本任务不自行 build/stage/pack/E2E，不派子 agent。
-- [ ] **Step 5: 交接真实验收。** 独审通过后由原 Task16 唯一 owner 消费匹配最终源码的新包重验实际原生取消→运行保留→再次确认→Host 收口→完整旧树零→仅清 A→同 profile 恢复。构建方案由实际生产差异决定；未变 Agent/Task18 资源不擅自重 stage，受影响输入不能复用旧字节。旧 Task16 首装/向导/严格 MODE GREEN 保留为旧包阶段证据，最终同包验收、Task12/13 和完整发布门禁仍 OPEN。
+- [ ] **Step 5: 交接真实验收。** 独审通过后由原 Task16 唯一 owner 消费匹配最终源码的新包重验实际原生取消→运行保留→再次确认→Host 收口→完整旧树零→仅清 A→同 profile 恢复。B 已确定影响 Agent 输入，旧随包 Agent 字节不能沿用；实际 Agent/Server 资源重建范围仍由正式 diff 和依赖确定，不擅自重 stage 未变资源。旧 Task16 首装/向导/严格 MODE GREEN 保留为旧包阶段证据，最终同包验收、Task12/13 和完整发布门禁仍 OPEN。
 
 ## 后续执行规则
 
