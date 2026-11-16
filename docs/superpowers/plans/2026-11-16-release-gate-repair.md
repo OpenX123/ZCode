@@ -402,6 +402,14 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 
 **已核实施边界：** 使用现有 `ZCODE_E2E_PACKAGED_APP_PATH`、隔离 `ZCODE_DESKTOP_DIST_DIR` 和 `ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY=1` 制作本次测试专用 win-unpacked，验证真实 release-versioned 缓存锁链；开发版 content-addressed 直接归档路径不算此验收。仅本次测试产物可用 Main 前置 wrapper 抑制 `app.setAsDefaultProtocolClient` 并记录调用，随后加载原 Main，避免写真实 HKCU 协议关联；不改生产源码或添加产品开关，不替换连接、错误或退出逻辑。正常产品菜单退出可在现有 reload 测试 helper 增加一个可选窄用途回调：完整旧进程树捕获后、deleteSession 前请求真实退出；默认行为和归零后回调/重启顺序不变，必须记录正常退出与 fallback 的区别。
 
+**Settings在线场景实施裁决：** 当前发行版minimum等于current，等版在线卡没有初始更新按钮。允许真实online后通过既有公开management.updateSource准备真实锁失败（明确bootstrap，不算UI/toast覆盖），随后必须点击Settings错误卡详情的原重试，再经历组件updateProfile真实catch/toast→toast详情→定位/复制/退出恢复。不改版本门槛/metadata，不注入Renderer错误或online可更新状态。若错误卡不可达，允许补真实needs-upgrade设备的Settings更新入口，但在线分支必须明确未实测，不伪称完成。
+
+**Windows Main观测实施裁决：** 已证生产exe关闭inspector参数fuse，带WDIO的loopback inspect参数时Main bridge两次失败；旧`-State Listen`查询未返回listener不能单独证明无监听，保留查询原件与此限制。精确owned旧树归零后，可复制合法phase产物exe为同目录明确命名的`YCode Task16 E2E.exe`，只用现有官方`@electron/fuses` API开启副本`EnableNodeCliInspectArguments`；原exe/resources、其他fuse、生产config/Main/Host不变，不重prepare/build/pack，副本绝不发布或安装。保留原fuse0与Main bridge失败证据，记录原/副exe、ASAR、Agent摘要及其他fuse不变，实际CDP端点只绑定loopback。任何归档、锁或合成密码写入前先严格验证Main bridge、isPackaged、协议guard和Renderer bridge/testActions，失败即停止fixture。测试副本仅解除观测前置，不覆盖生产fuse策略，也不替代正式资产安装启动核验。Task16候选沿已声明20min预算显式配置runner timeout以包括真实归档准备；原MODE02/03命令、哨兵与timeout不动。
+
+三入口必须各验证真实UI动作；完整正常退出→树零→同profile/cache→原UI重试恢复总体至少一条由首装或向导证明。等版Settings重启后没有新更新按钮，只计原连接成功与旧locator失效并如实列出限制，不能冒称A下载或新增产品入口。首装必须执行当前连接步骤内联“安装并继续”，再等待专用锁错，不能只寻找已退役的安装ConfirmDialog。
+
+**2026-11-17阶段状态：OPEN。** `task16-install-20261116-234936`已实际通过真实锁错、脱敏、Main/Explorer精确A、产品原生菜单handler退出、完整旧树归零、仅退出后清A与同profile重启，helper fallback为0；尚未通过重启后的真实A安装。A上传完成后远端exec退出126，源A内`bin/zcode`及`runtime/node`均无执行位，合成目录owner/mode正确。归档生产者缺陷候选分离为Task18，禁止在Task16临时chmod修绿；B fixture由Windows重新tar的同一执行位消费边界也需处理。当前仅阶段提交，三入口最终GREEN、真实取消后确认、严格MODE02/03及独立审查仍未完成，详见ignored `task-16-report.md`。
+
 - [ ] **Step 1: 准入与受控夹具。** 先catalog/matrix/spec，再fixture/场景。隔离HOME/USERPROFILE/userData/cache覆盖与descriptor/归档；探测真实目标，建立A/B两SHA和owner/.reaping原字节。两种marker都走实际连接/安装或更新，不Renderer注入Error。秘密碰撞保持为合成受控输入，禁止真实凭据。
 - [ ] **Step 2: 构建与真实交互。** 按目标包当前脚本准备匹配Task15的新桌面产物，不和dist依赖测试并行。三入口均验证当前错误、精确按钮与retry/update；两种marker及秘密碰撞至少各触发一条真实链。记录Main原生打开的A目标一致性布尔证据，并至少一次系统层检查文件管理器实际打开A，不只spy/DOM断言。
 - [ ] **Step 3: 退出后恢复。** 先复制安全固定步骤并保留文件管理器窗口，至少一次真实托盘/菜单正常退出并验证退出确认/Host清理；与helper强制fallback区分。精确A lock的夹具清理仅放 `afterElectronProcessExit`，旧进程树未归零不得删或建新session。保持同隔离profile/cache重启，通过原retry/update验证A恢复成功、B与归档未误改、成功后旧locator消失。禁止裸reload/rm、sleep或只等main PID。

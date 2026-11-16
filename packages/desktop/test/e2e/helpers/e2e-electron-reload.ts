@@ -4,6 +4,7 @@ import { buildWindowsTaskkillArgs, listE2EProcessTreePids } from "./e2e-process-
 import { reloadE2EElectronServiceBridge } from "./e2e-electron-service-lifecycle.js";
 
 export interface E2EElectronProcessExitOptions {
+  requestAppQuit?: () => Promise<void> | void;
   afterElectronProcessExit?: () => Promise<void> | void;
   cleanupTimedOutProcessTreePids?: (pids: number[]) => Promise<void> | void;
   collectProcessTreePids?: (rootPids?: number[]) => number[];
@@ -79,6 +80,9 @@ export async function reloadElectronSessionSafely(
   pendingExitBarrierByBrowser.set(browser, pendingBarrier);
 
   try {
+    // 修复依据：真实菜单退出必须在完整旧树已捕获后请求；退出后不能再依赖Main取PID。
+    // 默认调用方仍由deleteSession关闭窗口，之后的归零/夹具变更/重启屏障保持原顺序。
+    await options.requestAppQuit?.();
     try {
       await browser.deleteSession({ shutdownDriver: false });
     } catch (error) {

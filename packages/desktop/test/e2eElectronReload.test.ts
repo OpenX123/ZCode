@@ -6,6 +6,51 @@ import {
 } from "./e2e/helpers/e2e-electron-reload.js";
 
 describe("desktop e2e Electron reload", () => {
+  it("requests the product quit action only after tree capture and before deletion", async () => {
+    const events: string[] = [];
+    let deleteSession = vi.fn(async () => {
+      events.push("delete");
+    });
+    const browser = {
+      get deleteSession() {
+        return deleteSession;
+      },
+      overwriteCommand: vi.fn(
+        (_name: string, overwrite: (...args: unknown[]) => Promise<unknown>) => {
+          const original = deleteSession;
+          deleteSession = vi.fn((...args: unknown[]) => overwrite.call(browser, original, ...args));
+        },
+      ),
+      electron: { execute: vi.fn(async () => 4242) },
+      reloadSession: vi.fn(async () => {
+        events.push("reload");
+        return "new-session";
+      }),
+    };
+    await reloadElectronSessionSafely(
+      browser as never,
+      {
+        requestAppQuit: async () => {
+          events.push("product-quit");
+        },
+        collectProcessTreePids: () => {
+          events.push("capture");
+          return [4242];
+        },
+        isProcessAlive: () => false,
+        afterElectronProcessExit: async () => {
+          events.push("mutation");
+        },
+        reloadElectronServiceBridge: async () => undefined,
+      } as never,
+    );
+    expect(events).toContain("product-quit");
+    expect(events.indexOf("capture")).toBeLessThan(events.indexOf("product-quit"));
+    expect(events.indexOf("product-quit")).toBeLessThan(events.indexOf("delete"));
+    expect(events.indexOf("delete")).toBeLessThan(events.indexOf("mutation"));
+    expect(events.indexOf("mutation")).toBeLessThan(events.indexOf("reload"));
+  });
+
   it("runs isolated profile mutations after the old process tree exits and before reload", async () => {
     const events: string[] = [];
     let deleteSession = vi.fn(async () => {

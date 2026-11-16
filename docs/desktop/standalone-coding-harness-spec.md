@@ -1,5 +1,11 @@
 # 独立桌面 Coding Harness
 
+缓存恢复验收的Settings在线场景允许公开management.updateSource仅准备真实更新锁失败；随后必须点击既有错误卡详情中的重试，重新经过组件updateProfile的真实catch/toast，再点toast详情。不改兼容门槛、不注入Error/props/online updateAvailable，RPC准备不算UI动作或toast覆盖。若该卡不可达，在线分支保持未验证。
+
+缓存恢复桌面验收使用隔离的descriptor-only packaged产物，保留真实Host/Main/UI链。测试重启helper可在捕获完整旧进程树后、deleteSession前调用可选requestAppQuit请求真实产品菜单退出；默认调用方行为不变。退出确认取消不允许清理，只有旧进程树归零后的afterElectronProcessExit可清本次fixture精确A锁，再保持同profile重启。helper超时fallback与Main既有E2E精确自终止分开记账，不把它们冒称物理托盘点击或纯自然进程退出。测试包可仅于generated入口抑制协议注册，不能修改生产恢复或退出API。
+
+Windows生产包保持关闭Node inspector参数。若WDIO Main CDP观测因此不可用，缓存恢复验收可使用同一隔离目录中明确命名、绝不安装或发布的E2E exe副本，仅由现有官方fuses API开启该副本的EnableNodeCliInspectArguments；原exe、resources、其他fuse及产品逻辑不变。记录原/副exe、ASAR、Agent摘要与fuse差异，实际Main CDP仅允许loopback监听。任何归档、锁或合成密码fixture写入前，必须严格确认Main bridge、isPackaged、协议guard及Renderer store/testActions就绪，缺失立即失败。此变体不证明生产fuse设置可供WDIO观测，也不替代正式发布资产的生产fuse及安装启动验收。
+
 状态：2026-10-24 用户确认；实现已落地，macOS arm64 生产安装包隔离启动验收通过；真实 API、外部 SSH 和其他平台验证边界见验证记录。
 
 ## 产品边界

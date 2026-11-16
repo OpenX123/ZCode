@@ -1,5 +1,18 @@
 # Conversation Session Case Catalog
 
+## 本机 Source Server 缓存锁退出后恢复（2026-11-16）
+
+| ID | 前置 | 动作 | 必须结果 | 状态 |
+| --- | --- | --- | --- | --- |
+| CACHE-RECOVERY-01 | 隔离 packaged Desktop、真实合成 SSH、A exited-reaper/B独立SHA，合成密码与A SHA重合 | 首连点击当前内联“安装并继续”后安装失败，定位并复制说明；退出后只清A锁，再从原入口重试 | 真实Host/Main/UI错误；系统Explorer精确打开A；正文/复制脱敏；同profile成功，B及源归档不变 | accepted / pending |
+| CACHE-RECOVERY-02 | 同一真实目标B已安装；A old-empty-marker，合成密码与target重合 | 向导显式升级失败后定位、退出清A并重试 | 原updateSource链；两种marker原字节不被错误/打开/复制修改；A恢复及旧locator消失 | accepted / pending |
+| CACHE-RECOVERY-03 | 真实当前runtime在线，A锁残留，B缓存独立保留 | 公开管理RPC仅准备真实更新失败；随后从Settings错误卡详情点击重试，真实组件更新失败toast→详情；复制/保存，产品菜单取消一次再确认退出；归零后清A并重试 | RPC准备不计作UI点击或toast覆盖；组件重试必须重新执行真实更新并生成toast；正常退出确认及Host清理与helper fallback分开；B及归档不变 | accepted / pending |
+
+候选：`packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-source-server-cache-lock-recovery.test.ts`。
+测试包沿用现有store bridge，仅在generated Main wrapper抑制协议注册，不mock连接/错误/退出。Windows实测不外推macOS/Linux。
+Windows WDIO可使用同目录明确命名的测试exe副本，仅开启该副本的Node inspector参数fuse供loopback Main CDP；原生产exe/resources及其他fuse不变，副本不发布/安装。归档、锁与合成密码写入前先严格确认Main/Renderer bridge；生产fuse与正式安装启动另验，不能把此变体当生产exe同字节验收。
+当前发行版最低兼容版本等于当前版本，等版在线设备不显示初始更新按钮；场景03不得改兼容门槛或注入在线可更新状态。允许公开 `management.updateSource` 作为明确标注的故障准备，之后必须实证Settings原重试→组件catch→toast→详情。若错误卡不可达，另记真实needs-upgrade设备的Settings更新覆盖，并明确在线分支未实测。
+
 ## 双栏会话与流式 Mermaid（2026-10-27）
 
 用户已逐项确认 [双栏规范](chat/two-column-workbench.md)。本节覆盖旧 SWG 的任意四向分屏、侧栏替换当前 pane，以及 TSL08 冷启动清空布局规则；旧条目仅保留历史证据。退役的官方手机远控不恢复。

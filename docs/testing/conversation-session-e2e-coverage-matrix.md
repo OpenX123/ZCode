@@ -1,5 +1,16 @@
 # Conversation Session E2E Coverage Matrix
 
+## 本机缓存锁恢复（2026-11-16）
+
+| Case | 范围 | 入口 | 状态 |
+| --- | --- | --- | --- |
+| CACHE-RECOVERY-01/02/03 | 真实SSH两种marker、秘密碰撞、双SHA精确打开、三入口、正常退出后原入口重试 | `manual-review/pending/conversation-session-source-server-cache-lock-recovery.test.ts`；专用lock fixture、descriptor-only packaged、同profile进程树屏障 | pending，等待本轮真实执行及人工复核；不得以UT替代系统Explorer/正常退出证据 |
+
+场景03的公开管理RPC只准备online更新失败，不计UI入口。Settings错误卡详情的真实重试必须再次触发组件更新失败toast，并由toast进入详情；不改兼容版本或Renderer状态。错误卡不可达时，在线分支仍属未覆盖。
+Windows Main CDP观测允许仅对同目录明确命名的E2E exe副本开启inspector参数fuse，记录原/副exe及ASAR/Agent摘要、其他fuse不变和loopback监听；原生产exe与resources不改，测试副本不发布/安装，正式资产生产fuse/启动另验。bridge缺失必须在任何归档、锁或合成密码fixture写入前失败。
+
+2026-11-17阶段仍为OPEN：首装run `task16-install-20261116-234936`已实证锁错、精确Explorer打开与退出屏障，同profile重启后的A安装因归档可执行文件无执行位而失败（远端exit126）。该阻断交Task18；三入口最终恢复、真实取消后确认与严格MODE02/03均不得据此标为通过，候选不晋升。
+
 ## 双栏会话与流式 Mermaid（2026-10-27）
 
 当前规则见 [双栏规范](../chat/two-column-workbench.md)；取代旧 SWG 任意四向分屏与 TSL08 冷启动清空布局语义。
