@@ -16,6 +16,7 @@ Task19/20后新包必须重新验证全部入口。任何A/B锁或合成密码�
 
 readiness只建草稿时，先用case-local fast-text回放与原sendV4Prompt创建一次真实隔离本地会话，等待回复完成及idle后再读同run的stdio会话证据；独立admission不计四场景GREEN，各正式场景仍自行证明，不拼接另一run。
 Settings卡片与失败toast使用现有中文动作“查看详情”，在各自原scope内以可见、enabled和全文相等定位，保持30秒预算。只读诊断仅保存预期标签存在/可见/启用/遮挡、strict恢复metadata字段校验及显示线路与失败owner相等的布尔，不保存任意按钮原文或秘密路径。
+Task21最终同代包阶段在SLOW已接纳、切换Settings、第一次退出前、原生取消后和再次确认前，以现有getDesktopSessionActivity单次读取Main实际运行数，并关联同run原始Agent日志中的session/turn及无终态事实；取消后必须仍为同一真实turn。只读快照不注入、不轮询凑计数，不替代原生CUA取消/确认或完整旧进程树屏障，所有原预算不变。
 测试包沿用现有store bridge，仅在generated Main wrapper抑制协议注册，不mock连接/错误/退出。Windows实测不外推macOS/Linux。
 Windows WDIO可使用同目录明确命名的测试exe副本，仅开启该副本的Node inspector参数fuse供loopback Main CDP；原生产exe/resources及其他fuse不变，副本不发布/安装。归档、锁与合成密码写入前先严格确认Main/Renderer bridge；生产fuse与正式安装启动另验，不能把此变体当生产exe同字节验收。
 当前发行版最低兼容版本等于当前版本，等版在线设备不显示初始更新按钮；场景03不得改兼容门槛或注入在线可更新状态。允许公开 `management.updateSource` 作为明确标注的故障准备，之后必须实证Settings原重试→组件catch→toast→详情。若错误卡不可达，另记真实needs-upgrade设备的Settings更新覆盖，并明确在线分支未实测。

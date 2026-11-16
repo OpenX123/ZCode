@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -45,6 +45,54 @@ const ERROR_CODE = "source-server-cache-lock-interrupted";
 const scenario = process.env.ZCODE_TASK16_SCENARIO;
 const artifacts = process.env.ZCODE_E2E_ARTIFACT_DIR;
 const facts: Record<string, unknown> = { scenario };
+
+async function recordSettingsRuntimeActivity(stage: string, expectedTurnId?: string) {
+  if (!artifacts) throw new Error("缺少Settings运行态证据目录");
+  const activity = await browser.execute(async () => {
+    const bridge = window as unknown as {
+      zcode: { getDesktopSessionActivity(): Promise<{ runningAgentSessionCount: number }> };
+    };
+    return bridge.zcode.getDesktopSessionActivity();
+  });
+  const proof = facts.packagedAgentProof as { stdioSessionId: string };
+  const agentLogs = join(artifacts, "runtime-logs", "0-0", "agent");
+  const events: Array<{ event?: string; sessionId?: string; turnId?: string }> = [];
+  for (const file of await readdir(agentLogs)) {
+    if (!file.endsWith(".jsonl")) continue;
+    const lines = (await readFile(join(agentLogs, file), "utf8")).split("\n");
+    for (const line of lines.slice(0, -1)) if (line.trim()) events.push(JSON.parse(line));
+  }
+  const current = events.findLast(
+    (event) => event.event === "turn.started" && event.sessionId === proof.stdioSessionId,
+  );
+  const terminal = events.some(
+    (event) =>
+      event.sessionId === current?.sessionId &&
+      event.turnId === current?.turnId &&
+      ["turn.completed", "turn.failed"].includes(event.event ?? ""),
+  );
+  const snapshot = {
+    stage,
+    observedAt: new Date().toISOString(),
+    runningAgentSessionCount: activity.runningAgentSessionCount,
+    sessionId: current?.sessionId,
+    turnId: current?.turnId,
+    terminalObserved: terminal,
+  };
+  const snapshots = (facts.settingsRuntimeActivity ??= []) as Array<typeof snapshot>;
+  snapshots.push(snapshot);
+  await writeFile(
+    join(artifacts, "settings-runtime-activity.json"),
+    JSON.stringify(snapshots, null, 2),
+  );
+  // Task21缺口发生在真实runtime仍忙而Main缺计数；只读getter与Agent原始turn交叉取证，不注入事实。
+  expect(Number.isSafeInteger(activity.runningAgentSessionCount)).toBe(true);
+  expect(activity.runningAgentSessionCount).toBeGreaterThan(0);
+  expect(current?.turnId).toBeTruthy();
+  expect(terminal).toBe(false);
+  if (expectedTurnId) expect(current?.turnId).toBe(expectedTurnId);
+  return current!.turnId!;
+}
 
 async function clickVisible(label: string, scope = "body") {
   await browser.waitUntil(
@@ -305,14 +353,17 @@ describe(`${MARKER}: packaged 缓存锁真实恢复`, () => {
       await setSyntheticCacheRecoveryPassword(secret);
       const confirmations = join(artifacts, "native-confirmations.jsonl");
       await installCacheRecoveryNativeObservers(fixture.aParent, confirmations);
+      let settingsTurnId: string | undefined;
       if (scenario === "settings") {
         await sendV4Prompt(`${MARKER}_SLOW 保持运行，等待用户明确退出。`);
         await waitForV4TimelineContaining("CACHE_RECOVERY_STREAMING");
         await waitForV4Pane((state) => state.canStop, "退出确认准备任务没有运行");
+        settingsTurnId = await recordSettingsRuntimeActivity("slow-accepted");
       }
       await installHandoffRpcProbe();
       await openConnection(config, scenario === "settings" ? "settings" : "project");
       if (scenario === "settings") {
+        await recordSettingsRuntimeActivity("settings-switched", settingsTurnId);
         await waitForSSHDirectoryStep(MARKER, 180_000, { allowBoundaryAcknowledgement: true });
         const online = await callHandoffHost<SourceServerManagementSnapshot>(
           ServiceChannels.SourceServerManagement,
@@ -458,6 +509,7 @@ describe(`${MARKER}: packaged 缓存锁真实恢复`, () => {
       });
       clipboardSaved = false;
       if (scenario === "settings") {
+        await recordSettingsRuntimeActivity("before-first-quit", settingsTurnId);
         await writeFile(join(artifacts, "ready-cancel.json"), JSON.stringify({ ready: true }));
         await requestCacheRecoveryProductQuit();
         await browser.waitUntil(
@@ -469,11 +521,14 @@ describe(`${MARKER}: packaged 缓存锁真实恢复`, () => {
           nativeDialogReturned: true,
         });
         await fixture.assertOriginalLocks();
+        await recordSettingsRuntimeActivity("after-native-cancel", settingsTurnId);
         facts.nativeQuitCancelledWithLockUnchanged = true;
       }
       let fallbackCount = 0;
       const restartedProfile = await reloadElectronSessionPreservingBrowserProfile(browser, {
         requestAppQuit: async () => {
+          if (scenario === "settings")
+            await recordSettingsRuntimeActivity("before-second-quit", settingsTurnId);
           if (scenario === "settings")
             await writeFile(join(artifacts, "ready-confirm.json"), JSON.stringify({ ready: true }));
           await requestCacheRecoveryProductQuit();
