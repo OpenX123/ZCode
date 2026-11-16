@@ -20,6 +20,103 @@ afterEach(async () => {
 });
 
 describe("Upstream replay server", () => {
+  it("在受控 text chunks 中替换请求变量，并保留 gate 与 binary chunk", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zcode-replay-chunk-variable-"));
+    tempDirs.push(dir);
+    const fixture = join(dir, "fixture.json");
+    const artifactPath = join(dir, "artifact.json");
+    const binary = Buffer.from([0, 1, 255]);
+    await writeFile(
+      fixture,
+      JSON.stringify({
+        version: 1,
+        fixtures: [
+          {
+            id: "chunk-variable",
+            metadata: { timingPolicy: "controlled-stream" },
+            match: { pathIncludes: "/messages" },
+            response: {
+              statusCode: 200,
+              releaseAfterChunks: 1,
+              chunks: [
+                { offsetMs: 0, text: "{{browserFixtureUrl}}.png\n" },
+                { offsetMs: 5000, base64: binary.toString("base64") },
+                { offsetMs: 5100, text: "tail\n" },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    const server = await startUpstreamReplayServer({ artifactPath, fixturePaths: [fixture] });
+    activeServers.push(server);
+    const response = await fetch(`${server.baseUrl}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          { role: "user", content: "E2E_BROWSER_FIXTURE_URL:http://127.0.0.1:43123/basic" },
+        ],
+      }),
+    });
+    const reader = response.body!.getReader();
+    const first = (await reader.read()).value!;
+    expect(new TextDecoder().decode(first)).toBe("http://127.0.0.1:43123/basic.png\n");
+    expect(await fetch(`${server.baseUrl}/__e2e__/gates`).then((value) => value.json())).toEqual([
+      "chunk-variable",
+    ]);
+    expect(
+      (await fetch(`${server.baseUrl}/__e2e__/release/chunk-variable`, { method: "POST" })).status,
+    ).toBe(204);
+    const remaining: Uint8Array[] = [];
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      remaining.push(next.value);
+    }
+    expect(Buffer.concat(remaining)).toEqual(Buffer.concat([binary, Buffer.from("tail\n")]));
+    await server.stop();
+    activeServers.pop();
+    const record = (await readArtifact(artifactPath)).records[0];
+    expect(record?.responseChunkTimeline?.map((chunk) => chunk.byteLength)).toEqual([
+      Buffer.byteLength("http://127.0.0.1:43123/basic.png\n"),
+      binary.length,
+      Buffer.byteLength("tail\n"),
+    ]);
+  });
+
+  it("缺少 Browser URL 时拒绝含模板的 text chunk", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zcode-replay-chunk-missing-variable-"));
+    tempDirs.push(dir);
+    const fixture = join(dir, "fixture.json");
+    await writeFile(
+      fixture,
+      JSON.stringify({
+        version: 1,
+        fixtures: [
+          {
+            id: "missing-chunk-variable",
+            match: { pathIncludes: "/messages" },
+            response: {
+              statusCode: 200,
+              chunks: [{ offsetMs: 0, text: "{{browserFixtureUrl}}.png" }],
+            },
+          },
+        ],
+      }),
+    );
+    const server = await startUpstreamReplayServer({
+      artifactPath: join(dir, "artifact.json"),
+      fixturePaths: [fixture],
+    });
+    activeServers.push(server);
+    const response = await fetch(`${server.baseUrl}/messages`, { method: "POST" });
+    expect(response.status).toBe(500);
+    await expect(response.text()).resolves.toContain(
+      "Missing E2E_BROWSER_FIXTURE_URL replay variable",
+    );
+  });
+
   it("受控流在释放前保持 running，释放后不再等待旧的 45 秒时间轴", async () => {
     const dir = await mkdtemp(join(tmpdir(), "zcode-replay-gate-"));
     tempDirs.push(dir);

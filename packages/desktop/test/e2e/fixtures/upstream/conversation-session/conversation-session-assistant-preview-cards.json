@@ -577,6 +577,68 @@
           "text": "[UX05 公共网站](https://example.com/ux05)\n\n![UX05 图片]({{browserFixtureUrl}}.png)\n\n[直接音频]({{browserFixtureUrl}}.wav)\n\n[直接视频]({{browserFixtureUrl}}.mp4)\n\n[本地音频](<assistant-preview-e2e/media/生成 音频.wav>)\n\n[失效音频]({{browserFixtureUrl}}-retry.wav)\n\n```text\n{{browserFixtureUrl}}-final?next=(step)&x=1\n```\n\nE2E_ASSISTANT_PREVIEW_CARDS_UX05_DISPLAY_DONE"
         }
       }
+    },
+    {
+      "id": "assistant-preview-cards-renderer-stream",
+      "description": "APC15 同一流式正文先挂载 Mermaid 与 Markdown 媒体，再由 gate 释放未闭合及闭合 text fence。",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "controlled-stream",
+        "source": "synthetic",
+        "syntheticReason": "固定同一回答的 chunk 边界，真实 Electron DOM 可在 gate 前后比较实例，并验证新围栏动作。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": [
+          "E2E_ASSISTANT_PREVIEW_CARDS_RENDERER",
+          "E2E_BROWSER_FIXTURE_URL:"
+        ],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": {
+          "cache-control": "no-cache",
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "chunks": [
+          {
+            "offsetMs": 0,
+            "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"assistant-preview-cards-renderer-stream\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"deepseek-v4-flash\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":96,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":0,\"service_tier\":\"standard\"}}}\n\n"
+          },
+          {
+            "offsetMs": 100,
+            "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+          },
+          {
+            "offsetMs": 200,
+            "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"![FRI1 图片]({{browserFixtureUrl}}.png)\\n\\n[FRI1 音频]({{browserFixtureUrl}}.wav)\\n\\n[FRI1 视频]({{browserFixtureUrl}}.mp4)\\n\\n```mermaid\\nflowchart TD\\nA-->B\\n```\\n\\nE2E_ASSISTANT_PREVIEW_CARDS_RENDERER_READY\"}}\n\n"
+          },
+          {
+            "offsetMs": 500,
+            "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"\\n\\n正文继续。\\n\\n```text\\n{{browserFixtureUrl}}-stream?next=(step)&x=1\"}}\n\n"
+          },
+          {
+            "offsetMs": 5000,
+            "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"\\n```\\n\\nE2E_ASSISTANT_PREVIEW_CARDS_RENDERER_DONE\"}}\n\n"
+          },
+          {
+            "offsetMs": 20000,
+            "text": "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+          },
+          {
+            "offsetMs": 20100,
+            "text": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"input_tokens\":96,\"output_tokens\":120,\"service_tier\":\"standard\"}}\n\n"
+          },
+          {
+            "offsetMs": 20200,
+            "text": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+          }
+        ],
+        "releaseAfterChunks": 4
+      }
     }
   ]
 }

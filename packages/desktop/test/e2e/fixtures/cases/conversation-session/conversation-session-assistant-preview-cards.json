@@ -171,6 +171,13 @@
       "timingPolicy": "fast-text",
       "source": "synthetic",
       "syntheticReason": "固定已经送达的媒体引用；浏览器解码、Host 本地读取与原生打开继续走真实链路。"
+    },
+    {
+      "id": "assistant-preview-cards-renderer-stream",
+      "kind": "main",
+      "timingPolicy": "controlled-stream",
+      "source": "synthetic",
+      "syntheticReason": "固定同一回答的 chunk 边界，真实 Electron DOM 可在 gate 前后比较实例，并验证新围栏动作。"
     }
   ]
 }

@@ -353,11 +353,21 @@ async function handleReplayRequest(
       statusMessage: fixture.response.statusMessage ?? "OK",
     });
   } else {
-    const resolvedBody = resolveFixtureResponseBody(
-      fixture.response,
-      extractReplayVariables(requestText, requestJson),
-    );
-    if (resolvedBody.body.includes(BROWSER_FIXTURE_URL_REPLAY_TOKEN)) {
+    const variables = extractReplayVariables(requestText, requestJson);
+    const resolvedBody = resolveFixtureResponseBody(fixture.response, variables);
+    const resolvedChunks = fixture.response.chunks?.map((chunk) => {
+      if (chunk.base64 !== undefined || chunk.text === undefined) return chunk;
+      const text = applyReplayVariablesToString(chunk.text, variables);
+      // 只替换声明为文本的 chunk；原始 binary 和非模板 chunk 的字节合同保持不变。
+      return text === chunk.text ? chunk : { ...chunk, text, byteLength: undefined };
+    });
+    if (
+      resolvedBody.body.includes(BROWSER_FIXTURE_URL_REPLAY_TOKEN) ||
+      resolvedChunks?.some(
+        (chunk) =>
+          chunk.base64 === undefined && chunk.text?.includes(BROWSER_FIXTURE_URL_REPLAY_TOKEN),
+      )
+    ) {
       // 修复原因：动态 URL marker 缺失或格式错误时保留模板会让 Browser tool
       // 导航到字面量 `{{browserFixtureUrl}}`，随后可能被 compact 摘要掩盖成成功。
       // replay 必须 fail closed，让 fixture/request 契约错误直接可见。
@@ -377,7 +387,7 @@ async function handleReplayRequest(
     }
     await writeResponse(response, record, {
       body: resolvedBody.body,
-      chunks: fixture.response.chunks,
+      chunks: resolvedChunks,
       closeMode: fixture.response.closeMode,
       ...(fixture.response.releaseAfterChunks === undefined
         ? {}

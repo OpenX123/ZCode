@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- APC01-APC12 共用真实 Host stat、Browser/Preview Pane 与 cold-resume fixture。 */
+/* eslint-disable max-lines -- APC01-APC15 共用真实 Host stat、Browser/Preview Pane 与 cold-resume fixture。 */
 import {
   copyFile,
   mkdir,
@@ -20,6 +20,7 @@ import {
   managedAdapterInstallDirName,
 } from "@zcode/shared/external-engine";
 import { resolveE2EStorageRoot } from "../helpers/e2e-runtime-paths.js";
+import { releaseControlledReplay } from "../helpers/controlled-replay.js";
 import { skipOccupationOnboardingIfPresent } from "../helpers/occupation-onboarding.js";
 import {
   TID_BROWSER_ADDRESS_INPUT,
@@ -85,6 +86,16 @@ type NativeMediaProbeWindow = Window & {
     media: HTMLMediaElement[];
     imageSource: string;
     sources: string[];
+  };
+};
+
+type RendererStreamProbeWindow = Window & {
+  __apc15Probe?: {
+    diagram: HTMLElement;
+    svg: string;
+    image: HTMLImageElement;
+    audio: HTMLAudioElement;
+    video: HTMLVideoElement;
   };
 };
 
@@ -458,6 +469,117 @@ describe("Assistant Preview Cards E2E", () => {
     await waitForPreviewCards(["assistant-preview-stream"]);
   }).timeout(180_000);
 
+  it("APC15 FR-I1: 同一流式正文保持 Mermaid/媒体叶子并及时显示完整 text fence 目标", async () => {
+    await prepareCase();
+    const marker = `${CASE_MARKER}_RENDERER`;
+    const fixtureId = "assistant-preview-cards-renderer-stream";
+    const target = `${fixtureRootUrl}-stream?next=(step)&x=1`;
+    await sendV4Prompt(`${marker} E2E_BROWSER_FIXTURE_URL:${fixtureRootUrl}`);
+    await waitForV4AssistantMessageContaining(`${marker}_READY`, 60_000);
+    let readiness = {
+      imageExists: false,
+      imageWidth: 0,
+      audioExists: false,
+      audioReadyState: 0,
+      videoExists: false,
+      videoReadyState: 0,
+      diagramExists: false,
+      svgExists: false,
+    };
+    const readReadiness = () =>
+      browser.execute(() => {
+        const image = document.querySelector<HTMLImageElement>('img[alt="FRI1 图片"]');
+        const audio = document.querySelector<HTMLAudioElement>(
+          '[data-assistant-media="audio"] audio',
+        );
+        const video = document.querySelector<HTMLVideoElement>(
+          '[data-assistant-media="video"] video',
+        );
+        const diagram = document.querySelector<HTMLElement>('[data-mermaid-block] [role="img"]');
+        return {
+          imageExists: Boolean(image),
+          imageWidth: image?.naturalWidth ?? 0,
+          audioExists: Boolean(audio),
+          audioReadyState: audio?.readyState ?? 0,
+          videoExists: Boolean(video),
+          videoReadyState: video?.readyState ?? 0,
+          diagramExists: Boolean(diagram),
+          svgExists: Boolean(diagram?.querySelector("svg")),
+        };
+      });
+    try {
+      await browser.waitUntil(
+        async () => {
+          readiness = await readReadiness();
+          return Boolean(
+            readiness.imageWidth &&
+            readiness.audioReadyState &&
+            readiness.videoReadyState &&
+            readiness.svgExists,
+          );
+        },
+        { timeout: 60_000, timeoutMsg: "APC15 首段媒体与 Mermaid 未完成真实渲染" },
+      );
+    } catch (error) {
+      throw new Error(`APC15 首段真实渲染诊断: ${JSON.stringify(readiness)}`, { cause: error });
+    }
+    const initial = await browser.execute(() => {
+      const image = document.querySelector<HTMLImageElement>('img[alt="FRI1 图片"]')!;
+      const audio = document.querySelector<HTMLAudioElement>(
+        '[data-assistant-media="audio"] audio',
+      )!;
+      const video = document.querySelector<HTMLVideoElement>(
+        '[data-assistant-media="video"] video',
+      )!;
+      const diagram = document.querySelector<HTMLElement>('[data-mermaid-block] [role="img"]')!;
+      (window as RendererStreamProbeWindow).__apc15Probe = {
+        diagram,
+        svg: diagram.innerHTML,
+        image,
+        audio,
+        video,
+      };
+      return {
+        imageWidth: image.naturalWidth,
+        audioReadyState: audio.readyState,
+        videoReadyState: video.readyState,
+        svgId: diagram.querySelector("svg")?.id,
+      };
+    });
+    expect(initial.imageWidth).toBeGreaterThan(0);
+    expect(initial.audioReadyState).toBeGreaterThan(0);
+    expect(initial.videoReadyState).toBeGreaterThan(0);
+    await browser.waitUntil(async () => (await browser.$("body").getText()).includes(target), {
+      timeout: 10_000,
+      timeoutMsg: "APC15 gate 前未收到未闭合 text fence chunk",
+    });
+    expect(await browser.$("[data-assistant-text-fence-link]").isExisting()).toBe(false);
+    const afterPartial = await readRendererStreamProbe();
+    expect(afterPartial).toEqual(
+      expect.objectContaining({ diagram: true, image: true, audio: true, video: true, svg: true }),
+    );
+
+    await releaseControlledReplay(fixtureId);
+    const action = await browser.$(`[data-assistant-text-fence-link][title="${target}"]`);
+    await action.waitForDisplayed({ timeout: 30_000 });
+    const afterClosed = await readRendererStreamProbe();
+    expect(afterClosed).toEqual(
+      expect.objectContaining({ diagram: true, image: true, audio: true, video: true, svg: true }),
+    );
+    await action.click();
+    await waitForBrowserSurface(target, "APC01_LOCAL_URL_PAGE");
+    const afterClick = await readRendererStreamProbe();
+    const evidenceDir = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
+    if (evidenceDir) {
+      await browser.saveScreenshot(join(evidenceDir, "apc15-renderer-stream.png"));
+      await writeFile(
+        join(evidenceDir, "apc15-renderer-stream.json"),
+        JSON.stringify({ initial, afterPartial, afterClosed, afterClick }, null, 2),
+      );
+    }
+    await waitForCompleted(`${marker}_DONE`);
+  }).timeout(180_000);
+
   it("APC04: localhost 与本轮 HTML 同时出现时按现有业务规则抑制 HTML", async () => {
     await prepareCase({ yolo: true });
     const marker = `${CASE_MARKER}_LOCAL_SUPPRESSES_HTML`;
@@ -675,6 +797,34 @@ describe("Assistant Preview Cards E2E", () => {
     await assertSourcePreviewTargets();
   }).timeout(360_000);
 });
+
+async function readRendererStreamProbe() {
+  return browser.execute(() => {
+    const probe = (window as RendererStreamProbeWindow).__apc15Probe;
+    if (!probe) throw new Error("APC15 缺少首段 DOM 探针");
+    const diagram = document.querySelector<HTMLElement>('[data-mermaid-block] [role="img"]');
+    const image = document.querySelector<HTMLImageElement>('img[alt="FRI1 图片"]');
+    const audio = document.querySelector<HTMLAudioElement>('[data-assistant-media="audio"] audio');
+    const video = document.querySelector<HTMLVideoElement>('[data-assistant-media="video"] video');
+    const action = document.querySelector<HTMLElement>("[data-assistant-text-fence-link]");
+    const rect = action?.getBoundingClientRect();
+    return {
+      diagram: diagram === probe.diagram,
+      svg: diagram?.innerHTML === probe.svg,
+      image: image === probe.image,
+      audio: audio === probe.audio,
+      video: video === probe.video,
+      imageWidth: image?.naturalWidth ?? 0,
+      audioReadyState: audio?.readyState ?? 0,
+      videoReadyState: video?.readyState ?? 0,
+      actionRect: rect
+        ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+        : null,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
+  });
+}
 
 async function prepareCase(options: { yolo?: boolean } = {}) {
   await prepareV4ConversationE2E();

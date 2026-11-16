@@ -1362,6 +1362,10 @@ export const MessageResponse = memo(
         ),
       [references],
     );
+    // 流式正文每次更新都会重建目标 Set；若它参与 renderer 依赖，内联组件类型会换代，
+    // 导致 Mermaid 与 Markdown 媒体卸载。保持类型稳定，同时在本轮渲染读取最新目标。
+    const textFenceTargetsRef = useRef(textFenceTargets);
+    textFenceTargetsRef.current = textFenceTargets;
     const deliveredMedia = useMemo(() => {
       if (!allowAutomaticMedia) return [];
       const typed = (media ?? []).map((ref) => ({
@@ -1688,7 +1692,7 @@ export const MessageResponse = memo(
                 />
               </CodeBlock>
               {!suppressTextFenceActions &&
-              textFenceTargets.has(codeText.trim()) &&
+              textFenceTargetsRef.current.has(codeText.trim()) &&
               onOpenExternalUrl ? (
                 <MessageExternalLink
                   href={codeText.trim()}
@@ -1724,7 +1728,6 @@ export const MessageResponse = memo(
         onOpenExternalUrl,
         openMediaSource,
         suppressTextFenceActions,
-        textFenceTargets,
         readAttachment,
         renderStreaming,
         sessionId,

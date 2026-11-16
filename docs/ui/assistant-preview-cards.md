@@ -113,6 +113,31 @@ offer an explicit native button through the existing URL-opening callbacks and
 browser-routing policy. The complete validated target is passed directly, never
 reconstructed as Markdown; keyboard activation has the same behavior as clicking.
 
+Within one MessageResponse scope, streaming body updates keep the Markdown
+renderer component types stable. An existing Mermaid diagram retains its mounted
+instance and last successful SVG while later chunks arrive, including incomplete
+or invalid Mermaid text. Markdown image, audio, and video leaves retain their DOM
+identity, playback position, and already loaded resource/Blob URL when unrelated
+body text or a new text fence arrives; those updates do not reread the same
+resource. A newly closed single-URL `text` fence immediately exposes its open
+action with the current complete target, including when an earlier fence target
+was already present. The renderer reads the current fence target set for each
+render, rather than capturing a set from an earlier chunk.
+
+The existing MessageResponse scope and media reader remain the resource owners:
+changing the reader, session, workspace path/identity, or remote session releases
+old temporary URLs, ignores stale reads, and loads through the new scope. Unmount
+also releases temporary URLs. The text-fence projection owns only derived targets;
+it does not cache media bytes or accept a second write path.
+
+```text
+assistant body chunk -> MessageResponse props -> current reference/fence projection
+                                           -> stable Markdown renderer types
+                                           -> mounted Mermaid/media leaves
+closed fence arrives -> current target lookup -> native open action (complete URL)
+scope/reader changes or unmount -> leaf cleanup -> revoke old Blob / ignore stale read
+```
+
 Only closed Markdown links/images, standalone HTTP(S) URLs, and closed `text`
 fences containing exactly one HTTP(S) URL qualify. Inline code, indented code,
 other fences and commands do not qualify. Streaming standalone URLs require a

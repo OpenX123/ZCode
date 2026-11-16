@@ -42,6 +42,7 @@ replay fixture 的 `response.chunks` 存在时：
 - replay server 不写 `content-length`，让 Node 以 chunked response 流式发送。
 - 第一个 chunk 等待其 `offsetMs` 后写出。
 - 后续 chunk 按相邻 `offsetMs` 差值等待后写出。
+- fixture 的 `chunks[].text` 与 `response.body` 使用同一请求变量替换规则；`base64` 原样保留字节，替换后证据记录实际发送长度。缺少 Browser fixture URL 时同样拒绝回放。
 - `response.body` 仍保留为完整响应文本，用于报告和旧断言。
 
 没有 `response.chunks` 的旧 fixture 继续一次性返回 `response.body`。

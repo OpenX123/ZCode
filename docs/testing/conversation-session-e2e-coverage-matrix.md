@@ -1391,6 +1391,7 @@ artifact 后人工观察”的软通过口径。
 | APC12      | partial  | APC + focused tests          | formal replay：case-local MP4/WAV 进入同一存在性和逆序卡片投影；点击 WAV 后 Preview Pane 挂载原生 `audio[controls]`，媒体不触发 `fileChanges`；Desktop SSH/WSL/Docker Range Proxy 与手机大媒体预览暂不纳入本 case                                                                                                                                                                     |
 | APC13      | planned  | focused + SSH/WSL/Docker E2E | Desktop remote attachment 打开大于 8 MiB MP4，Host loopback Range Proxy 返回 `206` 并支持 seek；断言无 OSS 请求、无媒体字节进入 conversation/replay；手机 `/remote` 不复用 loopback URL                                                                                                                                                                                               |
 | APC14      | partial  | APC + focused tests          | Compact Preview/Open labels and directory removal: 12 focused tests pass; 2026-10-12 macOS replay blocked before menu assertions (default high level unavailable; retry without reasoning yields no preview cards); prior native action evidence remains historical; focused tests cover Web/remote capability exclusion; Windows/Linux, physical mobile and Docker admission pending |
+| APC15      | partial  | APC + focused tests          | 同一正式 APC spec 的 controlled-stream fixture 使用显式 gate；Windows Electron 观察 Mermaid SVG、Markdown 媒体真实 DOM 身份及未闭合→闭合 text fence 完整目标；Blob/reader/session/workspace 清理由 UI focused tests 覆盖，Docker admission 与其他平台未完成 |
 
 ### Conversation Share Candidate 覆盖
 

@@ -6,6 +6,8 @@ import { MessageResponse, type MessageResponseProps } from "@/components/ai-elem
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { MarkdownImage } from "@/components/ai-elements/markdown-image.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { ServiceProvider } from "@/hooks/useServices.js";
+import type { IServiceAccessor } from "@zcode/services";
 import { buildAssistantPreviewCards } from "@/lib/assistantPreviewCards.js";
 import type { AssistantMediaRef, AssistantTextRow } from "@zcode/shared/zcode-protocol-v4";
 import { ConversationTurnRow } from "@/v4/ConversationTurnRow.js";
@@ -249,6 +251,96 @@ describe("UX05 已送达媒体", () => {
     );
     expect(document.querySelector("audio")?.getAttribute("src")).toBe("https://example.com/a.wav");
     expect(document.querySelector("video")?.getAttribute("src")).toBe("https://example.com/v.mp4");
+  });
+  it("同一流式正文追加普通文本与新围栏时保留 Markdown 媒体叶子和 Blob 读取", async () => {
+    const image = "https://example.com/shot.png";
+    const audio = "./clip.wav";
+    const video = "./clip.mp4";
+    const prepare = vi.fn(async ({ path }: { path: string }) => ({
+      dataBase64: "AQ==",
+      mediaType: path.endsWith(".wav") ? "audio/wav" : "video/mp4",
+    }));
+    const services = { mediaPreviewService: { prepare } } as unknown as IServiceAccessor;
+    const createUrl = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValueOnce("blob:audio")
+      .mockReturnValueOnce("blob:video");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const initial = `![截图](${image})\n\n[音频](${audio})\n\n[视频](${video})`;
+    const response = (body: string) =>
+      createElement(
+        ServiceProvider,
+        { services },
+        wrap(
+          createElement(MessageResponse, {
+            children: body,
+            streaming: true,
+            theme: "light",
+            workspacePath: "/workspace",
+          }),
+        ),
+      );
+    const view = render(response(initial));
+    await waitFor(() => {
+      expect(view.container.querySelector("img")?.getAttribute("src")).toBe(image);
+      expect(view.container.querySelector("audio")?.getAttribute("src")).toBe("blob:audio");
+      expect(view.container.querySelector("video")?.getAttribute("src")).toBe("blob:video");
+    });
+    const leaves = ["img", "audio", "video"].map((selector) =>
+      view.container.querySelector(selector),
+    );
+    for (const leaf of leaves) {
+      if (leaf instanceof HTMLMediaElement) leaf.currentTime = 0.75;
+    }
+
+    view.rerender(response(`${initial}\n\n正文继续。`));
+    view.rerender(response(`${initial}\n\n正文继续。\n\n\`\`\`text\nhttps://example.com/new`));
+    view.rerender(
+      response(`${initial}\n\n正文继续。\n\n\`\`\`text\nhttps://example.com/new\n\`\`\``),
+    );
+    ["img", "audio", "video"].forEach((selector, index) => {
+      const leaf = view.container.querySelector(selector);
+      expect(leaf).toBe(leaves[index]);
+      if (leaf instanceof HTMLMediaElement) expect(leaf.currentTime).toBe(0.75);
+    });
+    expect(prepare.mock.calls.map(([value]) => value.path).sort()).toEqual(
+      ["/workspace/clip.wav", "/workspace/clip.mp4"].sort(),
+    );
+    expect(createUrl).toHaveBeenCalledTimes(2);
+    expect(revoke).not.toHaveBeenCalled();
+    view.unmount();
+    expect(revoke).toHaveBeenCalledWith("blob:audio");
+    expect(revoke).toHaveBeenCalledWith("blob:video");
+  });
+  it("流式 text fence 闭合及目标更新读取当前完整目标", () => {
+    const first = "https://example.com/first?next=(a)&x=1";
+    const second = "https://example.com/second?next=(b)&x=2";
+    const open = vi.fn();
+    const response = (body: string) =>
+      wrap(
+        createElement(MessageResponse, {
+          children: body,
+          streaming: true,
+          theme: "light",
+          onOpenExternalUrl: open,
+        }),
+      );
+    const view = render(response(`\`\`\`text\n${first}`));
+    expect(view.container.querySelector("[data-assistant-text-fence-link]")).toBeNull();
+    view.rerender(response(`\`\`\`text\n${first}\n\`\`\``));
+    const firstAction = view.container.querySelector<HTMLButtonElement>(
+      "[data-assistant-text-fence-link]",
+    );
+    expect(firstAction?.getAttribute("title")).toBe(first);
+    fireEvent.click(firstAction!);
+    expect(open).toHaveBeenLastCalledWith(first);
+    view.rerender(response(`\`\`\`text\n${second}\n\`\`\``));
+    const secondAction = view.container.querySelector<HTMLButtonElement>(
+      "[data-assistant-text-fence-link]",
+    );
+    expect(secondAction?.getAttribute("title")).toBe(second);
+    fireEvent.click(secondAction!);
+    expect(open).toHaveBeenLastCalledWith(second);
   });
   it("无 MIME 的普通网页按收到的标题成卡且手机仍可打开", () => {
     const cards = buildAssistantPreviewCards(
