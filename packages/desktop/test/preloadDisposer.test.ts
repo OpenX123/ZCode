@@ -1,4 +1,4 @@
-import { InternalChannels, PlatformChannels } from "@zcode/shared";
+import { InternalChannels, PlatformChannels, type UpdateStatePayload } from "@zcode/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseRemoteWorkspaceServicePortMessage } from "../src/renderer/src/remoteWorkspaceServicePortBridge.js";
 
@@ -13,7 +13,6 @@ import { parseRemoteWorkspaceServicePortMessage } from "../src/renderer/src/remo
 // 模拟 ipcRenderer 的 on / removeListener
 const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
 
-/** installArmsRumBridgeIpcForward 会替换 ipcRenderer.send，断言须用此引用 */
 const mockIpcSend = vi.fn();
 const mockIpcRenderer = {
   on: vi.fn((channel: string, handler: (...args: unknown[]) => void) => {
@@ -68,7 +67,7 @@ beforeEach(() => {
   mockIpcRenderer.on.mockClear();
   mockIpcRenderer.removeListener.mockClear();
   mockIpcSend.mockClear();
-  mockIpcRenderer.invoke.mockClear();
+  mockIpcRenderer.invoke.mockReset();
   mockWebFrame.getZoomFactor.mockClear();
   mockWebFrame.getZoomFactor.mockReturnValue(1);
   vi.mocked(window.addEventListener).mockClear();
@@ -317,119 +316,98 @@ describe("preload IPC disposer", () => {
     expect(mockIpcSend).toHaveBeenCalledWith(PlatformChannels.SyncWindowUnreadCount, 3);
   });
 
-  it("onUpdateReady 会在 dispose 后停止接收后续更新", async () => {
+  it("onUpdateState 转发 Main 状态，dispose 精确移除监听且不再接收后续更新", async () => {
     const api = await loadPreload();
     const callback = vi.fn();
-    const dispose = api.onUpdateReady(callback) as () => void;
+    const dispose = api.onUpdateState(callback) as () => void;
     expect(typeof dispose).toBe("function");
 
-    const handlers = Array.from(listeners.get(PlatformChannels.UpdateReady) ?? []);
-    expect(handlers.length).toBeGreaterThan(0);
-
-    for (const handler of handlers) {
-      handler({}, "0.1.25");
-    }
-    expect(callback).toHaveBeenCalledWith("0.1.25");
+    const handlers = Array.from(listeners.get(PlatformChannels.UpdateState) ?? []);
+    expect(handlers).toHaveLength(1);
+    const payload: UpdateStatePayload = {
+      kind: "update-available",
+      enabled: true,
+      version: "1.0.1",
+    };
+    handlers[0]?.({}, payload);
+    expect(callback).toHaveBeenCalledExactlyOnceWith(payload);
 
     callback.mockClear();
     dispose();
-
-    for (const handler of handlers) {
-      handler({}, "0.1.26");
+    expect(mockIpcRenderer.removeListener).toHaveBeenCalledExactlyOnceWith(
+      PlatformChannels.UpdateState,
+      handlers[0],
+    );
+    expect(listeners.get(PlatformChannels.UpdateState)?.size).toBe(0);
+    for (const handler of listeners.get(PlatformChannels.UpdateState) ?? []) {
+      handler({}, { kind: "idle", enabled: true });
     }
     expect(callback).not.toHaveBeenCalled();
   });
 
-  it("onUpdateReady 缓存会在更新状态变回 idle 后清除", async () => {
+  it("onUpdateState 晚注册不缓存或回放旧状态，仅接收注册后的 Main 事件", async () => {
     const api = await loadPreload();
-    const readyHandlers = Array.from(listeners.get(PlatformChannels.UpdateReady) ?? []);
-    const stateHandlers = Array.from(listeners.get(PlatformChannels.UpdateStateChanged) ?? []);
-    expect(readyHandlers.length).toBeGreaterThan(0);
-    expect(stateHandlers.length).toBeGreaterThan(0);
-
-    for (const handler of readyHandlers) {
-      handler({}, "0.1.25");
-    }
-    const replayBeforeClear = vi.fn();
-    const disposeBeforeClear = api.onUpdateReady(replayBeforeClear) as () => void;
-    expect(replayBeforeClear).toHaveBeenCalledWith("0.1.25");
-    disposeBeforeClear();
-
-    // 修复原因：main 在 staging error 后会广播 idle 清掉 ready；preload 如果继续
-    // 缓存旧 UpdateReady，新订阅的 renderer 仍会展示不可安装的“重启以更新”。
-    for (const handler of stateHandlers) {
-      handler({}, { kind: "idle", enabled: true });
-    }
-
-    const replayAfterClear = vi.fn();
-    const disposeAfterClear = api.onUpdateReady(replayAfterClear) as () => void;
-    expect(replayAfterClear).not.toHaveBeenCalled();
-    disposeAfterClear();
-  });
-
-  it("onUpdateStateChanged 晚注册时会立即回放最近一次状态", async () => {
-    const api = await loadPreload();
-    const handlers = Array.from(listeners.get(PlatformChannels.UpdateStateChanged) ?? []);
-    expect(handlers.length).toBeGreaterThan(0);
-
-    const payload = {
+    const first = vi.fn();
+    const disposeFirst = api.onUpdateState(first) as () => void;
+    const payload: UpdateStatePayload = {
       kind: "download-progress",
-      enabled: false,
+      enabled: true,
+      version: "1.0.1",
       progress: "42",
     };
-    for (const handler of handlers) {
+    for (const handler of listeners.get(PlatformChannels.UpdateState) ?? []) {
       handler({}, payload);
     }
+    expect(first).toHaveBeenCalledExactlyOnceWith(payload);
+    disposeFirst();
 
-    const callback = vi.fn();
-    const dispose = api.onUpdateStateChanged(callback) as () => void;
-    expect(callback).toHaveBeenCalledWith(payload);
-    dispose();
-  });
-
-  it("onPostUpdateReleaseNotes 晚注册时会立即回放最近一次 payload", async () => {
-    const api = await loadPreload();
-    const handlers = Array.from(listeners.get(PlatformChannels.PostUpdateReleaseNotes) ?? []);
-    expect(handlers.length).toBeGreaterThan(0);
-
-    for (const handler of handlers) {
-      handler(
-        {},
-        {
-          version: "0.1.25",
-          title: "Release v0.1.25",
-          markdown: "# Release v0.1.25\n\n- add popup",
-        },
-      );
+    const late = vi.fn();
+    const disposeLate = api.onUpdateState(late) as () => void;
+    expect(late).not.toHaveBeenCalled();
+    expect(mockIpcRenderer.invoke).not.toHaveBeenCalled();
+    const idle: UpdateStatePayload = { kind: "idle", enabled: true };
+    for (const handler of listeners.get(PlatformChannels.UpdateState) ?? []) {
+      handler({}, idle);
     }
+    expect(late).toHaveBeenCalledExactlyOnceWith(idle);
+    expect(first).toHaveBeenCalledTimes(1);
+    disposeLate();
+  });
 
+  it("getUpdateState 每次返回 Main 响应，事件不会覆盖或缓存快照", async () => {
+    const api = await loadPreload();
+    const available: UpdateStatePayload = {
+      kind: "update-available",
+      enabled: true,
+      version: "1.0.1",
+    };
+    const idle: UpdateStatePayload = { kind: "idle", enabled: true };
+    mockIpcRenderer.invoke.mockResolvedValueOnce(available).mockResolvedValueOnce(idle);
+
+    expect(await api.getUpdateState()).toBe(available);
     const callback = vi.fn();
-    const dispose = api.onPostUpdateReleaseNotes(callback) as () => void;
-    expect(callback).toHaveBeenCalledWith({
-      version: "0.1.25",
-      title: "Release v0.1.25",
-      markdown: "# Release v0.1.25\n\n- add popup",
-    });
+    const dispose = api.onUpdateState(callback) as () => void;
+    expect(callback).not.toHaveBeenCalled();
+    for (const handler of listeners.get(PlatformChannels.UpdateState) ?? []) {
+      handler({}, available);
+    }
+    expect(await api.getUpdateState()).toBe(idle);
+
+    expect(mockIpcRenderer.invoke.mock.calls).toEqual([
+      [PlatformChannels.GetUpdateState],
+      [PlatformChannels.GetUpdateState],
+    ]);
+    expect(callback).toHaveBeenCalledExactlyOnceWith(available);
     dispose();
   });
 
-  it("getUpdateState invokes update-state IPC", async () => {
-    const api = await loadPreload();
-
-    await api.getUpdateState();
-
-    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith(PlatformChannels.GetUpdateState);
-  });
-
-  it("acknowledgePostUpdateReleaseNotes 会通过对应 IPC 频道回传版本号", async () => {
-    const api = await loadPreload();
-
-    await api.acknowledgePostUpdateReleaseNotes("0.1.25");
-
-    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith(
-      PlatformChannels.AcknowledgePostUpdateReleaseNotes,
-      "0.1.25",
-    );
+  it.each([
+    "onUpdateReady",
+    "onUpdateStateChanged",
+    "onPostUpdateReleaseNotes",
+    "acknowledgePostUpdateReleaseNotes",
+  ])("实际 preload 不再暴露退役更新接口 %s", async (name) => {
+    expect(await loadPreload()).not.toHaveProperty(name);
   });
 
   it("dispose 后回调不再被触发", async () => {

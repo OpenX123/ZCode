@@ -2,7 +2,7 @@ import type { AddressInfo } from "node:net";
 import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChannelClient, ChannelServer, Emitter, Event, VSBuffer } from "@zcode/rpc";
 import type { IMessagePassingProtocol } from "@zcode/rpc";
 import {
@@ -14,6 +14,7 @@ import {
   generateNoiseKeyPair,
   parseMobileRemotePairingHash,
   type MobileRemoteStatus,
+  type MobileRemoteWindow,
 } from "@zcode/shared/mobile-remote";
 import { createRelayServer } from "@zcode/relay";
 import {
@@ -54,15 +55,21 @@ async function waitForAsync<T>(read: () => Promise<T>, timeoutMs = 3000): Promis
 }
 
 /** 模拟窗口 Host：每次 attach 新建一个 ChannelServer，暴露 echo 频道。 */
-function createFakeHost() {
-  const ports: Array<{ closed: boolean; flow: string[]; closeFromHost(): void }> = [];
+function createFakeHost(windowIds: readonly number[] = [1]) {
+  const ports: Array<{ windowId: number; closed: boolean; flow: string[]; closeFromHost(): void }> =
+    [];
+  const events: string[] = [];
+  const attachAttempts: number[] = [];
   const attach = (windowId: number): MobileRemoteHostPort | null => {
-    if (windowId !== 1) return null;
+    attachAttempts.push(windowId);
+    if (!windowIds.includes(windowId)) return null;
+    events.push(`attach:${windowId}`);
     const toServer = new Emitter<VSBuffer>();
     let rpcHandler: ((message: Uint8Array) => void) | null = null;
     const queued: Uint8Array[] = [];
     let closeHandler: (() => void) | null = null;
     const record = {
+      windowId,
       closed: false,
       flow: [] as string[],
       closeFromHost() {
@@ -73,6 +80,7 @@ function createFakeHost() {
     const protocol: IMessagePassingProtocol = {
       onMessage: toServer.event,
       send(buffer) {
+        events.push(`host-rpc:${windowId}`);
         // 与 MessagePortMain 一致：监听挂上前的消息排队，不丢 Initialize。
         if (rpcHandler) rpcHandler(buffer.buffer);
         else queued.push(buffer.buffer);
@@ -99,21 +107,23 @@ function createFakeHost() {
       },
     };
   };
-  return { ports, attach };
+  return { ports, attach, events, attachAttempts };
 }
 
-async function setup() {
+async function setup(
+  windows: MobileRemoteWindow[] = [{ windowId: 1, title: "ZCode", focused: true }],
+) {
   const relay = createRelayServer({ hostToken: TOKEN });
   await new Promise<void>((r) => relay.listen(0, "127.0.0.1", r));
   cleanups.push(() => new Promise((r) => relay.close(r)));
   const relayUrl = `http://127.0.0.1:${(relay.address() as AddressInfo).port}`;
   const dir = await mkdtemp(join(tmpdir(), "mobile-remote-"));
-  const host = createFakeHost();
+  const host = createFakeHost(windows.map(({ windowId }) => windowId));
   const statuses: MobileRemoteStatus[] = [];
   const gateway = createMobileRemoteGateway({
     store: createMobileRemoteStore(dir),
     hostName: () => "Test Mac",
-    listWindows: () => [{ windowId: 1, title: "ZCode", focused: true }],
+    listWindows: () => windows,
     attachWindow: host.attach,
     logger: { info: () => {}, warn: () => {} },
     onStatusChanged: (status) => statuses.push(status),
@@ -128,7 +138,11 @@ async function setup() {
 
 async function connectPhone(
   ctx: { relayUrl: string; gateway: MobileRemoteGateway },
-  options: { deviceKey?: ReturnType<typeof generateNoiseKeyPair>; pairingCode?: string } = {},
+  options: {
+    deviceKey?: ReturnType<typeof generateNoiseKeyPair>;
+    pairingCode?: string;
+    chooseWindow?: (windows: MobileRemoteWindow[]) => number | null | Promise<number | null>;
+  } = {},
 ) {
   const link = await connectMobileRemoteLink(
     {
@@ -137,7 +151,7 @@ async function connectPhone(
       deviceKey: options.deviceKey ?? generateNoiseKeyPair(),
       deviceName: "Phone",
       ...(options.pairingCode ? { pairingCode: options.pairingCode } : {}),
-      chooseWindow: (windows) => windows[0]?.windowId ?? null,
+      chooseWindow: options.chooseWindow ?? ((windows) => windows[0]?.windowId ?? null),
       timeoutMs: 3000,
     },
     (protocol) => new ChannelClient(protocol),
@@ -152,6 +166,147 @@ function pairingCodeOf(gateway: MobileRemoteGateway): string {
 }
 
 describe("mobile remote gateway", () => {
+  it("发送 attach 前先绑定 RPC 接收端，接住 Host 立即发出的 Initialize", async () => {
+    const ctx = await setup();
+    const initialized = vi.fn();
+    const link = await connectMobileRemoteLink(
+      {
+        relayUrl: ctx.relayUrl,
+        hostId: ctx.gateway.getStatus().hostId,
+        deviceKey: generateNoiseKeyPair(),
+        deviceName: "Phone",
+        pairingCode: pairingCodeOf(ctx.gateway),
+        chooseWindow: (windows) => windows[0]!.windowId,
+        timeoutMs: 3000,
+      },
+      (protocol) => {
+        ctx.host.events.push("client-bind");
+        const client = new ChannelClient(protocol);
+        client.onDidInitialize(initialized);
+        return client;
+      },
+    );
+    cleanups.push(() => link.close());
+
+    expect(ctx.host.events.slice(0, 3)).toEqual(["client-bind", "attach:1", "host-rpc:1"]);
+    expect(initialized).toHaveBeenCalledOnce();
+    expect(ctx.host.ports.map(({ windowId }) => windowId)).toEqual([1]);
+    await expect(link.bound.getChannel("echo").call("ready", "immediate")).resolves.toBe(
+      "ready:immediate",
+    );
+  });
+
+  it("收到完整窗口目录后才选择目标窗口，只为该窗口创建 attachment", async () => {
+    const windows = [
+      { windowId: 1, title: "First", focused: false },
+      { windowId: 2, title: "Target", focused: true, workspacePath: "/local/target" },
+    ];
+    const ctx = await setup(windows);
+    const chooseWindow = vi.fn((available: MobileRemoteWindow[]) => {
+      expect(available).toEqual(windows);
+      expect(ctx.host.attachAttempts).toEqual([]);
+      expect(ctx.host.ports).toEqual([]);
+      return available.find(({ focused }) => focused)!.windowId;
+    });
+    const link = await connectPhone(ctx, {
+      pairingCode: pairingCodeOf(ctx.gateway),
+      chooseWindow,
+    });
+
+    expect(chooseWindow).toHaveBeenCalledOnce();
+    expect(link.windowId).toBe(2);
+    expect(link.windows).toEqual(windows);
+    expect(ctx.host.attachAttempts).toEqual([2]);
+    expect(ctx.host.ports.map(({ windowId }) => windowId)).toEqual([2]);
+    await expect(link.bound.getChannel("echo").call("target", 2)).resolves.toBe("target:2");
+    expect(ctx.statuses.at(-1)?.devices).toEqual([
+      expect.objectContaining({ name: "Phone", connected: true }),
+    ]);
+  });
+
+  it("明确不存在的窗口被拒绝，不创建任何 Host attachment", async () => {
+    const ctx = await setup();
+    await expect(
+      connectPhone(ctx, {
+        pairingCode: pairingCodeOf(ctx.gateway),
+        chooseWindow: () => 404,
+      }),
+    ).rejects.toMatchObject({ code: "window_unavailable" });
+
+    expect(ctx.host.attachAttempts).toEqual([404]);
+    expect(ctx.host.ports).toEqual([]);
+    expect(ctx.gateway.getStatus().devices).toEqual([
+      expect.objectContaining({ name: "Phone", connected: false }),
+    ]);
+  });
+
+  it.each(["disabled", "revoked"] as const)(
+    "远端 %s 关闭后才完成 chooseWindow，不发布过期链路或创建 attachment",
+    async (reason) => {
+      const ctx = await setup();
+      let choose!: (windowId: number) => void;
+      let notifyChoosing!: () => void;
+      let notifyClosed!: () => void;
+      const selection = new Promise<number>((resolve) => {
+        choose = resolve;
+      });
+      const choosing = new Promise<void>((resolve) => {
+        notifyChoosing = resolve;
+      });
+      const socketClosed = new Promise<void>((resolve) => {
+        notifyClosed = resolve;
+      });
+      class ObservedWebSocket extends WebSocket {
+        constructor(url: string | URL, protocols?: string | string[]) {
+          super(url, protocols);
+          this.addEventListener("close", () => notifyClosed(), { once: true });
+        }
+      }
+      const bindProtocol = vi.fn(
+        (protocol: IMessagePassingProtocol) => new ChannelClient(protocol),
+      );
+      const connected = vi.fn();
+      const pending = connectMobileRemoteLink(
+        {
+          relayUrl: ctx.relayUrl,
+          hostId: ctx.gateway.getStatus().hostId,
+          deviceKey: generateNoiseKeyPair(),
+          deviceName: "Phone",
+          pairingCode: pairingCodeOf(ctx.gateway),
+          chooseWindow: (windows) => {
+            expect(windows.map(({ windowId }) => windowId)).toEqual([1]);
+            notifyChoosing();
+            return selection;
+          },
+          WebSocketImpl: ObservedWebSocket,
+          timeoutMs: 3000,
+        },
+        bindProtocol,
+      );
+      void pending.then(connected, () => {});
+      const rejected = expect(pending).rejects.toMatchObject({
+        code: reason === "revoked" ? "unknown_device" : "network",
+      });
+      await choosing;
+      expect(ctx.host.attachAttempts).toEqual([]);
+      if (reason === "revoked") {
+        await ctx.gateway.revokeDevice(ctx.gateway.getStatus().devices[0]!.id);
+      } else {
+        await ctx.gateway.setConfig({ enabled: false, relayUrl: ctx.relayUrl });
+      }
+      // 关闭事件是失效屏障；选窗结果必须在客户端已观察到关闭之后才返回。
+      await socketClosed;
+      await rejected;
+      choose(1);
+      await selection;
+
+      expect(bindProtocol).not.toHaveBeenCalled();
+      expect(connected).not.toHaveBeenCalled();
+      expect(ctx.host.attachAttempts).toEqual([]);
+      expect(ctx.host.ports).toEqual([]);
+    },
+  );
+
   it("扫码配对后 RPC 经中继与加密通道到达窗口 Host 并返回", async () => {
     const ctx = await setup();
     const deviceKey = generateNoiseKeyPair();
@@ -167,6 +322,7 @@ describe("mobile remote gateway", () => {
     });
     expect(status.devices).toHaveLength(1);
     expect(status.devices[0]!.name).toBe("Phone");
+    expect(ctx.host.ports[0]!.windowId).toBe(link.windowId);
   });
 
   it("配对码一次性：同一配对码第二台设备被拒绝；已配对设备无需配对码可重连", async () => {
@@ -175,11 +331,17 @@ describe("mobile remote gateway", () => {
     const deviceKey = generateNoiseKeyPair();
     const first = await connectPhone(ctx, { deviceKey, pairingCode: code });
     first.close();
+    await waitFor(() => ctx.host.ports[0]!.closed);
 
     await expect(connectPhone(ctx, { pairingCode: code })).rejects.toMatchObject({
       code: "unknown_device",
     });
     const again = await connectPhone(ctx, { deviceKey });
+    expect(again.windowId).toBe(1);
+    expect(ctx.host.ports.map(({ windowId, closed }) => ({ windowId, closed }))).toEqual([
+      { windowId: 1, closed: true },
+      { windowId: 1, closed: false },
+    ]);
     await expect(again.bound.getChannel("echo").call("ping", 1)).resolves.toBe("ping:1");
   });
 
@@ -228,14 +390,18 @@ describe("mobile remote gateway", () => {
       code: "unknown_device",
     });
     expect(ctx.host.ports[0]!.closed).toBe(true);
+    expect(ctx.host.ports[0]!.windowId).toBe(link.windowId);
+    expect(ctx.gateway.getStatus().devices).toEqual([]);
   });
 
   it("窗口 Host 端口关闭时手机连接以窗口不可用关闭", async () => {
     const ctx = await setup();
     const link = await connectPhone(ctx, { pairingCode: pairingCodeOf(ctx.gateway) });
     const closed = new Promise<{ error?: string }>((resolve) => link.onClose(resolve));
+    expect(ctx.host.ports[0]!.windowId).toBe(link.windowId);
     ctx.host.ports[0]!.closeFromHost();
     expect((await closed).error).toBe("window_unavailable");
+    expect(ctx.gateway.getStatus().devices[0]?.connected).toBe(false);
   });
 
   it("手机断开后网关关闭 Host attachment 端口", async () => {

@@ -39,34 +39,19 @@ describe("processResourceTelemetry 事件契约", () => {
     expect(leaking).toEqual([]);
   });
 
-  it("PRT-026 spec 与事件字典的三个属性表逐项匹配代码白名单", async () => {
+  it("PRT-026 旧 ARMS spec 与事件字典明确退役，不再作为实现或验收要求", async () => {
     const documents = await Promise.all(
       ["process-resource-telemetry.md", "performance-telemetry-catalog.md"].map((name) =>
         readFile(new URL(`../../../docs/monitoring/${name}`, import.meta.url), "utf8"),
       ),
     );
-    const contracts = [
-      ["perf_process_window", PERF_PROCESS_WINDOW_PROPERTY_KEYS],
-      ["perf_system_window", PERF_SYSTEM_WINDOW_PROPERTY_KEYS],
-      ["perf_tool_exec_resource", PERF_TOOL_EXEC_RESOURCE_PROPERTY_KEYS],
-    ] as const;
     for (const document of documents) {
-      for (const [event, keys] of contracts) {
-        const section = document
-          .split(/^### /m)
-          .find((part) => part.split("\n")[0]?.trim() === `\`${event}\``)
-          ?.split(/^## /m)[0];
-        expect(section, `${event} 必须有独立属性表`).toBeDefined();
-        const properties = (section ?? "")
-          .split("\n")
-          .filter((line) => line.startsWith("|"))
-          .flatMap((line) => [...(line.split("|")[2] ?? "").matchAll(/`([^`]+)`/g)])
-          .map((match) => match[1]);
-        // 全局四项与事件属性合并才是最终 ARMS 契约；重复列出属性同样应失败。
-        expect(["platform", "app_version", "arms_env", "device_mid", ...properties].sort()).toEqual(
-          [...keys].sort(),
-        );
-      }
+      expect(document.split("\n")[0]).toContain("已退役");
+      expect(document).toContain("官方事件上报、ARMS、OTLP 导出及相关商业埋点已随独立桌面改造删除");
+      expect(document).toContain("不作为实现或验收要求");
+      expect(document).toContain("../desktop/standalone-coding-harness-spec.md");
+      expect(document).toContain("保留的本地诊断");
+      expect(document).toContain("(README.md)");
     }
   });
 

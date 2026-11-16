@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
 import type { ModelSelectionView } from "@zcode/services";
 import { buildRegistryModelSelectGroups } from "../src/lib/modelSelectionGroups.js";
 
@@ -138,28 +137,27 @@ describe("model selection groups", () => {
     ]);
   });
 
-  it("直接把 Registry Account Provider 投影为已选连接，不重新裁决 Family", () => {
-    const providerId = BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan;
+  it("完整投影 Registry 普通 Personal Provider 的自定义名称、API 标和原模型成员，不重新裁决 Family", () => {
+    const providerId = "personal:my-provider";
     const selectionView: ModelSelectionView = {
       revision: 8,
       providers: [
         {
           providerId,
-          providerName: "BigModel Coding Plan",
+          providerName: "我的 Personal Provider",
           config: {
-            access: {
-              type: "zhipu-account",
-              accountType: "bigmodel",
-              mode: "team-coding-plan",
-              entitled: true,
-            },
+            access: { type: "api-key", apiKey: "isolated-test-key" },
             api: {
               type: "anthropic-messages",
               baseUrl: "https://example.com/anthropic",
             },
-            models: ["GLM-5.2"],
+            models: ["GLM-5.2", "claude-custom", "upstream/family/model"],
           },
-          models: [{ modelId: "GLM-5.2", config: {} }],
+          models: [
+            { modelId: "GLM-5.2", config: {} },
+            { modelId: "claude-custom", config: {} },
+            { modelId: "upstream/family/model", config: {} },
+          ],
         },
       ],
     };
@@ -167,14 +165,23 @@ describe("model selection groups", () => {
     expect(buildRegistryModelSelectGroups("glm", selectionView)).toEqual([
       {
         key: `registry-provider:${providerId}`,
-        label: "BigModel",
-        labelBadge: "Team",
-        directItems: true,
+        label: "我的 Personal Provider",
+        labelBadge: "API",
         items: [
           {
             key: `registry-provider:${providerId}:GLM-5.2`,
-            value: "custom:account%3Abigmodel-team-coding-plan:GLM-5.2",
+            value: "custom:personal%3Amy-provider:GLM-5.2",
             name: "GLM-5.2",
+          },
+          {
+            key: `registry-provider:${providerId}:claude-custom`,
+            value: "custom:personal%3Amy-provider:claude-custom",
+            name: "claude-custom",
+          },
+          {
+            key: `registry-provider:${providerId}:upstream/family/model`,
+            value: "custom:personal%3Amy-provider:upstream%2Ffamily%2Fmodel",
+            name: "upstream/family/model",
           },
         ],
       },
