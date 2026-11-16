@@ -175,6 +175,10 @@ for (const entry of [rootEntry, nodeEntry]) {
 - [ ] **Fix 1.3: GREEN。** 新确定性回归、实际覆盖的Bots释放规格通过；重跑composition精确文件及原Task4最终12文件批次，全部通过（独立R3仍另列不混入该批）。保留原EPERM日志，不用首次通过覆盖复跑失败。
 - [ ] **Fix 1.4: 静态/报告/提交。** 架构before/after、services当前context、定向format/lint/diff；完整fix报告追加原task-4-report.md，含命令、输出与覆盖测试。原实施者修复后controller按215107a2..fixHEAD唯一scoped复审I1及fix新增破坏；R3不在本次fix范围。
 
+#### Task 4 Fix 2：失败路径的兄弟 IO 完成合同
+
+Fix1 scoped 复审的原 I1 仍开放：初始化并行读取使用 fail-fast `Promise.all`，任一读取拒绝后，startup 聚合可先于另一项已接纳读取完成，导致 shutdown 提前 settle。按现有服务释放合同，最小修直接初始化依赖的等待语义，保持错误可见性、唯一 shutdown owner 和 dispose 幂等。先以 config 失败/state 在途和相反方向的受控 deferred 回归证明 RED，再修复、运行实际覆盖测试和 Task4 原最终12文件 GREEN。不得改变 authorityMode、删除清理、增加 sleep、重试或超时。FIX_BASE 为 `a1182730`；完整修复报告追加 Task4，独立 scoped 复审原 I1 及本 fix 新破坏。
+
 ### Task 5: 修正原平台豁免 API 与原生资源路径断言
 
 **Files:**
