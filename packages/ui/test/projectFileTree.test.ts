@@ -3,8 +3,9 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useProjectFileTree } from "@/project-sidebar/useProjectFileTree.js";
 import type {
+  IRemoteProjectService,
   ProjectSidebarProps,
-  SidebarFileTreeTarget,
+  RemoteProjectHost,
   VirtualProject,
   ProjectTask,
 } from "@/project-sidebar/contract.js";
@@ -15,49 +16,130 @@ import {
 const onOpenFileManager = vi.fn();
 afterEach(() => {
   onOpenFileManager.mockClear();
-  useRemoteWorkspaceSessionStore.setState({ sessionsById: {}, sessionIdByWorkspaceIdentity: {} });
+  useRemoteWorkspaceSessionStore.setState({
+    sessionsById: {},
+    sessionIdByWorkspaceIdentity: {},
+    sessionIdByWorkspacePath: {},
+  });
 });
-const resolveTarget = vi.hoisted(() => vi.fn());
-vi.mock("@/project-sidebar/project-file-navigation.js", () => ({
-  resolveProjectFileTarget: resolveTarget,
-}));
-it("drops a late file target after another selection or unmount", async () => {
-  const requests: ((value: SidebarFileTreeTarget) => void)[] = [];
-  resolveTarget.mockImplementation(() => new Promise((done) => requests.push(done)));
-  const { result, unmount } = renderHook(() =>
-    useProjectFileTree({ onOpenFileManager } as unknown as ProjectSidebarProps, {
-      hosts: [],
-      entries: [],
-    }),
+const remoteHost: RemoteProjectHost = {
+  id: "remote:server:s",
+  membershipId: "member",
+  kind: "server",
+  target: { kind: "server", url: "https://source.test" },
+  position: 0,
+};
+const remoteProject: VirtualProject = {
+  id: "remote-project",
+  hostId: remoteHost.id,
+  name: "Remote project",
+  nameOverridden: false,
+  roots: [
+    { rootPath: "/one", position: 0, isPrimary: true },
+    { rootPath: "/two", position: 1, isPrimary: false },
+  ],
+  position: 0,
+  pinned: false,
+  deleted: false,
+  createdAt: 0,
+  updatedAt: 0,
+};
+const remoteDirectory = { hosts: [remoteHost], entries: [] };
+
+function deferredConnection() {
+  const requested = Promise.withResolvers<void>();
+  const completion = Promise.withResolvers<string>();
+  return {
+    requested: requested.promise,
+    complete: completion.resolve,
+    connect: () => {
+      requested.resolve();
+      return completion.promise;
+    },
+  };
+}
+
+function remoteFileTreeSetup(connect: ProjectSidebarProps["onConnectRemote"]) {
+  const connectHost = vi.fn(async () => remoteHost);
+  const onConnectRemote = vi.fn(connect);
+  const onCancelRemoteProject = vi.fn(async () => {});
+  const onSelectRemoteProject = vi.fn<ProjectSidebarProps["onSelectRemoteProject"]>(
+    async (sessionId, workspacePath, _localWorkspacePath, workspaceIdentity) => {
+      useRemoteWorkspaceSessionStore.getState().registerSession({
+        sessionId,
+        workspacePath,
+        workspaceIdentity,
+        services: {},
+      } as RemoteWorkspaceSession);
+    },
   );
+  return {
+    props: {
+      workspacePath: "/current",
+      onOpenFileManager,
+      onConnectRemote,
+      onSelectRemoteProject,
+      onCancelRemoteProject,
+    } as unknown as ProjectSidebarProps,
+    remoteService: { connectHost } as unknown as IRemoteProjectService,
+    connectHost,
+    onConnectRemote,
+    onSelectRemoteProject,
+    onCancelRemoteProject,
+  };
+}
+
+it("keeps the newer file target when its remote connector completes first", async () => {
+  const older = deferredConnection();
+  const newer = deferredConnection();
+  const connect = vi
+    .fn<ProjectSidebarProps["onConnectRemote"]>()
+    .mockImplementationOnce(older.connect)
+    .mockImplementationOnce(newer.connect);
+  const setup = remoteFileTreeSetup(connect);
+  const { result } = renderHook(() =>
+    useProjectFileTree(setup.props, remoteDirectory, setup.remoteService),
+  );
+  // 原因：必须让真实 connector 已进入等待，再发下一轮，才能覆盖 generation 的乱序结果保护。
   let first!: Promise<void>;
   let second!: Promise<void>;
-  act(() => {
-    first = result.current.openFiles({} as VirtualProject, "/one");
-    second = result.current.openFiles({} as VirtualProject, "/two");
+  await act(async () => {
+    first = result.current.openFiles(remoteProject, "/one");
+    await older.requested;
   });
   await act(async () => {
-    requests[1]({ workspacePath: "/two", workspaceName: "Two" });
+    second = result.current.openFiles(remoteProject, "/two");
+    await newer.requested;
+  });
+  expect(setup.connectHost.mock.calls).toEqual([["remote:server:s"], ["remote:server:s"]]);
+  expect(setup.onConnectRemote.mock.calls).toEqual([[remoteHost.target], [remoteHost.target]]);
+  expect(setup.onSelectRemoteProject).not.toHaveBeenCalled();
+  expect(onOpenFileManager).not.toHaveBeenCalled();
+  await act(async () => {
+    newer.complete("newer-session");
     await second;
-  });
-  await act(async () => {
-    requests[0]({ workspacePath: "/one", workspaceName: "One" });
-    await first;
   });
   expect(onOpenFileManager).toHaveBeenCalledExactlyOnceWith({
     workspacePath: "/two",
-    workspaceName: "Two",
-  });
-  let third!: Promise<void>;
-  act(() => {
-    third = result.current.openFiles({} as VirtualProject, "/three");
-    unmount();
+    workspaceName: "Remote project",
+    workspaceIdentity: "remote:server:s:/two",
+    workspaceRemoteSessionId: "newer-session",
   });
   await act(async () => {
-    requests[2]({ workspacePath: "/three", workspaceName: "Three" });
-    await third;
+    older.complete("older-session");
+    await first;
   });
-  expect(onOpenFileManager).toHaveBeenCalledTimes(1);
+  expect(setup.onSelectRemoteProject.mock.calls).toEqual([
+    ["newer-session", "/two", undefined, "remote:server:s:/two"],
+    ["older-session", "/one", undefined, "remote:server:s:/one"],
+  ]);
+  expect(onOpenFileManager).toHaveBeenCalledExactlyOnceWith({
+    workspacePath: "/two",
+    workspaceName: "Remote project",
+    workspaceIdentity: "remote:server:s:/two",
+    workspaceRemoteSessionId: "newer-session",
+  });
+  expect(setup.onCancelRemoteProject).not.toHaveBeenCalled();
 });
 
 it("consumes each open request once without reopening on rerender", () => {
@@ -105,41 +187,35 @@ it("opens pinned task cwd without a tab and never borrows a local remote session
   expect(onOpenFileManager).toHaveBeenCalledTimes(1);
 });
 
-it("a late mobile task switch cannot reopen an unmounted sidebar", async () => {
-  let finish!: () => void;
-  const switchWorkspace = vi.fn(
-    () =>
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
-  );
-  const props = {
-    onOpenFileManager,
-    workspacePath: "/current",
-    webRemoteControlWorkspaceSwitcher: { switchWorkspace },
-  } as unknown as ProjectSidebarProps;
+it("a late remote file connection cannot reopen an unmounted sidebar", async () => {
+  const connection = deferredConnection();
+  const setup = remoteFileTreeSetup(connection.connect);
   const { result, unmount } = renderHook(() =>
-    useProjectFileTree(props, { hosts: [], entries: [] }),
+    useProjectFileTree(setup.props, remoteDirectory, setup.remoteService),
   );
   let pending!: Promise<void>;
-  act(() => {
-    pending = result.current.openTaskFiles({
-      workspacePath: "/task-cwd",
-      taskId: "task-cwd",
-      hostId: "local",
-    } as ProjectTask);
-    unmount();
-  });
   await act(async () => {
-    finish();
+    pending = result.current.openFiles(remoteProject, "/one");
+    await connection.requested;
+  });
+  expect(setup.connectHost).toHaveBeenCalledExactlyOnceWith("remote:server:s");
+  expect(setup.onConnectRemote).toHaveBeenCalledExactlyOnceWith(remoteHost.target);
+  expect(setup.onSelectRemoteProject).not.toHaveBeenCalled();
+  expect(onOpenFileManager).not.toHaveBeenCalled();
+  // 原因：卸载只失效文件树请求；随后真实连接和身份绑定完成，也不能重新打开已关闭的视图。
+  unmount();
+  await act(async () => {
+    connection.complete("late-session");
     await pending;
   });
-  expect(switchWorkspace).toHaveBeenCalledWith("/task-cwd", {
-    taskHostId: "local",
-    fileTreeTaskId: "task-cwd",
-    mobileNavigationIntent: "chat",
-  });
+  expect(setup.onSelectRemoteProject).toHaveBeenCalledExactlyOnceWith(
+    "late-session",
+    "/one",
+    undefined,
+    "remote:server:s:/one",
+  );
   expect(onOpenFileManager).not.toHaveBeenCalled();
+  expect(setup.onCancelRemoteProject).not.toHaveBeenCalled();
 });
 
 it("opens only the remote session matching the pinned task identity", async () => {
@@ -180,19 +256,17 @@ it("opens only the remote session matching the pinned task identity", async () =
   });
 });
 
-it("hands the file request to the new Root after a mobile workspace switch", async () => {
-  const switchWorkspace = vi.fn(async () => {
-    useRemoteWorkspaceSessionStore.setState({
-      sessionsById: {
-        fresh: { sessionId: "fresh", workspaceIdentity: "remote:task" } as RemoteWorkspaceSession,
-      },
-      sessionIdByWorkspaceIdentity: { "remote:task": "fresh" },
-    });
-  });
+it("opens task files directly from the current window identity index", async () => {
+  const state = useRemoteWorkspaceSessionStore.getState();
+  state.registerSession({ sessionId: "fresh", services: {} } as RemoteWorkspaceSession);
+  state.bindWorkspaceIdentity("remote:task", "fresh");
+  const connect = vi.fn();
+  const bind = vi.fn();
   const props = {
     onOpenFileManager,
     workspacePath: "/current",
-    webRemoteControlWorkspaceSwitcher: { switchWorkspace },
+    onConnectRemote: connect,
+    onSelectRemoteProject: bind,
   } as unknown as ProjectSidebarProps;
   const { result } = renderHook(() => useProjectFileTree(props, { hosts: [], entries: [] }));
   await act(async () => {
@@ -205,11 +279,39 @@ it("hands the file request to the new Root after a mobile workspace switch", asy
       "stale",
     );
   });
-  expect(onOpenFileManager).not.toHaveBeenCalled();
-  expect(switchWorkspace).toHaveBeenCalledWith(
-    "remote:task",
-    expect.objectContaining({ mobileNavigationIntent: "chat" }),
+  expect(onOpenFileManager).toHaveBeenCalledExactlyOnceWith({
+    workspacePath: "/task",
+    workspaceName: "task",
+    workspaceIdentity: "remote:task",
+    workspaceRemoteSessionId: "fresh",
+  });
+  expect(connect).not.toHaveBeenCalled();
+  expect(bind).not.toHaveBeenCalled();
+});
+
+it("rejects an unbound task identity without borrowing the current local path", async () => {
+  useRemoteWorkspaceSessionStore.setState({
+    sessionsById: {
+      local: { sessionId: "local", workspacePath: "/task", services: {} } as RemoteWorkspaceSession,
+    },
+    sessionIdByWorkspacePath: { "/task": "local" },
+  });
+  const { result } = renderHook(() =>
+    useProjectFileTree(
+      { workspacePath: "/task", onOpenFileManager } as unknown as ProjectSidebarProps,
+      { hosts: [], entries: [] },
+    ),
   );
+  await act(async () => {
+    await expect(
+      result.current.openTaskFiles({
+        workspacePath: "/task",
+        workspaceIdentity: "remote:task",
+        hostId: "remote-host",
+      } as ProjectTask),
+    ).rejects.toThrow("project.connection-unavailable");
+  });
+  expect(onOpenFileManager).not.toHaveBeenCalled();
 });
 
 it("accepts an identity-bound mobile session without duplicated session metadata", async () => {
