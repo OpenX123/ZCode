@@ -9,6 +9,14 @@
   "fileFixtures": [],
   "requests": [
     {
+      "id": "cache-recovery-agent-proof",
+      "description": "锁与密码夹具前通过真实本地会话证明本轮随包Agent执行来源",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "草稿readiness未创建stdio会话，使用隔离本地正常回放取得实际Agent进程与协议生命周期证据。"
+    },
+    {
       "id": "cache-recovery-title",
       "description": "标题辅助响应",
       "kind": "common",

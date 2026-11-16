@@ -4,6 +4,32 @@
   "spec": "./test/e2e/conversation-session/conversation-session-source-server-cache-lock-recovery.test.ts",
   "fixtures": [
     {
+      "id": "cache-recovery-agent-proof",
+      "description": "锁与密码夹具前通过真实本地会话证明本轮随包Agent执行来源",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "草稿readiness未创建stdio会话，使用隔离本地正常回放取得实际Agent进程与协议生命周期证据。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_SOURCE_SERVER_CACHE_LOCK_RECOVERY_AGENT_PROOF"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "cache-recovery-agent-proof",
+          "inputTokens": 80,
+          "outputTokens": 8,
+          "text": "CACHE_RECOVERY_AGENT_PROVEN"
+        }
+      }
+    },
+    {
       "id": "cache-recovery-title",
       "description": "标题辅助响应",
       "metadata": {

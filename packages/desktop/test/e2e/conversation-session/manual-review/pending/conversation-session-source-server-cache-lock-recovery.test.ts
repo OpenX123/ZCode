@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   ServiceChannels,
+  parseSourceServerCacheRecovery,
   type SourceServerManagementSnapshot,
   type SourceServerOperationLog,
 } from "@zcode/shared";
@@ -15,6 +16,7 @@ import {
   createSourceServerCacheLockRecoveryFixture,
 } from "#e2e/helpers/source-server-cache-lock-recovery-fixture";
 import {
+  assertCacheRecoveryPackagedAgentProof,
   explorerShowsExactCacheRecoveryFolder,
   installCacheRecoveryNativeObservers,
   readCacheRecoveryNativeOpen,
@@ -136,6 +138,69 @@ async function readArchiveDownloadCount(fileName: string): Promise<number> {
   return Number(((await response.json()) as Record<string, number>)[fileName] ?? 0);
 }
 
+async function readSettingsRecoveryDiagnostics(snapshot: SourceServerManagementSnapshot) {
+  const failed = snapshot.states.find((state) => state.errorCode === ERROR_CODE);
+  const profile = snapshot.profiles.find((item) => item.profileId === failed?.profileId);
+  const server = snapshot.servers.find((item) => item.sourceServerId === profile?.sourceServerId);
+  const profiles = snapshot.profiles.filter(
+    (item) => item.sourceServerId === profile?.sourceServerId && item.lifecycleState !== "retired",
+  );
+  const displayed =
+    profiles.find((item) =>
+      snapshot.states.some(
+        (state) => state.profileId === item.profileId && state.state === "online",
+      ),
+    ) ??
+    profiles.find((item) => item.profileId === server?.preferredProfileId) ??
+    profiles[0];
+  const metadata = failed?.cacheRecovery;
+  const strict = parseSourceServerCacheRecovery(failed?.errorCode, metadata);
+  return {
+    failureOwnerPresent: Boolean(failed && profile),
+    singleProfileDevice: profiles.length === 1,
+    displayedProfileMatchesFailureOwner: Boolean(
+      failed && displayed?.profileId === failed.profileId,
+    ),
+    strictMetadata: {
+      valid: Boolean(strict),
+      object: Boolean(metadata && typeof metadata === "object"),
+      kindString: typeof metadata?.kind === "string",
+      kindMatches: metadata?.kind === "source-server-cache-lock",
+      versionString: typeof metadata?.version === "string",
+      versionMatches: metadata?.version === "1.4.0",
+      targetString: typeof metadata?.target === "string",
+      targetMatches: metadata?.target === "linux-x64",
+      sha256String: typeof metadata?.sha256 === "string",
+      sha256Pattern:
+        typeof metadata?.sha256 === "string" && /^[a-f0-9]{64}$/u.test(metadata.sha256),
+    },
+    page: await browser.execute((sourceServerId) => {
+      const page = document.querySelector('[data-testid="settings-page"]');
+      const card = [
+        ...(page?.querySelectorAll<HTMLElement>("[data-source-server-card]") ?? []),
+      ].find((item) => item.dataset.sourceServerCard === sourceServerId);
+      const button = [...(page?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+        (item) => item.textContent?.trim() === "查看详情",
+      );
+      const rect = button?.getBoundingClientRect();
+      const hit = rect
+        ? document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+        : null;
+      return {
+        settingsPageExists: Boolean(page),
+        settingsPageVisible: Boolean(page?.getClientRects().length),
+        failureOwnerCardExists: Boolean(card),
+        failureOwnerCardVisible: Boolean(card?.getClientRects().length),
+        expectedLabelExists: Boolean(button),
+        expectedLabelVisible: Boolean(button?.getClientRects().length),
+        expectedLabelEnabled: Boolean(button && !button.disabled),
+        expectedLabelBelongsToFailureCard: Boolean(button && card?.contains(button)),
+        expectedLabelCenterUnobscured: Boolean(button && hit && button.contains(hit)),
+      };
+    }, profile?.sourceServerId ?? null),
+  };
+}
+
 describe(`${MARKER}: packaged 缓存锁真实恢复`, () => {
   after(async () => {
     if (artifacts) {
@@ -186,6 +251,12 @@ describe(`${MARKER}: packaged 缓存锁真实恢复`, () => {
     );
     expect(facts.bridges).toEqual({ tabs: true, sessions: true, actions: true });
     await writeFile(join(artifacts, "bridge-ready.json"), JSON.stringify(facts, null, 2));
+    await prepareV4ConversationE2E();
+    // 草稿readiness并不创建stdio会话；真实本地回放完成后才能将协议证据与当前Agent绑定。
+    await sendV4Prompt(`${MARKER}_AGENT_PROOF 请返回本轮随包Agent会话准入标记。`);
+    await waitForV4TimelineContaining("CACHE_RECOVERY_AGENT_PROVEN");
+    await waitForV4Pane((state) => !state.canStop, "Agent准入准备任务没有完成");
+    facts.packagedAgentProof = await assertCacheRecoveryPackagedAgentProof(artifacts);
     const originalConfig = readSSHRuntimeConfig(MARKER);
     const probe = await runSSHCommand(originalConfig, "uname -s; uname -m");
     if (probe.code !== 0) throw new Error("真实SSH probe失败");
@@ -232,7 +303,6 @@ describe(`${MARKER}: packaged 缓存锁真实恢复`, () => {
     let clipboardSaved = false;
     try {
       await setSyntheticCacheRecoveryPassword(secret);
-      await prepareV4ConversationE2E({ skipProvider: scenario !== "settings" });
       const confirmations = join(artifacts, "native-confirmations.jsonl");
       await installCacheRecoveryNativeObservers(fixture.aParent, confirmations);
       if (scenario === "settings") {
@@ -262,10 +332,17 @@ describe(`${MARKER}: packaged 缓存锁真实恢复`, () => {
         }
         if (!bootstrapFailed) throw new Error("公开RPC故障准备没有返回真实锁失败");
         facts.settingsRpcBootstrapOnly = true;
-        await clickVisible("详情", "[data-testid='settings-page']");
+        facts.settingsEntryDiagnostics = await readSettingsRecoveryDiagnostics(
+          await callHandoffHost<SourceServerManagementSnapshot>(
+            ServiceChannels.SourceServerManagement,
+            "getSnapshot",
+          ),
+        );
+        // 原候选精确匹配“详情”，但现有i18n动作是“查看详情”；保留scope与严格全文匹配。
+        await clickVisible("查看详情", "[data-testid='settings-page']");
         await clickVisible("重试", "[role='dialog']");
         await browser.keys("Escape");
-        await clickVisible("详情", "#zcode-toast-host");
+        await clickVisible("查看详情", "#zcode-toast-host");
         facts.settingsComponentRetryToastDetails = true;
       } else if (scenario === "wizard") {
         // 旧版连接自动尝试更新；可信锁错把主动作投影为“重试”，仍直达原update链。
@@ -506,6 +583,8 @@ describe(`${MARKER}: packaged 缓存锁真实恢复`, () => {
           hasCacheRecovery: Boolean(state.cacheRecovery),
           hasInstallPreview: Boolean(state.installPreview),
         }));
+        if (scenario === "settings")
+          facts.settingsFailureDiagnostics = await readSettingsRecoveryDiagnostics(snapshot);
       } catch {
         facts.failureSnapshotUnavailable = true;
       }

@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { Menu } from "electron";
 
@@ -13,6 +14,128 @@ type NativeCapture = {
   restore(): void;
 };
 type CaptureGlobal = typeof globalThis & { __cacheRecoveryNative?: NativeCapture };
+
+/** 包在仓库后代时旧resolver会误跑源码dist；写锁/改密码前必须核实实际进程与协议。 */
+export async function assertCacheRecoveryPackagedAgentProof(artifactDir: string) {
+  const expectedSha = process.env.ZCODE_TASK16_AGENT_SHA256;
+  const executable = process.env.ZCODE_E2E_PACKAGED_APP_PATH;
+  if (!expectedSha || !/^[a-f0-9]{64}$/u.test(expectedSha) || !executable)
+    throw new Error("缺少冻结包Agent身份");
+  const main = await browser.electron.execute(() => ({
+    pid: process.pid,
+    executable: process.execPath,
+    resources: process.resourcesPath,
+  }));
+  const canonical = async (path: string) => (await realpath(path)).toLowerCase();
+  const expectedExe = await canonical(executable);
+  if ((await canonical(main.executable)) !== expectedExe)
+    throw new Error("实际Main不属于本轮冻结包");
+  const entry = join(main.resources, "glm", "zcode.cjs");
+  const canonicalEntry = await canonical(entry);
+  const sha256 = createHash("sha256")
+    .update(await readFile(entry))
+    .digest("hex");
+  if (sha256 !== expectedSha) throw new Error("实际随包Agent入口摘要不匹配");
+  const logs = join(artifactDir, "runtime-logs", "0-0");
+  type Spawn = { workspaceKey: string; spawnPreflight: { command: string; args: string[] } };
+  type Started = { workspaceKey: string; command: string; pid: number };
+  const rows: Array<{ hostPid: number; preflight?: Spawn; started?: Started }> = [];
+  for (const file of await readdir(join(logs, "desktop"))) {
+    if (!file.endsWith(".log")) continue;
+    for (const line of (await readFile(join(logs, "desktop", file), "utf8")).split("\n")) {
+      if (!line.includes("[host-log] (local-")) continue;
+      const ids = [...line.matchAll(/\[pid:(\d+)\]/gu)].map((match) => Number(match[1]));
+      if (ids[0] !== main.pid || !ids[1]) continue;
+      const preflight = "ZCode agent spawn preflight ";
+      const started = "ZCode agent process started ";
+      if (line.includes(preflight))
+        rows.push({ hostPid: ids[1], preflight: JSON.parse(line.split(preflight)[1]!) as Spawn });
+      if (line.includes(started))
+        rows.push({ hostPid: ids[1], started: JSON.parse(line.split(started)[1]!) as Started });
+    }
+  }
+  const attempts = rows.filter((row) => row.preflight);
+  if (attempts.length === 0) throw new Error("本地会话readiness尚未产生实际Agent启动证据");
+  for (const { preflight } of attempts) {
+    if (
+      (await canonical(preflight!.spawnPreflight.command)) !== expectedExe ||
+      (await canonical(preflight!.spawnPreflight.args[0]!)) !== canonicalEntry ||
+      !preflight!.spawnPreflight.args.includes("app-server") ||
+      !preflight!.spawnPreflight.args.includes("--stdio")
+    )
+      throw new Error("实际Agent argv没有精确使用本包resources入口");
+  }
+  const last = attempts.at(-1)!;
+  const started = rows.findLast(
+    (row) =>
+      row.hostPid === last.hostPid && row.started?.workspaceKey === last.preflight!.workspaceKey,
+  )?.started;
+  if (!started || !Number.isSafeInteger(started.pid)) throw new Error("缺少实际Agent PID");
+  const os = await run(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Get-CimInstance Win32_Process -Filter ('ProcessId='+$env:TASK16_AGENT_PID) | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress",
+    ],
+    { env: { ...process.env, TASK16_AGENT_PID: String(started.pid) }, windowsHide: true },
+  );
+  const child = JSON.parse(os.stdout) as {
+    ProcessId: number;
+    ParentProcessId: number;
+    ExecutablePath: string;
+    CommandLine: string;
+  };
+  if (
+    child.ProcessId !== started.pid ||
+    child.ParentProcessId !== last.hostPid ||
+    (await canonical(child.ExecutablePath)) !== expectedExe ||
+    !child.CommandLine.toLowerCase().includes(canonicalEntry)
+  )
+    throw new Error("实际Agent进程不属于该Host或入口不匹配");
+  const events: Array<{ event?: string; traceId?: string; sessionId?: string }> = [];
+  for (const file of await readdir(join(logs, "agent"))) {
+    if (!file.endsWith(".jsonl")) continue;
+    const lines = (await readFile(join(logs, "agent", file), "utf8")).split("\n");
+    // 只读取已完成的JSONL行；活动日志末行可能仍在写入，不能解析半行或吞掉其它坏行。
+    for (const line of lines.slice(0, -1)) if (line.trim()) events.push(JSON.parse(line));
+  }
+  const trace = events.find(
+    (event) =>
+      event.event === "zcode_protocol.startup.started" &&
+      event.traceId &&
+      events.some(
+        (other) =>
+          other.traceId === event.traceId &&
+          other.event === "zcode_protocol.provider_registry.ready",
+      ) &&
+      events.some(
+        (other) =>
+          other.traceId === event.traceId && other.event === "zcode_protocol.startup.completed",
+      ),
+  )?.traceId;
+  if (!trace) throw new Error("同run原始Agent协议生命周期没有完成同trace启动");
+  const session = events.find(
+    (event) => event.event === "bootstrap.app.startup.completed" && event.sessionId,
+  );
+  if (!session) throw new Error("同run原始Agent日志缺少真实stdio会话启动完成证据");
+  const proof = {
+    mainPid: main.pid,
+    hostPid: last.hostPid,
+    agentPid: started.pid,
+    actualArgvMatchesPackagedResource: true,
+    ownedAgentProcessMatches: true,
+    protocolSameRun: true,
+    protocolTraceId: trace,
+    stdioSessionId: session.sessionId,
+    protocolPidRecorded: false,
+    sha256,
+    entryHashMatches: true,
+  };
+  await writeFile(join(artifactDir, "packaged-agent-proof.json"), JSON.stringify(proof, null, 2));
+  return proof;
+}
 
 /** 合成容器密码仅走 stdin；参数、输出和错误均不携带密码。 */
 export async function setSyntheticCacheRecoveryPassword(password: string) {
