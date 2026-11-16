@@ -139,11 +139,12 @@ export function V4InteractionDialogs({
       (interaction) =>
         interaction.payload.kind === "permission" || interaction.payload.kind === "userInput",
     ) ?? null;
-  // 迟到回调必须核对当前完整路由与运行身份；同路径远端/另一 trace 不能复用旧回答。
+  // Bug 根因：显式 identity 会遮蔽路径；两者必须独立参与同一身份，避免换路径后接受旧草稿/回调。
   const elicitationIdentity =
     pending?.payload.kind === "userInput"
       ? JSON.stringify([
           workspaceIdentity?.trim() || workspacePath,
+          workspacePath,
           remoteSessionId ?? null,
           sessionId,
           pending.payload.traceId ?? sessionId,

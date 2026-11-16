@@ -150,8 +150,8 @@ T04 不新增媒体协议事实，T05 再接入类型化媒体。
 - 普通提问固定在对应会话输入框上方，保留题干、选项、自由输入、多题进度与返回修改。
 - 此处“上方”遵守 [v4 protocol §4.2.6](../v4-refactor/10-protocol-spec.md)：同一 sticky bottom dock 内先渲染 interaction，再渲染保持挂载的 composer。pending 时普通 composer 继续 `aria-hidden` / `display:none`，草稿、编辑器和附件保留；收起问题卡也不开放额外发送入口，用户可查看上下文、重开回答，普通输入待权威 pending 清场后恢复。这一取舍避免给阻塞态增加第二条输入/发送路径。
 - 点选只更新草稿。下一题只换题；最后一题明确发送才提交。首次真实操作继续沿现有路径暂停普通 Ask 自动继续倒计时。
-- 关闭/收起只影响可见性；输入区保留重新打开的等待提示。跳过沿后端 decline 语义，不能当作成功空答案。
-- 请求草稿绑定 session/trace/request 身份，同 request 的新 snapshot 不重置；多端先完成后迟到提交不重发、不回答另一请求。
+- 关闭/收起只影响可见性；输入区保留重新打开的等待提示。收起态不处理选项选择或导航快捷键；等待文字按钮与展开按钮保留原生 Enter/Space 重开，数字键不得改写隐藏答案。跳过沿后端 decline 语义，不能当作成功空答案。
+- 请求草稿绑定规范化 identity key（`workspaceIdentity?.trim() || workspacePath`）、独立 workspacePath、remoteSessionId、session/trace/request 的完整身份，同身份的新 snapshot 不重置；显式 identity 不变而仅路径变化时，也重置草稿并拒绝旧回答/旧暂停回调。组件 key、草稿、snooze 与响应门禁共用同一身份，不新增 owner；多端先完成后迟到提交不重发、不回答另一请求。
 - 权限与计划审批继续使用各自的确认语义和超时规则，不套普通问题的自动继续或批量发送逻辑。非焦点会话的提问不抢走当前输入焦点。
 
 ### 5.6 标题与分屏

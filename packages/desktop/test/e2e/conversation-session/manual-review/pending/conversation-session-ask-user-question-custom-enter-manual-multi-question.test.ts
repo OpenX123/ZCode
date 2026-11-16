@@ -10,6 +10,7 @@ import {
   TID_TOOL_SUMMARY_TRIGGER,
 } from "@zcode/shared/test-ids";
 import { clearAppData } from "../../../helpers/desktop-app.js";
+import { confirmAskUserQuestionCustomAnswerByKeyboard } from "../../../helpers/conversation-session-tool.js";
 import {
   expectNoUpstreamRequestForTextWithin,
   waitForUpstreamRequest,
@@ -94,22 +95,7 @@ async function typeCustomAnswerThenConfirm(answer: string) {
     timeout: 10000,
     timeoutMsg: "AskUserQuestion 自定义回答没有通过键盘逐字写入输入框",
   });
-  const body = await $('[data-elicitation-dialog-body="true"]').getText();
-  await browser.keys("Enter");
-  // Enter 必须编辑换行；WebDriver getText 会包含 textarea 换行，不能把它误判为切题。
-  const editedValue = await $('[data-elicitation-dialog-body="true"] textarea').getValue();
-  expect(editedValue).toContain("\n");
-  expect(editedValue.replace(/\n/g, "")).toBe(answer);
-  expect((await $('[data-elicitation-dialog-body="true"]').getText()).replace(/\s/g, "")).toBe(
-    body.replace(/\s/g, ""),
-  );
-  await $('[data-elicitation-dialog-body="true"] textarea').setValue(answer);
-  await browser.keys("Tab");
-  await browser.keys("Tab");
-  expect(await $('[data-elicitation-dialog-footer="true"] button:last-child').isFocused()).toBe(
-    true,
-  );
-  await browser.keys("Enter");
+  await confirmAskUserQuestionCustomAnswerByKeyboard(answer);
 }
 
 async function getCustomElicitationInput() {

@@ -272,6 +272,30 @@ it.each(["button", "escape"])("普通 Ask %s 收起/重开只暂停一次且不�
   expect(view.onRespond).not.toHaveBeenCalled();
 });
 
+it.each(["waiting", "expand"])("收起态 %s 入口的键盘冒泡不能改写隐藏答案", (entry) => {
+  const view = renderOrdinary();
+  fireEvent.click(view.getByRole("option", { name: /改选/ }));
+  fireEvent.click(view.getByRole("button", { name: "折叠问题弹窗" }));
+  const reopen =
+    entry === "waiting"
+      ? view.container.querySelector<HTMLButtonElement>(
+          '[data-elicitation-waiting="true"] > button',
+        )!
+      : view.getByRole("button", { name: "展开问题弹窗" });
+  reopen.focus();
+  expect(fireEvent.keyDown(reopen, { key: "1" })).toBe(true);
+  expect(fireEvent.keyDown(reopen, { key: "ArrowDown" })).toBe(true);
+  expect(fireEvent.keyDown(reopen, { key: "Tab" })).toBe(true);
+  expect(fireEvent.keyDown(reopen, { key: "Enter" })).toBe(true);
+  expect(fireEvent.keyDown(reopen, { key: " " })).toBe(true);
+  expect(document.activeElement).toBe(reopen);
+  // jsdom 不执行按钮原生键盘激活；此处点击重开，真实 Enter/Space 路径由 Electron E2E 验证。
+  fireEvent.click(reopen);
+  expect(view.getByRole("option", { name: /改选/ }).getAttribute("aria-selected")).toBe("true");
+  expect(view.getByRole("option", { name: /选项一/ }).getAttribute("aria-selected")).toBe("false");
+  expect(view.onRespond).not.toHaveBeenCalled();
+});
+
 it("计划审批选项和 Escape 保留原确认/拒绝路径", () => {
   const request = {
     ...ordinaryRequest(),

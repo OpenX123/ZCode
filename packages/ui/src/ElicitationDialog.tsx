@@ -919,6 +919,8 @@ function ElicitationDialogContent({
   const handleCardKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if (event.defaultPrevented || isImeComposingKeyEvent(event)) return;
+      // Bug 根因：等待入口的数字键会冒泡到卡片；收起时不改隐藏答案，也不拦截按钮原生重开。
+      if (!isDialogExpanded) return;
       if (!isPlanApproval && event.key === "Escape") {
         event.preventDefault();
         collapse();
@@ -965,6 +967,7 @@ function ElicitationDialogContent({
       moveSelection,
       continueOrSubmit,
       isPlanApproval,
+      isDialogExpanded,
       closeFromKeyboard,
       collapse,
       currentQuestion,

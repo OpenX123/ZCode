@@ -150,16 +150,29 @@ describe("会话区 AskUserQuestion 键盘导航 E2E", () => {
     await activatePrimaryByKeyboard();
     await waitForElicitationPage("2 / 3", QUESTION_TWO);
 
-    await $('[aria-label="折叠问题弹窗"]').click();
-    await $('[data-elicitation-waiting="true"]').waitForDisplayed();
-    expect(await $('[data-elicitation-dialog-body="true"]').isDisplayed()).toBe(false);
-    await $('[data-elicitation-waiting="true"] [aria-label="展开问题弹窗"]').click();
-    await waitForElicitationPage("2 / 3", QUESTION_TWO);
-    expect(
-      (await getElicitationKeyboardSnapshot()).selectedTexts.some((text) =>
-        text.includes(Q2_OPTION_B),
-      ),
-    ).toBe(true);
+    for (const [reopenSelector, reopenKey] of [
+      ['[data-elicitation-waiting="true"] > button', Key.Enter],
+      ['[data-elicitation-waiting="true"] [aria-label="展开问题弹窗"]', " "],
+    ] as const) {
+      await $('[aria-label="折叠问题弹窗"]').click();
+      await $('[data-elicitation-waiting="true"]').waitForDisplayed();
+      expect(await $('[data-elicitation-dialog-body="true"]').isDisplayed()).toBe(false);
+      // 仅布置可见按钮焦点；数字键与原生 Enter/Space 重开均由真实 WebDriver 键盘执行。
+      await browser.execute((selector) => {
+        const entry = document.querySelector<HTMLButtonElement>(selector);
+        if (!entry) throw new Error(`收起后的重开入口不存在: ${selector}`);
+        entry.focus();
+      }, reopenSelector);
+      expect(await $(reopenSelector).isFocused()).toBe(true);
+      await browser.keys("1");
+      expect(await $('[data-elicitation-dialog-body="true"]').isDisplayed()).toBe(false);
+      await browser.keys(reopenKey);
+      await waitForElicitationPage("2 / 3", QUESTION_TWO);
+      const selected = (await getElicitationKeyboardSnapshot()).selectedTexts;
+      expect(selected).toHaveLength(1);
+      expect(selected[0]).toContain(Q2_OPTION_B);
+      expect(await countUpstreamRequests({ includes: [customAnswer] })).toBe(0);
+    }
     await verifyOtherPaneKeepsFocus();
     await seedBlockedComposerDraft();
     await $('[aria-label="折叠问题弹窗"]').click();

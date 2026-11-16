@@ -1719,6 +1719,8 @@ BG13/BG18 增量埋点断言：保留内部工具逐条上报及零 token 断言
 
 这些 case 对应 [conversation-session-case-catalog.md](../conversation-session-case-catalog.md) 的 `Q` 分组。`TX` 已覆盖 `AskUserQuestion` 作为工具块参与 completed 后 compact/fork/goal 的稳定性，但没有断言用户回答本身是否在会话历史里可见。`AQ` 先证明 `elicitation_response` 已进入下一次模型请求，再断言同一答案必须保留在 AskUserQuestion 消息的已回答记录里。
 
+Q04/Q22 的 `AK` 回归包含收起后分别聚焦等待文字按钮、展开按钮，按数字键后通过真实 Enter/Space 重开并保留原答案。显式 identity 不变而仅 workspacePath 变化时的草稿重置、旧回答/旧暂停回调拒绝由 `v4InteractionDialogs.test.ts` 定向覆盖；不扩展为真实 SSH 或 replayable 恢复证据。
+
 | Catalog ID | 覆盖状态 | 自动化  | 备注                                                                                                                                                                                                                                                                             |
 | ---------- | -------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Q01        | covered  | AQ      | 正式 E2E 断言答案被 agent 消费后，仍显示在 AskUserQuestion 消息的已回答记录中，而不是额外生成用户消息                                                                                                                                                                            |

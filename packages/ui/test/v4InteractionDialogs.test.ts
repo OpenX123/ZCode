@@ -344,7 +344,7 @@ it.each([undefined, "remote-a"])(
   },
 );
 
-it.each(["completed", "trace", "request", "session", "workspace", "remote"])(
+it.each(["completed", "trace", "request", "session", "workspace", "workspacePath", "remote"])(
   "%s 换代后的迟到 Ask 回答不得发出或答错后续请求",
   async (change) => {
     const snapshot = askSnapshot();
@@ -353,6 +353,7 @@ it.each(["completed", "trace", "request", "session", "workspace", "remote"])(
       sessionId = "session-current",
       workspaceIdentity = "ssh-a",
       remoteSessionId = "remote-a",
+      workspacePath = "/same/path",
     ) =>
       createElement(
         ZCodeIntlProvider,
@@ -360,7 +361,7 @@ it.each(["completed", "trace", "request", "session", "workspace", "remote"])(
         createElement(V4InteractionDialogs, {
           snapshot: snapshotValue,
           sessionId,
-          workspacePath: "/same/path",
+          workspacePath,
           workspaceIdentity,
           remoteSessionId,
           focused: false,
@@ -374,6 +375,8 @@ it.each(["completed", "trace", "request", "session", "workspace", "remote"])(
     if (change === "session")
       view.rerender(content({ ...snapshot, sessionId: "session-new" }, "session-new"));
     if (change === "workspace") view.rerender(content(snapshot, "session-current", "ssh-b"));
+    if (change === "workspacePath")
+      view.rerender(content(snapshot, "session-current", "ssh-a", "remote-a", "/new/path"));
     if (change === "remote")
       view.rerender(content(snapshot, "session-current", "ssh-a", "remote-b"));
     await act(async () => {
@@ -382,6 +385,76 @@ it.each(["completed", "trace", "request", "session", "workspace", "remote"])(
     expect(captured.sendCommand).not.toHaveBeenCalled();
   },
 );
+
+it.each([undefined, "remote-a"])(
+  "remote=%s 显式 identity 不变而仅路径变化时，重置选项草稿及收起状态",
+  (remoteSessionId) => {
+    const content = (workspacePath: string) =>
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "zh-CN" },
+        createElement(V4InteractionDialogs, {
+          snapshot: askSnapshot(),
+          sessionId: "session-current",
+          workspacePath,
+          workspaceIdentity: "ssh-a",
+          remoteSessionId,
+          focused: false,
+        }),
+      );
+    const view = render(content("/same/path"));
+    fireEvent.click(view.getByRole("option", { name: /是/ }));
+    fireEvent.click(view.getByRole("button", { name: "折叠问题弹窗" }));
+    view.rerender(content("/new/path"));
+    expect(view.queryByText("等待回答")).toBeNull();
+    expect(view.getByRole("option", { name: /是/ }).getAttribute("aria-selected")).toBe("false");
+  },
+);
+
+it("显式 identity 不变而仅路径变化时，拒绝旧暂停回调且新路径仍可暂停", async () => {
+  captured.sendCommand.mockImplementation(async (envelope) => ({
+    commandId: envelope.commandId,
+    status: "accepted",
+    revisionAtDecision: 1,
+  }));
+  const snapshot = askSnapshot();
+  snapshot.pendingInteractions[0]!.autoResolution = {
+    state: "hiddenGrace",
+    startedAt: 1,
+    visibleAt: 60001,
+    deadlineAt: 300001,
+  };
+  const content = (workspacePath: string) =>
+    createElement(
+      ZCodeIntlProvider,
+      { initialLocale: "zh-CN" },
+      createElement(V4InteractionDialogs, {
+        snapshot,
+        sessionId: "session-current",
+        workspacePath,
+        workspaceIdentity: "ssh-a",
+        remoteSessionId: "remote-a",
+        focused: false,
+      }),
+    );
+  const view = render(content("/same/path"));
+  const oldFirstInteraction = captured.props!.onFirstInteraction!;
+  view.rerender(content("/new/path"));
+  await act(async () => {
+    expect(await oldFirstInteraction("navigation")).toBe(false);
+  });
+  expect(captured.sendCommand).not.toHaveBeenCalled();
+  await act(async () => {
+    expect(await captured.props!.onFirstInteraction!("answer")).toBe(true);
+  });
+  expect(captured.sendCommand).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      sessionId: "session-current",
+      type: "snoozeInteractionAutoResolution",
+      payload: { interactionId: "ask-current" },
+    }),
+  );
+});
 
 it("Bot 草稿只可覆盖同 session/trace/request 的 pending", () => {
   const projected = {

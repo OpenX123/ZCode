@@ -41,6 +41,28 @@ export async function waitForToolCallBlockByToolName(
   return waitForToolCallBlock({ type: "toolName", value: toolName }, timeout);
 }
 
+/** 已填写并聚焦自定义输入框后，验证 Enter 编辑，再用真实 Tab/Enter 激活当前主动作。 */
+export async function confirmAskUserQuestionCustomAnswerByKeyboard(expectedAnswer: string) {
+  const body = await $('[data-elicitation-dialog-body="true"]');
+  const input = await body.$("textarea");
+  expect(await input.isFocused()).toBe(true);
+  expect(await input.getValue()).toBe(expectedAnswer);
+  const bodyBeforeEnter = await body.getText();
+  await browser.keys("Enter");
+  // Enter 应插入换行；题卡非空白文本仍不变，不能把 textarea 的换行误判为切题。
+  const editedValue = await input.getValue();
+  expect(editedValue).toContain("\n");
+  expect(editedValue.replace(/\n/g, "")).toBe(expectedAnswer);
+  expect((await body.getText()).replace(/\s/g, "")).toBe(bodyBeforeEnter.replace(/\s/g, ""));
+  await input.setValue(expectedAnswer);
+  await browser.keys("Tab");
+  await browser.keys("Tab");
+  expect(await $('[data-elicitation-dialog-footer="true"] button:last-child').isFocused()).toBe(
+    true,
+  );
+  await browser.keys("Enter");
+}
+
 export async function waitForToolCallBlockByToolCallId(
   toolCallId: string,
   timeout = 20000,
