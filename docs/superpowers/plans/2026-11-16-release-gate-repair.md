@@ -425,6 +425,18 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 2: 一次聚焦因果定位。** 以受控隔离fixture和实际E2E入口，在不改正式源码的前提下补齐 renderer键盘/composition/input/onData、平台write接纳、Service write及PTY回显的关联事件，分清重复UI输入、传输写入和仅显示异常。必要临时诊断用独立scratch配置/运行时观测，不能引入新测试门禁、宽松匹配或改产品路径。只为具体证据缺口运行，不高频重复碰运气。
 - [ ] **Step 3: 交付与边界。** 报告task-17-report.md，记录真实命令、脱敏有序证据、确认根因/仍待证假设、最小后续建议和未覆盖条件。若严谨定位仍未完成如实报告，不改终端阈值/生产逻辑，不以推测宣布修复。禁止派子代理；不与dist构建并行，不碰用户正在使用的稳定版。
 
+### Task 18: 修复跨宿主 POSIX 归档的执行权限
+
+**Files:** `packages/zcode-server-cli/src/packaging/stage.ts`、`stageArchives.ts`、现有 packaging CLI 和对应 `packages/zcode-server-cli/test/`；必要的最小公开 packaging 边界、直接依赖与架构登记；`packages/desktop/test/e2e/helpers/source-server-cache-lock-recovery-fixture.ts` 的 B 重包消费边界。Spec 先更新 `docs/testing/1.4.1-gate-repair-spec.md` 及实际拥有归档合同的既有 spec，不扩成 installer 权限修补。
+
+**Interfaces:** producer 是完整归档与组件归档的唯一权限所有者；consumer 原样校验/解压/执行，不增加远端 chmod fallback。Windows 宿主不能依赖本地 chmod 后 stat 推导 POSIX 可执行性。完整包、组件包及测试 B 重包必须通过同一明确的 portable 权限合同；跨包消费使用公开入口或 CLI，不私导实现。`hashPaths` 的内容 hash 合同保持；实际 tar.gz 字节变化必须重算归档 SHA/descriptor。
+
+- [ ] **Step 1: 独立 RED 与归因。** 固定 Node，先 freshness/架构检查，读取受控 context 和现有 tar 选择。复用 Task16 原不可变 A/B 及本轮合成 Linux Docker（只读源），在本次独立临时目录解压并实际执行 `bin/zcode`/`runtime/node`，保存 mode、exit126 或确切失败。以 Windows 最小 producer 夹具复现完整/组件同缺陷，区分 Node chmod、宿主归档行为与 installer，不凭观察时间推断引入提交。不得改远端已安装文件或临时 chmod 跑绿。
+- [ ] **Step 2: 最小 portable producer。** 先补 spec 和明确的文件权限分类，再修完整/组件 producer，保持目标 Windows zip 语义、macOS xattr/AppleDouble 边界和安全普通文件权限。仅声明必要直接依赖；新 source 按现有政策纳管，不整包迁移 legacy、不刷新准入快照。保留路径/字节、组件 ID/hash、async IO 和既有错误传播。B 派生重包使用同一明确可复用合同，不在测试中复制生产 tar header 算法。若公开消费边界存在多种实质设计，先向 controller 提供最小选项与证据，不能私建通用归档框架。
+- [ ] **Step 3: 精确 GREEN。** 回归覆盖完整与组件的启动脚本、Node、search/native 可执行文件及普通文件/目录模式，实际在 Linux 解压并执行；可用 mock/最小文件覆盖非本机 target，不声称实际 macOS 运行。B 的旧版本 metadata/marker 与独立 SHA 语义保持且 Linux 解压可执行。保留 RED，既有 release/remote-assets/installer 的精确受影响 suite 实际运行，不 skip、不弱化断言、不改 timeout。
+- [ ] **Step 4: 匹配资源交接。** 按新 producer 仅重新 stage 必要匹配归档及 descriptor，记录旧/新 hash、目标、版本与来源；更新本次专用 loopback 资源服务和测试包外置 descriptor 前先核确切路径及 consumer。保留旧资源证据，不重建无关 Main/Renderer/Agent，不碰正式安装或公开 CDN。若需额外重建，先说明实际代码依赖。交接 Task16 新 A/descriptor/CDN 与 B 正确生产入口及可复用验证命令。
+- [ ] **Step 5: 静态/提交/审查。** 完整报告写 `task-18-report.md`，包含 RED/GREEN 命令、真实退出码/日志、权限矩阵、直接依赖/架构决定、产物身份、自审及未覆盖平台。定向 format/lint/diff、默认真实基线架构检查；根 typecheck/lint 由 controller 统一。只提交本任务正式文件，独立 reviewer 审查后再恢复原 Task16，Task16/12/13 仍 OPEN，不把此任务当其 E2E 通过。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
