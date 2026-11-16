@@ -66,6 +66,8 @@ interface RemoteAttachmentRoute {
   // Main 只保留端口转发所需的 request/session 关联和脱敏 descriptor；连接/任务事实归 Host。
   descriptor: WindowHostRemoteWorkspaceDescriptor;
   rendererAttachmentId?: string;
+  /** 最后已发布给 Renderer 的 session 关联；只用于连续重连的通知，不是 Host 事实。 */
+  rendererSessionId?: string;
   pendingRendererAttachment?: {
     attachmentId: string;
     previousAttachmentId?: string;
@@ -429,6 +431,7 @@ export function createRemoteWorkspaceSessionManager(options: {
     );
     if (!route.connectFinalized) {
       route.connectFinalized = true;
+      route.rendererSessionId = payload.sessionId;
     }
     pending.resolve();
   }
@@ -580,6 +583,49 @@ export function createRemoteWorkspaceSessionManager(options: {
         },
       );
     });
+    if (route.mobileOnly) return;
+
+    // Bug 原因：原重连仅更新 descriptor/Provisioning，没有重新发送 scoped port，Renderer
+    // 因而永远使用旧 session。复用唯一 candidate/ACK 路径；配置重下发不能成为重连发布屏障。
+    const attached = attachRendererPort(win, route, "source-reconnected");
+    const attachmentId = route.pendingRendererAttachment?.attachmentId;
+    void attached
+      .then(() => {
+        if (
+          routesBySessionId.get(descriptor.remoteSessionId) !== route ||
+          route.descriptor !== descriptor ||
+          route.attachmentState !== "attachable" ||
+          route.pendingRendererAttachment ||
+          route.rendererAttachmentId !== attachmentId ||
+          options.windowHostProcessMap.get(webContentsId) !== child ||
+          win.isDestroyed() ||
+          win.webContents.isDestroyed()
+        ) {
+          options.logger.info("[window-host-remote] ignore superseded reconnect attachment", {
+            sessionId: descriptor.remoteSessionId,
+            attachmentId,
+          });
+          return;
+        }
+        // A→B 未通知又重连到 C 时，UI 仍绑定 A；不能用已换代的 descriptor 反推旧关联。
+        win.webContents.send(PlatformChannels.RemoteSessionReconnected, {
+          previousSessionId: route.rendererSessionId ?? previousRemoteSessionId,
+          sessionId: descriptor.remoteSessionId,
+          workspacePath: descriptor.workspacePath,
+          workspaceIdentity: descriptor.workspaceIdentity,
+        });
+        route.rendererSessionId = descriptor.remoteSessionId;
+      })
+      .catch((error: unknown) => {
+        // attachRendererPort 已按 attachmentId 回收自己的 candidate；迟到失败不能删除新 route。
+        options.logger.warn("[window-host-remote] reconnect renderer attachment failed", {
+          sessionId: descriptor.remoteSessionId,
+          attachmentId,
+          error: sanitizeRemoteConnectionLog(
+            error instanceof Error ? error.message : String(error),
+          ),
+        });
+      });
   }
 
   function executeProviderProvisioning(

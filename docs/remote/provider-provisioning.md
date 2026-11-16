@@ -50,6 +50,48 @@ Desktop Main 先 dispose 绑定旧 session 的登记，再以新 `remoteSessionI
 等价于该 Environment 重新上线：触发一次 `environment-online` 整份重下发，补齐离线期间的本地配置变更。
 重连不是发布屏障，失败只记录结构化 warning，不拆除已恢复的 Workspace。
 
+Source/session/generation 事实仍由 Window Host registry 拥有。Main 只维护 descriptor、
+转发 route 和 Environment lane 的请求关联：先同步把旧 session route 换为新 session，
+dispose 旧 Provisioning 登记并登记新 session；随后配置重下发与 Desktop attachment 恢复并行。
+不能等待未完成或失败的 `registration.initialSync` 才恢复已经重连的 Desktop。
+
+Desktop 恢复复用唯一 `attachRendererPort`：Renderer 注册新 scoped services 后，以当前
+窗口、sessionId 和 attachmentId ACK；Main 的 `confirmRendererAttachmentReady` 才提升候选、
+幂等拆除旧 attachment，然后通知 `RemoteSessionReconnected`。迟到旧 ACK、连续换代、
+route 关闭或 Host 退出都不能提升或通知旧 candidate；失败只清理该 candidate 并记录 warning，
+不能误拆后续代的 route。`mobileOnly` scope 只更新转发关联，不自动创建 `desktop-continuous`；
+桌面显式 adoption 仍沿既有首次 Provisioning 与 renderer ACK 屏障。
+
+Main route 另保留一个有界的“最后已发布给 Renderer 的 sessionId”转发关联：首次 Desktop ACK
+创建，重连候选期间保持不变，只有当前 ACK 对应的重连通知实际发出后才推进。现有
+`rendererAttachmentId` 只有端口 ID，descriptor 已是 Host 的最新 session，不能从两者反推该关联。
+因此 A→B 尚未通知又换到 C 时，只能在 C ACK 后通知 A→C；B ACK 后 C 已开始的迟到 continuation
+也不得发 A→B。可恢复断线保留该关联供下一代恢复；显式释放、窗口关闭和 Host 退出随 route
+一起清除；`mobileOnly` 不创建该 Desktop 关联。它不保存 Host session 事实或第二份 pending 队列。
+
+```mermaid
+sequenceDiagram
+  participant H as Window Host（Source/session事实）
+  participant M as Main（route与请求关联）
+  participant P as Environment lane
+  participant R as Renderer（services投影）
+  H->>M: RemoteWorkspaceReconnected(oldSession, descriptor)
+  M->>M: 原route换新session；同步dispose旧登记
+  M->>P: register(environmentKey, newSession)
+  par 非阻塞配置重下发
+    P->>H: environment-online / ProviderProvisioningExecute
+    H-->>P: applied / failed（失败仅warning）
+  and 已有Desktop恢复
+    M->>H: AttachServicePort(desktop-continuous, newSession)
+    M->>R: 新scoped port + attachmentId
+    R->>R: 注册新services
+    R-->>M: 当前窗口/session/attachment ACK
+    M->>M: 校验当前candidate并提升
+    M->>H: DetachServicePort(旧attachment)
+    M-->>R: RemoteSessionReconnected（仅仍当前代）
+  end
+```
+
 ### Environment 级协调
 
 Workspace 不是同步单位。同一 Remote Environment 的多个 Workspace、多个窗口共用 Desktop
@@ -78,7 +120,8 @@ RPC 客户端与协议；未完成及等待 Initialize 的请求以 `ConnectionC
 ```text
 Provider apply 尚未返回 -> Source 断开 -> 旧 ChannelClient.dispose
                                       -> Host 返回同步失败 -> 旧 lane 收口
-新 Source 连接 -> 同一 Environment 读取最新配置 -> 同步成功 -> Renderer attachment ready
+首次 Source 连接 -> 同一 Environment 读取最新配置 -> 同步成功 -> Renderer attachment ready
+已发布 Source 重连 -> 新登记配置重下发 || Desktop attachment + Renderer ACK -> 重连通知
 ```
 
 远端配置文件已更新不等于整个 apply RPC 已结束；用户此时断开仍须满足上述契约。

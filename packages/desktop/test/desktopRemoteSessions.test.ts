@@ -2,14 +2,12 @@ import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildRemoteWorkspaceIdentity,
-  buildServerRemoteWorkspaceIdentity,
   HostMessageTypes,
   HostResponseTypes,
   InternalChannels,
   PlatformChannels,
   type RemoteTarget,
 } from "@zcode/shared";
-import { resolveBotRemoteWorkspace } from "../src/host/botRemoteWorkspaceResolver.js";
 import { createRemoteWorkspaceSessionManager } from "../src/main/desktopRemoteSessions.js";
 
 const { browserWindowMock, channels } = vi.hoisted(() => {
@@ -56,6 +54,7 @@ vi.mock("electron", () => ({
 class MockUtilityProcess extends EventEmitter {
   pid: number;
   postMessage: ReturnType<typeof vi.fn>;
+  autoProvisioning = true;
   provisioningResult: {
     status: "applied" | "already-applied" | "unsupported" | "failed" | "rollback_failed";
     error?: string;
@@ -71,7 +70,8 @@ class MockUtilityProcess extends EventEmitter {
         requestId?: string;
         environmentKey?: string;
       };
-      if (candidate.type !== HostMessageTypes.ProviderProvisioningExecute) return;
+      if (candidate.type !== HostMessageTypes.ProviderProvisioningExecute || !this.autoProvisioning)
+        return;
       queueMicrotask(() => {
         this.emit("message", {
           type: HostResponseTypes.ProviderProvisioningExecutionResult,
@@ -84,6 +84,8 @@ class MockUtilityProcess extends EventEmitter {
   }
 }
 
+const scopedPortEvents = new EventEmitter();
+
 function createWindow(id: number, webContentsId: number) {
   const win = {
     id,
@@ -92,7 +94,9 @@ function createWindow(id: number, webContentsId: number) {
       id: webContentsId,
       isDestroyed: () => false,
       send: vi.fn(),
-      postMessage: vi.fn(),
+      postMessage: vi.fn((channel: string, payload: { sessionId: string }, _ports?: unknown[]) => {
+        if (channel === InternalChannels.ScopedServicePort) scopedPortEvents.emit("port", payload);
+      }),
     },
   };
   browserWindowMock.windows.push(win);
@@ -110,36 +114,10 @@ function createManager(
   options?: {
     rendererAttachmentReadyTimeoutMs?: number;
     workspaceBindReadyTimeoutMs?: number;
-    reportRemoteConnectionStateChanged?: (params: {
-      rendererId: number;
-      remoteKind: RemoteTarget["kind"];
-      transition:
-        | "connected"
-        | "connection-closed"
-        | "disposed"
-        | "window-closed"
-        | "host-exit"
-        | "app-shutdown";
-    }) => void;
-    reportRemoteDisconnect?: (params: {
-      rendererId: number;
-      remoteKind: RemoteTarget["kind"];
-      disconnectReason:
-        | "connection-closed"
-        | "disposed"
-        | "window-closed"
-        | "host-exit"
-        | "app-shutdown";
-      durationMs: number;
-    }) => void;
     monotonicNowMs?: () => number;
     resolveWslTarget?: (
       target: Extract<RemoteTarget, { kind: "wsl" }>,
     ) => Promise<Extract<RemoteTarget, { kind: "wsl" }>>;
-    webRemoteControlManager?: {
-      failRemoteSession: ReturnType<typeof vi.fn>;
-      replaceRemoteSession: ReturnType<typeof vi.fn>;
-    };
     logger?: {
       info: ReturnType<typeof vi.fn>;
       warn: ReturnType<typeof vi.fn>;
@@ -154,10 +132,7 @@ function createManager(
     resolveWslTarget: options?.resolveWslTarget,
     rendererAttachmentReadyTimeoutMs: options?.rendererAttachmentReadyTimeoutMs,
     workspaceBindReadyTimeoutMs: options?.workspaceBindReadyTimeoutMs,
-    reportRemoteConnectionStateChanged: options?.reportRemoteConnectionStateChanged,
-    reportRemoteDisconnect: options?.reportRemoteDisconnect,
     monotonicNowMs: options?.monotonicNowMs,
-    webRemoteControlManagerRef: { current: options?.webRemoteControlManager ?? null },
   });
 }
 
@@ -171,9 +146,31 @@ async function emitConnected(params: {
   workspacePath?: string;
   workspaceIdentity?: string;
   workspacePurpose?: "project" | "conversation";
+  waitForAttachment?: boolean;
 }) {
   const target = params.target ?? sshTarget;
   const workspacePath = params.workspacePath ?? "/";
+  const shouldWaitForAttachment =
+    params.child.autoProvisioning &&
+    params.waitForAttachment !== false &&
+    ["applied", "already-applied"].includes(params.child.provisioningResult.status) &&
+    !browserWindowMock.windows.some((candidate) =>
+      (candidate as ReturnType<typeof createWindow>).webContents.postMessage.mock.calls.some(
+        ([channel, payload]) =>
+          channel === InternalChannels.ScopedServicePort &&
+          payload.sessionId === params.remoteSessionId,
+      ),
+    );
+  const attachmentPublished = shouldWaitForAttachment
+    ? new Promise<void>((resolve) => {
+        const onPort = (payload: { sessionId: string }) => {
+          if (payload.sessionId !== params.remoteSessionId) return;
+          scopedPortEvents.off("port", onPort);
+          resolve();
+        };
+        scopedPortEvents.on("port", onPort);
+      })
+    : undefined;
   params.child.emit("message", {
     type: HostResponseTypes.RemoteWorkspaceConnected,
     requestId: params.requestId,
@@ -191,9 +188,8 @@ async function emitConnected(params: {
       generation: 1,
     },
   });
-  // 连接发布前会等待 Environment 首次 Provisioning attempt；测试 Host 在微任务里回包，
-  // 这里让完整 Promise 链排空后再检查 renderer attachment。
-  for (let index = 0; index < 6; index += 1) await Promise.resolve();
+  // 实际端口发布事件推进首次同步链，不猜微任务数量，也不推进 fake timer 越过原 ACK 截止。
+  await attachmentPublished;
 }
 
 function getLatestScopedAttachment(win: ReturnType<typeof createWindow>): {
@@ -219,6 +215,7 @@ function confirmLatestScopedAttachment(
 beforeEach(() => {
   browserWindowMock.windows.length = 0;
   channels.length = 0;
+  scopedPortEvents.removeAllListeners();
   browserWindowMock.fromId.mockClear();
   browserWindowMock.getAllWindows.mockClear();
 });
@@ -388,18 +385,45 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
     },
   );
 
+  it("首次 Provisioning 尚未返回时不发布 Desktop，成功后仍等待 renderer ACK", async () => {
+    const child = new MockUtilityProcess(1001);
+    child.autoProvisioning = false;
+    const win = createWindow(1, 101);
+    const manager = createManager(new Map([[101, child]]));
+    const settled = vi.fn();
+    const connecting = manager
+      .createRemoteWorkspaceSession(win as never, sshTarget, "first-provisioning")
+      .then(settled);
+    await emitConnected({
+      child,
+      requestId: "first-provisioning",
+      remoteSessionId: "first-session",
+    });
+    expect(win.webContents.postMessage).not.toHaveBeenCalled();
+    expect(settled).not.toHaveBeenCalled();
+    const command = child.postMessage.mock.calls.find(
+      ([message]) => message.type === HostMessageTypes.ProviderProvisioningExecute,
+    )![0];
+    child.emit("message", {
+      type: HostResponseTypes.ProviderProvisioningExecutionResult,
+      requestId: command.requestId,
+      environmentKey: command.environmentKey,
+      status: "applied",
+    });
+    await vi.waitFor(() => expect(getLatestScopedAttachment(win).sessionId).toBe("first-session"));
+    expect(settled).not.toHaveBeenCalled();
+    confirmLatestScopedAttachment(manager, win);
+    await connecting;
+    expect(settled).toHaveBeenCalledWith("first-session");
+    manager.disposeRemoteWorkspaceSessionsForWindow(101);
+  });
+
   it("已连接后的 Provisioning 失败只记录结构化 warning，不拆除 Workspace", async () => {
     const child = new MockUtilityProcess(1001);
     const win = createWindow(1, 101);
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const manager = createManager(new Map([[101, child]]), { logger });
-    const connecting = manager.createRemoteWorkspaceSession(
-      win as never,
-      sshTarget,
-      "connect-1",
-      undefined,
-      { remoteUsageTelemetryEligible: true },
-    );
+    const connecting = manager.createRemoteWorkspaceSession(win as never, sshTarget, "connect-1");
     await emitConnected({ child, requestId: "connect-1", remoteSessionId: "remote-session-1" });
     confirmLatestScopedAttachment(manager, win);
     await connecting;
@@ -409,7 +433,7 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
       type: HostResponseTypes.ProviderProvisioningSourceChanged,
       trigger: "personal-config",
     });
-    for (let index = 0; index < 6; index += 1) await Promise.resolve();
+    await vi.waitFor(() => expect(logger.warn).toHaveBeenCalled());
 
     expect(logger.warn).toHaveBeenCalledWith(
       "[provider-provisioning] Environment sync did not apply",
@@ -420,10 +444,7 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
       }),
     );
     expect(logger.warn.mock.calls.at(-1)?.[1]).not.toHaveProperty("errorSummary");
-    expect(manager.getRemoteConnectionStats()).toEqual({
-      activeSessionCount: 1,
-      activeTargetCount: 1,
-    });
+    expect(manager.hasRemoteWorkspaceSessionForTarget(win as never, sshTarget)).toBe(true);
   });
 
   it.each([undefined, "source-read-failed"])(
@@ -445,6 +466,7 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
         requestId: "connect-diagnostic",
         remoteSessionId: "remote-diagnostic",
       });
+      await outcome;
       const code = errorCode ?? "target-apply-failed";
       expect(logger.warn).toHaveBeenCalledWith(
         "[provider-provisioning] Environment sync did not apply",
@@ -473,91 +495,41 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
     },
   );
 
-  it("只在 eligible 连接完成 renderer ACK 后计入并发并上报 connected gauge", async () => {
+  it("连接只有对应窗口与 attachment 的 renderer ACK 后才完成", async () => {
     const child = new MockUtilityProcess(1001);
     const win = createWindow(1, 101);
-    const reportRemoteConnectionStateChanged = vi.fn();
-    const reportRemoteDisconnect = vi.fn();
-    const manager = createManager(new Map([[101, child]]), {
-      reportRemoteConnectionStateChanged,
-      reportRemoteDisconnect,
+    const manager = createManager(new Map([[101, child]]));
+    const settled = vi.fn();
+    const connecting = manager
+      .createRemoteWorkspaceSession(win as never, sshTarget, "connect-ready")
+      .then(settled);
+    await emitConnected({ child, requestId: "connect-ready", remoteSessionId: "remote-ready" });
+    const attachment = getLatestScopedAttachment(win);
+    manager.confirmRendererAttachmentReady(202, attachment);
+    manager.confirmRendererAttachmentReady(101, { ...attachment, attachmentId: "old-attachment" });
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    expect(child.postMessage).not.toHaveBeenCalledWith({
+      type: HostMessageTypes.DetachServicePort,
+      attachmentId: attachment.attachmentId,
     });
-
-    const eligible = manager.createRemoteWorkspaceSession(
-      win as never,
-      sshTarget,
-      "connect-eligible",
-      undefined,
-      { remoteUsageTelemetryEligible: true },
-    );
-    await emitConnected({
-      child,
-      requestId: "connect-eligible",
-      remoteSessionId: "remote-eligible",
-    });
-    expect(manager.getRemoteConnectionStats()).toEqual({
-      activeSessionCount: 0,
-      activeTargetCount: 0,
-    });
-    confirmLatestScopedAttachment(manager, win);
-    await eligible;
-
-    expect(manager.getRemoteConnectionStats()).toEqual({
-      activeSessionCount: 1,
-      activeTargetCount: 1,
-    });
-    expect(reportRemoteConnectionStateChanged).toHaveBeenCalledWith({
-      rendererId: 101,
-      remoteKind: "ssh",
-      transition: "connected",
-    });
-
-    const internal = manager.createRemoteWorkspaceSession(
-      win as never,
-      { kind: "docker", container: "internal-only" },
-      "connect-internal",
-    );
-    await emitConnected({
-      child,
-      requestId: "connect-internal",
-      remoteSessionId: "remote-internal",
-      target: { kind: "docker", container: "internal-only" },
-    });
-    confirmLatestScopedAttachment(manager, win);
-    await internal;
-
-    expect(manager.getRemoteConnectionStats()).toEqual({
-      activeSessionCount: 1,
-      activeTargetCount: 1,
-    });
-    manager.disposeRemoteWorkspaceSession("remote-internal", "internal-finished");
-    expect(reportRemoteConnectionStateChanged).toHaveBeenCalledOnce();
-    expect(reportRemoteDisconnect).not.toHaveBeenCalled();
+    manager.confirmRendererAttachmentReady(101, attachment);
+    await connecting;
+    expect(settled).toHaveBeenCalledOnce();
+    expect(settled).toHaveBeenCalledWith("remote-ready");
+    manager.disposeRemoteWorkspaceSession("remote-ready");
   });
 
-  it("连接异常关闭后上报一次 after-state gauge 与时长，随后 dispose 不重复", async () => {
+  it("连接异常关闭后停止 attachment，随后 dispose 幂等回收同一 session", async () => {
     const child = new MockUtilityProcess(1001);
     const win = createWindow(1, 101);
-    let now = 100;
-    const reportRemoteConnectionStateChanged = vi.fn();
-    const reportRemoteDisconnect = vi.fn();
-    const manager = createManager(new Map([[101, child]]), {
-      monotonicNowMs: () => now,
-      reportRemoteConnectionStateChanged,
-      reportRemoteDisconnect,
-    });
-    const connecting = manager.createRemoteWorkspaceSession(
-      win as never,
-      sshTarget,
-      "connect-1",
-      undefined,
-      { remoteUsageTelemetryEligible: true },
-    );
+    const manager = createManager(new Map([[101, child]]));
+    const connecting = manager.createRemoteWorkspaceSession(win as never, sshTarget, "connect-1");
     await emitConnected({ child, requestId: "connect-1", remoteSessionId: "remote-session-1" });
+    const attachment = getLatestScopedAttachment(win);
     confirmLatestScopedAttachment(manager, win);
     await connecting;
-
-    now = 600;
+    child.postMessage.mockClear();
     child.emit("message", {
       type: HostResponseTypes.RemoteWorkspaceClosed,
       remoteSessionId: "remote-session-1",
@@ -565,77 +537,52 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
       exitCode: 255,
       signal: null,
     });
-
-    expect(manager.getRemoteConnectionStats()).toEqual({
-      activeSessionCount: 0,
-      activeTargetCount: 0,
+    expect(manager.hasRemoteWorkspaceSessionForTarget(win as never, sshTarget)).toBe(false);
+    expect(child.postMessage).toHaveBeenCalledWith({
+      type: HostMessageTypes.DetachServicePort,
+      attachmentId: attachment.attachmentId,
     });
-    expect(reportRemoteConnectionStateChanged).toHaveBeenNthCalledWith(2, {
-      rendererId: 101,
-      remoteKind: "ssh",
-      transition: "connection-closed",
-    });
-    expect(reportRemoteDisconnect).toHaveBeenCalledWith({
-      rendererId: 101,
-      remoteKind: "ssh",
-      disconnectReason: "connection-closed",
-      durationMs: 500,
-    });
-
     manager.disposeRemoteWorkspaceSession("remote-session-1", "tab-closed");
-    expect(reportRemoteConnectionStateChanged).toHaveBeenCalledTimes(2);
-    expect(reportRemoteDisconnect).toHaveBeenCalledOnce();
+    manager.disposeRemoteWorkspaceSession("remote-session-1", "tab-closed-again");
+    expect(
+      child.postMessage.mock.calls.filter(
+        ([message]) => message.type === HostMessageTypes.DisposeRemoteWorkspaceSession,
+      ),
+    ).toEqual([[expect.objectContaining({ remoteSessionId: "remote-session-1" })]]);
+    expect(
+      child.postMessage.mock.calls.filter(
+        ([message]) => message.type === HostMessageTypes.DetachServicePort,
+      ),
+    ).toHaveLength(1);
   });
 
   it.each([
     ["window-closed", "window"],
     ["host-exit", "host"],
     ["app-shutdown", "app"],
-  ] as const)("%s 退出 eligible route 时上报对应终态", async (reason, owner) => {
+  ] as const)("%s 清除 route 后不再复挂或接受旧 ACK", async (_reason, owner) => {
     const child = new MockUtilityProcess(1001);
     const win = createWindow(1, 101);
-    let now = 10;
-    const reportRemoteConnectionStateChanged = vi.fn();
-    const reportRemoteDisconnect = vi.fn();
-    const manager = createManager(new Map([[101, child]]), {
-      monotonicNowMs: () => now,
-      reportRemoteConnectionStateChanged,
-      reportRemoteDisconnect,
-    });
-    const connecting = manager.createRemoteWorkspaceSession(
-      win as never,
-      sshTarget,
-      "connect-1",
-      undefined,
-      { remoteUsageTelemetryEligible: true },
-    );
+    const manager = createManager(new Map([[101, child]]));
+    const connecting = manager.createRemoteWorkspaceSession(win as never, sshTarget, "connect-1");
     await emitConnected({ child, requestId: "connect-1", remoteSessionId: "remote-session-1" });
+    const attachment = getLatestScopedAttachment(win);
     confirmLatestScopedAttachment(manager, win);
     await connecting;
-    now = 210;
-
     if (owner === "window") manager.disposeRemoteWorkspaceSessionsForWindow(101);
     else if (owner === "host") child.emit("exit");
     else await manager.disposeAllAndWaitForAppShutdown("app-quit");
-
-    expect(reportRemoteConnectionStateChanged).toHaveBeenLastCalledWith({
-      rendererId: 101,
-      remoteKind: "ssh",
-      transition: reason,
-    });
-    expect(reportRemoteDisconnect).toHaveBeenCalledWith({
-      rendererId: 101,
-      remoteKind: "ssh",
-      disconnectReason: reason,
-      durationMs: 200,
-    });
-    expect(manager.getRemoteConnectionStats()).toEqual({
-      activeSessionCount: 0,
-      activeTargetCount: 0,
-    });
+    win.webContents.postMessage.mockClear();
+    child.postMessage.mockClear();
+    manager.confirmRendererAttachmentReady(101, attachment);
+    manager.reattachRemoteWorkspaceSessionsForWindow(win as never, "late-reload");
+    manager.disposeRemoteWorkspaceSession("remote-session-1");
+    expect(manager.hasRemoteWorkspaceSessionForTarget(win as never, sshTarget)).toBe(false);
+    expect(win.webContents.postMessage).not.toHaveBeenCalled();
+    expect(child.postMessage).not.toHaveBeenCalled();
   });
 
-  it("按脱敏 target identity 去重诊断计数，但保留每个逻辑 session", async () => {
+  it("同 target 的各 logical session 独立持有 scope，释放一个不影响另一个", async () => {
     const child = new MockUtilityProcess(1001);
     const win = createWindow(1, 101);
     const manager = createManager(new Map([[101, child]]));
@@ -647,57 +594,52 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
       { kind: "server", url: "wss://studio.example.com/ws" },
       { kind: "server", url: "https://studio.example.com" },
     ];
-
+    const attachments: string[] = [];
     for (const [index, target] of targets.entries()) {
-      const requestId = `connect-${index}`;
-      const remoteSessionId = `remote-${index}`;
-      const connecting = manager.createRemoteWorkspaceSession(
-        win as never,
-        target,
-        requestId,
-        undefined,
-        { remoteUsageTelemetryEligible: true },
-      );
+      const requestId = "connect-" + index;
+      const remoteSessionId = "remote-" + index;
+      const connecting = manager.createRemoteWorkspaceSession(win as never, target, requestId);
       await emitConnected({ child, requestId, remoteSessionId, target });
+      expect(getLatestScopedAttachment(win).sessionId).toBe(remoteSessionId);
+      attachments.push(getLatestScopedAttachment(win).attachmentId);
       confirmLatestScopedAttachment(manager, win);
-      await connecting;
+      await expect(connecting).resolves.toBe(remoteSessionId);
     }
-
-    expect(manager.getRemoteConnectionStats()).toEqual({
-      activeSessionCount: 6,
-      activeTargetCount: 3,
+    expect(new Set(attachments).size).toBe(6);
+    manager.disposeRemoteWorkspaceSession("remote-0");
+    expect(manager.hasRemoteWorkspaceSessionForTarget(win as never, sshTarget)).toBe(true);
+    const surviving = manager.attachRemoteWorkspaceSessionHost({
+      windowId: 1,
+      remoteSessionId: "remote-1",
+      workspacePath: "/",
+      workspaceIdentity: "remote:ssh:dev.internal:22:developer:/",
+      workspaceKey: "remote:ssh:dev.internal:22:developer:/",
+      clientMode: "web-remote-replayable",
     });
+    expect(surviving.process).toBe(child);
+    manager.disposeRemoteWorkspaceSessionsForWindow(101);
   });
 
-  it("telemetry callback 抛错不改变连接成功或 dispose 结果", async () => {
+  it("已 ready session 的显式 dispose 幂等拆除 attachment 并释放 Host scope", async () => {
     const child = new MockUtilityProcess(1001);
     const win = createWindow(1, 101);
-    const reportRemoteConnectionStateChanged = vi.fn(() => {
-      throw new Error("gauge reporter unavailable");
-    });
-    const reportRemoteDisconnect = vi.fn(() => {
-      throw new Error("disconnect reporter unavailable");
-    });
-    const manager = createManager(new Map([[101, child]]), {
-      reportRemoteConnectionStateChanged,
-      reportRemoteDisconnect,
-    });
-    const connecting = manager.createRemoteWorkspaceSession(
-      win as never,
-      sshTarget,
-      "connect-1",
-      undefined,
-      { remoteUsageTelemetryEligible: true },
-    );
+    const manager = createManager(new Map([[101, child]]));
+    const connecting = manager.createRemoteWorkspaceSession(win as never, sshTarget, "connect-1");
     await emitConnected({ child, requestId: "connect-1", remoteSessionId: "remote-session-1" });
-
-    expect(() => confirmLatestScopedAttachment(manager, win)).not.toThrow();
+    const attachment = getLatestScopedAttachment(win);
+    confirmLatestScopedAttachment(manager, win);
     await expect(connecting).resolves.toBe("remote-session-1");
-    expect(() =>
-      manager.disposeRemoteWorkspaceSession("remote-session-1", "tab-closed"),
-    ).not.toThrow();
-    expect(reportRemoteConnectionStateChanged).toHaveBeenCalledTimes(2);
-    expect(reportRemoteDisconnect).toHaveBeenCalledOnce();
+    child.postMessage.mockClear();
+    expect(() => manager.disposeRemoteWorkspaceSession("remote-session-1")).not.toThrow();
+    expect(() => manager.disposeRemoteWorkspaceSession("remote-session-1")).not.toThrow();
+    expect(child.postMessage.mock.calls.map(([message]) => message)).toEqual([
+      { type: HostMessageTypes.DetachServicePort, attachmentId: attachment.attachmentId },
+      expect.objectContaining({
+        type: HostMessageTypes.DisposeRemoteWorkspaceSession,
+        remoteSessionId: "remote-session-1",
+      }),
+    ]);
+    expect(manager.hasRemoteWorkspaceSessionForTarget(win as never, sshTarget)).toBe(false);
   });
 
   it("WSL target 解析期间进入 app shutdown 后不发送迟到连接", async () => {
@@ -1196,51 +1138,21 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
     });
   });
 
-  it("promotes telemetry eligibility once when an eligible request joins a ready route", async () => {
+  it("ready route 的同 scope join 复用原 attachment 并返回同 session", async () => {
     const child = new MockUtilityProcess(1001);
     const win = createWindow(1, 101);
-    const reportRemoteConnectionStateChanged = vi.fn();
-    const manager = createManager(new Map([[101, child]]), {
-      reportRemoteConnectionStateChanged,
-    });
-    const background = manager.createRemoteWorkspaceSession(
-      win as never,
-      sshTarget,
-      "connect-background",
-    );
-    await emitConnected({
-      child,
-      requestId: "connect-background",
-      remoteSessionId: "remote-session-1",
-    });
+    const manager = createManager(new Map([[101, child]]));
+    const background = manager.createRemoteWorkspaceSession(win as never, sshTarget, "background");
+    await emitConnected({ child, requestId: "background", remoteSessionId: "remote-session-1" });
+    const attachment = getLatestScopedAttachment(win);
     confirmLatestScopedAttachment(manager, win);
     await background;
-    expect(reportRemoteConnectionStateChanged).not.toHaveBeenCalled();
-
-    const eligible = manager.createRemoteWorkspaceSession(
-      win as never,
-      sshTarget,
-      "connect-eligible",
-      undefined,
-      { remoteUsageTelemetryEligible: true },
-    );
-    await emitConnected({
-      child,
-      requestId: "connect-eligible",
-      remoteSessionId: "remote-session-1",
-    });
-
-    await expect(eligible).resolves.toBe("remote-session-1");
-    expect(reportRemoteConnectionStateChanged).toHaveBeenCalledTimes(1);
-    expect(reportRemoteConnectionStateChanged).toHaveBeenCalledWith({
-      rendererId: 101,
-      remoteKind: "ssh",
-      transition: "connected",
-    });
-    expect(manager.getRemoteConnectionStats()).toEqual({
-      activeSessionCount: 1,
-      activeTargetCount: 1,
-    });
+    const joined = manager.createRemoteWorkspaceSession(win as never, sshTarget, "joined");
+    await emitConnected({ child, requestId: "joined", remoteSessionId: "remote-session-1" });
+    await expect(joined).resolves.toBe("remote-session-1");
+    expect(getLatestScopedAttachment(win)).toEqual(attachment);
+    expect(win.webContents.postMessage).toHaveBeenCalledOnce();
+    manager.disposeRemoteWorkspaceSession("remote-session-1");
   });
 
   it("rejects a concurrent different context without disturbing the owning bind", async () => {
@@ -1331,6 +1243,7 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
       requestId: "connect-conflict",
       remoteSessionId: "remote-session-1",
       target: otherTarget,
+      waitForAttachment: false,
     });
 
     await expect(conflicting).rejects.toThrow("join 与已有 route 不匹配");
@@ -1345,10 +1258,6 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
         remoteSessionId: "remote-session-1",
       }),
     );
-    expect(manager.getRemoteConnectionStats()).toEqual({
-      activeSessionCount: 0,
-      activeTargetCount: 0,
-    });
     expect(manager.hasRemoteWorkspaceSessionForTarget(win as never, sshTarget)).toBe(true);
   });
 
@@ -1383,6 +1292,7 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
       requestId: "connect-alternate-profile",
       remoteSessionId: "remote-session-1",
       sourceServerId: "source-1",
+      waitForAttachment: false,
       // Host 返回真正持有 logical session 的 canonical entry target，而不是请求线路。
       target: sshTarget,
     });
@@ -1570,16 +1480,12 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
     );
   });
 
-  it("Source 自动重连后先恢复 Desktop，手机 bridge 失败不回滚新 session", async () => {
+  async function setupSourceReconnect() {
     const child = new MockUtilityProcess(1001);
     const win = createWindow(1, 101);
-    const webRemoteControlManager = {
-      failRemoteSession: vi.fn(),
-      replaceRemoteSession: vi.fn(async () => {
-        throw new Error("mobile bridge unavailable");
-      }),
-    };
-    const manager = createManager(new Map([[101, child]]), { webRemoteControlManager });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const hosts = new Map([[101, child]]);
+    const manager = createManager(hosts, { logger });
     const workspacePath = "/work/demo";
     const workspaceIdentity = "remote:ssh:dev.internal:22:developer:/work/demo";
     const connecting = manager.createRemoteWorkspaceSession(win as never, sshTarget, "connect-1", {
@@ -1595,75 +1501,225 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
     });
     confirmLatestScopedAttachment(manager, win);
     await connecting;
-    child.emit("message", {
-      type: HostResponseTypes.RemoteWorkspaceClosed,
-      remoteSessionId: "remote-session-1",
-      reason: "connection-closed",
-      exitCode: 255,
-      signal: null,
-      recoverable: true,
-      recoveryAttempt: 2,
-      recoveryLimit: 3,
-    });
-    expect(webRemoteControlManager.failRemoteSession).not.toHaveBeenCalled();
-    expect(win.webContents.send).toHaveBeenCalledWith(PlatformChannels.RemoteSessionClosed, {
-      sessionId: "remote-session-1",
-      reason: "host-exit",
-      exitCode: 255,
-      signal: null,
-      recoverable: true,
-      recoveryAttempt: 2,
-      recoveryLimit: 3,
-    });
+    const originalAttachment = getLatestScopedAttachment(win);
+    child.postMessage.mockClear();
     win.webContents.send.mockClear();
-
-    child.emit("message", {
-      type: HostResponseTypes.RemoteWorkspaceReconnected,
-      previousRemoteSessionId: "remote-session-1",
-      descriptor: {
-        remoteSessionId: "remote-session-2",
-        target: sshTarget,
-        workspacePath,
-        workspaceIdentity,
-        generation: 2,
-      },
-    });
-    expect(getLatestScopedAttachment(win).sessionId).toBe("remote-session-2");
-    confirmLatestScopedAttachment(manager, win);
-    await vi.waitFor(() =>
-      expect(win.webContents.send).toHaveBeenCalledWith(PlatformChannels.RemoteSessionReconnected, {
-        previousSessionId: "remote-session-1",
-        sessionId: "remote-session-2",
-        workspacePath,
-        workspaceIdentity,
-      }),
-    );
-    expect(webRemoteControlManager.replaceRemoteSession).toHaveBeenCalledWith({
-      previousSessionId: "remote-session-1",
-      sessionId: "remote-session-2",
+    const reconnect = (
+      previousRemoteSessionId: string,
+      remoteSessionId: string,
+      generation: number,
+    ) => {
+      child.emit("message", {
+        type: HostResponseTypes.RemoteWorkspaceReconnected,
+        previousRemoteSessionId,
+        descriptor: {
+          remoteSessionId,
+          target: sshTarget,
+          workspacePath,
+          workspaceIdentity,
+          generation,
+        },
+      });
+      return getLatestScopedAttachment(win);
+    };
+    const notices = () =>
+      win.webContents.send.mock.calls
+        .filter(([channel]) => channel === PlatformChannels.RemoteSessionReconnected)
+        .map(([, payload]) => payload);
+    return {
+      child,
+      win,
+      logger,
+      hosts,
+      manager,
       workspacePath,
       workspaceIdentity,
+      originalAttachment,
+      reconnect,
+      notices,
+    };
+  }
+
+  it("Source 重连先恢复 Desktop，未完成的 Provisioning 不阻塞 renderer ACK 提交", async () => {
+    const { child, manager, reconnect, notices, originalAttachment } = await setupSourceReconnect();
+    child.autoProvisioning = false;
+    const candidate = reconnect("remote-session-1", "remote-session-2", 2);
+    expect(candidate.sessionId).toBe("remote-session-2");
+    expect(candidate.attachmentId).not.toBe(originalAttachment.attachmentId);
+    expect(notices()).toEqual([]);
+    expect(child.postMessage).not.toHaveBeenCalledWith({
+      type: HostMessageTypes.DetachServicePort,
+      attachmentId: originalAttachment.attachmentId,
     });
-    expect(child.postMessage).not.toHaveBeenCalledWith(
+    manager.confirmRendererAttachmentReady(101, originalAttachment);
+    manager.confirmRendererAttachmentReady(202, candidate);
+    expect(notices()).toEqual([]);
+    manager.confirmRendererAttachmentReady(101, candidate);
+    expect(child.postMessage).toHaveBeenCalledWith({
+      type: HostMessageTypes.DetachServicePort,
+      attachmentId: originalAttachment.attachmentId,
+    });
+    await vi.waitFor(() =>
+      expect(notices()).toEqual([
+        {
+          previousSessionId: "remote-session-1",
+          sessionId: "remote-session-2",
+          workspacePath: "/work/demo",
+          workspaceIdentity: "remote:ssh:dev.internal:22:developer:/work/demo",
+        },
+      ]),
+    );
+    expect(child.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: HostMessageTypes.DisposeRemoteWorkspaceSession,
+        type: HostMessageTypes.ProviderProvisioningExecute,
         remoteSessionId: "remote-session-2",
       }),
     );
+    manager.disposeRemoteWorkspaceSessionsForWindow(101);
+  });
 
-    child.emit("message", {
-      type: HostResponseTypes.RemoteWorkspaceClosed,
-      remoteSessionId: "remote-session-2",
-      reason: "connection-closed",
-      exitCode: 255,
-      signal: null,
-      recoverable: false,
+  it("Source 连续两次重连只提交最新 candidate，通知仍显示旧 session 的 Renderer", async () => {
+    const { child, manager, reconnect, notices } = await setupSourceReconnect();
+    const first = reconnect("remote-session-1", "remote-session-2", 2);
+    expect(first.sessionId).toBe("remote-session-2");
+    const latest = reconnect("remote-session-2", "remote-session-3", 3);
+    expect(latest.sessionId).toBe("remote-session-3");
+    expect(child.postMessage).toHaveBeenCalledWith({
+      type: HostMessageTypes.DetachServicePort,
+      attachmentId: first.attachmentId,
     });
-    expect(webRemoteControlManager.failRemoteSession).toHaveBeenCalledWith(
-      "remote-session-2",
-      "window-host:connection-offline",
-      expect.objectContaining({ reason: "workspace-closed" }),
+    manager.confirmRendererAttachmentReady(101, first);
+    expect(notices()).toEqual([]);
+    manager.confirmRendererAttachmentReady(101, latest);
+    await vi.waitFor(() =>
+      expect(notices()).toEqual([
+        expect.objectContaining({
+          previousSessionId: "remote-session-1",
+          sessionId: "remote-session-3",
+        }),
+      ]),
     );
+    expect(child.postMessage).not.toHaveBeenCalledWith({
+      type: HostMessageTypes.DetachServicePort,
+      attachmentId: latest.attachmentId,
+    });
+    manager.disposeRemoteWorkspaceSessionsForWindow(101);
+  });
+
+  it("Source 的 B ACK 后 C 已开始时，B 的迟到 continuation 不发布旧通知", async () => {
+    const { manager, reconnect, notices } = await setupSourceReconnect();
+    const first = reconnect("remote-session-1", "remote-session-2", 2);
+    expect(first.sessionId).toBe("remote-session-2");
+    manager.confirmRendererAttachmentReady(101, first);
+    const latest = reconnect("remote-session-2", "remote-session-3", 3);
+    expect(latest.sessionId).toBe("remote-session-3");
+    manager.confirmRendererAttachmentReady(101, latest);
+    await vi.waitFor(() =>
+      expect(notices()).toEqual([
+        expect.objectContaining({
+          previousSessionId: "remote-session-1",
+          sessionId: "remote-session-3",
+        }),
+      ]),
+    );
+    manager.disposeRemoteWorkspaceSessionsForWindow(101);
+  });
+
+  it.each(["connection-closed", "window-closed", "host-exit"] as const)(
+    "Source 重连 ACK 前 %s 使 candidate 失效，迟到 ACK 不发布通知",
+    async (reason) => {
+      const { child, win, manager, reconnect, notices, logger } = await setupSourceReconnect();
+      const candidate = reconnect("remote-session-1", "remote-session-2", 2);
+      expect(candidate.sessionId).toBe("remote-session-2");
+      if (reason === "connection-closed")
+        child.emit("message", {
+          type: HostResponseTypes.RemoteWorkspaceClosed,
+          remoteSessionId: "remote-session-2",
+          reason: "connection-closed",
+          recoverable: true,
+        });
+      else if (reason === "window-closed") manager.disposeRemoteWorkspaceSessionsForWindow(101);
+      else child.emit("exit");
+      manager.confirmRendererAttachmentReady(101, candidate);
+      // 观察 reject 的恢复链已收口，而不是靠固定微任务数猜测通知不会到达。
+      await vi.waitFor(() =>
+        expect(logger.warn).toHaveBeenCalledWith(
+          "[window-host-remote] reconnect renderer attachment failed",
+          expect.objectContaining({ sessionId: "remote-session-2" }),
+        ),
+      );
+      expect(notices()).toEqual([]);
+      manager.reattachRemoteWorkspaceSessionsForWindow(win as never, "late-reload");
+      expect(getLatestScopedAttachment(win)).toEqual(candidate);
+      expect(manager.hasRemoteWorkspaceSessionForTarget(win as never, sshTarget)).toBe(false);
+      manager.disposeRemoteWorkspaceSessionsForWindow(101);
+    },
+  );
+
+  it.each(["connection-closed", "window-closed", "host-exit"] as const)(
+    "Source ACK 后 %s 仍阻止尚未发出的重连通知",
+    async (reason) => {
+      const { child, win, manager, reconnect, notices, logger } = await setupSourceReconnect();
+      const candidate = reconnect("remote-session-1", "remote-session-2", 2);
+      expect(candidate.sessionId).toBe("remote-session-2");
+      manager.confirmRendererAttachmentReady(101, candidate);
+      if (reason === "connection-closed")
+        child.emit("message", {
+          type: HostResponseTypes.RemoteWorkspaceClosed,
+          remoteSessionId: "remote-session-2",
+          reason: "connection-closed",
+          recoverable: true,
+        });
+      else if (reason === "window-closed") {
+        win.isDestroyed = () => true;
+        manager.disposeRemoteWorkspaceSessionsForWindow(101);
+      } else child.emit("exit");
+      await vi.waitFor(() =>
+        expect(logger.info).toHaveBeenCalledWith(
+          "[window-host-remote] ignore superseded reconnect attachment",
+          expect.objectContaining({ sessionId: "remote-session-2" }),
+        ),
+      );
+      expect(notices()).toEqual([]);
+      manager.disposeRemoteWorkspaceSessionsForWindow(101);
+    },
+  );
+
+  it("Source attachment 传递失败回收本 candidate、记录 warning，后续重连仍可提交", async () => {
+    const { child, win, manager, logger, reconnect, notices } = await setupSourceReconnect();
+    win.webContents.postMessage.mockImplementationOnce(() => {
+      throw new Error("port delivery failed");
+    });
+    reconnect("remote-session-1", "remote-session-2", 2);
+    await vi.waitFor(() =>
+      expect(logger.warn).toHaveBeenCalledWith(
+        "[window-host-remote] reconnect renderer attachment failed",
+        expect.objectContaining({ sessionId: "remote-session-2" }),
+      ),
+    );
+    const failed = child.postMessage.mock.calls.find(
+      ([message]) =>
+        message.type === HostMessageTypes.AttachServicePort &&
+        message.scope.remoteSessionId === "remote-session-2",
+    )![0];
+    expect(child.postMessage).toHaveBeenCalledWith({
+      type: HostMessageTypes.DetachServicePort,
+      attachmentId: failed.attachmentId,
+    });
+    expect(channels.at(-1)?.port1.close).toHaveBeenCalledOnce();
+    expect(notices()).toEqual([]);
+    const latest = reconnect("remote-session-2", "remote-session-3", 3);
+    expect(latest.sessionId).toBe("remote-session-3");
+    manager.confirmRendererAttachmentReady(101, latest);
+    await vi.waitFor(() =>
+      expect(notices()).toEqual([
+        expect.objectContaining({
+          previousSessionId: "remote-session-1",
+          sessionId: "remote-session-3",
+        }),
+      ]),
+    );
+    manager.disposeRemoteWorkspaceSessionsForWindow(101);
   });
 
   async function reconnectSourceSession(params: {
@@ -1694,7 +1750,7 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
         generation: 2,
       },
     });
-    for (let index = 0; index < 6; index += 1) await Promise.resolve();
+    expect(getLatestScopedAttachment(params.win).sessionId).toBe("remote-session-2");
     confirmLatestScopedAttachment(params.manager, params.win);
     await vi.waitFor(() =>
       expect(params.win.webContents.send).toHaveBeenCalledWith(
@@ -1748,7 +1804,14 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
       type: HostResponseTypes.ProviderProvisioningSourceChanged,
       trigger: "personal-config",
     });
-    for (let index = 0; index < 6; index += 1) await Promise.resolve();
+    await vi.waitFor(() =>
+      expect(child.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: HostMessageTypes.ProviderProvisioningExecute,
+          trigger: "personal-config",
+        }),
+      ),
+    );
 
     const provisioningExecutions = child.postMessage.mock.calls
       .map(([message]) => message as { type?: string; remoteSessionId?: string; trigger?: string })
@@ -1798,13 +1861,7 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
   it("手机项目准备只转交 Host descriptor，不创建桌面 tab/continuous attachment", async () => {
     const child = new MockUtilityProcess(1001);
     const win = createWindow(1, 101);
-    const remoteControl = {
-      failRemoteSession: vi.fn(),
-      replaceRemoteSession: vi.fn(async () => undefined),
-    };
-    const manager = createManager(new Map([[101, child]]), {
-      webRemoteControlManager: remoteControl,
-    });
+    const manager = createManager(new Map([[101, child]]));
     const pending = manager.prepareProjectWorkspace(
       win as never,
       { projectId: "p", hostId: "remote:server:s" },
@@ -1857,10 +1914,29 @@ describe("desktopRemoteSessions R1 window Host forwarding", () => {
       previousRemoteSessionId: "mobile-scope",
       descriptor: { ...remote, remoteSessionId: "mobile-reconnected", generation: 2 },
     });
-    await vi.waitFor(() =>
-      expect(remoteControl.replaceRemoteSession).toHaveBeenCalledWith(
-        expect.objectContaining({ sessionId: "mobile-reconnected" }),
-      ),
+    expect(
+      manager.attachRemoteWorkspaceSessionHost({
+        windowId: 1,
+        remoteSessionId: "mobile-reconnected",
+        workspacePath: "/new",
+        workspaceIdentity: remote.workspaceIdentity,
+        workspaceKey: remote.workspaceIdentity,
+        clientMode: "web-remote-replayable",
+      }).process,
+    ).toBe(child);
+    expect(() =>
+      manager.attachRemoteWorkspaceSessionHost({
+        windowId: 1,
+        remoteSessionId: "mobile-scope",
+        workspacePath: "/new",
+        workspaceIdentity: remote.workspaceIdentity,
+        workspaceKey: remote.workspaceIdentity,
+        clientMode: "web-remote-replayable",
+      }),
+    ).toThrow("未找到远程 workspace session");
+    expect(win.webContents.send).not.toHaveBeenCalledWith(
+      PlatformChannels.RemoteSessionReconnected,
+      expect.anything(),
     );
     expect(win.webContents.postMessage).not.toHaveBeenCalled();
     manager.disposeRemoteWorkspaceSessionsForWindow(101);
@@ -1984,8 +2060,7 @@ describe("mobile scope admission joins", () => {
   function setup() {
     const child = new MockUtilityProcess(1001);
     const win = createWindow(1, 101);
-    const reportRemoteConnectionStateChanged = vi.fn();
-    const manager = createManager(new Map([[101, child]]), { reportRemoteConnectionStateChanged });
+    const manager = createManager(new Map([[101, child]]));
     const value = {
       projectId: "p",
       hostId: "remote:server:s",
@@ -2014,7 +2089,7 @@ describe("mobile scope admission joins", () => {
       });
       return result;
     };
-    return { child, win, manager, prepare, reportRemoteConnectionStateChanged };
+    return { child, win, manager, prepare };
   }
   it("a second navigation waits for the shared scope's initial provisioning", async () => {
     const { child, manager, prepare } = setup();
@@ -2043,25 +2118,21 @@ describe("mobile scope admission joins", () => {
     manager.disposeRemoteWorkspaceSessionsForWindow(101);
     expect(completedBeforeProvisioning).toBe(0);
   });
-  it("desktop adoption of a mobile scope reports connection only after renderer readiness", async () => {
-    const { child, win, manager, prepare, reportRemoteConnectionStateChanged } = setup();
+  it("desktop adoption of a mobile scope completes only after renderer readiness", async () => {
+    const { child, win, manager, prepare } = setup();
     await prepare("mobile");
-    const desktop = manager.createRemoteWorkspaceSession(
-      win as never,
-      sshTarget,
-      "desktop",
-      undefined,
-      { remoteUsageTelemetryEligible: true },
-    );
+    expect(win.webContents.postMessage).not.toHaveBeenCalled();
+    const settled = vi.fn();
+    const desktop = manager
+      .createRemoteWorkspaceSession(win as never, sshTarget, "desktop")
+      .then(settled);
     await emitConnected({ child, requestId: "desktop", remoteSessionId: "mobile-scope" });
-    expect(reportRemoteConnectionStateChanged).not.toHaveBeenCalled();
+    expect(settled).not.toHaveBeenCalled();
+    expect(getLatestScopedAttachment(win).sessionId).toBe("mobile-scope");
     confirmLatestScopedAttachment(manager, win);
     await desktop;
-    expect(reportRemoteConnectionStateChanged).toHaveBeenCalledWith({
-      rendererId: 101,
-      remoteKind: "ssh",
-      transition: "connected",
-    });
+    expect(settled).toHaveBeenCalledOnce();
+    expect(settled).toHaveBeenCalledWith("mobile-scope");
     manager.disposeRemoteWorkspaceSessionsForWindow(101);
   });
 
@@ -2080,7 +2151,11 @@ describe("mobile scope admission joins", () => {
       { kind: "wsl" },
       "connect-wsl",
     );
-    for (let index = 0; index < 6; index += 1) await Promise.resolve();
+    await vi.waitFor(() =>
+      expect(child.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: HostMessageTypes.ConnectRemoteWorkspace }),
+      ),
+    );
     await emitConnected({
       child,
       requestId: "connect-wsl",
