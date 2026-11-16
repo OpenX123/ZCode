@@ -570,6 +570,8 @@ describe("ElicitationDialog request identity", () => {
       mountedRoot?.render(createElement(ElicitationDialog, { request, onRespond }));
     });
     act(() => clickFirstOption(container));
+    expect(onRespond).not.toHaveBeenCalled();
+    act(() => clickPrimaryAction(container));
 
     // 模拟 autoResolution hiddenGrace -> snoozed 后，同一 interaction 被投影成新对象。
     act(() => {
@@ -581,6 +583,8 @@ describe("ElicitationDialog request identity", () => {
       );
     });
     act(() => clickFirstOption(container));
+    expect(onRespond).not.toHaveBeenCalled();
+    act(() => clickPrimaryAction(container));
 
     expect(onRespond).toHaveBeenCalledWith("request-1", "accept", {
       answers: {
@@ -638,6 +642,8 @@ describe("ElicitationDialog request identity", () => {
       );
     });
     act(() => clickFirstOption(container));
+    expect(onRespond).not.toHaveBeenCalled();
+    act(() => clickPrimaryAction(container));
 
     expect(onRespond).toHaveBeenCalledWith("request-restored", "accept", {
       answers: {

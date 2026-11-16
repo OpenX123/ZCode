@@ -1,4 +1,10 @@
 import {
+  prepareV4ConversationE2E,
+  sendV4Prompt,
+  waitForV4ComposerText,
+  waitForV4TimelineContaining,
+} from "../../../helpers/v4-conversation.js";
+import {
   TID_CHAT_ASSISTANT_HISTORY_TRIGGER,
   TID_CHAT_TOOL_CALL_BLOCK,
   TID_TOOL_SUMMARY_TRIGGER,
@@ -6,12 +12,8 @@ import {
 import { clearAppData } from "../../../helpers/desktop-app.js";
 import {
   expectNoUpstreamRequestForTextWithin,
-  prepareConversationE2E,
-  sendPrompt,
-  waitForComposerText,
   waitForUpstreamRequest,
   waitForToolCallBlockByToolName,
-  waitForUserMessageContaining,
 } from "../../../helpers/conversation-session.js";
 
 const PROMPT_MARKER = "E2E_ASK_USER_QUESTION_CUSTOM_ENTER_MULTI";
@@ -27,29 +29,29 @@ describe("会话区 AskUserQuestion 多题 custom input Enter E2E", () => {
     await clearAppData();
   });
 
-  it("非最后一题 custom input 按 Enter 应进入下一题而不是提前提交", async function () {
+  it("非最后一题 custom input Enter 不推进，显式确认进入下一题", async function () {
     this.timeout(150000);
 
-    await prepareConversationE2E();
+    await prepareV4ConversationE2E();
 
     const runId = Date.now();
     const prompt = [
       `${PROMPT_MARKER}_${runId}: Trigger the AskUserQuestion tool exactly once.`,
       `${TOOL_MARKER}: ask two questions before continuing.`,
-      "The first answer will be submitted by pressing Enter in the custom input.",
+      "The first answer is edited in the input; the explicit next action navigates without submitting.",
       "After the user answers both questions, continue with a brief acknowledgement.",
     ].join(" ");
     const firstAnswer = `${FIRST_ANSWER_MARKER}_${runId}`;
     const secondAnswer = `${SECOND_ANSWER_MARKER}_${runId}`;
 
-    await sendPrompt(prompt);
-    await waitForComposerText("", "AskUserQuestion 多题首发后输入框没有清空");
-    await waitForUserMessageContaining(`${PROMPT_MARKER}_${runId}`);
+    await sendV4Prompt(prompt);
+    await waitForV4ComposerText("", "AskUserQuestion 多题首发后输入框没有清空");
+    await waitForV4TimelineContaining(`${PROMPT_MARKER}_${runId}`);
     await waitForToolCallBlockByToolName("AskUserQuestion", 60000);
 
     await waitForElicitationDialogContaining(FIRST_QUESTION_MARKER);
-    // 回归点：custom input 的 Enter 不能绕过多题分页，否则第 1 题会把整个问答提前提交。
-    await pressEnterInCustomElicitationInput(firstAnswer);
+    // Enter 不导航；真实 Tab 到明确下一题后才切题。
+    await editThenConfirmCustomAnswer(firstAnswer);
 
     await waitForElicitationDialogContaining(SECOND_QUESTION_MARKER, 10000);
     await expectNoUpstreamRequestForTextWithin(firstAnswer, 900);
@@ -69,9 +71,24 @@ describe("会话区 AskUserQuestion 多题 custom input Enter E2E", () => {
   });
 });
 
-async function pressEnterInCustomElicitationInput(answer: string) {
+async function editThenConfirmCustomAnswer(answer: string) {
   const input = await fillCustomElicitationAnswer(answer);
   await input.click();
+  const body = await $('[data-elicitation-dialog-body="true"]').getText();
+  await browser.keys("Enter");
+  // Enter 必须编辑换行；WebDriver getText 会包含 textarea 换行，不能把它误判为切题。
+  const editedValue = await $('[data-elicitation-dialog-body="true"] textarea').getValue();
+  expect(editedValue).toContain("\n");
+  expect(editedValue.replace(/\n/g, "")).toBe(answer);
+  expect((await $('[data-elicitation-dialog-body="true"]').getText()).replace(/\s/g, "")).toBe(
+    body.replace(/\s/g, ""),
+  );
+  await $('[data-elicitation-dialog-body="true"] textarea').setValue(answer);
+  await browser.keys("Tab");
+  await browser.keys("Tab");
+  expect(await $('[data-elicitation-dialog-footer="true"] button:last-child').isFocused()).toBe(
+    true,
+  );
   await browser.keys("Enter");
 }
 
@@ -85,7 +102,7 @@ async function submitCustomElicitationAnswer(answer: string) {
     const button = Array.from(footer?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
       (candidate) => {
         const text = normalizeText(candidate.textContent);
-        return text === "Submit" || text === "提交";
+        return text === "Send" || text === "发送";
       },
     );
     button?.click();
@@ -183,7 +200,7 @@ function getExpandedAskUserQuestionBlockDiagnostics(
       );
       for (const trigger of historyTriggers) {
         if (
-          trigger.getAttribute("data-history-has-content") === "true" &&
+          trigger.getAttribute("data-history-has-content") !== "false" &&
           trigger.getAttribute("aria-expanded") !== "true"
         ) {
           trigger.click();

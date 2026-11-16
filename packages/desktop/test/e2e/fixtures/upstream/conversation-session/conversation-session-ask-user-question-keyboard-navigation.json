@@ -21,10 +21,7 @@
           "E2E_ASK_USER_QUESTION_KEYBOARD_NAV",
           "E2E_ASK_USER_QUESTION_KEYBOARD_NAV_TOOL"
         ],
-        "bodyExcludes": [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY"
-        ]
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
       },
       "response": {
         "statusCode": 200,
@@ -39,11 +36,11 @@
                 "options": [
                   {
                     "label": "E2E_AQK_Q1_OPTION_A",
-                    "description": "Unused preset option for custom Enter navigation."
+                    "description": "Unused preset option; the custom answer is edited before explicit confirmation."
                   },
                   {
                     "label": "E2E_AQK_Q1_OPTION_B",
-                    "description": "Unused preset option for custom Enter navigation."
+                    "description": "Unused preset option; the custom answer is edited before explicit confirmation."
                   }
                 ]
               },
@@ -53,11 +50,11 @@
                 "options": [
                   {
                     "label": "E2E_AQK_Q2_OPTION_A",
-                    "description": "First option should be preselected by default."
+                    "description": "Remains unselected until an explicit choice."
                   },
                   {
                     "label": "E2E_AQK_Q2_OPTION_B",
-                    "description": "ArrowDown then Space should select this option."
+                    "description": "Number 2 selects this draft without advancing."
                   }
                 ]
               },
@@ -67,11 +64,11 @@
                 "options": [
                   {
                     "label": "E2E_AQK_Q3_OPTION_A",
-                    "description": "ArrowDown then ArrowUp then Enter should submit this option."
+                    "description": "ArrowDown then Enter selects this draft; Send confirms all answers."
                   },
                   {
                     "label": "E2E_AQK_Q3_OPTION_B",
-                    "description": "Intermediate option used to prove ArrowUp moves preselection back."
+                    "description": "Alternative option for keyboard focus navigation."
                   }
                 ]
               }
@@ -100,10 +97,7 @@
           "E2E_ASK_USER_QUESTION_KEYBOARD_NAV_TOOL",
           "toolu_e2e_ask_user_question_keyboard_navigation"
         ],
-        "bodyExcludes": [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY"
-        ]
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
       },
       "response": {
         "statusCode": 200,

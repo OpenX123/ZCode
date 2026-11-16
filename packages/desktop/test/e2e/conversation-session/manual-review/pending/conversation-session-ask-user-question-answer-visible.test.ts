@@ -1,16 +1,18 @@
 import {
+  prepareV4ConversationE2E,
+  sendV4Prompt,
+  waitForV4ComposerText,
+  waitForV4TimelineContaining,
+} from "../../../helpers/v4-conversation.js";
+import {
   TID_CHAT_ASSISTANT_HISTORY_TRIGGER,
   TID_CHAT_TOOL_CALL_BLOCK,
   TID_TOOL_SUMMARY_TRIGGER,
 } from "@zcode/shared/test-ids";
 import { clearAppData } from "../../../helpers/desktop-app.js";
 import {
-  prepareConversationE2E,
-  sendPrompt,
-  waitForComposerText,
   waitForUpstreamRequest,
   waitForToolCallBlockByToolName,
-  waitForUserMessageContaining,
 } from "../../../helpers/conversation-session.js";
 
 const PROMPT_MARKER = "E2E_ASK_USER_QUESTION_ANSWER_VISIBLE";
@@ -26,7 +28,7 @@ describe("会话区 AskUserQuestion 问答响应可见性 E2E", () => {
   it("自定义问答响应被 agent 消费后仍应保留在 AskUserQuestion 消息里", async function () {
     this.timeout(150000);
 
-    await prepareConversationE2E();
+    await prepareV4ConversationE2E();
 
     const runId = Date.now();
     const prompt = [
@@ -36,9 +38,9 @@ describe("会话区 AskUserQuestion 问答响应可见性 E2E", () => {
     ].join(" ");
     const answer = `${ANSWER_MARKER}_${runId}`;
 
-    await sendPrompt(prompt);
-    await waitForComposerText("", "AskUserQuestion 首发后输入框没有清空");
-    await waitForUserMessageContaining(`${PROMPT_MARKER}_${runId}`);
+    await sendV4Prompt(prompt);
+    await waitForV4ComposerText("", "AskUserQuestion 首发后输入框没有清空");
+    await waitForV4TimelineContaining(`${PROMPT_MARKER}_${runId}`);
     await waitForToolCallBlockByToolName("AskUserQuestion", 60000);
 
     await waitForElicitationDialog();
@@ -92,15 +94,13 @@ async function submitCustomElicitationAnswer(answer: string) {
   const clicked = (await browser.execute(() => {
     const normalizeText = (value: string | null | undefined) =>
       (value ?? "").replace(/\u00a0/g, " ").trim();
-    const footer = document.querySelector<HTMLElement>(
-      '[data-elicitation-dialog-footer="true"]',
+    const footer = document.querySelector<HTMLElement>('[data-elicitation-dialog-footer="true"]');
+    const button = Array.from(footer?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
+      (candidate) => {
+        const text = normalizeText(candidate.textContent);
+        return text === "Send" || text === "发送";
+      },
     );
-    const button = Array.from(
-      footer?.querySelectorAll<HTMLButtonElement>("button") ?? [],
-    ).find((candidate) => {
-      const text = normalizeText(candidate.textContent);
-      return text === "Submit" || text === "提交";
-    });
     button?.click();
     return Boolean(button);
   })) as boolean;
@@ -112,17 +112,12 @@ function getElicitationDialogText() {
     const normalizeText = (value: string | null | undefined) =>
       (value ?? "").replace(/\u00a0/g, " ").trim();
     return normalizeText(
-      document.querySelector<HTMLElement>(
-        '[data-elicitation-dialog-body="true"]',
-      )?.innerText,
+      document.querySelector<HTMLElement>('[data-elicitation-dialog-body="true"]')?.innerText,
     );
   });
 }
 
-async function waitForExpandedAskUserQuestionBlockContaining(
-  text: string,
-  timeout: number,
-) {
+async function waitForExpandedAskUserQuestionBlockContaining(text: string, timeout: number) {
   let latest: AskUserQuestionBlockDiagnostics | null = null;
   try {
     await browser.waitUntil(
@@ -138,9 +133,7 @@ async function waitForExpandedAskUserQuestionBlockContaining(
   } catch (error) {
     latest = await getExpandedAskUserQuestionBlockDiagnostics(text);
     throw new Error(
-      `AskUserQuestion 自定义回答没有显示在已询问消息详情里; diagnostics=${JSON.stringify(
-        latest,
-      )}`,
+      `AskUserQuestion 自定义回答没有显示在已询问消息详情里; diagnostics=${JSON.stringify(latest)}`,
       { cause: error },
     );
   }
@@ -159,22 +152,15 @@ function getExpandedAskUserQuestionBlockDiagnostics(
   text: string,
 ): Promise<AskUserQuestionBlockDiagnostics> {
   return browser.execute(
-    (
-      historyTriggerPrefix,
-      toolBlockPrefix,
-      summaryTriggerPrefix,
-      expectedText,
-    ) => {
+    (historyTriggerPrefix, toolBlockPrefix, summaryTriggerPrefix, expectedText) => {
       const normalizeText = (value: string | null | undefined) =>
         (value ?? "").replace(/\u00a0/g, " ").trim();
       const historyTriggers = Array.from(
-        document.querySelectorAll<HTMLElement>(
-          `[data-testid^="${historyTriggerPrefix}-"]`,
-        ),
+        document.querySelectorAll<HTMLElement>(`[data-testid^="${historyTriggerPrefix}-"]`),
       );
       for (const trigger of historyTriggers) {
         if (
-          trigger.getAttribute("data-history-has-content") === "true" &&
+          trigger.getAttribute("data-history-has-content") !== "false" &&
           trigger.getAttribute("aria-expanded") !== "true"
         ) {
           trigger.click();

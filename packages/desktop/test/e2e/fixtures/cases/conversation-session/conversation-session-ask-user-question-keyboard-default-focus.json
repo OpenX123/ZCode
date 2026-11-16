@@ -76,7 +76,7 @@
       "kind": "main",
       "source": "synthetic",
       "timingPolicy": "fast-text",
-      "syntheticReason": "稳定验证 dismiss 关闭 UI 后 declined tool_result 按当前产品语义回传模型，避免用未命中 fixture 的 500 重试做负向计时断言"
+      "syntheticReason": "稳定验证收起不响应，重新打开后独立忽略沿既有 decline 路径回传模型。"
     }
   ]
 }

@@ -28,7 +28,7 @@ interface ElicitationDialogProps {
     requestId: string,
     action: "accept" | "decline" | "cancel",
     content?: Record<string, unknown>,
-  ) => void;
+  ) => boolean | void | Promise<boolean | void>;
   /** 普通 AskUserQuestion 首次暂停来源；失败返回 false 后允许下一次操作重试。 */
   onFirstInteraction?: (
     source: ElicitationAutoResolutionSnoozeSource,
@@ -116,9 +116,7 @@ export interface AnswerDraft {
 export type DraftState = Record<string, AnswerDraft>;
 
 export type ElicitationCustomInputKeyAction =
-  | "advance"
   | "submit"
-  | "previous"
   | "dismiss"
   | "previousOption"
   | "nextOption";
@@ -134,8 +132,7 @@ export function resolveElicitationCustomInputKeyAction(event: {
   isPlanApproval?: boolean;
   hasPreviousQuestion?: boolean;
 }): ElicitationCustomInputKeyAction | null {
-  // 自定义回答使用可自动换行的文本框；普通 AskUserQuestion 的 Enter 跟随当前题目的
-  // 推进/提交语义，ExitPlanMode 属于计划审批边界，裸 Enter 才能直接提交。
+  // 普通 Ask 的多行编辑不能隐式发送；计划审批保留既有裸 Enter 确认边界。
   // 中文输入法用 Enter 确认候选时仍属于 composition，不能误提交给 agent。
   if (isImeComposingKeyEvent(event)) {
     return null;
@@ -147,16 +144,13 @@ export function resolveElicitationCustomInputKeyAction(event: {
   if (event.key === "ArrowDown") return "nextOption";
 
   if (event.key === "Enter") {
-    if (event.ctrlKey || event.metaKey || event.isPlanApproval) {
+    if (event.isPlanApproval) {
       return "submit";
     }
-    return event.advanceKind === "submit" ? "submit" : "advance";
+    return null;
   }
 
   if (event.key === "Escape") {
-    if (!event.isPlanApproval && event.hasPreviousQuestion) {
-      return "previous";
-    }
     return "dismiss";
   }
 
@@ -258,7 +252,7 @@ function getPreferredActiveOptionIndex(
     return question.options.length;
   }
   // 不预选任何选项，避免用户将键盘焦点（bg-hover）误认为"已选中"。
-  // 用户必须通过方向键导航或点击才能聚焦选项，聚焦后点继续/提交才会自动补选。
+  // 普通 Ask 的焦点只用于导航，不会在继续/发送时补成用户答案。
   return -1;
 }
 
@@ -339,7 +333,12 @@ export function ElicitationDialog(props: ElicitationDialogProps) {
   // snoozed，投影因此重建 request 对象，但业务 requestId 没变。若按 request/questions
   // 引用重置，本地 questionIndex 和 drafts 会被误清空并跳回第一题。
   // 用 key 把本地表单实例绑定到协议身份：同一请求保留进度，新请求才完整初始化。
-  return <ElicitationDialogContent key={props.request.requestId} {...props} />;
+  return (
+    <ElicitationDialogContent
+      key={JSON.stringify([props.request.taskId, props.request.traceId, props.request.requestId])}
+      {...props}
+    />
+  );
 }
 
 function ElicitationDialogContent({
@@ -353,17 +352,22 @@ function ElicitationDialogContent({
 }: ElicitationDialogProps) {
   const { intl } = useZCodeIntl();
   const questions = useMemo(() => normalizeElicitationQuestions(request), [request]);
+  const restoredDraft =
+    initialFormDraft?.traceId === undefined || initialFormDraft.traceId === request.traceId
+      ? initialFormDraft
+      : undefined;
   const [questionIndex, setQuestionIndex] = useState(
-    () => initialFormDraft?.questionIndex ?? normalizeInitialQuestionIndex(request, questions),
+    () => restoredDraft?.questionIndex ?? normalizeInitialQuestionIndex(request, questions),
   );
   const [activeOptionIndex, setActiveOptionIndex] = useState(() =>
     isPlanApprovalElicitationRequest(request) ? 0 : -1,
   );
   const [drafts, setDrafts] = useState<DraftState>(
-    () => initialFormDraft?.drafts ?? createInitialElicitationDrafts(questions, request),
+    () => restoredDraft?.drafts ?? createInitialElicitationDrafts(questions, request),
   );
   const [isQuestionExpanded, setIsQuestionExpanded] = useState(false);
-  const [isDialogExpanded, setIsDialogExpanded] = useState(true);
+  const [isDialogExpanded, setIsDialogExpanded] = useState(restoredDraft?.isDialogExpanded ?? true);
+  const respondedRef = useRef(false);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const customInputRef = useRef<HTMLTextAreaElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
@@ -372,8 +376,20 @@ function ElicitationDialogContent({
   const countdownSeconds = useElicitationCountdownSeconds(autoResolution);
 
   useEffect(() => {
-    onFormDraftChange?.(request.requestId, { questionIndex, drafts });
-  }, [drafts, onFormDraftChange, questionIndex, request.requestId]);
+    onFormDraftChange?.(request.requestId, {
+      traceId: request.traceId,
+      questionIndex,
+      drafts,
+      isDialogExpanded,
+    });
+  }, [
+    drafts,
+    isDialogExpanded,
+    onFormDraftChange,
+    questionIndex,
+    request.requestId,
+    request.traceId,
+  ]);
 
   const reportFirstInteraction = useCallback(
     (source: ElicitationAutoResolutionSnoozeSource) => {
@@ -406,31 +422,33 @@ function ElicitationDialogContent({
     ? (drafts[currentQuestion.key] ?? { selectedValues: [], customAnswer: "" })
     : undefined;
   const isPlanApproval = isPlanApprovalElicitationRequest(request);
+  const currentOptionCount = currentQuestion?.options.length ?? 0;
 
   useEffect(() => {
-    if (!autoFocus || getQuestionOptionCount(currentQuestion) === 0 || activeOptionIndex < 0) {
+    if (!autoFocus || !isDialogExpanded || activeOptionIndex < 0) {
       return;
     }
     const frameId = requestAnimationFrame(() => {
-      if (activeOptionIndex < (currentQuestion?.options.length ?? 0)) {
+      if (activeOptionIndex < currentOptionCount) {
         optionRefs.current[activeOptionIndex]?.focus();
         return;
       }
       customInputRef.current?.focus();
     });
     return () => cancelAnimationFrame(frameId);
-  }, [autoFocus, activeOptionIndex, currentQuestion]);
+    // 同身份 snapshot 重建题目对象时不重抢焦点；只对真实导航/激活作出响应。
+  }, [autoFocus, activeOptionIndex, currentOptionCount, questionIndex, isDialogExpanded]);
 
   // 初始 activeOptionIndex=-1 时无按钮有焦点。卡片容器自动聚焦后
-  // 可接收键盘事件，在容器层捕获 Tab/↓/↑/Enter 启动导航或推进。
+  // 可接收键盘事件，在容器层捕获 Tab/↓/↑ 启动选项导航。
   useEffect(() => {
-    if (autoFocus && activeOptionIndex < 0) {
+    if (autoFocus && isDialogExpanded && activeOptionIndex < 0) {
       const frameId = requestAnimationFrame(() => {
         cardRef.current?.focus();
       });
       return () => cancelAnimationFrame(frameId);
     }
-  }, [autoFocus, activeOptionIndex]);
+  }, [autoFocus, activeOptionIndex, questionIndex, isDialogExpanded]);
 
   const updateDraft = useCallback(
     (question: NormalizedElicitationQuestion, updater: (draft: AnswerDraft) => AnswerDraft) => {
@@ -453,19 +471,45 @@ function ElicitationDialogContent({
     [reportFirstInteraction, updateDraft],
   );
 
+  const respondOnce = useCallback(
+    (action: "accept" | "decline", content?: Record<string, unknown>) => {
+      // 原因：同步重复点击必须防重，但拒绝/传输失败不代表权威 pending 已完成。
+      // 只有明确 false/异常才释放门禁；成功或旧 void 回调保持锁定等待 pending 清场。
+      if (respondedRef.current) return;
+      respondedRef.current = true;
+      let response: boolean | void | Promise<boolean | void>;
+      try {
+        response =
+          content === undefined
+            ? onRespond(request.requestId, action)
+            : onRespond(request.requestId, action, content);
+      } catch {
+        respondedRef.current = false;
+        return;
+      }
+      void Promise.resolve(response)
+        .then((accepted) => {
+          if (accepted === false) respondedRef.current = false;
+        })
+        .catch(() => {
+          respondedRef.current = false;
+        });
+    },
+    [onRespond, request.requestId],
+  );
+
   const submitWithDrafts = useCallback(
     (nextDrafts: DraftState) => {
       const content = buildElicitationResponseContent(questions, nextDrafts);
-      onRespond(request.requestId, "accept", content);
+      respondOnce("accept", content);
     },
-    [onRespond, questions, request.requestId],
+    [questions, respondOnce],
   );
 
   const advanceFromQuestion = useCallback(
     (nextDrafts: DraftState) => {
       if (getElicitationQuestionAdvanceKind(questions, questionIndex) === "submit") {
-        // 最后一题选完要直接提交；这里用传入的最新草稿，避免 React state
-        // 尚未刷新时漏掉最后一次选择。
+        // 只有显式下一题/发送动作调用此路径；选项本身只更新草稿。
         submitWithDrafts(nextDrafts);
         return;
       }
@@ -481,20 +525,21 @@ function ElicitationDialogContent({
   const selectOption = useCallback(
     (question: NormalizedElicitationQuestion, optionValue: string) => {
       reportFirstInteraction("answer");
-      const nextDrafts = updateElicitationDraftsForOption(drafts, question, optionValue);
-      setDrafts(nextDrafts);
-      if (!question.multiSelect) {
+      if (isPlanApproval && !question.multiSelect) {
+        const nextDrafts = updateElicitationDraftsForOption(drafts, question, optionValue);
+        setDrafts(nextDrafts);
         advanceFromQuestion(nextDrafts);
+        return;
       }
+      setDrafts((current) => updateElicitationDraftsForOption(current, question, optionValue));
     },
-    [advanceFromQuestion, drafts, reportFirstInteraction],
+    [advanceFromQuestion, drafts, isPlanApproval, reportFirstInteraction],
   );
 
   // 不预选任何选项（activeOptionIndex 初始 -1），消除"焦点即选中"的 UX 混淆。
-  // 用户通过方向键/Tab 将焦点移到某选项后点继续/提交，代表意图选择该选项，此时自动补选。
-  // 若用户从未按键导航（activeOptionIndex 仍为 -1），提交空答案即为明确的跳过意图。
+  // 普通 Ask 的焦点只表示导航，不能在下一题/发送时伪造成答案；仅计划审批保留原补选规则。
   const getDraftsWithAutoSelectedOption = useCallback((): DraftState => {
-    if (!currentQuestion || currentQuestion.multiSelect) {
+    if (!isPlanApproval || !currentQuestion || currentQuestion.multiSelect) {
       return drafts;
     }
     if (activeOptionIndex < 0) {
@@ -511,7 +556,7 @@ function ElicitationDialogContent({
       return drafts;
     }
     return updateElicitationDraftsForOption(drafts, currentQuestion, activeOption.value);
-  }, [activeOptionIndex, currentQuestion, drafts]);
+  }, [activeOptionIndex, currentQuestion, drafts, isPlanApproval]);
 
   const goBack = useCallback(() => {
     reportFirstInteraction("navigation");
@@ -529,8 +574,20 @@ function ElicitationDialogContent({
 
   const dismiss = useCallback(() => {
     reportFirstInteraction("answer");
-    onRespond(request.requestId, "decline");
-  }, [onRespond, reportFirstInteraction, request.requestId]);
+    respondOnce("decline");
+  }, [reportFirstInteraction, respondOnce]);
+
+  const changeDialogExpanded = useCallback(
+    (expanded: boolean) => {
+      // 明确收起也是阅读/操作意图，普通 Ask 沿原暂停路径等待用户，不在隐藏后自动续跑。
+      if (!isPlanApproval) reportFirstInteraction("navigation");
+      setIsDialogExpanded(expanded);
+    },
+    [isPlanApproval, reportFirstInteraction],
+  );
+  const collapse = useCallback(() => changeDialogExpanded(false), [changeDialogExpanded]);
+
+  const closeFromKeyboard = isPlanApproval ? dismiss : collapse;
 
   const goPreviousPage = useCallback(() => {
     if (questions.length === 0) {
@@ -610,6 +667,7 @@ function ElicitationDialogContent({
       if (!currentQuestion) {
         return;
       }
+      if (isImeComposingKeyEvent(event)) return;
       switch (event.key) {
         case "ArrowUp":
         case "ArrowLeft":
@@ -618,9 +676,14 @@ function ElicitationDialogContent({
           return;
         case "ArrowDown":
         case "ArrowRight":
-        case "Tab":
           event.preventDefault();
           moveSelection(event.shiftKey ? -1 : 1);
+          return;
+        case "Tab":
+          if (isPlanApproval) {
+            event.preventDefault();
+            moveSelection(event.shiftKey ? -1 : 1);
+          }
           return;
         case " ":
           event.preventDefault();
@@ -637,9 +700,8 @@ function ElicitationDialogContent({
         case "Enter":
           event.preventDefault();
           if (activeOptionIndex < 0) return;
-          // 多选题 Space 勾选/取消勾选，Enter 确认选择并推进/提交。
-          // 单选题 Enter 等同 Space，选中当前选项。
-          if (currentQuestion?.multiSelect) {
+          // 普通问答 Enter/Space 都只更新草稿；计划审批保留原确认语义。
+          if (isPlanApproval && currentQuestion.multiSelect) {
             continueOrSubmit();
           } else if (activeOptionIndex < currentQuestion.options.length) {
             const option = currentQuestion.options[activeOptionIndex];
@@ -652,11 +714,7 @@ function ElicitationDialogContent({
           return;
         case "Escape":
           event.preventDefault();
-          if (!isPlanApproval && questionIndex > 0) {
-            goBack();
-            return;
-          }
-          dismiss();
+          closeFromKeyboard();
           return;
         default:
           return;
@@ -666,11 +724,9 @@ function ElicitationDialogContent({
       activeOptionIndex,
       continueOrSubmit,
       currentQuestion,
-      dismiss,
-      goBack,
+      closeFromKeyboard,
       isPlanApproval,
       moveSelection,
-      questionIndex,
       selectOption,
     ],
   );
@@ -694,39 +750,21 @@ function ElicitationDialogContent({
         return;
       }
       if (action) {
-        // 原因：空自定义输入框也允许用 Enter / Esc 切题；这仍是明确的题目导航，
-        // 不能因为没有触发 onChange 就继续保留自动结束 deadline。
+        // Escape 收起/计划确认也属于真实操作，不能因没有 onChange 保留旧 deadline。
         reportFirstInteraction("navigation");
-      }
-      if (action === "advance") {
-        event.preventDefault();
-        if (getElicitationQuestionAdvanceKind(questions, questionIndex) === "next") {
-          advanceFromQuestion(drafts);
-        }
-        return;
       }
       if (action === "submit") {
         event.preventDefault();
         submit();
         return;
       }
-      if (action === "previous") {
-        event.preventDefault();
-        // AskUserQuestion 是多题澄清流；中间题按 Esc 应先返回上一题，
-        // 避免用户想改上一题答案时把整个阻塞请求取消掉。
-        goBack();
-        return;
-      }
       if (action === "dismiss") {
         event.preventDefault();
-        dismiss();
+        closeFromKeyboard();
       }
     },
     [
-      advanceFromQuestion,
-      dismiss,
-      drafts,
-      goBack,
+      closeFromKeyboard,
       isPlanApproval,
       moveSelection,
       questionIndex,
@@ -877,10 +915,26 @@ function ElicitationDialogContent({
   const canGoNextPage = questions.length > 0 && questionIndex < questions.length - 1;
 
   // activeOptionIndex=-1 时卡片有焦点，键盘事件到达卡片 onKeyDown。
-  // Tab/↓/↑ 聚焦选项，Enter 直接推进到下一题（或提交）。
+  // Tab/↓/↑ 聚焦选项；普通 Ask 的卡片 Enter 不推进，发送只来自显式按钮。
   const handleCardKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      if (activeOptionIndex >= 0) return; // 按钮已有焦点，由按钮 onKeyDown 处理
+      if (event.defaultPrevented || isImeComposingKeyEvent(event)) return;
+      if (!isPlanApproval && event.key === "Escape") {
+        event.preventDefault();
+        collapse();
+        return;
+      }
+      if (!isPlanApproval && /^[1-9]$/.test(event.key)) {
+        const index = Number(event.key) - 1;
+        const option = currentQuestion?.options[index];
+        if (option && currentQuestion) {
+          event.preventDefault();
+          setActiveOptionIndex(index);
+          selectOption(currentQuestion, option.value);
+        }
+        return;
+      }
+      if (event.target !== event.currentTarget) return;
       switch (event.key) {
         case "ArrowDown":
           event.preventDefault();
@@ -896,37 +950,33 @@ function ElicitationDialogContent({
           return;
         case "Enter":
           event.preventDefault();
-          continueOrSubmit();
+          if (isPlanApproval) continueOrSubmit();
           return;
         case "Escape":
-          // 初始 activeOptionIndex=-1 时卡片接收焦点，Escape 必须
-          // 由卡片层处理，与按钮 onKeyDown 保持一致：非 plan mode 有上题则返回，
-          // 否则 dismiss。
+          // 普通 Ask 已在上方收起；计划审批仍沿原拒绝路径处理 Escape。
           event.preventDefault();
-          if (!isPlanApproval && questionIndex > 0) {
-            goBack();
-          } else {
-            dismiss();
-          }
+          closeFromKeyboard();
           return;
         default:
           return;
       }
     },
     [
-      activeOptionIndex,
       moveSelection,
       continueOrSubmit,
       isPlanApproval,
-      questionIndex,
-      goBack,
-      dismiss,
+      closeFromKeyboard,
+      collapse,
+      currentQuestion,
+      selectOption,
     ],
   );
 
   const primaryActionMessageId =
     questions.length === 0 || questionIndex >= questions.length - 1
-      ? "chat.elicitation.submit"
+      ? isPlanApproval
+        ? "chat.elicitation.submit"
+        : "chat.elicitation.send"
       : "chat.elicitation.continue";
   const titleHeader = isPlanApproval
     ? intl.formatMessage({ id: "chat.permission.title" })
@@ -977,9 +1027,10 @@ function ElicitationDialogContent({
         <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
           <div
             data-elicitation-dialog-body="true"
+            hidden={!isDialogExpanded}
             className={cn(
               "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain pr-1",
-              !isDialogExpanded ? "max-md:hidden" : undefined,
+              !isDialogExpanded ? "hidden" : undefined,
             )}
           >
             <div className="flex items-start justify-between gap-3">
@@ -1034,8 +1085,7 @@ function ElicitationDialogContent({
                   aria-expanded={isDialogExpanded}
                   aria-label={dialogCollapseLabel}
                   title={dialogCollapseLabel}
-                  onClick={() => setIsDialogExpanded((expanded) => !expanded)}
-                  className="hidden max-md:inline-flex"
+                  onClick={() => changeDialogExpanded(!isDialogExpanded)}
                 >
                   {isDialogExpanded ? (
                     <ChevronDown className="size-3" />
@@ -1100,10 +1150,13 @@ function ElicitationDialogContent({
           </div>
 
           {!isDialogExpanded ? (
-            <div className="hidden min-w-0 items-center justify-between gap-2 max-md:flex">
+            <div
+              className="flex min-w-0 items-center justify-between gap-2"
+              data-elicitation-waiting="true"
+            >
               <button
                 type="button"
-                onClick={() => setIsDialogExpanded(true)}
+                onClick={() => changeDialogExpanded(true)}
                 className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1 py-0.5 text-left text-ui-base font-medium text-foreground hover:bg-hover"
               >
                 {titleHeader ? (
@@ -1114,6 +1167,9 @@ function ElicitationDialogContent({
                     {titleHeader}
                   </Badge>
                 ) : null}
+                <span className="shrink-0 text-foreground-subtle">
+                  {intl.formatMessage({ id: "chat.elicitation.waitingAnswer" })}
+                </span>
                 <span className="min-w-0 flex-1 truncate">{titleQuestion}</span>
               </button>
               {countdownButton}
@@ -1127,7 +1183,7 @@ function ElicitationDialogContent({
                 aria-expanded={isDialogExpanded}
                 aria-label={dialogCollapseLabel}
                 title={dialogCollapseLabel}
-                onClick={() => setIsDialogExpanded(true)}
+                onClick={() => changeDialogExpanded(true)}
               >
                 <ChevronUp className="size-3" />
               </Button>
@@ -1136,15 +1192,20 @@ function ElicitationDialogContent({
 
           <div
             data-elicitation-dialog-footer="true"
+            hidden={!isDialogExpanded}
             className={cn(
               "flex shrink-0 items-center justify-between gap-2 px-1 max-sm:flex-wrap",
-              !isDialogExpanded ? "max-md:hidden" : undefined,
+              !isDialogExpanded ? "hidden" : undefined,
             )}
           >
             <p className="flex min-w-0 flex-1 items-center gap-2 text-ui-base text-foreground-subtle max-sm:basis-full">
               <Info className="size-4 shrink-0 text-foreground" />
               <span className="min-w-0">
-                {intl.formatMessage({ id: "chat.elicitation.keyboardHint" })}
+                {intl.formatMessage({
+                  id: isPlanApproval
+                    ? "chat.elicitation.keyboardHint"
+                    : "chat.elicitation.explicitKeyboardHint",
+                })}
               </span>
             </p>
             <div className="flex shrink-0 items-center gap-2">

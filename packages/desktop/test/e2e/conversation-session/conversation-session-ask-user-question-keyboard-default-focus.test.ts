@@ -1,7 +1,13 @@
 import { clearAppData } from "../helpers/desktop-app.js";
-import { waitForUpstreamRequest } from "../helpers/conversation-session-network.js";
+import { TID_V4_MODEL_CONFIG, TID_V4_SESSION_PANE, testId } from "@zcode/shared/test-ids";
+import { UPSTREAM_MODEL_VALUES } from "../helpers/upstream-provider.js";
+import {
+  countUpstreamRequests,
+  waitForUpstreamRequest,
+} from "../helpers/conversation-session-network.js";
 import { waitForToolCallBlockByToolName } from "../helpers/conversation-session-tool.js";
 import {
+  getV4FocusedPaneId,
   prepareV4ConversationE2E,
   sendV4Prompt,
   waitForV4TimelineContaining,
@@ -21,6 +27,35 @@ const Q1_OPT_B = "E2E_ADF_Q1_B";
 const Q2_OPT_A = "E2E_ADF_Q2_A";
 const Q2_OPT_B = "E2E_ADF_Q2_B";
 const Q2_OPT_C = "E2E_ADF_Q2_C";
+let providerReady = false;
+
+async function prepareQuestionCase() {
+  // 已隐藏的旧会话保留 toolbar，通用 provider helper 的首个匹配不等于当前草稿。
+  // 同 spec 仅在首次真实初始化成功后复用；单独筛选任一 case 仍会完整初始化。
+  await prepareV4ConversationE2E({ skipProvider: providerReady });
+  const paneId = await getV4FocusedPaneId();
+  if (!paneId) throw new Error("准备完成后没有当前焦点 pane");
+  await browser.waitUntil(
+    async () => {
+      const config = await browser.execute(
+        (paneTestId, configTestId) => {
+          // 外层 pane shell 同样有 data-pane-id，只有 session pane 拥有 data-session-id。
+          const pane = document.querySelector<HTMLElement>(`[data-testid="${paneTestId}"]`);
+          const anchor = pane?.querySelector<HTMLElement>(`[data-testid="${configTestId}"]`);
+          return { sessionId: pane?.dataset.sessionId, model: anchor?.dataset.model };
+        },
+        testId(TID_V4_SESSION_PANE, paneId),
+        TID_V4_MODEL_CONFIG,
+      );
+      return config.sessionId === "draft" && UPSTREAM_MODEL_VALUES.includes(config.model ?? "");
+    },
+    {
+      timeout: 10000,
+      timeoutMsg: "当前 draft 未保留已实际选择的回放模型，不能跳过 provider 初始化",
+    },
+  );
+  providerReady = true;
+}
 
 describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
   after(async () => {
@@ -34,7 +69,7 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
 
     // Bug 根因：该 case 转正后仍使用 legacy conversation harness，
     // formal 证据无法确保操作的是当前 V4 pane。
-    await prepareV4ConversationE2E();
+    await prepareQuestionCase();
 
     const runId = Date.now();
     const prompt = [
@@ -64,11 +99,11 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     );
   });
 
-  // Q18: 弹窗打开无预选 → Tab → 第一项聚焦 → Enter → 选中并推进
-  it("无预聚焦时按 Tab 聚焦第一项，Enter 选中推进", async function () {
+  // Q18: Tab → 第一项聚焦 → Enter 仅选择 → 显式继续/发送
+  it("无预聚焦时按 Tab 聚焦第一项，Enter 只选择，显式按钮推进", async function () {
     this.timeout(180000);
 
-    await prepareV4ConversationE2E();
+    await prepareQuestionCase();
 
     const runId = Date.now();
     const prompt = [
@@ -90,8 +125,10 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     await browser.keys("Tab");
     await expectActiveOption(Q1_OPT_A);
 
-    // Enter → 选中并推进到 Q2
+    // Enter → 只选择，显式继续才进入 Q2
     await browser.keys("Enter");
+    await waitForElicitationPage("1 / 2", Q1_SINGLE);
+    await clickPrimaryAction();
     await waitForElicitationPage("2 / 2", Q2_MULTI);
 
     // Q2 也是无预选（切题后普通问答不预聚焦）。
@@ -102,6 +139,8 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     await expectActiveOption(Q2_OPT_A);
     await expectOptionSelected(Q2_OPT_A, false);
     await browser.keys("Enter");
+    await waitForElicitationPage("2 / 2", Q2_MULTI);
+    await clickPrimaryAction();
 
     await waitForUpstreamRequest(
       { includes: [`${MARKER_TAB_ENTER}_${runId}`, Q1_OPT_A, Q2_OPT_A] },
@@ -110,11 +149,11 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     );
   });
 
-  // Q19: 弹窗打开无预选 → 直接 Enter → 跳过当前题推进
-  it("无预聚焦时直接按 Enter 跳过当前题推进", async function () {
+  // Q19: 卡片 Enter 不推进，显式继续可留空导航
+  it("卡片 Enter 不推进，显式继续可留空，Escape 只收起", async function () {
     this.timeout(180000);
 
-    await prepareV4ConversationE2E();
+    await prepareQuestionCase();
 
     const runId = Date.now();
     const prompt = [
@@ -131,24 +170,31 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     await waitForElicitationVisible(Q1_SINGLE);
     await expectNoOptionPreSelected();
 
-    // 直接 Enter → 跳过 Q1
+    // 卡片 Enter 不导航；下一题按钮才允许留空导航。
     await browser.keys("Enter");
+    await waitForElicitationPage("1 / 2", Q1_SINGLE);
+    await clickPrimaryAction();
     await waitForElicitationPage("2 / 2", Q2_MULTI);
 
-    // Q22：后续题仍处于卡片初始焦点时，Escape 返回上一题。
+    // Q22：后续题 Escape 只收起，可重开后用显式上一题回改。
     await expectNoOptionPreSelected();
     await browser.keys("Escape");
+    await $('[data-elicitation-waiting="true"]').waitForDisplayed();
+    await $('[data-elicitation-waiting="true"] button:last-child').click();
+    await $('[aria-label="上一题"],[aria-label="Previous question"]').click();
     await waitForElicitationPage("1 / 2", Q1_SINGLE);
     await expectNoOptionPreSelected();
 
-    // 再次直接 Enter 跳过 Q1，证明返回没有隐式写入第一项。
-    await browser.keys("Enter");
+    // 再次显式继续留空，证明返回没有隐式写入第一项。
+    await clickPrimaryAction();
     await waitForElicitationPage("2 / 2", Q2_MULTI);
 
-    // Tab → 选中 Q2 第一项 → Enter 提交
+    // Tab → Enter 只选中 Q2 第一项，再显式发送。
     await browser.keys("Tab");
     await expectActiveOption(Q2_OPT_A);
     await browser.keys("Enter");
+    await waitForElicitationPage("2 / 2", Q2_MULTI);
+    await clickPrimaryAction();
 
     await waitForUpstreamRequest(
       {
@@ -159,11 +205,11 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     );
   });
 
-  // Q20: 多选题 Space 勾选/取消，Enter 确认
-  it("多选题 Space 勾选取消，Enter 确认提交", async function () {
+  // Q20: 多选题 Space/Enter 勾选，显式发送确认
+  it("多选题 Space/Enter 只勾选取消，显式发送才提交", async function () {
     this.timeout(180000);
 
-    await prepareV4ConversationE2E();
+    await prepareQuestionCase();
 
     const runId = Date.now();
     const prompt = [
@@ -204,8 +250,12 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     await browser.keys(" ");
     await expectOptionChecked(Q2_OPT_B, false);
 
-    // Enter 确认提交
+    // Enter 也只勾选当前项，不能提交；再取消 B 后显式发送。
     await browser.keys("Enter");
+    await expectOptionChecked(Q2_OPT_B, true);
+    await browser.keys(" ");
+    await expectOptionChecked(Q2_OPT_B, false);
+    await clickPrimaryAction();
 
     await waitForUpstreamRequest(
       { includes: [`${MARKER_MULTISELECT}_${runId}`, Q2_OPT_A, Q2_OPT_C] },
@@ -214,11 +264,11 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     );
   });
 
-  // Q22: 首题卡片初始焦点 → Escape → dismiss，并把 declined 结果回传 Agent
-  it("首题无选项聚焦时按 Escape 关闭整组问答", async function () {
+  // Q22: Escape 只收起，重开后的独立忽略才 decline
+  it("首题 Escape 只收起，重开后独立忽略才 decline", async function () {
     this.timeout(180000);
 
-    await prepareV4ConversationE2E();
+    await prepareQuestionCase();
 
     const runId = Date.now();
     const prompt = [
@@ -234,9 +284,14 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     await expectNoOptionPreSelected();
 
     await browser.keys("Escape");
+    await $('[data-elicitation-waiting="true"]').waitForDisplayed();
+    expect(await countUpstreamRequests({ includes: ["toolu_e2e_adf_escape_dismiss"] })).toBe(0);
+    await $('[data-elicitation-waiting="true"] button:last-child').click();
+    await waitForElicitationVisible(Q1_SINGLE);
+    await $('[data-elicitation-dialog-footer="true"] button:first-child').click();
     await waitForElicitationClosed();
     // 修复原因：负向 1200ms 抓包计数依赖 artifact 写盘时机，单跑可能在请求已经
-    // 发出时仍读取旧文件而假绿。当前产品合同是 dismiss 关闭 UI，并把 declined
+    // 发出时仍读取旧文件而假绿。当前产品合同是独立忽略关闭 UI，并把 declined
     // tool_result 交给模型收口；用 case-local final fixture 对该请求做正向取证。
     await waitForUpstreamRequest(
       {
@@ -246,7 +301,7 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
           "AskUserQuestion was declined",
         ],
       },
-      "Escape dismiss 后 declined tool_result 没有进入模型收口请求",
+      "重开并忽略后 declined tool_result 没有进入模型收口请求",
       60000,
     );
     await waitForV4TimelineContaining("E2E_ADF_ESCAPE_DISMISS_ACK", 60000);
@@ -466,7 +521,7 @@ function getElicitationKeyboardSnapshot(): Promise<ElicitationKeyboardSnapshot> 
       cardFocused: focused === card,
       pageText,
       selectedTexts,
-      visible: Boolean(body),
+      visible: Boolean(body && !body.hidden),
     };
   });
 }

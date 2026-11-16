@@ -18,10 +18,7 @@
         "pathIncludes": "/messages",
         "lastUserMessageIncludes": ["E2E_ADF_EMPTY_SUBMIT"],
         "bodyIncludes": ["E2E_ADF_EMPTY_SUBMIT"],
-        "bodyExcludes": [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY"
-        ]
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
       },
       "response": {
         "statusCode": 200,
@@ -64,10 +61,7 @@
         "pathIncludes": "/messages",
         "lastUserMessageIncludes": ["E2E_ADF_EMPTY_SUBMIT"],
         "bodyIncludes": ["toolu_e2e_adf_empty_submit"],
-        "bodyExcludes": [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY"
-        ]
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
       },
       "response": {
         "statusCode": 200,
@@ -76,7 +70,7 @@
     },
     {
       "id": "upstream-conversation-ask-default-focus-tab-enter-call",
-      "description": "Q18: AskUserQuestion 两题无预选 → Tab/↓+Enter 选中推进",
+      "description": "Q18: Tab/方向键导航，Enter 只选择，显式按钮下一题/发送",
       "metadata": {
         "kind": "main",
         "timingPolicy": "fast-text",
@@ -89,10 +83,7 @@
         "pathIncludes": "/messages",
         "lastUserMessageIncludes": ["E2E_ADF_TAB_ENTER"],
         "bodyIncludes": ["E2E_ADF_TAB_ENTER"],
-        "bodyExcludes": [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY"
-        ]
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
       },
       "response": {
         "statusCode": 200,
@@ -149,10 +140,7 @@
         "pathIncludes": "/messages",
         "lastUserMessageIncludes": ["E2E_ADF_TAB_ENTER"],
         "bodyIncludes": ["toolu_e2e_adf_tab_enter"],
-        "bodyExcludes": [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY"
-        ]
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
       },
       "response": {
         "statusCode": 200,
@@ -161,7 +149,7 @@
     },
     {
       "id": "upstream-conversation-ask-default-focus-enter-skip-call",
-      "description": "Q19: AskUserQuestion 两题无预选 → Enter 跳过 Q1",
+      "description": "Q19: 卡片 Enter 不导航，显式下一题允许留空",
       "metadata": {
         "kind": "main",
         "timingPolicy": "fast-text",
@@ -174,10 +162,7 @@
         "pathIncludes": "/messages",
         "lastUserMessageIncludes": ["E2E_ADF_ENTER_SKIP"],
         "bodyIncludes": ["E2E_ADF_ENTER_SKIP"],
-        "bodyExcludes": [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY"
-        ]
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
       },
       "response": {
         "statusCode": 200,
@@ -234,10 +219,7 @@
         "pathIncludes": "/messages",
         "lastUserMessageIncludes": ["E2E_ADF_ENTER_SKIP"],
         "bodyIncludes": ["toolu_e2e_adf_enter_skip"],
-        "bodyExcludes": [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY"
-        ]
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
       },
       "response": {
         "statusCode": 200,
@@ -246,7 +228,7 @@
     },
     {
       "id": "upstream-conversation-ask-default-focus-multiselect-call",
-      "description": "Q20: AskUserQuestion 多选题 → Space 勾选 Enter 确认",
+      "description": "Q20: Space/Enter 只勾选，显式发送确认",
       "metadata": {
         "kind": "main",
         "timingPolicy": "fast-text",
@@ -259,10 +241,7 @@
         "pathIncludes": "/messages",
         "lastUserMessageIncludes": ["E2E_ADF_MULTISELECT"],
         "bodyIncludes": ["E2E_ADF_MULTISELECT"],
-        "bodyExcludes": [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY"
-        ]
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
       },
       "response": {
         "statusCode": 200,
@@ -284,7 +263,10 @@
                     "label": "E2E_ADF_Q2_B",
                     "description": "Second option — should be toggled off."
                   },
-                  { "label": "E2E_ADF_Q2_C", "description": "Third option." }
+                  {
+                    "label": "E2E_ADF_Q2_C",
+                    "description": "Third option."
+                  }
                 ]
               }
             ]
@@ -307,10 +289,7 @@
         "pathIncludes": "/messages",
         "lastUserMessageIncludes": ["E2E_ADF_MULTISELECT"],
         "bodyIncludes": ["toolu_e2e_adf_multiselect"],
-        "bodyExcludes": [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY"
-        ]
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
       },
       "response": {
         "statusCode": 200,
@@ -319,12 +298,12 @@
     },
     {
       "id": "upstream-conversation-ask-default-focus-escape-dismiss-call",
-      "description": "Q22: AskUserQuestion 首题卡片初始焦点 → Escape dismiss",
+      "description": "Q22: Escape 只收起，重开后独立忽略",
       "metadata": {
         "kind": "main",
         "timingPolicy": "fast-text",
         "source": "synthetic",
-        "syntheticReason": "稳定制造单题 AskUserQuestion 等待态，验证没有选项聚焦时卡片层 Escape 关闭整组问答"
+        "syntheticReason": "稳定制造单题 AskUserQuestion 等待态，验证没有选项聚焦时 Escape 只收起，重开后独立忽略才结束整组问答"
       },
       "maxMatches": 1,
       "match": {
@@ -332,10 +311,7 @@
         "pathIncludes": "/messages",
         "lastUserMessageIncludes": ["E2E_ADF_ESCAPE_DISMISS"],
         "bodyIncludes": ["E2E_ADF_ESCAPE_DISMISS"],
-        "bodyExcludes": [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY"
-        ]
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
       },
       "response": {
         "statusCode": 200,
@@ -365,22 +341,19 @@
     },
     {
       "id": "upstream-conversation-ask-default-focus-escape-dismiss-final",
-      "description": "Q22: Escape dismiss 后模型收到 declined tool_result 并正常收口",
+      "description": "Q22: Escape 只收起，重开后独立忽略才把 declined tool_result 发给模型",
       "metadata": {
         "kind": "main",
         "timingPolicy": "fast-text",
         "source": "synthetic",
-        "syntheticReason": "稳定验证 dismiss 关闭 UI 后 declined tool_result 按当前产品语义回传模型，避免用未命中 fixture 的 500 重试做负向计时断言"
+        "syntheticReason": "稳定验证收起不响应，重新打开后独立忽略沿既有 decline 路径回传模型。"
       },
       "maxMatches": 1,
       "match": {
         "method": "POST",
         "pathIncludes": "/messages",
         "bodyIncludes": ["toolu_e2e_adf_escape_dismiss", "AskUserQuestion was declined"],
-        "bodyExcludes": [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY"
-        ]
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
       },
       "response": {
         "statusCode": 200,

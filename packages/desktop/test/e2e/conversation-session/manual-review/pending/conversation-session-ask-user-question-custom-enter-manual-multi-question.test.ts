@@ -1,4 +1,10 @@
 import {
+  prepareV4ConversationE2E,
+  sendV4Prompt,
+  waitForV4ComposerText,
+  waitForV4TimelineContaining,
+} from "../../../helpers/v4-conversation.js";
+import {
   TID_CHAT_ASSISTANT_HISTORY_TRIGGER,
   TID_CHAT_TOOL_CALL_BLOCK,
   TID_TOOL_SUMMARY_TRIGGER,
@@ -6,12 +12,8 @@ import {
 import { clearAppData } from "../../../helpers/desktop-app.js";
 import {
   expectNoUpstreamRequestForTextWithin,
-  prepareConversationE2E,
-  sendPrompt,
-  waitForComposerText,
   waitForUpstreamRequest,
   waitForToolCallBlockByToolName,
-  waitForUserMessageContaining,
 } from "../../../helpers/conversation-session.js";
 
 const PROMPT_MARKER = "E2E_ASK_USER_QUESTION_CUSTOM_ENTER_MANUAL_MULTI";
@@ -29,10 +31,10 @@ describe("会话区 AskUserQuestion 多题 custom input 逐字输入 Enter E2E",
     await clearAppData();
   });
 
-  it("三题都逐字输入自定义答案后按 Enter 继续/提交不应丢失中间题", async function () {
+  it("三题都逐字输入自定义答案后用 Tab 到显式按钮并按 Enter 确认不应丢失中间题", async function () {
     this.timeout(180000);
 
-    await prepareConversationE2E();
+    await prepareV4ConversationE2E();
 
     const runId = Date.now();
     const prompt = [
@@ -42,28 +44,28 @@ describe("会话区 AskUserQuestion 多题 custom input 逐字输入 Enter E2E",
       `Question 2 text must include ${QUESTION_TWO_MARKER}.`,
       `Question 3 text must include ${QUESTION_THREE_MARKER}.`,
       "Each question should provide exactly two non-Other options; the client will provide the custom answer input.",
-      "The user will type custom answers with the keyboard and press Enter to continue or submit.",
+      "The user will type custom answers, Tab to the explicit confirmation button, and press Enter.",
       "After the user answers all questions, continue with a brief acknowledgement.",
     ].join(" ");
     const firstAnswer = `${ANSWER_ONE_MARKER}_${runId}`;
     const secondAnswer = `${ANSWER_TWO_MARKER}_${runId}`;
     const thirdAnswer = `${ANSWER_THREE_MARKER}_${runId}`;
 
-    await sendPrompt(prompt);
-    await waitForComposerText("", "AskUserQuestion Enter 多题首发后输入框没有清空");
-    await waitForUserMessageContaining(`${PROMPT_MARKER}_${runId}`);
+    await sendV4Prompt(prompt);
+    await waitForV4ComposerText("", "AskUserQuestion Enter 多题首发后输入框没有清空");
+    await waitForV4TimelineContaining(`${PROMPT_MARKER}_${runId}`);
     await waitForToolCallBlockByToolName("AskUserQuestion", 60000);
 
     await waitForElicitationPage("1 / 3", QUESTION_ONE_MARKER);
-    await typeCustomAnswerAndPressEnter(firstAnswer);
+    await typeCustomAnswerThenConfirm(firstAnswer);
 
     await waitForElicitationPage("2 / 3", QUESTION_TWO_MARKER, 10000);
     await expectNoUpstreamRequestForTextWithin(firstAnswer, 900);
-    await typeCustomAnswerAndPressEnter(secondAnswer);
+    await typeCustomAnswerThenConfirm(secondAnswer);
 
     await waitForElicitationPage("3 / 3", QUESTION_THREE_MARKER, 10000);
     await expectNoUpstreamRequestForTextWithin(secondAnswer, 900);
-    await typeCustomAnswerAndPressEnter(thirdAnswer);
+    await typeCustomAnswerThenConfirm(thirdAnswer);
 
     await waitForUpstreamRequest(
       {
@@ -84,7 +86,7 @@ describe("会话区 AskUserQuestion 多题 custom input 逐字输入 Enter E2E",
   });
 });
 
-async function typeCustomAnswerAndPressEnter(answer: string) {
+async function typeCustomAnswerThenConfirm(answer: string) {
   const input = await getCustomElicitationInput();
   await input.click();
   await browser.keys(answer);
@@ -92,6 +94,21 @@ async function typeCustomAnswerAndPressEnter(answer: string) {
     timeout: 10000,
     timeoutMsg: "AskUserQuestion 自定义回答没有通过键盘逐字写入输入框",
   });
+  const body = await $('[data-elicitation-dialog-body="true"]').getText();
+  await browser.keys("Enter");
+  // Enter 必须编辑换行；WebDriver getText 会包含 textarea 换行，不能把它误判为切题。
+  const editedValue = await $('[data-elicitation-dialog-body="true"] textarea').getValue();
+  expect(editedValue).toContain("\n");
+  expect(editedValue.replace(/\n/g, "")).toBe(answer);
+  expect((await $('[data-elicitation-dialog-body="true"]').getText()).replace(/\s/g, "")).toBe(
+    body.replace(/\s/g, ""),
+  );
+  await $('[data-elicitation-dialog-body="true"] textarea').setValue(answer);
+  await browser.keys("Tab");
+  await browser.keys("Tab");
+  expect(await $('[data-elicitation-dialog-footer="true"] button:last-child').isFocused()).toBe(
+    true,
+  );
   await browser.keys("Enter");
 }
 
@@ -104,11 +121,7 @@ async function getCustomElicitationInput() {
   return input;
 }
 
-async function waitForElicitationPage(
-  pageText: string,
-  questionText: string,
-  timeout = 60000,
-) {
+async function waitForElicitationPage(pageText: string, questionText: string, timeout = 60000) {
   let latest = "";
   try {
     await browser.waitUntil(
@@ -201,7 +214,7 @@ function getExpandedAskUserQuestionBlockDiagnostics(
       );
       for (const trigger of historyTriggers) {
         if (
-          trigger.getAttribute("data-history-has-content") === "true" &&
+          trigger.getAttribute("data-history-has-content") !== "false" &&
           trigger.getAttribute("aria-expanded") !== "true"
         ) {
           trigger.click();

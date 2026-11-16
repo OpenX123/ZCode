@@ -1,3 +1,10 @@
+import {
+  prepareV4ConversationE2E,
+  sendV4Prompt,
+  waitForV4ComposerText,
+  waitForV4TimelineContaining,
+  waitForV4AssistantMessageContaining,
+} from "../../../helpers/v4-conversation.js";
 import { ASK_USER_QUESTION_E2E_CLOCK_SCALE_ENV } from "@zcode/shared";
 import {
   TID_SETTINGS_ASK_USER_QUESTION_AUTO_RESOLUTION_SWITCH,
@@ -8,14 +15,7 @@ import {
   testId,
 } from "@zcode/shared/test-ids";
 import { clearAppData, clickTestIdByDom, readSettings } from "../../../helpers/desktop-app.js";
-import {
-  prepareConversationE2E,
-  sendPrompt,
-  waitForAssistantMessageContaining,
-  waitForComposerText,
-  waitForToolCallBlockByToolName,
-  waitForUserMessageContaining,
-} from "../../../helpers/conversation-session.js";
+import { waitForToolCallBlockByToolName } from "../../../helpers/conversation-session.js";
 
 const FIRST_PROMPT = "E2E_ASK_AUTO_RESOLUTION_SETTING_FIRST";
 const FIRST_ANSWER = "E2E_ASK_AUTO_RESOLUTION_SETTING_FIRST_ANSWER";
@@ -34,15 +34,15 @@ describe("AskUserQuestion 自动继续设置 GUI 候选", () => {
     const clockScale = requireInjectedClockScale();
     const acceleratedDeadlineMs = Math.ceil(300_000 / clockScale);
 
-    await prepareConversationE2E();
+    await prepareV4ConversationE2E();
     await setAutoResolutionEnabled(true);
 
-    await sendPrompt(
+    await sendV4Prompt(
       `${FIRST_PROMPT}: call AskUserQuestion exactly once, then wait for my answer. ` +
         `After the answer, reply with ${FIRST_FINAL}.`,
     );
-    await waitForComposerText("", "首个 AskUserQuestion 提交后输入框没有清空");
-    await waitForUserMessageContaining(FIRST_PROMPT);
+    await waitForV4ComposerText("", "首个 AskUserQuestion 提交后输入框没有清空");
+    await waitForV4TimelineContaining(FIRST_PROMPT);
     await waitForToolCallBlockByToolName("AskUserQuestion", 60_000);
     await waitForElicitationDialog(FIRST_PROMPT);
 
@@ -56,16 +56,16 @@ describe("AskUserQuestion 自动继续设置 GUI 候选", () => {
     await waitForElicitationDialog(FIRST_PROMPT);
 
     await submitCustomAnswer(FIRST_ANSWER);
-    await waitForAssistantMessageContaining(FIRST_FINAL);
+    await waitForV4AssistantMessageContaining(FIRST_FINAL);
 
-    await sendPrompt(
+    await sendV4Prompt(
       `${SECOND_PROMPT}: call AskUserQuestion exactly once, then wait for my answer. ` +
         `After automatic continuation, reply with ${SECOND_FINAL}.`,
     );
-    await waitForComposerText("", "第二个 AskUserQuestion 提交后输入框没有清空");
+    await waitForV4ComposerText("", "第二个 AskUserQuestion 提交后输入框没有清空");
     await waitForToolCallBlockByToolName("AskUserQuestion", 60_000);
     await waitForElicitationDialog(SECOND_PROMPT);
-    await waitForAssistantMessageContaining(SECOND_FINAL);
+    await waitForV4AssistantMessageContaining(SECOND_FINAL);
   });
 });
 
@@ -167,7 +167,7 @@ async function submitCustomAnswer(answer: string): Promise<void> {
     const button = Array.from(footer?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
       (candidate) => {
         const text = (candidate.textContent ?? "").trim();
-        return text === "Submit" || text === "提交";
+        return text === "Send" || text === "发送";
       },
     );
     button?.click();

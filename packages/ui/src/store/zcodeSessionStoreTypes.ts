@@ -84,6 +84,11 @@ export interface ElicitationAnswerDraft {
 }
 
 export interface ElicitationFormDraft {
+  /** V4 恢复时核对完整路由身份，防止同路径/同名请求跨远端连接继承草稿。 */
+  interactionIdentity?: string;
+  /** requestId 由现有 task/workspace scope 隔离；trace 防止旧运行复用同名请求。 */
+  traceId?: string;
+  isDialogExpanded?: boolean;
   questionIndex: number;
   drafts: Record<string, ElicitationAnswerDraft>;
 }

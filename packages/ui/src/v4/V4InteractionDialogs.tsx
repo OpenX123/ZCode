@@ -58,14 +58,19 @@ export function resolveV4ElicitationRequest(
   botProgress: ZCodeElicitationRequest | null,
 ): ZCodeElicitationRequest | null {
   // Bugfix：V4 snapshot 只保留原始阻塞请求，Bot 代答后的逐题进度必须覆盖同一 request 的投影。
-  if (projected && botProgress?.requestId === projected.requestId) {
+  if (
+    projected &&
+    botProgress?.requestId === projected.requestId &&
+    botProgress.taskId === projected.taskId &&
+    botProgress.traceId === projected.traceId
+  ) {
     return botProgress;
   }
   return projected;
 }
 
 export function buildV4ElicitationProgressKey(request: ZCodeElicitationRequest): string {
-  return `${request.requestId}:${request.currentQuestionIndex ?? 0}:${JSON.stringify(request.answerDrafts ?? {})}`;
+  return `${JSON.stringify([request.taskId, request.traceId, request.requestId])}:${request.currentQuestionIndex ?? 0}:${JSON.stringify(request.answerDrafts ?? {})}`;
 }
 
 export interface InteractionAutoResolutionIntentTracker {
@@ -134,6 +139,26 @@ export function V4InteractionDialogs({
       (interaction) =>
         interaction.payload.kind === "permission" || interaction.payload.kind === "userInput",
     ) ?? null;
+  // 迟到回调必须核对当前完整路由与运行身份；同路径远端/另一 trace 不能复用旧回答。
+  const elicitationIdentity =
+    pending?.payload.kind === "userInput"
+      ? JSON.stringify([
+          workspaceIdentity?.trim() || workspacePath,
+          remoteSessionId ?? null,
+          sessionId,
+          pending.payload.traceId ?? sessionId,
+          pending.interactionId,
+        ])
+      : null;
+  const latestElicitationIdentityRef = useRef(elicitationIdentity);
+  latestElicitationIdentityRef.current = elicitationIdentity;
+  useEffect(() => {
+    latestElicitationIdentityRef.current = elicitationIdentity;
+    return () => {
+      latestElicitationIdentityRef.current = null;
+    };
+  }, [elicitationIdentity]);
+  const elicitationResponseFlight = useRef<string | null>(null);
   const workspaceHookReview = currentSnapshot?.pendingInteractions.find(
     (interaction) => interaction.payload.kind === "workspaceHookReview",
   );
@@ -260,11 +285,19 @@ export function V4InteractionDialogs({
 
   const persistElicitationDraft = useCallback(
     (requestId: string, draft: ElicitationFormDraft) => {
+      if (!elicitationIdentity || latestElicitationIdentityRef.current !== elicitationIdentity)
+        return;
       useZCodeSessionStore
         .getState()
-        .setTaskElicitationFormDraft(workspacePath, sessionId, requestId, draft, workspaceIdentity);
+        .setTaskElicitationFormDraft(
+          workspacePath,
+          sessionId,
+          requestId,
+          { ...draft, interactionIdentity: elicitationIdentity },
+          workspaceIdentity,
+        );
     },
-    [sessionId, workspaceIdentity, workspacePath],
+    [elicitationIdentity, sessionId, workspaceIdentity, workspacePath],
   );
 
   const removeElicitationDraft = useCallback(
@@ -297,19 +330,23 @@ export function V4InteractionDialogs({
   }, [currentSnapshot, removeElicitationDraft, sessionId, workspaceIdentity, workspacePath]);
 
   const sendSnoozeOnce = useCallback(
-    async (interactionId: string, autoResolutionReady: boolean) => {
+    async (
+      interactionId: string,
+      autoResolutionReady: boolean,
+      intentKey: string = interactionId,
+    ) => {
       // 首个 userInput 与 autoResolution durable event 可能相邻两帧到达。未就绪时保留
       // tracker 意图，但向弹窗返回 false，让后续真实操作仍可重试；就绪后的 effect 会补发。
       if (!autoResolutionReady) return false;
-      if (!autoResolutionIntentRef.current.consumeSnooze(interactionId, autoResolutionReady)) {
+      if (!autoResolutionIntentRef.current.consumeSnooze(intentKey, autoResolutionReady)) {
         return true;
       }
       try {
         const accepted = await snoozeAutoResolution(interactionId);
-        if (!accepted) autoResolutionIntentRef.current.releaseSnooze(interactionId);
+        if (!accepted) autoResolutionIntentRef.current.releaseSnooze(intentKey);
         return accepted;
       } catch {
-        autoResolutionIntentRef.current.releaseSnooze(interactionId);
+        autoResolutionIntentRef.current.releaseSnooze(intentKey);
         return false;
       }
     },
@@ -320,9 +357,13 @@ export function V4InteractionDialogs({
     // PermissionRequested 可能先投出 userInput，紧接着 autoResolution durable event 才到。
     // 用户若在这两帧之间完成首个分题操作，先记本地意图，registry 就绪后立即补发一次。
     if (pending) {
-      void sendSnoozeOnce(pending.interactionId, Boolean(pending.autoResolution));
+      void sendSnoozeOnce(
+        pending.interactionId,
+        Boolean(pending.autoResolution),
+        elicitationIdentity ?? pending.interactionId,
+      );
     }
-  }, [pending?.autoResolution, pending?.interactionId, sendSnoozeOnce]);
+  }, [elicitationIdentity, pending?.autoResolution, pending?.interactionId, sendSnoozeOnce]);
 
   if (!pending) {
     const startWithoutReview = currentSnapshot?.plan?.startWithoutReview;
@@ -452,43 +493,67 @@ export function V4InteractionDialogs({
       pending.autoResolution !== undefined;
     return (
       <ElicitationDialog
-        key={buildV4ElicitationProgressKey(elicitationRequest)}
+        key={`${elicitationIdentity}:${buildV4ElicitationProgressKey(elicitationRequest)}`}
         autoFocus={focused}
         request={elicitationRequest}
         initialFormDraft={
-          botElicitationProgress?.requestId === elicitationRequest.requestId
+          botElicitationProgress === elicitationRequest
             ? undefined
-            : localElicitationDraft
+            : localElicitationDraft?.interactionIdentity === elicitationIdentity ||
+                (localElicitationDraft?.interactionIdentity === undefined &&
+                  remoteSessionId === undefined)
+              ? localElicitationDraft
+              : undefined
         }
         onFormDraftChange={persistElicitationDraft}
         autoResolution={isAskUserQuestion ? pending.autoResolution : undefined}
         onFirstInteraction={
           isAskUserQuestion
             ? (source) => {
-                if (!loggedSnoozeSourceIdsRef.current.has(pending.interactionId)) {
-                  loggedSnoozeSourceIdsRef.current.add(pending.interactionId);
+                if (latestElicitationIdentityRef.current !== elicitationIdentity) return false;
+                if (!loggedSnoozeSourceIdsRef.current.has(elicitationIdentity!)) {
+                  loggedSnoozeSourceIdsRef.current.add(elicitationIdentity!);
                   logger.debug("[v4-interaction] AskUserQuestion 请求暂停自动结束", {
                     interactionId: pending.interactionId,
                     source,
                   });
                 }
-                autoResolutionIntentRef.current.markInteracted(pending.interactionId);
-                return sendSnoozeOnce(pending.interactionId, Boolean(pending.autoResolution));
+                autoResolutionIntentRef.current.markInteracted(elicitationIdentity!);
+                return sendSnoozeOnce(
+                  pending.interactionId,
+                  Boolean(pending.autoResolution),
+                  elicitationIdentity!,
+                );
               }
             : undefined
         }
-        onRespond={(_requestId, action, content) => {
-          void resolveInteraction(pending.interactionId, {
+        onRespond={(requestId, action, content) => {
+          if (
+            requestId !== elicitationRequest.requestId ||
+            latestElicitationIdentityRef.current !== elicitationIdentity ||
+            elicitationResponseFlight.current === elicitationIdentity
+          )
+            return false;
+          elicitationResponseFlight.current = elicitationIdentity;
+          return resolveInteraction(pending.interactionId, {
             action,
             ...(content ? { content } : {}),
           }).then((accepted) => {
-            if (!accepted) return;
+            if (!accepted) {
+              if (elicitationResponseFlight.current === elicitationIdentity) {
+                elicitationResponseFlight.current = null;
+              }
+              return false;
+            }
+            // ACK 晚于新 pending 时不能清理新请求的草稿。
+            if (latestElicitationIdentityRef.current !== elicitationIdentity) return true;
             removeElicitationDraft(pending.interactionId);
             if (isExitPlanMode) {
               // Plan 回执 ACK 与 replayable pending 清场是两条异步路径。
               // 这里只上报已接受的 Plan interaction，由手机 pane 在仍读到旧权威状态时触发恢复。
               onPlanInteractionAccepted?.(pending.interactionId);
             }
+            return true;
           });
         }}
       />

@@ -1,16 +1,18 @@
 import {
+  prepareV4ConversationE2E,
+  sendV4Prompt,
+  waitForV4ComposerText,
+  waitForV4TimelineContaining,
+} from "../../../helpers/v4-conversation.js";
+import {
   TID_CHAT_ASSISTANT_HISTORY_TRIGGER,
   TID_CHAT_TOOL_CALL_BLOCK,
   TID_TOOL_SUMMARY_TRIGGER,
 } from "@zcode/shared/test-ids";
 import { clearAppData } from "../../../helpers/desktop-app.js";
 import {
-  prepareConversationE2E,
-  sendPrompt,
-  waitForComposerText,
   waitForUpstreamRequest,
   waitForToolCallBlockByToolName,
-  waitForUserMessageContaining,
 } from "../../../helpers/conversation-session.js";
 
 const PROMPT_MARKER = "E2E_ASK_USER_QUESTION_CUSTOM_ENTER_SINGLE";
@@ -24,29 +26,29 @@ describe("会话区 AskUserQuestion 单题 custom input Enter E2E", () => {
     await clearAppData();
   });
 
-  it("只有一题时 custom input 按 Enter 应直接提交答案", async function () {
+  it("只有一题时 custom input Enter 不提交，显式发送才提交", async function () {
     this.timeout(150000);
 
-    await prepareConversationE2E();
+    await prepareV4ConversationE2E();
 
     const runId = Date.now();
     const prompt = [
       `${PROMPT_MARKER}_${runId}: Trigger the AskUserQuestion tool exactly once.`,
       `${TOOL_MARKER}: ask one question before continuing.`,
       `${QUESTION_MARKER}: include this marker in the question text.`,
-      "The custom answer will be submitted by pressing Enter in the custom input.",
+      "The custom answer is edited in the input and explicitly sent using the confirmation button.",
       "After the user answers, continue with a brief acknowledgement.",
     ].join(" ");
     const answer = `${ANSWER_MARKER}_${runId}`;
 
-    await sendPrompt(prompt);
-    await waitForComposerText("", "AskUserQuestion 单题首发后输入框没有清空");
-    await waitForUserMessageContaining(`${PROMPT_MARKER}_${runId}`);
+    await sendV4Prompt(prompt);
+    await waitForV4ComposerText("", "AskUserQuestion 单题首发后输入框没有清空");
+    await waitForV4TimelineContaining(`${PROMPT_MARKER}_${runId}`);
     await waitForToolCallBlockByToolName("AskUserQuestion", 60000);
 
     await waitForElicitationDialogContaining(QUESTION_MARKER);
-    // 对照多题 case：单题 custom input 的 Enter 应等价于最终提交。
-    await pressEnterInCustomElicitationInput(answer);
+    // 单题输入 Enter 仍是编辑；Tab 到明确发送动作才提交。
+    await editThenConfirmCustomAnswer(answer);
 
     await waitForUpstreamRequest(
       {
@@ -60,7 +62,7 @@ describe("会话区 AskUserQuestion 单题 custom input Enter E2E", () => {
   });
 });
 
-async function pressEnterInCustomElicitationInput(answer: string) {
+async function editThenConfirmCustomAnswer(answer: string) {
   const input = await $('[data-elicitation-dialog-body="true"] textarea');
   await input.waitForDisplayed({
     timeout: 30000,
@@ -72,6 +74,21 @@ async function pressEnterInCustomElicitationInput(answer: string) {
     timeout: 10000,
     timeoutMsg: "AskUserQuestion 自定义回答没有写入输入框",
   });
+  const body = await $('[data-elicitation-dialog-body="true"]').getText();
+  await browser.keys("Enter");
+  // Enter 必须编辑换行；WebDriver getText 会包含 textarea 换行，不能把它误判为切题。
+  const editedValue = await $('[data-elicitation-dialog-body="true"] textarea').getValue();
+  expect(editedValue).toContain("\n");
+  expect(editedValue.replace(/\n/g, "")).toBe(answer);
+  expect((await $('[data-elicitation-dialog-body="true"]').getText()).replace(/\s/g, "")).toBe(
+    body.replace(/\s/g, ""),
+  );
+  await $('[data-elicitation-dialog-body="true"] textarea').setValue(answer);
+  await browser.keys("Tab");
+  await browser.keys("Tab");
+  expect(await $('[data-elicitation-dialog-footer="true"] button:last-child').isFocused()).toBe(
+    true,
+  );
   await browser.keys("Enter");
 }
 
@@ -149,7 +166,7 @@ function getExpandedAskUserQuestionBlockDiagnostics(
       );
       for (const trigger of historyTriggers) {
         if (
-          trigger.getAttribute("data-history-has-content") === "true" &&
+          trigger.getAttribute("data-history-has-content") !== "false" &&
           trigger.getAttribute("aria-expanded") !== "true"
         ) {
           trigger.click();

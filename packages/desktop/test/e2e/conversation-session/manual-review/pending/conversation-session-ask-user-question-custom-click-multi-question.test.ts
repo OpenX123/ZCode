@@ -1,4 +1,10 @@
 import {
+  prepareV4ConversationE2E,
+  sendV4Prompt,
+  waitForV4ComposerText,
+  waitForV4TimelineContaining,
+} from "../../../helpers/v4-conversation.js";
+import {
   TID_CHAT_ASSISTANT_HISTORY_TRIGGER,
   TID_CHAT_TOOL_CALL_BLOCK,
   TID_TOOL_SUMMARY_TRIGGER,
@@ -6,12 +12,8 @@ import {
 import { clearAppData } from "../../../helpers/desktop-app.js";
 import {
   expectNoUpstreamRequestForTextWithin,
-  prepareConversationE2E,
-  sendPrompt,
-  waitForComposerText,
   waitForUpstreamRequest,
   waitForToolCallBlockByToolName,
-  waitForUserMessageContaining,
 } from "../../../helpers/conversation-session.js";
 
 const PROMPT_MARKER = "E2E_ASK_USER_QUESTION_CUSTOM_CLICK_MULTI";
@@ -32,7 +34,7 @@ describe("会话区 AskUserQuestion 多题 custom input 鼠标点击 E2E", () =>
   it("三题都手打自定义答案后鼠标点击继续/提交不应丢失中间题", async function () {
     this.timeout(180000);
 
-    await prepareConversationE2E();
+    await prepareV4ConversationE2E();
 
     const runId = Date.now();
     const prompt = [
@@ -49,9 +51,9 @@ describe("会话区 AskUserQuestion 多题 custom input 鼠标点击 E2E", () =>
     const secondAnswer = `${ANSWER_TWO_MARKER}_${runId}`;
     const thirdAnswer = `${ANSWER_THREE_MARKER}_${runId}`;
 
-    await sendPrompt(prompt);
-    await waitForComposerText("", "AskUserQuestion 鼠标点击多题首发后输入框没有清空");
-    await waitForUserMessageContaining(`${PROMPT_MARKER}_${runId}`);
+    await sendV4Prompt(prompt);
+    await waitForV4ComposerText("", "AskUserQuestion 鼠标点击多题首发后输入框没有清空");
+    await waitForV4TimelineContaining(`${PROMPT_MARKER}_${runId}`);
     await waitForToolCallBlockByToolName("AskUserQuestion", 60000);
 
     await waitForElicitationPage("1 / 3", QUESTION_ONE_MARKER);
@@ -66,7 +68,7 @@ describe("会话区 AskUserQuestion 多题 custom input 鼠标点击 E2E", () =>
     await waitForElicitationPage("3 / 3", QUESTION_THREE_MARKER, 10000);
     await expectNoUpstreamRequestForTextWithin(secondAnswer, 900);
     await typeCustomElicitationAnswer(thirdAnswer);
-    await clickPrimaryElicitationAction(["Submit", "提交"]);
+    await clickPrimaryElicitationAction(["Send", "发送"]);
 
     await waitForUpstreamRequest(
       {
@@ -133,11 +135,7 @@ function normalizeText(value: string | null | undefined) {
   return (value ?? "").replace(/\u00a0/g, " ").trim();
 }
 
-async function waitForElicitationPage(
-  pageText: string,
-  questionText: string,
-  timeout = 60000,
-) {
+async function waitForElicitationPage(pageText: string, questionText: string, timeout = 60000) {
   let latest = "";
   try {
     await browser.waitUntil(
@@ -230,7 +228,7 @@ function getExpandedAskUserQuestionBlockDiagnostics(
       );
       for (const trigger of historyTriggers) {
         if (
-          trigger.getAttribute("data-history-has-content") === "true" &&
+          trigger.getAttribute("data-history-has-content") !== "false" &&
           trigger.getAttribute("aria-expanded") !== "true"
         ) {
           trigger.click();

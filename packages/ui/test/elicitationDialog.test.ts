@@ -382,22 +382,22 @@ describe("ElicitationDialog", () => {
     expect(zhHtml).not.toContain("Exit plan mode and start implementation.");
   });
 
-  it("自定义回答输入框 Enter 遵循当前题目和计划审批语义，并避开输入法组词态", () => {
+  it("普通多行回答 Enter 保留编辑语义，不能隐式推进或发送", () => {
     expect(
       resolveElicitationCustomInputKeyAction({
         key: "Enter",
         advanceKind: "next",
       }),
-    ).toBe("advance");
+    ).toBeNull();
     expect(
       resolveElicitationCustomInputKeyAction({
         key: "Enter",
         advanceKind: "submit",
       }),
-    ).toBe("submit");
-    expect(resolveElicitationCustomInputKeyAction({ key: "Enter" })).toBe("advance");
-    expect(resolveElicitationCustomInputKeyAction({ key: "Enter", ctrlKey: true })).toBe("submit");
-    expect(resolveElicitationCustomInputKeyAction({ key: "Enter", metaKey: true })).toBe("submit");
+    ).toBeNull();
+    expect(resolveElicitationCustomInputKeyAction({ key: "Enter" })).toBeNull();
+    expect(resolveElicitationCustomInputKeyAction({ key: "Enter", ctrlKey: true })).toBeNull();
+    expect(resolveElicitationCustomInputKeyAction({ key: "Enter", metaKey: true })).toBeNull();
     expect(
       resolveElicitationCustomInputKeyAction({
         key: "Enter",
@@ -416,7 +416,7 @@ describe("ElicitationDialog", () => {
         key: "Escape",
         hasPreviousQuestion: true,
       }),
-    ).toBe("previous");
+    ).toBe("dismiss");
   });
 
   it("ExitPlanMode 自定义反馈输入框裸 Enter 提交", () => {

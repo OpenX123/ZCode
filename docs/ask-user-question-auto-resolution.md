@@ -122,6 +122,8 @@ AskUserQuestion tool ───────────> CLI interaction coordina
 - 点击选项，或用键盘选择选项；
 - 自定义输入的键入或粘贴；
 - 前进/后退题目导航；
+- 普通 Ask 显式收起/重开或 Escape 收起（navigation），以同一请求身份去重；隐藏后不再继续旧无人操作倒计时，可能等待用户更久。普通权限/计划审批保留原 dismiss 与超时规则；
+- 普通 Ask 的选项动作只修改草稿，下一题只导航；最后明确发送才走既有回答命令。关闭只收起并保留可重开的等待入口，不等于跳过或拒绝；独立“跳过”仍为 decline。
 - Bot 多题问答首次记录有效的分题答案。
 - 点击问答面板右上角的末分钟秒数；
 - 点击侧栏 AskUserQuestion 的“停止计时”胶囊。
@@ -150,9 +152,10 @@ hiddenGrace ── 首次有效操作 ──> snoozed
 新 requestId ──> 新建问答实例 ──> 按 currentQuestionIndex / answerDrafts 初始化
 ```
 
-- 同一 `requestId` 的 `autoResolution`、owner/lease、origin 或其他非题目生命周期 snapshot 更新，不得重置当前 tab、已选答案、自定义输入或首次操作标记。
+- 同一 `taskId + traceId + requestId` 的 `autoResolution`、owner/lease、origin 或其他非题目生命周期 snapshot 更新，不得重置当前 tab、已选答案、自定义输入、收起状态或首次操作标记。
 - task 切换期间若 `sessionId` 已变化但上一 task 的 snapshot 尚未换代，该旧 snapshot 不得渲染当前 task 的问答，也不得参与当前 task 草稿清理；只有 `snapshot.sessionId === sessionId` 的投影可作为 pending interaction 权威。
 - 新 `requestId` 必须创建新的本地问答实例，不能继承上一轮草稿。
+- 即使 requestId 相同，task/session 或 trace 改变也必须初始化新表单；renderer 本地草稿携带 trace，恢复时核对。响应使用提交时绑定的完整身份，并核对最新 pending；一次显式发送只调用一次 onRespond，另一端已完成或请求换代后的迟到提交直接丢弃。
 - 页面首次打开、重连或 replayable snapshot 重新挂载时，仍使用该请求携带的 `currentQuestionIndex` / `answerDrafts` 初始化；挂载后的普通 metadata 更新不反向覆盖本地编辑进度。
 - 桌面与手机各自按 `workspaceKey + taskId + requestId` 保留未提交的 renderer-local 草稿；切换 task 导致问答组件卸载后，切回同一 task 必须恢复当前题目和已填答案。最终 `resolveInteraction` 仍按 runtime 先到先得；请求成功收口后清理对应本地草稿。若未来要求跨端实时同步分题草稿，需要新增显式协议状态，不能借用对象重建隐式同步。
 
