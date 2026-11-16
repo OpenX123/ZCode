@@ -288,6 +288,56 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 3: 真正异步 generation 验收。** 将旧 late task switch 用例迁为 hook `openFiles` 通过现有 remote connector 的受控延迟 Promise：连接请求发出后 unmount，再完成连接，断言不能重新打开；另覆盖更新一轮文件请求先完成时旧异步结果不得覆盖。旧 handoff 用例改为同窗口 identity 索引绑定后直接 `openTaskFiles`，无旧切换、无重复 metadata；未绑定拒绝且不能读取同路径本地文件。保留其他 task identity/已绑定/本地/混合场景。使用明确 deferred 完成信号，不固定 sleep、清空有效断言或改生产 timing。
 - [ ] **Step 4: GREEN/静态/提交。** 重跑两文件并保留精确调用/拒绝/过期结果断言，架构 before/after、格式/diff/定向 lint。报告根因及三条旧断言去向，独立审查；本任务无产品行为修改不追加新 UI E2E。
 
+### Task 11: 恢复浏览器反向 RPC 并修正 Agent 协议测试夹具
+
+**Files:**
+
+- Modify: `packages/services/src/zcode-agent/zcodeAgentService.ts`
+- Modify/Test: `packages/services/test/zcodeAgentService.test.ts`
+- Read: `zcodeAgentBrowserAmbientContext.ts` 的现有 Executor、shared browserList/browserExecute schema 与 result、providerRefreshRegistry result、Task6调查报告及审查。
+- Spec: `docs/testing/1.4.1-gate-repair-spec.md` 的 Agent 协议回归边界；`docs/browser-use/2026-07-07-agent-host-main-channel-spec.md`。
+
+**Interfaces:** 现有 browserControlExecutor 是唯一注入点；反向 router 恢复纯 RPC，不新建service、pending map、权限旁路或另一个browser owner。Native readiness 保持先刷新Registry后create；三条stale fake不漏ACK，不能改其生产timeout/retry。
+
+- [ ] **Step 1: RED。** 浏览器 stdio 现有正向用例已有执行器0调用证据；先精确重现并补无执行器、非法params、executor错误/无效result的必要合同回归，保留全上下文/browsers shape验证。Native只选一个代表缺ACK用例验证阻塞；已有11条main失败不必再次等完。计时器污染已有Task6精确4用例RED和有序证据，不重做诊断。
+- [ ] **Step 2: 当前schema路由。** 在既有 client.onRequest 恢复 interactionBrowserList/Execute 分派；输入和结果均使用shared严格schema。list包装 `{browsers}`，execute透传已验证result，保留browserId/generation与完整远端scope，不吞掉错误或让请求悬空；无executor走现有backend_unavailable合同。复用现有workspace默认语义及Main实际能力/隔离owner，不臆造与现有协议冲突的身份规则。中文注释说明router缺失导致合法反向请求落到method-not-found。不得修改普通ambient预算/收集或引入权限会话事件。
+- [ ] **Step 3: 严格fake与生命周期。** 只为实际走native registry barrier的 SHELL_SETTINGS_SNAPSHOT_FAKE_AGENT、RUNTIME_PREFERENCES_FAKE_AGENT、LEGACY_CREATE_PARAMS_FAKE_AGENT 及核实需要的同类fake补 `provider/refreshRegistry` 的 `{refreshed:true}` ACK，保留session参数、旧optional字段拒绝重试与runtime preference原断言。为fake timer用例在可能挂起的await前登记可靠teardown；失败时同样关闭并等待已创建的service/订阅，再恢复timer和删目录，不能仅afterEach useRealTimers后丢弃在途进程。清理保持幂等，不改生产watchdog/timeout，不加skip或sleep。
+- [ ] **Step 4: GREEN。** 先跑Task6四用例顺序组合，然后完整 `packages/services/test/zcodeAgentService.test.ts`（原41例加新增回归）；所有原断言实跑通过才可关闭15个原失败，不把单独3条通过当修好。报告原有环境告警与真实统计，保留JSON/日志，不输出协议中的环境/Key。
+- [ ] **Step 5: 静态/自审/提交。** 架构before/after，目标模块当前context、定向格式/lint/diff；完整报告写task-11-report.md，独立任务审查。无产品UI修改不制造新UI E2E；不构建dist、不改共享schema、不恢复退役账号。
+
+### Task 12: 修复 Source 自动重连的 Desktop attachment 恢复
+
+**Files:**
+
+- Modify: `packages/desktop/src/main/desktopRemoteSessions.ts`
+- Modify/Test: `packages/desktop/test/desktopRemoteSessions.test.ts`
+- Spec: `docs/remote/provider-provisioning.md`、`docs/desktop/standalone-coding-harness-spec.md`（实现前补准确owner/ACK时序图）。
+- Read: 原 Task2 清单 R4、mobile-remote spec、现有 attachRendererPort/confirmRendererAttachmentReady、相关Host消息schema及renderer接线。
+
+**Interfaces:** Main只拥有请求/descriptor/转发route，不接管Host会话事实；复用唯一attachRendererPort和renderer ACK提交点。重连与首次连接的Provisioning屏障不同。
+
+- [ ] **Step 1: 精确RED及旧遥测迁移。** 现15失败逐标题映射；去除已退役getRemoteConnectionStats/telemetry callback专属夹具与断言，但保留连接ready、同session错target不替owner、renderer ACK、dispose幂等、target与scope隔离。旧统计专属case须迁到其真实连接生命周期断言而非整段删除。旧官方remoteControl.replaceRemoteSession桥不恢复；保留合法mobileOnly scope join/cancel与桌面adoption，手机一期local窗口合同不扩展跨SSH。
+- [ ] **Step 2: spec先行与回归。** 明确route从旧session换到新session、同步dispose旧Provisioning登记并登记新session；异步environment-online重下发与Desktop attachment恢复并行。添加/调整严格受控ACK回归：新port在对应renderer ACK后提升并拆旧port，随后通知RemoteSessionReconnected；迟到旧ACK/两次连续重连/关闭或Host退出不能通知或提升旧candidate。未完成或失败的Provisioning不能阻塞已重连Desktop；首次连接原屏障不变；mobileOnly不自动建desktop-continuous。
+- [ ] **Step 3: 最小恢复实现。** 重连使用现有attachRendererPort，不复制owner/pending系统。消息传递遵守当前平台schema；attachment失败与过期结果有明确清理/日志，不能吞掉恢复失败或误拆更新后的route。中文注释解释原handleReconnected只改descriptor/Provisioning而未重新attach。不要固定微任务次数、sleep或放宽waitFor。
+- [ ] **Step 4: GREEN与边界。** 完整desktopRemoteSessions文件加mobileRemoteGateway现有suite，确保原47例的有效替代验收及新增竞态全部通过；再按真实变更判断是否需要已有Electron重连接线场景，存在交互变化时实际执行可用场景并记录环境限制，不冒称外部SSH已测。
+- [ ] **Step 5: 静态/自审/提交。** 架构before/after、desktop owning context、格式/lint/diff，报告逐项原失败去向、source所有者、真实命令与统计；独立spec/quality审查，根门禁最终统一。
+
+### Task 13: 隐藏只有已结束智能体的空 mini 胶囊
+
+**Files:**
+
+- Modify: `packages/ui/src/v4/ConversationStatusPanel.tsx`
+- Modify/Test: `packages/ui/test/v4ConversationStatusPanel.test.ts`
+- Spec: `docs/desktop/multi-agent-display-spec.md`（已补mini与panel规则）
+- Test/按需扩展: `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-subagent-work-card.test.ts`
+
+**Interfaces:** panel只派生现有运行/终态事实，不持久化新状态；正在查看的Side Pane由原owner保持，不受摘要退场影响。
+
+- [ ] **Step 1: RED。** 复现现有 `does not keep a mini capsule alive for ended Agents alone` 失败，补mini/panel、只有ended Agent/有其他摘要/运行Agent/已结束workflow边界矩阵，按spec明确预期。
+- [ ] **Step 2: 最小可见性修复。** ended Agent目录仅在panel时可独自保留shell；mini无内容时不因ended Agent存活。保留其他summary优先级、ended workflow和panel目录入口、运行Agent；修正过时中文注释并说明空胶囊根因。不得关闭详情、取消任务或把summary可见性当CLI事实。
+- [ ] **Step 3: GREEN与交互。** 完整精确UI规格通过；运行现有subagent工作卡Electron场景，必要时增加结束后mini消失但已开详情保持的断言。只按目标包真实入口执行，遵循E2E case lifecycle/spec；不把静态HTML单测当交互E2E通过。原T08无需重新大范围审查。
+- [ ] **Step 4: 静态/自审/提交。** DESIGN.md、架构before/after及UI相关context；定向格式/lint/diff，完整报告真实UT/E2E统计与环境边界，独立审查。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
