@@ -115,6 +115,94 @@ describe("botsService status", () => {
     }
   });
 
+  it.each(["config", "state"] as const)(
+    "%s 初始化读取失败，关闭仍等待同次已接纳的兄弟 IO 结束",
+    async (failingRead) => {
+      const configEntered = Promise.withResolvers<void>();
+      const stateEntered = Promise.withResolvers<void>();
+      const fail = Promise.withResolvers<void>();
+      const failed = Promise.withResolvers<void>();
+      const sibling = Promise.withResolvers<void>();
+      const siblingFinished = Promise.withResolvers<void>();
+      const repo = f.createMemoryRepo({ version: 3, bots: [] });
+      const failure = new Error(`isolated ${failingRead} initialization failed`);
+      let stateReads = 0;
+      let ioFinished = false;
+      const read = async (name: "config" | "state") => {
+        if (name === failingRead) {
+          await fail.promise;
+          failed.resolve();
+          throw failure;
+        }
+        await sibling.promise;
+        ioFinished = true;
+        siblingFinished.resolve();
+      };
+      repo.readConfig = vi.fn(async () => {
+        configEntered.resolve();
+        await read("config");
+        return { version: 3 as const, bots: [] };
+      });
+      repo.readState = vi.fn(async () => {
+        stateReads += 1;
+        if (stateReads === 1) {
+          stateEntered.resolve();
+          await read("state");
+        }
+        // 关闭自己的 cancelUploads 读取不能充当 startup 兄弟 IO 的完成信号。
+        return { version: 3 as const, bots: {} };
+      });
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const service = f.createBotsService({
+        credentialService: f.createCredentialService(),
+        repo: repo as never,
+      });
+      await Promise.all([configEntered.promise, stateEntered.promise]);
+      // 仅让已接纳的三个 refresh 观察同一初始化；读取的完成仍由 deferred 控制。
+      await setImmediate();
+      const disposing = service.disposeAllAndWait();
+      let disposed = false;
+      void disposing.then(() => {
+        disposed = true;
+      });
+      try {
+        expect(service.disposeAllAndWait()).toBe(disposing);
+        fail.resolve();
+        await failed.promise;
+        await setImmediate();
+        expect(ioFinished).toBe(false);
+        expect(disposed).toBe(false);
+        sibling.resolve();
+        await disposing;
+        expect(ioFinished).toBe(true);
+        expect(error).toHaveBeenCalledWith(
+          expect.any(String),
+          `Bot storage initialization failed: ${failure.message}`,
+        );
+        for (const name of ["Telegram polling", "Weixin polling", "Feishu WebSocket"]) {
+          expect(warn).toHaveBeenCalledWith(
+            expect.any(String),
+            `refresh ${name} failed: ${failure.message}`,
+          );
+        }
+        expect(repo.readConfig).toHaveBeenCalledOnce();
+        expect(repo.readState).toHaveBeenCalledTimes(2);
+        await setImmediate();
+        expect(repo.readConfig).toHaveBeenCalledOnce();
+        expect(repo.readState).toHaveBeenCalledTimes(2);
+      } finally {
+        fail.resolve();
+        sibling.resolve();
+        await siblingFinished.promise;
+        await disposing;
+        await setImmediate();
+        error.mockRestore();
+        warn.mockRestore();
+      }
+    },
+  );
+
   it.each(["connection", "task-service"] as const)(
     "群恢复等待 %s 时关闭，晚到结果不能重新建立订阅",
     async (phase) => {

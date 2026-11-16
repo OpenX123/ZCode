@@ -166,3 +166,64 @@ pnpm exec vitest run packages/services/test/botsService.groups.test.ts packages/
 - 原 R3 的旧频道 46 计数不在本次 Fix1 范围，也没有被声明通过。原 EPERM 日志完整保留；修复后的精确 composition 2/2 和原 12 文件 78/78 作为新运行事实。
 - pnpm 仍提示仓库已有 package.json pnpm 字段忽略信息，Git 仍有 LF/CRLF 提示；oxlint 自身 0 warning / 0 error，不声称全程输出完全无噪声。
 - 根 typecheck/lint、29 规格及完整原始基线 pre-push 仍由 controller 整批统一执行，本次未运行全量 pnpm test/test:unit，也未 push。Task4 本地必要回归与 I1 验收已通过，发布总门禁仍以 controller 最终结果为准。
+
+# Task 4 Fix 2：初始化失败仍等待同次并行读取全部结束
+
+状态：实施及定向验证完成，待 controller 唯一 scoped 复审。FIX_BASE 为 a1182730；开工时 HEAD 同为 a1182730。期间 controller 先提交 35bbee08，仅在 tracked spec/plan 明确失败路径合同。本轮实现仅修改 botsService.ts、botsService.status.test.ts 和本报告追加，不纳入其他任务改动，也不覆盖此前报告或原始失败日志。
+
+## 独立复审结论与本轮根因证据
+
+Fix1 独立复审 task-4-fix1-rereview.md 将 I1 判为 NOT ADDRESSED：Service 已持有 startupPromise，但 ensureBotStorageMigrated 内的 Promise.all 会在一个读取拒绝时提前拒绝，另一个已接纳读取仍可能在途，因此 shutdown 等待的 startupPromise 仍不足以证明本次 IO 全部结束。Fix1 的通过记录保留为历史运行事实，不能代替本轮失败路径验收。
+
+本轮先将该场景迁为正式参数化回归，两方向均在修改生产代码前失败。每个用例分别等待 config/state 真实入场，关闭服务后才释放指定失败读取；同次兄弟读取继续由另一个 deferred 保持 pending。shutdown 自身 cancelUploads 的 readState 独立即时返回，不能成为 startup 读取的替代屏障。
+
+| 正式回归 | 原 a1182730 + 新测试的 RED | 本轮最终 GREEN |
+| --- | --- | --- |
+| config 拒绝，state 仍在途 | fix2-red.json：ioFinished 为 false，但 disposed 已为 true；第 175 行 expected true to be false | status 13/13 中通过 |
+| state 拒绝，config 仍在途 | 同一 RED，同一关闭提前完成断言失败 | status 13/13 中通过 |
+
+RED 总计 13 条：11 passed / 2 failed，exit 1。两失败均为上述预期关闭断言，不是测试超时、导入错误或真实文件系统偶现失败。它们确定性证明 fail-fast 依赖是本次错误路径缺口；仍不声称已穷尽原单次 EPERM 的所有成因。
+
+## 最小修复与保留合同
+
+- 唯一生产变更位于 ensureBotStorageMigrated：将同次 repo.readConfig/readState 的两个原始 Promise 保存为局部 reads；成功路径仍由原 Promise.all 完成。失败 catch 先 await Promise.allSettled(reads)，再按原逻辑清空 botStorageMigrationPromise 并重抛原 error。
+- 这使现有 startupPromise → shutdownPromise 的等待依赖完整覆盖已发出的兄弟读取。没有新增 pending 账本、生命周期 owner、公共 API、超时、重试或文件删除操作，也没有扩大 Provider runtime 的队列合同。
+- 原 Promise.all 捕获的第一个拒绝对象直接重抛，没有从 allSettled 按数组顺序另选错误；初始化 error 和三个 startup refresh warn 保持原信息。双方向测试逐项验证这些日志、并发 dispose 返回同一 Promise，以及关闭后读取计数不再增长。
+- 中文注释解释 fail-fast 后兄弟读取仍可能持有文件锁，因此关闭必须等待全部已接纳 IO 结束。authorityMode、composition 清理、退役账号/遥测/分享功能、Fix1 的恢复订阅 guard 均未改。
+
+单次 setImmediate 仅让事件循环观察已可 settle 的关闭 Promise，并让三个已接纳 refresh 共享初始化；它不是 IO 完成屏障。读取入场和结束均由明确 deferred 控制，最终完成仍只验收原 disposeAllAndWait Promise。用例 finally 释放 deferred 并等待兄弟读取及关闭，不靠 sleep、固定次数微任务循环或 rm 重试。
+
+## 执行命令与真实结果
+
+全部从仓库根执行，固定 PATH 指向 Node 24.14.0，pnpm 10.33.2。原始输出位于 scratch/task-4/fix2-*，此前 red/green/EPERM 文件未覆盖。
+
+| 命令 / 日志 | exit | 结果 |
+| --- | --- | --- |
+| node scripts/check-workspace-freshness.mjs | 0 | ahead 43 / behind 0，无远端跟踪分支提示 |
+| pnpm architecture:check --changed；fix2-architecture-before.log | 0 | violations 0 / baseline 0 / new 0 |
+| pnpm architecture:context services；fix2-services-context.log | 0 | services 当前为 legacy unmanaged，无额外已声明 contract；不将架构检查当作释放时序语义的证明 |
+| 下列 status 命令，输出 fix2-red.json / .log | 1 | 生产修复前 13 条：11 passed / 2 failed，两个方向均提前完成关闭 |
+| 同一 status 命令，输出 fix2-green-status.json / .log | 0 | 13/13 |
+| pnpm exec oxfmt packages/services/src/bots/botsService.ts packages/services/test/botsService.status.test.ts；fix2-format.log | 0 | 仅格式化这两个变更文件 |
+| 下列 focused 命令；fix2-green-focused.json / .log | 0 | 3 文件 36/36：status 13、botsChannelRuntime 21、composition 2 |
+| 下列原 12 文件命令；fix2-green-final-12.json / .log | 0 | 12 文件 78/78，无 pending；未混入独立 R3 计数测试 |
+| 下列恢复命令；fix2-green-recovery.json / .log | 0 | 2 文件 126/126：groups 112、privateSync 14；复验共享初始化依赖变更后的既有恢复合同 |
+| pnpm architecture:check --changed；fix2-architecture-after.log | 0 | violations 0 / baseline 0 / new 0 |
+| pnpm exec oxlint packages/services/src/bots/botsService.ts packages/services/test/botsService.status.test.ts；fix2-lint.log | 0 | 2 文件，0 warning / 0 error |
+| pnpm exec oxfmt --check packages/services/src/bots/botsService.ts packages/services/test/botsService.status.test.ts；fix2-format-check.log | 0 | 两个变更文件格式通过 |
+| git diff --check；fix2-diff-check.log | 0 | 无差异空白错误 |
+
+```powershell
+pnpm exec vitest run packages/services/test/botsService.status.test.ts --reporter=json --outputFile=.superpowers/sdd/2026-11-16-release-gate-repair/scratch/task-4/fix2-red.json
+pnpm exec vitest run packages/services/test/botsService.status.test.ts --reporter=json --outputFile=.superpowers/sdd/2026-11-16-release-gate-repair/scratch/task-4/fix2-green-status.json
+pnpm exec vitest run packages/services/test/botsService.status.test.ts packages/services/test/botsChannelRuntime.test.ts packages/services/test/conversationShareComposition.test.ts --reporter=json --outputFile=.superpowers/sdd/2026-11-16-release-gate-repair/scratch/task-4/fix2-green-focused.json
+pnpm exec vitest run packages/client/test/remoteServiceAccess.test.ts packages/desktop/test/hostRemoteWorkspaceServices.test.ts packages/desktop/test/remoteConversationShareWiring.test.ts packages/desktop/test/remoteWorkspaceSessionServices.test.ts packages/services/test/conversationShareComposition.test.ts packages/services/test/servicesEntryBoundary.test.ts packages/services/test/telemetryUserIdLoader.test.ts packages/shared/test/officialMcpAuthProtocol.test.ts packages/zcode-server-cli/test/coreHttp.test.ts packages/services/test/credentialService.test.ts packages/services/test/standaloneProviderRuntime.test.ts packages/shared/test/mcp.test.ts --reporter=json --outputFile=.superpowers/sdd/2026-11-16-release-gate-repair/scratch/task-4/fix2-green-final-12.json
+pnpm exec vitest run packages/services/test/botsService.groups.test.ts packages/services/test/botsService.privateSync.test.ts --reporter=json --outputFile=.superpowers/sdd/2026-11-16-release-gate-repair/scratch/task-4/fix2-green-recovery.json
+```
+
+## 自审与 concerns
+
+- 已逐行自审本轮两个源码/测试文件的完整 diff：生产修改仅局部等待依赖，测试仅新增两个错误方向；未修改 channelRuntime、三个 Provider runtime、authorityMode、清理或 timeout，未新增 skip，未恢复退役 surface。
+- 两个单失败方向有正式 RED→GREEN。双读取同时拒绝未另加测试；原 first-rejection 的保留由同一 catch 参数及 throw error 直接保证，而 allSettled 只承担 drain。
+- 原 R3 旧 46 频道计数仍不在本轮范围，不声明其通过。现有 pnpm 忽略 package.json 字段、Node SQLite experimental 和 Git LF/CRLF 提示仍保留在原日志中；定向 oxlint 自身为 0 warning / 0 error，不将输出噪声写成不存在。
+- 根 pnpm typecheck、pnpm lint 与整批 pre-push 按 task brief 由 controller 统一执行，本轮未执行，不声明通过。未运行全量 pnpm test/test:unit，未 push。I1 的最终处置及发布门禁以 controller 对 a1182730..fixHEAD 的权威包和独立复审为准。

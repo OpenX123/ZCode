@@ -2281,9 +2281,12 @@ export function createBotsService(
   async function ensureBotStorageMigrated(): Promise<void> {
     // 单向导入已收口到 Repo；这里只等待初始化，不再读取旧模型字段或重写当前状态。
     if (!botStorageMigrationPromise) {
-      botStorageMigrationPromise = Promise.all([repo.readConfig(), repo.readState()])
+      const reads = [repo.readConfig(), repo.readState()];
+      botStorageMigrationPromise = Promise.all(reads)
         .then(() => undefined)
-        .catch((error: unknown) => {
+        .catch(async (error: unknown) => {
+          // Promise.all 提前拒绝后，兄弟读取仍可能持有文件锁；关闭须等已接纳 IO 全部结束。
+          await Promise.allSettled(reads);
           botStorageMigrationPromise = null;
           throw error;
         });
