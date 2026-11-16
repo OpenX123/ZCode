@@ -163,6 +163,37 @@ for (const entry of [rootEntry, nodeEntry]) {
 - [ ] **Step 3: GREEN 与迁入验证。** 运行上述九规格，加上 `packages/services/test/credentialService.test.ts`、`packages/services/test/standaloneProviderRuntime.test.ts`、`packages/shared/test/mcp.test.ts`、`packages/desktop/test/windowHostAttachmentRpcPolicy.test.ts`。最后一个规格的旧 46 数字计数已知另有 R3 任务，若仍失败保留明确独立结果；本任务新增/迁移断言与其余保留 suite 必须实际通过。不触碰其计数、不新增 skip、不修改 timeout。迁入历史读取由 standaloneProviderRuntime 的 `getImportedConversation` 正向/缺失用例覆盖，不恢复云 API。
 - [ ] **Step 4: 静态、自审与提交。** 修改前后运行架构检查、变更测试文件格式/diff 检查。报告逐文件旧失败→新覆盖/原保留覆盖映射、真实命令与统计、潜在未覆盖边界，并只提交本任务测试/必要 spec；独立 controller 派审。真实 UI 未变不为本任务额外添加 E2E；根类型/lint 与完整门禁仍在整批结束执行。
 
+### Task 5: 修正原平台豁免 API 与原生资源路径断言
+
+**Files:**
+
+- Modify/Test: `packages/desktop/test/remoteWorkspacePreparation.test.ts`
+- Modify/Test: `packages/zcode-server-cli/test/remoteAssetRelease.test.ts`
+- Read: `packages/desktop/src/host/remoteWorkspacePreparation.ts`、`packages/zcode-server-cli/src/packaging/remoteAssetRelease.ts`。
+
+**Interfaces:**
+
+- Consumes: 当前目录 admission 与四平台 release asset staging 公开入口。
+- Produces: 原本应豁免的平台权限组合正确跳过，删除目录场景仍在 Windows 实跑；四归档文件名以 native basename 验证，生产代码不变。
+
+- [ ] **Step 1: RED。** 精确运行两文件并保留结果，确认 `context.skip` 不是合法参数、原生分隔符比较差异来自旧测试；不把 Windows chmod 语义当成生产 admission 缺陷。
+
+```powershell
+pnpm exec vitest run packages/desktop/test/remoteWorkspacePreparation.test.ts packages/zcode-server-cli/test/remoteAssetRelease.test.ts --reporter=json --outputFile=<本任务 scratch>/task-5-red.json
+```
+
+- [ ] **Step 2: 修正夹具。** 原 `it.each` 第二回调参数不是 Vitest `TestContext`，将 Windows/root 且 `mode !== null` 的原有运行时豁免改为静态 `it.skipIf`/逐组合构造，准确保持原计划豁免集合；`mode === null` 的 manual/automatic 删除目录与修复重连用例必须在 Windows 执行。POSIX CI 非 root 权限组合仍执行，不新增豁免条件。文件名比较复用 `node:path.basename`，保留四目标、descriptor、size/SHA 与缺失 fail closed 断言。
+
+```ts
+// 只更换路径解析方法，不更换预期四平台归档名集合。
+const fileNames = copiedPaths.map((filePath) => basename(filePath));
+```
+
+实际变量名按当前测试；不得用仅检查数组长度代替精确文件名集合。
+
+- [ ] **Step 3: GREEN。** 重跑两文件，报告每个执行/跳过的参数组合与原意的对应；Windows/root 权限豁免必须如实计入skip且说明是修正既有豁免API，不能写成所有权限分支实测通过。
+- [ ] **Step 4: 静态、自审、提交。** 架构before/after、变更文件格式/diff检查，报告真实命令与统计，只提交两测试文件。controller独立派审；无需改产品spec或生产实现，也不改全局Vitest配置触发全量跳过。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
