@@ -93,7 +93,7 @@ expect(await service.readDirectory()).toEqual({ path: ownerPath, entries: [] });
 **Interfaces:**
 
 - Consumes: 现有 `resolveSourceServerReleaseAsset` 公开入口、`.lock/owner.json` 与独占 `.reaping` 标记；不改变其签名和缓存身份。
-- Produces: Windows 可安全回收已退出进程的锁；现有 SHA、互斥、取消与清理边界保持。
+- Produces: Windows 可安全回收已退出进程的锁；现有 SHA、互斥、取消与清理边界保持。本任务只关闭句柄导致的 EPERM；同规格另两条“中断回收提示完整路径”与通用脱敏出口的合同冲突继续作为补充修复必做项，不把本任务通过外推为整个规格或门禁全绿。
 
 - [ ] **Step 1: 定向 RED。** 固定 Node 下运行现有“回收已退出进程的锁后可以重新下载”规格并记录 `rename` 的 EPERM 与源位置；若原始错误已不出现，核对文件状态及真实平台，不通过猜测修改。
 
@@ -114,10 +114,10 @@ try {
 
 上例只说明顺序；须与原 `retiredLockDir` finally 清理组合，避免漏关句柄、双重关闭或清理后来者的新锁。
 
-- [ ] **Step 3: GREEN 与并发边界。** 运行整个精确测试文件，保留失败锁回收、遗留回收标记两分支、同SHA并发只下载一次、不同SHA不覆盖、校验失败清理、取消后重试覆盖。增加聚焦回归：两个并发请求竞争同一个已退出 owner 锁，最终只下载一次并只剩当前归档；原实现下应暴露 Windows 回收失败，不用增加 sleep 或放宽时限。
+- [ ] **Step 3: GREEN 与并发边界。** 运行整个精确测试文件，保留失败锁回收、遗留回收标记两分支、同SHA并发只下载一次、不同SHA不覆盖、校验失败清理、取消后重试覆盖。增加聚焦回归：两个并发请求竞争同一个已退出 owner 锁，最终只下载一次并只剩当前归档；原实现下应暴露 Windows 回收失败，不用增加 sleep 或放宽时限。新并发及原单独回收断言须 GREEN；全文件预期仍有两条已确认的提示脱敏合同失败，必须逐项报告并继续后续任务，不能改成 skip、移除、降低要求或宣称全文件通过。
 
 ```powershell
-pnpm exec vitest run packages/desktop/test/sourceServerReleaseResolver.test.ts --reporter=json --outputFile=<本任务 scratch>/task-3-green.json
+pnpm exec vitest run packages/desktop/test/sourceServerReleaseResolver.test.ts --reporter=json --outputFile=<本任务 scratch>/task-3-after.json
 ```
 
 - [ ] **Step 4: 架构、格式与提交。** 修改前执行架构检查，阅读已有 resolver 与当前 spec，属于局部既有合同修复无需制造新模块；修改后重跑架构、定向格式与diff检查。自审后只提交本任务源码/测试/对应spec，完整报告写本计划scratch，controller独立派任务审查。根typecheck/lint在整批后执行。
