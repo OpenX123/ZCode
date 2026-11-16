@@ -128,7 +128,7 @@ describe("Legacy Personal Provider Config Importer", () => {
     const before = structuredClone(legacyProviders);
     const imported = importLegacyPersonalProviderConfig({ legacyProviders });
     expect(imported.providers.getRule("custom-id")?.providerName).toBe("My API");
-    expect(imported.providers.getRule("bigmodel-api")?.templateId).toBe("bigmodel-api");
+    expect(imported.providers.getRule("bigmodel-api")?.templateId).toBe("bigmodel-standard-api");
     expect(imported.providers.get("custom-id")?.toJSON()).not.toHaveProperty("label");
     expect(imported.providers.get("bigmodel-api")?.toJSON()).not.toHaveProperty("templateId");
     expect(imported.models.toPersonalJSON().manualProviderModelRules).toEqual([]);
@@ -156,7 +156,8 @@ describe("Legacy Personal Provider Config Importer", () => {
         ],
       });
       expect(document.providers.keys()).toEqual(["bigmodel-api", "zai-api"]);
-      expect(document.providers.getRule("bigmodel-api")?.templateId).toBe("bigmodel-api");
+      expect(document.providers.getRule("bigmodel-api")?.templateId).toBe("bigmodel-standard-api");
+      expect(document.providers.getRule("zai-api")?.templateId).toBe("zai-standard-api");
       expect(document.providers.getRule("bigmodel-api")?.enabled).toBeUndefined();
       expect(document.providers.get("bigmodel-api")?.toJSON()).toEqual({
         group: "standard-personal",

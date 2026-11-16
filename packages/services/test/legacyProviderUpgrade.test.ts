@@ -105,12 +105,24 @@ describe("Todo 72 已发布 config.json 首次升级", () => {
         personalModels: personal.models,
         accountProviders: ProviderConfigMap.empty(),
       });
-      for (const family of ["bigmodel", "zai"] as const) {
-        const id = `${family}-api`;
+      for (const { family, id, templateId, baseUrl } of [
+        {
+          family: "bigmodel",
+          id: "bigmodel-api",
+          templateId: "bigmodel-standard-api",
+          baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+        },
+        {
+          family: "zai",
+          id: "zai-api",
+          templateId: "zai-standard-api",
+          baseUrl: "https://api.z.ai/api/paas/v4",
+        },
+      ]) {
+        expect(builtin.providerTemplates?.get(templateId)?.config.api?.baseUrl).toBe(baseUrl);
+        expect(personal.providers.getRule(id)?.templateId).toBe(templateId);
         const provider = resolved.resolvedProviders.find((item) => item.providerId === id)!;
-        expect(provider.config.api?.baseUrl).toBe(
-          builtin.providerTemplates?.get(id)?.config.api?.baseUrl,
-        );
+        expect(provider.config.api?.baseUrl).toBe(baseUrl);
         // Todo112 规范了当前模板的官方 ID；旧配置导入仍保留 Key 与旧文件，不沿用旧名单大小写。
         expect(provider.models.some((model) => model.modelId === "GLM-5.3")).toBe(true);
         expect(provider.models.find((model) => model.modelId === "GLM-5.3")?.executable).toBe(true);
@@ -118,7 +130,6 @@ describe("Todo 72 已发布 config.json 首次升级", () => {
           group: "standard-personal",
           access: { type: "api-key", apiKey: `fake-builtin:${family}` },
         });
-        expect(personal.providers.getRule(id)?.templateId).toBe(id);
       }
       expect(personal.models.getExact(customId, "GLM-5.3")?.properties?.contextWindow).toBe(64_000);
       expect(personal.providers.getRule(customId)?.enabled).toBe(enabled);
@@ -135,17 +146,28 @@ describe("Todo 72 已发布 config.json 首次升级", () => {
         zcodeBuiltinProviders: builtin.providers,
         zcodeBuiltinProviderTemplates: builtin.providerTemplates,
         zcodeBuiltinModelRules: builtin.models,
-        personalProviders: personal.providers.setRule({
-          ...personal.providers.getRule(customId)!,
-          enabled: true,
-          config: personal.providers
-            .get(customId)!
-            .overlay(new ProviderConfig({ access: new ApiKeyAccessConfig({ apiKey: "" }) })),
-        }),
+        personalProviders: ["bigmodel-api", "zai-api", customId].reduce(
+          (providers, id) =>
+            providers.setRule({
+              ...personal.providers.getRule(id)!,
+              enabled: true,
+              config: personal.providers
+                .get(id)!
+                .overlay(new ProviderConfig({ access: new ApiKeyAccessConfig({ apiKey: "" }) })),
+            }),
+          personal.providers,
+        ),
         personalModels: personal.models,
         accountProviders: ProviderConfigMap.empty(),
       });
-      expect(missingKey.registryProviders.some((item) => item.providerId === customId)).toBe(false);
+      for (const id of ["bigmodel-api", "zai-api", customId]) {
+        expect(
+          missingKey.resolvedProviders
+            .find((item) => item.providerId === id)
+            ?.models.find((item) => item.modelId === "GLM-5.3")?.executable,
+        ).toBe(false);
+        expect(missingKey.registryProviders.some((item) => item.providerId === id)).toBe(false);
+      }
       await repository.update((current) => ({
         ...current,
         providers: current.providers.delete("bigmodel-api").setRule({

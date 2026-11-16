@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import {
-  isApiKeyAccess,
+  ApiKeyAccessConfig,
   type ModelConfig,
   type ProviderConfig,
   type ProviderConfigLayerSnapshot,
@@ -737,8 +737,9 @@ function convertPersonalProviderConfig(
       },
       apiFormat: provider.api?.type ?? "openai-chat-completions",
       apiKeyRequired: true,
-      // 套餐手动 Key 同样是 API Key；仅识别普通类型会把已保存凭据误报为空。
-      apiKey: isApiKeyAccess(provider.access) ? provider.access.apiKey?.trim() || "" : "",
+      // 编辑谓词只接受普通 Key；观察时按公开配置类型兼容旧套餐手动 Key，账号仍投影为空。
+      apiKey:
+        provider.access instanceof ApiKeyAccessConfig ? provider.access.apiKey?.trim() || "" : "",
       defaultKind: kind,
       models: (provider.personalModelIds ?? []).map((modelId) =>
         convertPersonalModelConfig(

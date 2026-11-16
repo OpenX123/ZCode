@@ -137,6 +137,12 @@ describe("custom OpenAI Provider E2E seed", () => {
                   personalModelIds: [],
                 },
               },
+              {
+                providerId: "example-account",
+                config: {
+                  access: { type: "zhipu-account", accountType: "zai", mode: "start-plan" },
+                },
+              },
             ],
           },
           modelConfigRules: { providerModelRules: [], manualProviderModelRules: [] },
@@ -147,6 +153,10 @@ describe("custom OpenAI Provider E2E seed", () => {
     expect(await readModelProvider("example-plan")).toMatchObject({
       id: "example-plan",
       apiKey: "e2e-plan-key",
+    });
+    expect(await readModelProvider("example-account")).toMatchObject({
+      id: "example-account",
+      apiKey: "",
     });
   });
 
