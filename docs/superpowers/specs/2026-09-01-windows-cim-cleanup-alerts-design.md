@@ -97,13 +97,18 @@ cleanup
   满余量分配500/500/250。验证慢或窗口不足时保留未决成员，不假报清理成功。
 - root-exited 初始过滤截止为 `min(now+750, nominalForceAt-750, D)`；无正余量便直接走
   force，不加前置串行查询。graceful/force 每身份每阶段至多查询一次。
-- 每个定向批次最多64 PID，一个 CIM OR filter，每个 cleanup attempt 定向并发上限1；
+- 每个定向批次最多64 PID，一个 CIM OR filter，同一受管进程/固定快照 cleanup 链（含最终
+  retry）的底层活动查询并发上限1；
   18项一批，129项最多64/64/1三批，共用同一阶段绝对截止。失败批次unknown，不重试或
   退回全表，已完成匹配批次不被一项失败拖成无目标。多workspace保持既有并行收口。
+- 逻辑deadline返回不释放尚未物理结束的查询占用。retry等待旧查询结束期间只观察，不启动
+  第二查询或新增信号；等待计入原D2，归还后由新attempt自身重核占用/截止并按实际s重算预算，
+  不复用旧M、不续D2、不增retry。旧callback只收口旧资源，不自行调度查询或信号；占用留在
+  现有owner/适配器，不新增Host全局队列或第二owner。
 - PID 须为安全整数 `1..4294967295`，仅序列化校验后的数值，禁止拼入外部字符串；
   出界/小数/非有限值在CIM和runner边界拒绝。结果重复、坏行或不完整不能伪装成缺失。
 - 确认 matched 后的PID探测仅用于观察；OS拒绝访问不是不存在。unknown仍预留潜在命令预算，
-  不可因空匹配集切到短纯观察并释放ownership。全部unavailable且没有固定候选时才保留
+  不可因空匹配集切到短纯观察并释放ownership。全部unavailable、没有固定候选且root例外不适用时才保留
   既有原ChildProcess纯观察分支；成功只证明此有限责任，不保证所有未知后代已退出。
 
 ### Alert policy

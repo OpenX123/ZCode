@@ -61,18 +61,21 @@ Windows 普通退出属于高频交互，更新安装属于低频且必须释放
                                             `-- deadline 时存活或未知 -> remainingPids + 保留 ownership
   ```
 
-  Windows 的快照、EOF、taskkill 和终态观察共享 transport 固定绝对 deadline；没有已验证
-  `taskkill` 目标时不得把剩余预算压缩成固定的 250ms，而应在同一绝对 deadline 内为原
-  `ChildProcess` / 已固定身份保留最多 750ms 的纯观察窗口。本次新增的纯观察路径与首次
-  3.25s cleanup 的最坏组合不超过 Local Host 的 4s 强制退出点；有已验证信号目标的路径
-  继续沿用既有 taskkill 绝对 deadline。macOS/Linux 继续使用既有 POSIX force + observation
-  上界，本轮没有运行时证据支持扩大其等待时间。
+  Windows 的快照、EOF、taskkill 和终态观察共享 transport 固定绝对 deadline。只有完全
+  unavailable、无固定候选且 root 例外不适用时，才进入原 `ChildProcess` 的既有纯观察分支，
+  有效截止直接遵循[状态机公式](../windows-agent-process-cleanup-state-machine.md#force-验证命令观察分配)：
+  显式 transport D 下为 `min(D,waiterStart+max(remainingForce+G,750))`。750ms 是既有最终
+  retry 的纯观察上限，不是所有 `M=[]` 情况的总等待上限。只要 K 仍有未决固定身份，即使
+  初始过滤全部 unknown、M 为空，也保留 L 命令预算与 force 复核机会，不能仅因此提前 settle。
+  纯观察最终 retry 与首轮 3.25s 的最坏组合不超过 Local Host 的 4s 强制退出点；有固定候选
+  的路径继续沿用原 taskkill 绝对 deadline。macOS/Linux 的既有 POSIX force + observation
+  上界不变。
 
 - 进程树快照不能只保存裸 PID：必须同时保存可复核的进程创建标识（Linux `/proc` start ticks；Darwin `lstart + command + PGID`；Windows `CreationDate`）和 POSIX PGID。Windows sync/async 统一为 `windows-utc-100ns:<UTC Unix epoch 起的整数 ticks>`，保留 CIM 经 .NET ticks 输出的全部精度，用 BigInt 比较，不降为毫秒或添加 epsilon。来源只提供微秒时，该编码不增加真实精度。首次发现必须先验证 root 锚点，再逐条要求 `child.created >= directParent.created`；早于父节点、身份不可解析、循环或重复 PID 的歧义节点及依赖分支全部拒绝，合法同精度相等保留。
 - live root 的创建时间不得早于可信 spawn 起点；root 已退出（含查询期间退出）时不能采用同 PID 当前行，只能由真实 exit 事件提供可信 `[spawn, exit)`。边界须为非负安全整数毫秒且 `spawn < exit`，转换为 BigInt ticks 后比较；所有恢复候选仍限制在该生命周期内，并逐边验证，不扩展到 root 退出后新生孙代。同步入口也遵守该规则，查询完成时间不得代替 exit。同步阻塞期间尚未投递的 exit 是观测限制。
 - 首次合法快照是固定候选，不是发送时的当前证据。live root 只对原受管 root 发 exact graceful；EOF 前旧快照不得直接授权 descendant graceful。root 已退出时，只有本阶段定向过滤为 matched 的成员可发 exact graceful；短余量时跳过该前置 graceful 阶段并直接进入有验证的 force。所有仍未确认退出的已登记后代（含 reparent）都保留 force 验证资格，不能只从上一阶段 matched 子集挑选。
 - 本 services/process 清理链的 graceful、force、root 例外和默认 runner 全部禁止 `taskkill /T`。只使用 `taskkill /PID <pid>` 或 `taskkill /PID <pid> /F`，不得让原生命令重新扩树。受管 root 例外只作用于调用链传入的原始 spawn `ChildProcess`：未进入 `unverifiedRootOnly`、未证明身份换代、尚未观察 exit、句柄可用且 PID 存活；只有裸 PID、旧 snapshot 或具有 `kill` 方法的任意对象不能证明该前提。该例外也受命令绝对截止约束。外部 taskkill 仍按数值 PID 执行，不能宣称它使用了 ChildProcess 的原句柄。
-- Windows 后续身份验证只查固定候选 PID；每批最多 64 个、一个 `ProcessId = n OR ...` CIM filter、每个 cleanup attempt 内并发上限 1，所有批共享本阶段验证绝对截止，每身份每阶段至多查询一次。18 项必须一批；超长集合不能开 N 个 PowerShell、补全表或失败重试。PID 只能由已校验的系统整数序列化，详见 [Windows 状态机的预算和结果合同](../windows-agent-process-cleanup-state-machine.md)。
+- Windows 后续身份验证只查固定候选 PID；每批最多 64 个、一个 `ProcessId = n OR ...` CIM filter，同一受管进程/固定快照 cleanup 链（含最终 retry）的底层活动查询并发上限 1，所有批共享本阶段验证绝对截止，每身份每阶段至多查询一次。旧查询未确认物理结束时 retry 只能观察并等待其占用释放；等待计入原 D2，随后由新 attempt 自身调度重核占用、截止和实际余量，不复用旧阶段身份结果。旧 callback 只收口旧资源，不能自行调度新查询或信号；不增加全局 Host 队列或第二 owner。18 项必须一批；超长集合不能开 N 个 PowerShell、补全表或失败重试。PID 只能由已校验的系统整数序列化，详见 [Windows 状态机的预算和结果合同](../windows-agent-process-cleanup-state-machine.md)。
 - 验证内部结果必须区分 matched、gone 和 unknown。只有成功且完整的定向响应证实原身份缺失/换代，或明确的 OS 不存在证据，才将原成员视为 gone；超时、权限错误、无法解析或未查询均为 unknown。初始 root-exited 过滤若全部未知，也必须保留固定成员及命令预算，不能因 `currentIdentities=[]` 提前成功。历史成员的当前 PPID 改变不影响创建身份复核。
 - 系统进程表暂时不可用且尚未取得 root 创建标识时，本轮回收必须 fail closed：不得通过 `ChildProcess.kill()` 或 `taskkill` 向裸 PID 发信号，也不得在延迟 force 阶段重新发现该 PID 的进程树。快照必须显式标记 `identityVerification: "unavailable"`，在既有退出预算内继续观察原 `ChildProcess`；截止时仍未退出则通过 `remainingPids` 报告 cleanup incomplete，禁止把空身份误报为清理成功。
 - Agent 的“当前可复用 protocol client”与 Host 的“尚未确认退出的 OS 进程所有权”是两种状态。protocol close 可以立即解除 workspace 的 active client 绑定，但只有 cleanup 确认 root 与已登记树成员均退出后才能释放进程所有权。

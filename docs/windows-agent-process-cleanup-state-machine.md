@@ -228,10 +228,17 @@ graceful 与 force flight 并发，不各加一份总预算。若 graceful 在 s
 
 - 只查询本阶段未决 K 的 PID，固定候选按首次快照顺序稳定分批，每批最多64个，每批只有一个
   `Get-CimInstance Win32_Process -Filter "ProcessId = n OR ProcessId = m"`。
-- 每个 cleanup attempt 任意时刻至多一个定向 PowerShell；graceful/force 两阶段不重叠。
-  多 workspace 沿既有并发 cleanup 各自受界，不增加 Host 全局队列或第二 owner。
-  前阶段已超时但底层查询尚未settle时，不再启动下一批或force查询；取消/超时沿原execFile
-  机制收口，后续只能用D内真实剩余窗口。不能以Promise先返回unknown掩盖仍在途的第二进程。
+- 同一受管进程/固定快照 cleanup 链（含既有最终 retry）共享一个底层定向查询占用，任意
+  时刻至多一个物理在途 PowerShell；graceful/force 阶段及相邻 attempt 均不得重叠查询。
+  占用由现有 owner/适配器维护，具体私有结构留实现；多 workspace 沿既有并发 cleanup
+  各自受界，不增加 Host 全局队列或第二 owner。逻辑 timeout、Waiter settle、cleanup Promise
+  清除不等于物理查询结束；只有底层 execFile/close 确认旧进程结束才释放该占用。
+- 前阶段或前 attempt 的旧查询尚未物理结束时，retry不重复EOF宽限，但只观察并等待占用，
+  不启动第二查询或任何新增信号（含root例外）；等待持续扣减原D2。旧查询结束后，新attempt
+  仅由自身仍有效的调度检查占用和截止，再以实际s计算R/O/V/C，绝不延长D2、沿用旧M或增加
+  retry。旧callback可收口旧资源、释放占用，不能自行调度查询/信号；新attempt已settle或到D2
+  后只能留unknown/remaining，旧查询随后结束也不能触发动作。不能以Promise先返回unknown
+  掩盖仍在途的第二进程；取消/超时仍沿原execFile机制收口。
 - 18项为1批；129项最多3批（64/64/1），所有批共享同一个阶段绝对截止。每批启动前使用
   `timeout=floor(stageDeadline-now)`；不足1ms不启动。不得每批各领750ms。
 - 每身份每阶段至多查询一次。批次失败只令该批unknown，已完成匹配批次仍可exact force；
