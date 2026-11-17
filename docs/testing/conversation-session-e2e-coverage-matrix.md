@@ -2,15 +2,17 @@
 
 ## 本机缓存锁恢复（2026-11-16）
 
-| Case | 范围 | 入口 | 状态 |
-| --- | --- | --- | --- |
-| CACHE-RECOVERY-01/02/03 | 真实SSH两种marker、秘密碰撞、双SHA精确打开、三入口、正常退出后原入口重试 | `manual-review/pending/conversation-session-source-server-cache-lock-recovery.test.ts`；专用lock fixture、descriptor-only packaged、同profile进程树屏障 | pending，等待本轮真实执行及人工复核；不得以UT替代系统Explorer/正常退出证据 |
+| Case                    | 范围                                                                     | 入口                                                                                                                                                    | 状态                                                                                                |
+| ----------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| CACHE-RECOVERY-01/02/03 | 真实SSH两种marker、秘密碰撞、双SHA精确打开、三入口、正常退出后原入口重试 | `manual-review/pending/conversation-session-source-server-cache-lock-recovery.test.ts`；专用lock fixture、descriptor-only packaged、同profile进程树屏障 | pending，最终三入口已有独立成功run，见下文；不自动晋升正式gate，不以UT替代系统Explorer/正常退出证据 |
 
 场景03的公开管理RPC只准备online更新失败，不计UI入口。Settings错误卡详情的真实重试必须再次触发组件更新失败toast，并由toast进入详情；不改兼容版本或Renderer状态。错误卡不可达时，在线分支仍属未覆盖。
 Task21后同代包在SLOW已接纳、Settings切换、首次退出前、真实取消后、再次确认前记录现有Main activity getter的单次实际计数及同run Agent session/turn边界。取消后同一turn未终态且Main仍有运行数；该证据不替代真实原生动作，禁止注入/轮询凑数或扩大原等待预算。
 Windows Main CDP观测允许仅对同目录明确命名的E2E exe副本开启inspector参数fuse，记录原/副exe及ASAR/Agent摘要、其他fuse不变和loopback监听；原生产exe与resources不改，测试副本不发布/安装，正式资产生产fuse/启动另验。bridge缺失必须在任何归档、锁或合成密码fixture写入前失败。
 
-2026-11-17阶段仍为OPEN：首装run `task16-install-20261116-234936`已实证锁错、精确Explorer打开与退出屏障，同profile重启后的A安装因归档可执行文件无执行位而失败（远端exit126）。该阻断交Task18；三入口最终恢复、真实取消后确认与严格MODE02/03均不得据此标为通过，候选不晋升。
+历史阶段：首装run `task16-install-20261116-234936`已实证锁错、精确Explorer打开与退出屏障，同profile重启后的A安装因归档可执行文件无执行位而失败（远端exit126）。当时阻断交Task18，三入口最终恢复、真实取消后确认与严格MODE02/03均不能据此标通过；该失败原样保留，不由后续成功追认。
+
+Task18修复归档执行位、Task19/20修复精确resources Agent优先级和在线可信详情后，最终同代测试包install `task16-install-20261117-062859` 与wizard `task16-wizard-20261117-063208` 均exit0，各自证明实际随包Agent/stdio会话、可信详情/系统Explorer精确A、正常退出后完整旧树归零、仅清A锁及同profile原入口下载A恢复。Settings `task16-settings-20261117-070854` exit0，证明在线可信详情、组件重试→失败toast→详情、真实取消result1后同一SLOW turn继续、再次确认result0后正常Host清理、完整旧树归零后仅清A及同profile等版重连，不声称重新下载A；三轮B/source不变、旧locator消失、helper fallback0。原严格MODE02/03 `task16-mode-20261117-065529` exit0；spec无prompt，外层同run随包Agent启动不扩写为模型任务stdio覆盖。测试包含bridge/guard及E2E exe fuse差异，不是正式发布资产；生产fuse/安装另验，候选仍pending，不自动纳入正式gate。
 
 ## 双栏会话与流式 Mermaid（2026-10-27）
 
@@ -1403,7 +1405,7 @@ artifact 后人工观察”的软通过口径。
 | APC12      | partial  | APC + focused tests          | formal replay：case-local MP4/WAV 进入同一存在性和逆序卡片投影；点击 WAV 后 Preview Pane 挂载原生 `audio[controls]`，媒体不触发 `fileChanges`；Desktop SSH/WSL/Docker Range Proxy 与手机大媒体预览暂不纳入本 case                                                                                                                                                                     |
 | APC13      | planned  | focused + SSH/WSL/Docker E2E | Desktop remote attachment 打开大于 8 MiB MP4，Host loopback Range Proxy 返回 `206` 并支持 seek；断言无 OSS 请求、无媒体字节进入 conversation/replay；手机 `/remote` 不复用 loopback URL                                                                                                                                                                                               |
 | APC14      | partial  | APC + focused tests          | Compact Preview/Open labels and directory removal: 12 focused tests pass; 2026-10-12 macOS replay blocked before menu assertions (default high level unavailable; retry without reasoning yields no preview cards); prior native action evidence remains historical; focused tests cover Web/remote capability exclusion; Windows/Linux, physical mobile and Docker admission pending |
-| APC15      | partial  | APC + focused tests          | 同一正式 APC spec 的 controlled-stream fixture 使用显式 gate；Windows Electron 观察 Mermaid SVG、Markdown 媒体真实 DOM 身份及未闭合→闭合 text fence 完整目标；Blob/reader/session/workspace 清理由 UI focused tests 覆盖，Docker admission 与其他平台未完成 |
+| APC15      | partial  | APC + focused tests          | 同一正式 APC spec 的 controlled-stream fixture 使用显式 gate；Windows Electron 观察 Mermaid SVG、Markdown 媒体真实 DOM 身份及未闭合→闭合 text fence 完整目标；Blob/reader/session/workspace 清理由 UI focused tests 覆盖，Docker admission 与其他平台未完成                                                                                                                           |
 
 ### Conversation Share Candidate 覆盖
 
@@ -2767,8 +2769,8 @@ SFTP 首装缺失/其它错误分类。Main 无 syncId，数值相等不证明�
 HOME采用同client固定printf→exit0/无signal/有界合法绝对路径→标准SFTP realpath完全一致，
 exec ACK/data/close与SFTP open/realpath/read共原单60秒deadline，不另连或fallback。真实
 GUI helper fake transport覆盖各pending/路径/状态错误，不改依赖或保存自由stderr。
-`r3-provisioning-gui` 保留配置同步/失败/离线两次修改/显式重连合同。结果在真实两轮运行及
-独立审查前保持 Pending，不因已通过源码 UT 或最终 UI online 标 GREEN。
+`r3-provisioning-gui` 保留配置同步/失败/离线两次修改/显式重连合同。两轮最终运行及独立审查
+结果见下文，候选保持 Pending，不因源码 UT、最终 UI online 或成功run自动晋升正式gate。
 本组测试定位通过真实创建观察贯穿稳定项目 ID/Host/identity，保留重名项目及错误身份不回退
 名称的确定性回归 `projectSidebarScope.test.ts`；该 helper 回归不替代真实 SSH 验收。
 PRV12 的持续目录写保护按真实 Main warning 精确要求 `rollback_failed` /
@@ -2785,6 +2787,17 @@ PRV12 的持续目录写保护按真实 Main warning 精确要求 `rollback_fail
 歧义与显式 pane 回归由 `v4TaskNavigationScope.test.ts` 覆盖；R94 实际根因仍未确定。
 有 artifact 目录时，仅被动记录导航 click 前/返回后/等待完成或失败时的活动 Tab/workspace
 及 paneId/sessionId/focused/groupActive/rect/visibility；不读取输入正文，不重派点击或修正焦点。
+
+Task12最终独立证据：R97 GUI `task12-gui-canonical-home-20261117-102108-880` 自然exit0，
+1 pass/0 fail/0 skip，覆盖配置失败/恢复、离线两次修改、显式重连及原任务续发；journal旧61 ID
+保留，新增唯一applied14与本run同Environment Main applied14精确settled。R99 fault
+`task12-fault-closed-order-20261117-112547-708` 自然exit0，1 pass/0 fail/0 skip，
+manualReconnectActions0、A/B self-healed、originalTasksAndFollowTurnsPassed=true；46条同轮
+事件证明两条旧port→connection-closed→实际Detach→新Source→attach→port→ACK→promotion→
+通知。closed分支Detach是Main实际请求，不是Host销毁完成ACK，也不替代有效旧port的新ACK后
+Detach合同。两轮owned0及前后五包资产guard全match；GUI手动恢复与fault自动恢复不互代，
+旧失败保留，pending不自动晋升或纳入正式gate。仅证明Windows Desktop与Linux x64合成SSH，
+不外推其他平台或真实用户SSH；详见Task12实施报告及最终独审。
 
 ```text
 测试只读原 Tab/空草稿 → ProjectCreation 保存并核原草稿有效性 → 产品 owner 准备并提交远端目标
@@ -4497,7 +4510,6 @@ AX03/AX07 的最终输入区合同以 external-agent-engines-spec.md 顶部为�
 | -------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | YD-PREVIEW-01  | partial | fileManagerPaneLayout 聚焦回归覆盖 source 初开300px；APC05加强实际尺寸断言；pending desktop-preview-layout补可见尺寸与目录切换 |
 | YD-SUBAGENT-01 | partial | subagentWorkCard/contract 单测覆盖折叠、状态与常驻入口；沿既有 subagent-work-card pending E2E 验收                             |
-
 
 ## UX09 工作台标题统一（2026-11-15）
 

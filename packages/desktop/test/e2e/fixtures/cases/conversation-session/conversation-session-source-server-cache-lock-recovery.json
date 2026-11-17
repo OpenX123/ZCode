@@ -26,7 +26,7 @@
     },
     {
       "id": "cache-recovery-slow",
-      "description": "保持远端任务运行直到更新守卫出现且用户取消；明确释放后才允许普通更新",
+      "description": "保持真实本地 SLOW 会话运行；取消应用退出后同一 turn 继续，再次确认退出后验证正常 Host 清理。",
       "kind": "main",
       "timingPolicy": "controlled-stream",
       "source": "synthetic",
