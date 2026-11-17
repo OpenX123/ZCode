@@ -6,6 +6,13 @@ GitHub Actions 仅为 macOS ARM64、Windows x64 构建桌面安装包；远程 S
 
 ## 发布身份与唯一所有者
 
+### Task44 独立 Mac ARM64 本机构建
+
+- 新 `build-macos-local.yml` 仅 workflow_dispatch/main，使用 `[self-hosted, macOS, ARM64, zcode-macos]`；与独立Windows workflow并行，互不重复dispatch。
+- 完全复用Task42的只读权限、固定source run44137427217/版本1.4.1/tagv1.4.1、Node环境校验、固定Node24.14.0/pnpm10.33.2、隔离checkout/frozeninstall、原apply/descriptor-only流程；不allocate/tag/release，不改变正式版本或更新源。
+- 构建命令固定 `pnpm bundle:desktop -- --os mac --arch arm64`；上传DMG与ZIP及独立size-report artifacts，缺件失败。ARM64宿主按既有native policy保留本机可选绑定，原完整Mach-O/app/DMG/ZIP门仍必须实际通过，不增加CPU豁免。
+- 唯一新增四文件：Mac workflow、本spec、现计划、原workflow测试。测试锁定与Windows同源资源与工具、main-only/ref gate、Mac runner labels/目标/上传、只读权限和无发布路径；实际job与产物结果由controller跟踪，不把配置测试当作Mac构建已完成。
+
 ### Task42 独立本机 Windows 实产物构建
 
 - 新 `build-windows-local.yml` 仅接受 workflow_dispatch，job 同时校验事件与 main ref，固定 `[self-hosted, Windows, X64, ycode-windows]`。不经过正式发布 workflow，不增加版本；旧正式 run 可继续。

@@ -1,5 +1,13 @@
 # 1.4.1 发布门禁补充修复计划
 
+### Task 44: 独立 Mac ARM64 本机构建
+
+精确四文件：新build-macos-local.yml、release-packaging spec、本计划、原workflow测试；基线ecce302f。writer不push/dispatch/派agent，不重复Windows已运行44145390880。
+
+- [ ] freshness/arch、先spec/plan，复用Task42固定source44137427217/版本1.4.1/tag与工具，不触发正式发版。
+- [ ] 测试先RED后实现main-only/只读权限/固定MacARM64 labels，原apply/descriptoronly/bundle，DMG+ZIP及size上传；保持native/预算门。
+- [ ] 四node测试、定向lint/fmt/arch后提交报告；root最终检查/自然ecce hook再独立dispatchMac并跟随真实结果，Windows原run继续不重复。
+
 ### Task 42: 独立本机 Windows 1.4.1 构建，不再正式发版
 
 精确四文件：新build-windows-local.yml、release-packaging spec、本计划、原workflow测试；基线acb726ee。writer不push/dispatch/派agent，不写runner token或用户目录。
