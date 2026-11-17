@@ -57,3 +57,22 @@ flowchart TD
 - 轻量包中 remote-assets 只能存在当前 descriptor；最终安装器按独立固定预算审计，不再按远程归档字节增加额度。
 - 脚本测试覆盖首次 1.0.0、最大 patch 递增、标签过滤、跨 job 版本恢复、固定 URL、旧 build URL、篡改与缺件、六安装包完整性、四目标更新清单与摘要；安装器运行行为由安装态 smoke 与远程连接回归验证。
 - 生产 Release 资产齐全且可下载才算发布完成；Actions 成功不替代各平台已安装应用的运行验证。
+
+## Task36 纯发布工具增量的验证边界
+
+仅本次 Node loader 修复允许携带既有本地应用候选证据。相对已推送 `76be2adf3994cd3a17691796c51943e6542e708e`，新 HEAD 的 tracked 差异必须精确为以下四文件；不得通过重设 BASE、伪 HEAD、跳过 hook 或修改门禁取得通过：
+
+- `scripts/github-release-assets.mjs`
+- `scripts/test/github-release-assets.test.mjs`
+- `docs/desktop/github-release-packaging-spec.md`
+- `docs/superpowers/plans/2026-11-16-release-gate-repair.md`
+
+相对原本地候选 `f7c38cbe78e14226a487dac62822db202e4d5e98` 的严格等价 allowlist 精确为上述四文件，加 Task35 的以下三文件（本计划已包含在上述四文件中，合计七文件）：
+
+- `docs/testing/1.4.1-gate-repair-spec.md`
+- `packages/ui/test/v4ConversationStatusPanelGitReview.test.ts`
+- `packages/services/test/zcodeStdioTransport.processTree.test.ts`
+
+验证须逐项比较全部其余 tracked tree 的 path、mode、type、blob，新增、删除、mode 或子模块变化也必须拒绝；任何其它差异或生产/依赖/配置变更均停止复用并重建重验。重新核验原 f7 包的五个固定 SHA、原生验收、92 项保护原件及证据哈希；保留 `buildCommit=f7`，HEAD/buildTime 等 metadata 不等价，不改旧 stamp/base/包或历史原件，不声称新 HEAD 构建或缓存命中。
+
+原76be八步门禁、原BASE完整 pre-push 的 1128 files /12619 tests 成功与 remote SHA 原件仅作为祖先证据保留。新 HEAD 必须完成 root typecheck/lint/architecture、全部相关发布脚本测试及独立审查；随后以自然远端76be作为实际 push 的 hook 比较基线运行原 pre-push，保存自然退出与新 remote SHA 回读，不冒称新 HEAD 再跑了原1af基线全套。以上只避免无应用内容变化时重复本地打包和原生验收；正式 GitHub assets 始终必须由最终 HEAD 重构建。
