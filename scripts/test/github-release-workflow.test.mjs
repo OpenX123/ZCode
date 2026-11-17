@@ -13,6 +13,21 @@ function evaluate(expression, github) {
   return runInNewContext(expression.slice(3, -2), { github });
 }
 
+test("macARM64 使用 Intel 宿主但保留目标 ARM64 与原 bundle 命令", () => {
+  const targets = workflow.jobs.package.strategy.matrix.include;
+  assert.deepEqual(
+    targets.filter((entry) => entry.os === "mac"),
+    [
+      { os: "mac", arch: "arm64", runner: "macos-15-intel" },
+      { os: "mac", arch: "x64", runner: "macos-15-intel" },
+    ],
+  );
+  assert.equal(
+    workflow.jobs.package.steps.find((step) => step.name === "Build installer").run,
+    "pnpm bundle:desktop -- --os ${{ matrix.os }} --arch ${{ matrix.arch }}",
+  );
+});
+
 test("只有 main 手动运行允许分配正式版本并发布", () => {
   assert.deepEqual(Object.keys(workflow.on).sort(), ["pull_request", "push", "workflow_dispatch"]);
   assert.deepEqual(workflow.on.push.branches, ["main"]);

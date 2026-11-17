@@ -7,6 +7,7 @@
 import { spawn } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
 import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import process from "node:process";
 import { dirname, join, resolve } from "node:path";
@@ -24,6 +25,7 @@ import {
   runCommandAndReadStdout,
 } from "../../../scripts/spawn-command.mjs";
 import { resolveIntranetDepsBaseUrl } from "../../../scripts/intranetDefaults.mjs";
+import { verifyMacPackages } from "../../../scripts/macos-package-architecture.mjs";
 
 const desktopRoot = resolve(import.meta.dirname, "..");
 const workspaceRoot = resolve(desktopRoot, "../..");
@@ -736,6 +738,24 @@ async function main() {
   runTimedSync("bundle:verify-runtime-dependencies", () =>
     verifyPackagedRuntimeDependencies(os, arch),
   );
+
+  if (os === "mac") {
+    const metadata = getBuildMetadata();
+    const artifactNames = (await readdir(desktopDistRoot)).filter(
+      (name) =>
+        name.startsWith(
+          `${desktopProductIdentity.productName}-${metadata.appVersion}-mac-${arch}`,
+        ) && /\.(dmg|zip)$/.test(name),
+    );
+    await runTimedAsync("bundle:verify-macos-architecture", () =>
+      verifyMacPackages({
+        appPath: resolve(dirname(resolveAppAsarPath(os, arch)), "../.."),
+        artifacts: artifactNames.map((name) => join(desktopDistRoot, name)),
+        arch,
+        asarCliPath,
+      }),
+    );
+  }
 
   const artifactPath = findBuiltArtifact(os, arch);
   const appVersion = getBuildMetadata().appVersion;
