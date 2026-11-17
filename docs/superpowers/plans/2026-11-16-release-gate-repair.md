@@ -654,3 +654,5 @@ Task32 raw 收敛补充：新 raw 频繁调用原防抖会让恢复 full load �
 - [ ] Step 3: 完成 module.ts、contract.ts、contract.example.ts、contract.test.ts、CONTRACT.md 和公开 factory index。契约测试经公开 factory 与文件 reader seam 验证 prepare → read 隔离快照 → dispose 拒读；不使用 manifest 自证、无意义 brand 或 TODO。原缓存 mock 和 native watcher 整文件保留业务断言，scope 仅测试内部导入。
 - [ ] Step 4: 执行新契约、原缓存 mock、原 native watcher 整文件和必要相关回归；执行定向格式/lint/diff、原默认 base architecture:check --changed 及 architecture:context subagent-runtime-config。保存原日志，新日志仅在本计划 scratch/task33/；用移前移后差异证明无行为变化。
 - [ ] Step 5: 自审、提交限定文件并写 task-33-report.md，报告 commits、真实命令/退出/skip、迁移差异和限制后停止。不得派子 agent、运行全量、构建、清理进程、push 或发布；根 typecheck/lint、聚合独审及最终冻结门禁由 controller 统一执行。
+
+**Controller 最终执行顺序（仅工作流优化，不改产品或门禁）：** 同一冻结 HEAD 先执行 root frozen 静态/closure 预检 7 步，再验收匹配候选原生包；通过后由实际 git push 的原 `.husky/pre-push` 运行第 8 步完整 `verify:pre-push`，固定原 BASE `1af`。hook 非 0 不上传，保留原 hook、全部门禁和预算；避免同 HEAD standalone verify 后 push 重复执行。controller 使用 ignored `Run-FrozenReleasePreflight.ps1` 与 `Complete-FrozenReleaseWithPush.ps1`，不改旧 `Run-FrozenReleaseGate`、根 package、hook 或测试选择器；完整闭环仍要求最终 results 8 步及 remote SHA 读回。
