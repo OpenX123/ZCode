@@ -509,6 +509,36 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] **Step 4: GREEN、静态与独立审查。** 完整跑实际受影响既有 suite，精确 RED→GREEN；类型/格式/lint/diff/真实架构执行并保留输出。报告 `task-21-report.md` 包含根因证据、owner/事件图、命令/退出码/统计、兼容范围、未覆盖项与后续构建依赖。只提交本任务正式文件并释放 writer，controller 派独立 spec/quality 审查；本任务不自行 build/stage/pack/E2E，不派子 agent。
 - [ ] **Step 5: 交接真实验收。** 独审通过后由原 Task16 唯一 owner 消费匹配最终源码的新包重验实际原生取消→运行保留→再次确认→Host 收口→完整旧树零→仅清 A→同 profile 恢复。B 已确定影响 Agent 输入，旧随包 Agent 字节不能沿用；实际 Agent/Server 资源重建范围仍由正式 diff 和依赖确定，不擅自重 stage 未变资源。旧 Task16 首装/向导/严格 MODE GREEN 保留为旧包阶段证据，最终同包验收、Task12/13 和完整发布门禁仍 OPEN。
 
+### Task 22: 对齐八个 Agent Service 测试替身的当前运行事实合同
+
+**Files:** `packages/services/test/zcodeAgentService.dynamicWorkflowPolicy.test.ts`、`zcodeAgentService.externalEngine.test.ts`、`zcodeAgentService.providerRegistry.test.ts`、`zcodeAgentService.savedWorkflows.test.ts`、`zcodeAgentService.sendPath.test.ts`、`zcodeAgentService.subagentRuntimeConfig.test.ts`、`zcodeAgentService.workspaceHookTrust.test.ts`、`zcodeAgentService.pluginOperationProgress.test.ts`（后七个同目录）。只改这八文件；根 spec/plan 已先行更新。
+
+**Interfaces:** 消费真实 `ZCodeAgentProcessManager.getExistingClient`、ProtocolClient 的 `onRuntimeActivityChanged` 与当前快照读取合同。测试替身拥有受控 client 和可释放订阅，不产生新的产品状态/API。
+
+- [ ] Step 1: 固定 Node24.14.0，读取现行 owning source/有关 spec，先运行八文件保存 RED JSON。原门禁73失败作为线索，不推断每条都同根因。
+- [ ] Step 2: 按现行 manager/client 合同修正每个 fake，保留初始化前无 client、getClient 后已有 client 的时序及工作区隔离；无活动时准确表达空快照。订阅返回可释放 disposable，实际需要事件的场景通过受控 emitter，不给生产加 fallback。中文注释说明为何新增合同。
+- [ ] Step 3: 八文件完整 GREEN，原断言不删/不弱化，不新增 skip/重试/timeout。记录每文件统计及 unhandled errors。若发现不同生产缺陷，先报告 controller，不擅改产品。
+- [ ] Step 4: 精确格式/lint、diff、架构检查；只提交八文件并自审。写 `task-22-report.md`，列真实合同证据、RED/GREEN命令与计数、每文件变更和兼容边界；不得发布、构建/E2E或派子 agent。根完整门禁由 controller 最终统一执行。
+
+### Task 23: 修复 replay 与 SSH 首发单测的失效依赖
+
+**Files:** `packages/desktop/test/mobileReplayFixture.test.ts`、`packages/desktop/test/sshLifecycleProjectDraft.test.ts`。不改真实 E2E helper 或生产代码，不恢复已退役 fixture。
+
+**Interfaces:** 当前 `startUpstreamReplayServer` fixture schema、gate release API、最新 user 回合匹配；`getFocusedComposerScope` 的精确 pane scope 参数传递。
+
+- [ ] Step 1: 读取当前 schema/consumer 和删除历史，双文件 RED 记录；确认旧手机 fixture 的退役边界与当前仍有效 server 断言。
+- [ ] Step 2: 用本次临时目录内自含 fixture（依现行 schema）保留两条显式 gate 释放前不完成/释放后唯一结束，以及带手机历史的最新桌面输入匹配断言。夹具由测试 owning，先 stop server 再删目录。
+- [ ] Step 3: SSH 单测准确 mock 新 scope 依赖并核同一个 scope 被传递到相关 helper；远端 identity/已选 model/不创建全局本地草稿断言保持。不得 stub 被测 orchestration 自身。
+- [ ] Step 4: 双文件 GREEN、精确格式/lint、diff/架构；自审后仅提交两文件。写 `task-23-report.md`，保留 RED/GREEN、有效替代与不覆盖的真实 UI 边界，controller 独审。
+
+### Task 24: 调查完整门禁中的 stdio 清理失败
+
+**Files:** 只读 `packages/services/test/zcodeAgentService.test.ts`、`packages/services/src/zcode-agent/zcodeStdioTransport.ts`、`zcodeProtocolClient.ts` 与当前进程树清理 owner。报告在本计划 ignored 工作区，不修改正式源码。
+
+- [ ] Step 1: 从冻结原日志提取唯一失败与 teardown 调用，核 PID 生命周期、当前预算和 owner。区分产品、夹具与环境的已证事实及假设。
+- [ ] Step 2: 仅具体问题需要时执行一次精确 suite/case，不泛重跑、不泛 kill、不扩超时/重试/skip。
+- [ ] Step 3: 报告 `task-24-investigation.md`：根因证据或缺口、最小确定性 RED、建议 owning 修复及原预算。controller 有证据后另写具体任务，不以事后进程消失关闭失败。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
