@@ -1,5 +1,14 @@
 # 1.4.1 发布门禁补充修复计划
 
+### Task 42: 独立本机 Windows 1.4.1 构建，不再正式发版
+
+精确四文件：新build-windows-local.yml、release-packaging spec、本计划、原workflow测试；基线acb726ee。writer不push/dispatch/派agent，不写runner token或用户目录。
+
+- [ ] freshness/arch与先spec/plan；固定复用旧run44137427217的1.4.1 descriptor，保留旧在途mac job。
+- [ ] meaningful tests先RED；仅dispatch/main gate、固定labels与只读权限，env+Node校验固定run/version，不在shell拼接输入。
+- [ ] 复用原工具版本/frozen install/apply/descriptoronly/bundle与artifact上传，不allocate/tag/publish；四node测试及lint/fmt/arch后提交。
+- [ ] root检查/自然acb hook后独立dispatch并跟随真实job、EXE/size证据；隔离checkout首次安装不冒称复用开发依赖，安装更新另验收。
+
 ### Task 41: 手动 main 发布按次选择本机 Windows runner
 
 精确四文件：workflow、release-packaging spec、本计划、原workflow测试。writer不push/不派agent，不处理token/runner安装目录或常驻服务；controller负责仓库外短路径ephemeral runner。

@@ -6,6 +6,17 @@ GitHub Actions 仅为 macOS ARM64、Windows x64 构建桌面安装包；远程 S
 
 ## 发布身份与唯一所有者
 
+### Task42 独立本机 Windows 实产物构建
+
+- 新 `build-windows-local.yml` 仅接受 workflow_dispatch，job 同时校验事件与 main ref，固定 `[self-hosted, Windows, X64, ycode-windows]`。不经过正式发布 workflow，不增加版本；旧正式 run 可继续。
+- 本轮任务固定复用 source run `44137427217` 的 `source-server-descriptor-v1.4.1` artifact、版本 `1.4.1`，不提供额外通用输入。两值通过 job env 交给 Node，regex 校验 run-id/版本格式；shell 不拼接用户或远端文本。download-artifact v8 明确 run-id 与 github-token，artifact 来自同仓库既有资源 job。
+- 权限仅 contents:read、actions:read；checkout 使用 runner 隔离工作目录，安装固定 pnpm10.33.2/Node24.14.0，再 frozen install，不复用用户开发目录或其 node_modules。runner由controller在仓库外注册为单job ephemeral。
+- 调用原 github-release-version apply 恢复 RELEASE_VERSION；下载descriptor到当前版本目录；设置descriptor-only并运行原 `pnpm bundle:desktop -- --os win --arch x64`。复用既有依赖、SHA/descriptor、native和预算门禁。
+- 仅上传本机 EXE 与独立 size-report artifacts，缺件失败。workflow没有 allocate、tag、Release、publish job或写权限；不会通过本轮构建触发更新源变化。成功需真实 job/产物证据，本机安装/更新由controller另验收。
+- 测试实际解析新workflow，锁定单事件/main gate、固定labels/权限/工具/源descriptor/版本apply/目标命令、上传与禁止发布；不以静态测试声称本机构建成功。
+
+Task42 精确四文件：新workflow、本spec、现计划、原github-release-workflow测试。root最终检查、自然acb726ee远端基线push hook后才dispatch独立job，并持续跟踪真实结果。
+
 ### Task41 按次选择本机 Windows runner
 
 - `workflow_dispatch` 增加 boolean 输入 `local_windows`，默认 false。只有 `matrix.os == 'win'`、事件为 `workflow_dispatch`、ref 为 `refs/heads/main` 且该输入为 true 时，package job 选择 `[self-hosted, Windows, X64, ycode-windows]`；其余情况继续使用该行原托管 runner。
