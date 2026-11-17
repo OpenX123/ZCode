@@ -52,6 +52,9 @@ export interface ProcessTreeOwnershipResolution {
   childStillOwned: boolean;
   currentIdentities: ProcessIdentity[];
   knownIdentities: ProcessIdentity[];
+  /** Windows 内部逐身份结果；current 仅为本阶段 matched，unknown 仍由 waiter 负责。 */
+  unknownIdentities?: ProcessIdentity[];
+  goneIdentities?: ProcessIdentity[];
 }
 
 export interface ProcessTreeTerminationResult {

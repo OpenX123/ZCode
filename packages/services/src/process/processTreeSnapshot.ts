@@ -8,9 +8,11 @@ import type {
 
 const PROCESS_LOOKUP_TIMEOUT_MS = 1_000;
 const DOTNET_UNIX_EPOCH_TICKS = 621_355_968_000_000_000n;
-const TICKS_PER_MILLISECOND = 10_000n;
+const WINDOWS_START_TIME_PREFIX = "windows-utc-100ns:";
 
-let windowsProcessListCache: readonly ProcessIdentity[] | undefined;
+let windowsProcessListCache:
+  | { identities: readonly ProcessIdentity[]; startedAtMs: number }
+  | undefined;
 
 function warn(options: ProcessTreeTerminatorOptions, message: string, ...args: unknown[]): void {
   options.log?.warn(options.traceId, message, ...args);
@@ -47,28 +49,130 @@ function parsePosixProcessList(stdout: string, includeCommand: boolean): Process
   return identities;
 }
 
-function parseWindowsProcessList(stdout: string): ProcessIdentity[] {
-  const identities: ProcessIdentity[] = [];
-  for (const line of stdout.split(/\r?\n/)) {
-    const [pidText, parentPidText, startTime] = line.trim().split(/\s+/);
-    const pid = parsePositiveInteger(pidText);
-    const parentPid = parseNonNegativeInteger(parentPidText);
-    if (pid === undefined || parentPid === undefined || !startTime) {
-      continue;
-    }
-    identities.push({ parentPid, pid, startTime });
-  }
-  return identities;
+export function isWindowsPid(pid: unknown, allowZero = false): pid is number {
+  return (
+    typeof pid === "number" &&
+    Number.isSafeInteger(pid) &&
+    pid >= (allowZero ? 0 : 1) &&
+    pid <= 4_294_967_295
+  );
 }
 
-function parseWindowsCreationTimeMs(startTime: string): number | undefined {
-  try {
-    const unixTicks = BigInt(startTime) - DOTNET_UNIX_EPOCH_TICKS;
-    const timestamp = Number(unixTicks / TICKS_PER_MILLISECOND);
-    return Number.isSafeInteger(timestamp) ? timestamp : undefined;
-  } catch {
-    return undefined;
+export function normalizeWindowsStartTime(raw: string | undefined): string | undefined {
+  if (!raw || !/^(0|[1-9]\d*)$/u.test(raw)) return undefined;
+  const ticks = BigInt(raw);
+  if (ticks > 3_155_378_975_999_999_999n) return undefined;
+  return `${WINDOWS_START_TIME_PREFIX}${ticks - DOTNET_UNIX_EPOCH_TICKS}`;
+}
+
+export function parseWindowsCreationTicks(startTime: string): bigint | undefined {
+  if (!startTime.startsWith(WINDOWS_START_TIME_PREFIX)) return undefined;
+  const raw = startTime.slice(WINDOWS_START_TIME_PREFIX.length);
+  if (!/^(0|-?[1-9]\d*)$/u.test(raw)) return undefined;
+  const ticks = BigInt(raw);
+  const dotNetTicks = ticks + DOTNET_UNIX_EPOCH_TICKS;
+  return dotNetTicks >= 0n && dotNetTicks <= 3_155_378_975_999_999_999n ? ticks : undefined;
+}
+
+export function parseWindowsProcessList(stdout: string): {
+  identities: ProcessIdentity[];
+  complete: boolean;
+} {
+  const identities: ProcessIdentity[] = [];
+  let complete = true;
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const fields = line.trim().split(/\s+/);
+    const [pidText, parentPidText, rawStartTime] = fields;
+    const pid = /^(0|[1-9]\d*)$/u.test(pidText ?? "") ? Number(pidText) : NaN;
+    if (!isWindowsPid(pid)) {
+      complete = false;
+      continue;
+    }
+    const parentPid = /^(0|[1-9]\d*)$/u.test(parentPidText ?? "") ? Number(parentPidText) : NaN;
+    // 不丢弃坏中间节点，否则它的后代可能经另一条歧义边被重新认领。
+    identities.push({
+      parentPid: isWindowsPid(parentPid, true) ? parentPid : -1,
+      pid,
+      startTime: fields.length === 3 ? (normalizeWindowsStartTime(rawStartTime) ?? "") : "",
+    });
   }
+  return { identities, complete };
+}
+
+export function isWindowsLifecycleBoundary(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+export function collectWindowsSnapshotIdentities(
+  rootPid: number,
+  processList: readonly ProcessIdentity[],
+  options: ProcessTreeTerminatorOptions,
+  rootExited: boolean,
+): ProcessIdentity[] {
+  if (!isWindowsPid(rootPid)) return [];
+  const byPid = new Map<number, ProcessIdentity[]>();
+  for (const identity of processList)
+    byPid.set(identity.pid, [...(byPid.get(identity.pid) ?? []), identity]);
+  const rootRows = byPid.get(rootPid) ?? [];
+  const startedAt = options.ownedProcessStartedAtMs;
+  const exitedAt = options.ownedProcessExitedAtMs ?? options.resolveOwnedProcessExitedAtMs?.();
+  // 真实 exit 已记录时，即使 ChildProcess 的投影状态尚未更新，也不能信任同 PID 新行。
+  rootExited = rootExited || exitedAt !== undefined;
+  if (
+    rootExited &&
+    (!isWindowsLifecycleBoundary(startedAt) ||
+      !isWindowsLifecycleBoundary(exitedAt) ||
+      startedAt >= exitedAt)
+  )
+    return [];
+  const root = rootRows.length === 1 ? rootRows[0] : undefined;
+  const rootTicks = root ? parseWindowsCreationTicks(root.startTime) : undefined;
+  const isCyclic = (pid: number) => {
+    const seen = new Set<number>();
+    while (byPid.get(pid)?.length === 1) {
+      if (seen.has(pid)) return true;
+      seen.add(pid);
+      pid = byPid.get(pid)![0]!.parentPid;
+    }
+    return false;
+  };
+  // root 自身参与环时不能作为信任锚；环内与依赖环的分支均不能认领。
+  if (!rootExited && isCyclic(rootPid)) return [];
+  if (
+    !rootExited &&
+    (!root ||
+      rootTicks === undefined ||
+      !isWindowsPid(root.parentPid, true) ||
+      (startedAt !== undefined &&
+        (!isWindowsLifecycleBoundary(startedAt) || rootTicks < BigInt(startedAt) * 10_000n)))
+  )
+    return [];
+  const accepted: ProcessIdentity[] = rootExited ? [] : [root!];
+  const visit = (parentPid: number, parentTicks: bigint, path: Set<number>) => {
+    for (const rows of byPid.values()) {
+      if (rows.length !== 1) continue;
+      const identity = rows[0]!;
+      if (
+        identity.parentPid !== parentPid ||
+        path.has(identity.pid) ||
+        identity.pid === rootPid ||
+        (!rootExited && isCyclic(identity.pid))
+      )
+        continue;
+      const ticks = parseWindowsCreationTicks(identity.startTime);
+      if (
+        ticks === undefined ||
+        ticks < parentTicks ||
+        (rootExited && ticks >= BigInt(exitedAt!) * 10_000n)
+      )
+        continue;
+      accepted.push(identity);
+      visit(identity.pid, ticks, new Set([...path, identity.pid]));
+    }
+  };
+  visit(rootPid, rootExited ? BigInt(startedAt!) * 10_000n : rootTicks!, new Set([rootPid]));
+  return accepted;
 }
 
 function readPosixProcessList(options: ProcessTreeTerminatorOptions): ProcessIdentity[] {
@@ -99,9 +203,21 @@ function readPosixProcessList(options: ProcessTreeTerminatorOptions): ProcessIde
 }
 
 function readWindowsProcessList(options: ProcessTreeTerminatorOptions): readonly ProcessIdentity[] {
-  if (windowsProcessListCache) {
-    return windowsProcessListCache;
+  if (
+    windowsProcessListCache &&
+    (options.ownedProcessStartedAtMs === undefined ||
+      options.ownedProcessStartedAtMs < windowsProcessListCache.startedAtMs)
+  ) {
+    return windowsProcessListCache.identities;
   }
+  const startedAtMs = Date.now();
+  const timeout = Math.min(
+    PROCESS_LOOKUP_TIMEOUT_MS,
+    options.windowsCleanupDeadlineAtMs === undefined
+      ? PROCESS_LOOKUP_TIMEOUT_MS
+      : Math.floor(options.windowsCleanupDeadlineAtMs - startedAtMs),
+  );
+  if (timeout < 1) return [];
   const result = spawnSync(
     "powershell.exe",
     [
@@ -113,7 +229,7 @@ function readWindowsProcessList(options: ProcessTreeTerminatorOptions): readonly
     ],
     {
       encoding: "utf8",
-      timeout: PROCESS_LOOKUP_TIMEOUT_MS,
+      timeout,
       windowsHide: true,
     },
   );
@@ -125,12 +241,20 @@ function readWindowsProcessList(options: ProcessTreeTerminatorOptions): readonly
     );
     return [];
   }
-  const identities = parseWindowsProcessList(result.stdout);
-  windowsProcessListCache = identities;
+  if (
+    options.windowsCleanupDeadlineAtMs !== undefined &&
+    Date.now() >= options.windowsCleanupDeadlineAtMs
+  )
+    return [];
+  const parsed = parseWindowsProcessList(result.stdout);
+  if (!parsed.complete) return [];
+  const identities = parsed.identities;
+  const cache = { identities, startedAtMs };
+  windowsProcessListCache = cache;
   // 同一轮 app quit 会同步抓取多个 workspace，复用同一份带 CreationDate 的系统进程表；
   // 下个 microtask 立即失效，避免稍后的 restart/quit 把 PID 复用误判成旧进程。
   queueMicrotask(() => {
-    if (windowsProcessListCache === identities) {
+    if (windowsProcessListCache === cache) {
       windowsProcessListCache = undefined;
     }
   });
@@ -226,6 +350,54 @@ export function filterCurrentProcessIdentities(
   if (identities.length === 0) {
     return [];
   }
+  if (process.platform === "win32") {
+    const current: ProcessIdentity[] = [];
+    for (let index = 0; index < identities.length; index += 64) {
+      const batch = identities.slice(index, index + 64);
+      if (batch.some((identity) => !isWindowsPid(identity.pid))) continue;
+      const timeout = Math.min(
+        PROCESS_LOOKUP_TIMEOUT_MS,
+        options.windowsCleanupDeadlineAtMs === undefined
+          ? PROCESS_LOOKUP_TIMEOUT_MS
+          : Math.floor(options.windowsCleanupDeadlineAtMs - Date.now()),
+      );
+      if (timeout < 1) break;
+      const result = spawnSync(
+        "powershell.exe",
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `Get-CimInstance Win32_Process -Filter "${batch.map((identity) => `ProcessId = ${identity.pid}`).join(" OR ")}" | ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().Ticks }`,
+        ],
+        { encoding: "utf8", timeout, windowsHide: true },
+      );
+      if (
+        result.error ||
+        result.status !== 0 ||
+        (options.windowsCleanupDeadlineAtMs !== undefined &&
+          Date.now() >= options.windowsCleanupDeadlineAtMs)
+      )
+        continue;
+      const parsed = parseWindowsProcessList(result.stdout ?? "");
+      if (
+        !parsed.complete ||
+        parsed.identities.some((identity) => !batch.some((target) => target.pid === identity.pid))
+      )
+        continue;
+      for (const target of batch) {
+        const rows = parsed.identities.filter((identity) => identity.pid === target.pid);
+        if (
+          rows.length === 1 &&
+          rows[0]!.startTime === target.startTime &&
+          parseWindowsCreationTicks(target.startTime) !== undefined
+        )
+          current.push(target);
+      }
+    }
+    return current;
+  }
   const trackedPids = new Set(identities.map((identity) => identity.pid));
   const currentByPid = new Map(
     refineProcessIdentities(
@@ -249,6 +421,23 @@ export function captureProcessTreeSnapshot(
     return undefined;
   }
   const processList = readProcessList(options);
+  if (process.platform === "win32") {
+    const identities = collectWindowsSnapshotIdentities(
+      child.pid,
+      processList,
+      options,
+      child.exitCode !== null || child.signalCode !== null,
+    );
+    return identities.length === 0
+      ? undefined
+      : {
+          rootPid: child.pid,
+          identities,
+          descendantPids: identities
+            .filter((identity) => identity.pid !== child.pid)
+            .map((identity) => identity.pid),
+        };
+  }
   const rootIdentity = processList.find((identity) => identity.pid === child.pid);
   if (!rootIdentity) {
     // 没有创建标识的 rootPid 不能形成进程所有权；返回半截快照会让
@@ -315,12 +504,10 @@ export function captureExitedRootDescendantsSnapshot(
   const exitedAtMs = options.ownedProcessExitedAtMs;
   if (
     process.platform !== "win32" ||
-    !Number.isInteger(rootPid) ||
-    rootPid <= 0 ||
-    typeof startedAtMs !== "number" ||
-    !Number.isFinite(startedAtMs) ||
-    typeof exitedAtMs !== "number" ||
-    !Number.isFinite(exitedAtMs)
+    !isWindowsPid(rootPid) ||
+    !isWindowsLifecycleBoundary(startedAtMs) ||
+    !isWindowsLifecycleBoundary(exitedAtMs) ||
+    startedAtMs >= exitedAtMs
   ) {
     return undefined;
   }
@@ -328,11 +515,12 @@ export function captureExitedRootDescendantsSnapshot(
   // 已经退出。裸 ParentProcessId 会在 PID 复用后误认领无关进程，因此候选成员的
   // CreationDate 还必须落在 Host 记录的 root 生命周期内；后续 force 再按同一
   // CreationDate 复核，不能向已经复用的 descendant PID 发信号。
-  const processList = readProcessList(options).filter((identity) => {
-    const createdAtMs = parseWindowsCreationTimeMs(identity.startTime);
-    return createdAtMs !== undefined && createdAtMs >= startedAtMs && createdAtMs <= exitedAtMs;
-  });
-  const identities = collectDescendantIdentitiesFromProcessList(rootPid, processList);
+  const identities = collectWindowsSnapshotIdentities(
+    rootPid,
+    readProcessList(options),
+    options,
+    true,
+  );
   if (identities.length === 0) {
     return undefined;
   }

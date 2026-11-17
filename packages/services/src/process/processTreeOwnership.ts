@@ -3,10 +3,8 @@ import {
   captureProcessTreeSnapshot,
   filterCurrentProcessIdentities,
 } from "#src/process/processTreeSnapshot.js";
-import {
-  captureProcessTreeSnapshotAsync,
-  filterCurrentProcessIdentitiesAsync,
-} from "#src/process/processTreeSnapshotAsync.js";
+import { captureProcessTreeSnapshotAsync } from "#src/process/processTreeSnapshotAsync.js";
+import { verifyWindowsProcessIdentitiesAsync } from "#src/process/windowsProcessListAsync.js";
 import type {
   ProcessIdentity,
   ProcessTreeOwnershipResolution,
@@ -15,15 +13,6 @@ import type {
 
 function hasChildExited(child: ChildProcess): boolean {
   return child.exitCode !== null || child.signalCode !== null;
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function mergeIdentities(...groups: readonly (readonly ProcessIdentity[])[]): ProcessIdentity[] {
@@ -141,26 +130,19 @@ export async function resolveCurrentOwnedIdentitiesAsync(
 
   const rootPid = child.pid!;
   const knownRootIdentity = knownIdentities.find((identity) => identity.pid === rootPid);
-  if (hasChildExited(child)) {
-    if (!knownIdentities.some((identity) => isPidAlive(identity.pid))) {
-      return {
-        childStillOwned: false,
-        currentIdentities: [],
-        knownIdentities: [...knownIdentities],
-      };
-    }
+  if (knownIdentities.length > 0) {
+    const resolution = await verifyWindowsProcessIdentitiesAsync(
+      knownIdentities,
+      options.windowsCleanupDeadlineAtMs ?? Date.now() + 750,
+      child,
+      options,
+    );
     return {
-      childStillOwned: false,
-      currentIdentities: await filterCurrentProcessIdentitiesAsync(knownIdentities, options),
-      knownIdentities: [...knownIdentities],
-    };
-  }
-  if (knownRootIdentity) {
-    const currentIdentities = await filterCurrentProcessIdentitiesAsync(knownIdentities, options);
-    return {
-      childStillOwned: currentIdentities.some((identity) => identity.pid === rootPid),
-      currentIdentities,
-      knownIdentities: [...knownIdentities],
+      ...resolution,
+      childStillOwned:
+        !hasChildExited(child) &&
+        Boolean(knownRootIdentity) &&
+        resolution.currentIdentities.some((identity) => identity.pid === rootPid),
     };
   }
   if (!allowRootDiscovery) {

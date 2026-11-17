@@ -1085,7 +1085,7 @@ export class ZCodeAgentProcessManager {
     const child = spawn(effectiveCommand.command, spawnPreflight.args, {
       cwd: spawnPreflight.cwd,
       // agent 可能再派生实际 runtime/MCP 子进程。POSIX 下让 wrapper 进入独立进程组，
-      // 关闭时才能按进程树整体回收；Windows 保持非 detached，交给 taskkill /T 处理。
+      // 关闭时才能按进程树整体回收；Windows 保持非 detached，交给固定身份复核后的 exact PID 清理。
       detached: shouldSpawnInDetachedProcessGroup(),
       env: {
         ...sanitizeZCodeRuntimeEnv(process.env),

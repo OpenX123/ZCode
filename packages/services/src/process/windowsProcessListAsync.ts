@@ -1,102 +1,187 @@
 import { execFile } from "node:child_process";
+import {
+  isWindowsPid,
+  parseWindowsCreationTicks,
+  parseWindowsProcessList,
+} from "#src/process/processTreeSnapshot.js";
 import type {
   ProcessIdentity,
+  ProcessTreeOwnershipResolution,
   ProcessTreeTerminatorOptions,
 } from "#src/process/processTreeTypes.js";
 
 const WINDOWS_PROCESS_LOOKUP_TIMEOUT_MS = 2_500;
-const DOTNET_UNIX_EPOCH_TICKS = 621_355_968_000_000_000n;
-const TICKS_PER_MICROSECOND = 10n;
-const WINDOWS_START_TIME_PREFIX = "windows-utc-us:";
-
 type WindowsCimCapability = "cim" | "identity-unavailable";
-
 interface WindowsProcessListFlight {
   promise: Promise<readonly ProcessIdentity[]>;
   startedAtMs: number;
 }
-
 let windowsProcessListInFlight: WindowsProcessListFlight | undefined;
 let windowsCimCapability: WindowsCimCapability | undefined;
+// 逻辑截止不等于 PowerShell 已退出。占用绑定原 child，跨同一快照的 retry 保留，
+// 只有 execFile 的物理完成回调可归还；旧回调不负责派发下一次工作。
+const queryFlights = new WeakMap<object, Promise<void>>();
 
-function isHardCimUnavailable(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException | undefined)?.code;
-  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
-}
-
-function remainingWindowsCleanupMs(options: ProcessTreeTerminatorOptions): number | undefined {
-  return options.windowsCleanupDeadlineAtMs === undefined
-    ? undefined
-    : Math.max(options.windowsCleanupDeadlineAtMs - Date.now(), 0);
-}
-
-function boundedWindowsLookupTimeoutMs(
-  defaultTimeoutMs: number,
-  options: ProcessTreeTerminatorOptions,
-): number {
-  const remainingMs = remainingWindowsCleanupMs(options);
-  return remainingMs === undefined
-    ? defaultTimeoutMs
-    : Math.max(Math.min(defaultTimeoutMs, remainingMs), 0);
-}
-
-async function awaitWindowsProcessListWithinDeadline(
-  request: Promise<readonly ProcessIdentity[]>,
-  options: ProcessTreeTerminatorOptions,
-): Promise<readonly ProcessIdentity[]> {
-  const remainingMs = remainingWindowsCleanupMs(options);
-  if (remainingMs === undefined) return await request;
-  if (remainingMs <= 0) return [];
-
-  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+async function beforeDeadline<T>(request: Promise<T>, deadline: number, fallback: T): Promise<T> {
+  const remaining = Math.floor(deadline - Date.now());
+  if (remaining < 1) return fallback;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       request,
-      new Promise<readonly ProcessIdentity[]>((resolve) => {
-        deadlineTimer = setTimeout(() => resolve([]), remainingMs);
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), remaining);
       }),
     ]);
   } finally {
-    if (deadlineTimer) clearTimeout(deadlineTimer);
+    if (timer) clearTimeout(timer);
   }
 }
 
-function warn(options: ProcessTreeTerminatorOptions, message: string, ...args: unknown[]): void {
-  options.log?.warn(options.traceId, message, ...args);
+export function hasWindowsProcessQueryInFlight(owner: object): boolean {
+  return queryFlights.has(owner);
 }
 
-function parsePositiveInteger(value: string | undefined): number | undefined {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function parseNonNegativeInteger(value: string | undefined): number | undefined {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
-}
-
-function parseWindowsProcessList(stdout: string): ProcessIdentity[] {
-  const identities: ProcessIdentity[] = [];
-  for (const line of stdout.split(/\r?\n/)) {
-    const [pidText, parentPidText, rawStartTime] = line.trim().split(/\s+/);
-    const pid = parsePositiveInteger(pidText);
-    const parentPid = parseNonNegativeInteger(parentPidText);
-    const startTime = normalizePowerShellStartTime(rawStartTime);
-    if (pid === undefined || parentPid === undefined || !startTime) continue;
-    identities.push({ parentPid, pid, startTime });
+export async function waitForWindowsProcessQuerySlot(
+  owner: object,
+  deadline: number,
+): Promise<boolean> {
+  while (Date.now() < deadline) {
+    const previous = queryFlights.get(owner);
+    if (!previous) return true;
+    const released = await beforeDeadline(
+      previous.then(() => true),
+      deadline,
+      false,
+    );
+    if (!released) return false;
   }
-  return identities;
+  return false;
 }
 
-function normalizePowerShellStartTime(rawStartTime: string | undefined): string | undefined {
-  if (!rawStartTime) return undefined;
-  try {
-    const unixMicroseconds =
-      (BigInt(rawStartTime) - DOTNET_UNIX_EPOCH_TICKS) / TICKS_PER_MICROSECOND;
-    return `${WINDOWS_START_TIME_PREFIX}${unixMicroseconds}`;
-  } catch {
-    return undefined;
+function trackQuery<T>(owner: object, request: Promise<T>): Promise<T> {
+  const physical = request.then(
+    () => undefined,
+    () => undefined,
+  );
+  queryFlights.set(owner, physical);
+  void physical.then(() => {
+    if (queryFlights.get(owner) === physical) queryFlights.delete(owner);
+  });
+  return request;
+}
+
+function queryWindowsProcesses(
+  filter: readonly number[] | undefined,
+  timeoutMs: number,
+  options: ProcessTreeTerminatorOptions,
+): Promise<ReturnType<typeof parseWindowsProcessList> | undefined> {
+  if (
+    timeoutMs < 1 ||
+    windowsCimCapability === "identity-unavailable" ||
+    filter?.some((pid) => !isWindowsPid(pid))
+  )
+    return Promise.resolve(undefined);
+  return new Promise((resolve) => {
+    execFile(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `Get-CimInstance Win32_Process${filter ? ` -Filter "${filter.map((pid) => `ProcessId = ${pid}`).join(" OR ")}"` : ""} | ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().Ticks }`,
+      ],
+      { encoding: "utf8", timeout: timeoutMs, windowsHide: true },
+      (error, stdout, stderr) => {
+        if (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" || code === "EACCES" || code === "EPERM")
+            windowsCimCapability = "identity-unavailable";
+          options.log?.warn(options.traceId, "Windows CIM 身份查询失败:", error, stderr);
+          resolve(undefined);
+          return;
+        }
+        windowsCimCapability = "cim";
+        resolve(parseWindowsProcessList(stdout));
+      },
+    );
+  });
+}
+
+export async function verifyWindowsProcessIdentitiesAsync(
+  identities: readonly ProcessIdentity[],
+  deadline: number,
+  owner: object,
+  options: ProcessTreeTerminatorOptions,
+  isActive: () => boolean = () => true,
+): Promise<ProcessTreeOwnershipResolution> {
+  const currentIdentities: ProcessIdentity[] = [];
+  const goneIdentities: ProcessIdentity[] = [];
+  const unknownIdentities: ProcessIdentity[] = [];
+  for (let index = 0; index < identities.length; index += 64) {
+    const batch = identities.slice(index, index + 64);
+    if (!isActive() || !(await waitForWindowsProcessQuerySlot(owner, deadline)) || !isActive()) {
+      unknownIdentities.push(...identities.slice(index));
+      break;
+    }
+    if (
+      batch.some(
+        (identity) =>
+          !isWindowsPid(identity.pid) ||
+          parseWindowsCreationTicks(identity.startTime) === undefined,
+      )
+    ) {
+      unknownIdentities.push(...batch);
+      continue;
+    }
+    const timeout = Math.floor(deadline - Date.now());
+    if (timeout < 1) {
+      unknownIdentities.push(...identities.slice(index));
+      break;
+    }
+    const parsed = await beforeDeadline(
+      trackQuery(
+        owner,
+        queryWindowsProcesses(
+          batch.map((identity) => identity.pid),
+          timeout,
+          options,
+        ),
+      ),
+      deadline,
+      undefined,
+    );
+    if (
+      !isActive() ||
+      Date.now() >= deadline ||
+      !parsed?.complete ||
+      parsed.identities.some((identity) => !batch.some((target) => target.pid === identity.pid))
+    ) {
+      unknownIdentities.push(...batch);
+      continue;
+    }
+    for (const identity of batch) {
+      const rows = parsed.identities.filter((row) => row.pid === identity.pid);
+      if (
+        rows.length > 1 ||
+        (rows.length === 1 &&
+          (!isWindowsPid(rows[0]!.parentPid, true) ||
+            parseWindowsCreationTicks(rows[0]!.startTime) === undefined))
+      )
+        unknownIdentities.push(identity);
+      else if (rows.length === 0 || rows[0]!.startTime !== identity.startTime)
+        goneIdentities.push(identity);
+      else currentIdentities.push(identity);
+    }
   }
+  return {
+    childStillOwned: false,
+    currentIdentities,
+    goneIdentities,
+    unknownIdentities,
+    knownIdentities: [...identities],
+  };
 }
 
 export async function verifyWindowsProcessIdentityAsync(
@@ -105,103 +190,41 @@ export async function verifyWindowsProcessIdentityAsync(
   options: ProcessTreeTerminatorOptions = {},
 ): Promise<boolean> {
   if (process.platform !== "win32" || timeoutMs <= 0) return false;
-  if (windowsCimCapability === "identity-unavailable") return false;
-  // Windows 11 24H2 及部分 Win10 镜像不再提供 WMIC；Windows 10+ 统一使用
-  // PowerShell/CIM，查询失败仍按 CreationDate 无法确认处理，禁止绕过身份校验强杀。
-  return await new Promise<boolean>((resolve) => {
-    execFile(
-      "powershell.exe",
-      [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `Get-CimInstance Win32_Process -Filter "ProcessId = ${identity.pid}" | ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().Ticks }`,
-      ],
-      {
-        encoding: "utf8",
-        timeout: timeoutMs,
-        windowsHide: true,
-      },
-      (error, stdout, stderr) => {
-        if (error || !stdout) {
-          if (isHardCimUnavailable(error)) windowsCimCapability = "identity-unavailable";
-          warn(
-            options,
-            `Windows root 身份 PowerShell 复核失败 pid=${identity.pid}:`,
-            error ?? stderr,
-          );
-          resolve(false);
-          return;
-        }
-        const current = parseWindowsProcessList(stdout).find(
-          (processIdentity) => processIdentity.pid === identity.pid,
-        );
-        windowsCimCapability = "cim";
-        resolve(current?.startTime === identity.startTime);
-      },
-    );
-  });
+  const result = await verifyWindowsProcessIdentitiesAsync(
+    [identity],
+    Math.min(Date.now() + timeoutMs, options.windowsCleanupDeadlineAtMs ?? Infinity),
+    identity,
+    options,
+  );
+  return result.currentIdentities.length === 1;
 }
 
 export async function readWindowsProcessListAsync(
   options: ProcessTreeTerminatorOptions,
+  owner?: object,
 ): Promise<readonly ProcessIdentity[]> {
   if (windowsCimCapability === "identity-unavailable") return [];
-  const ownedProcessStartedAtMs = options.ownedProcessStartedAtMs;
+  const deadline =
+    options.windowsCleanupDeadlineAtMs ?? Date.now() + WINDOWS_PROCESS_LOOKUP_TIMEOUT_MS;
+  const spawn = options.ownedProcessStartedAtMs;
   if (
     windowsProcessListInFlight &&
-    (ownedProcessStartedAtMs === undefined ||
-      ownedProcessStartedAtMs < windowsProcessListInFlight.startedAtMs)
+    (spawn === undefined || spawn < windowsProcessListInFlight.startedAtMs)
   ) {
-    return await awaitWindowsProcessListWithinDeadline(windowsProcessListInFlight.promise, options);
+    const request = owner
+      ? trackQuery(owner, windowsProcessListInFlight.promise)
+      : windowsProcessListInFlight.promise;
+    return await beforeDeadline(request, deadline, []);
   }
-
-  // Get-CimInstance 在部分 Windows 机器上会超过 1 秒。同步等待会阻塞 Host
-  // 的退出 deadline；共享同一个异步查询后，多个 workspace 可以复用一次系统进程表。
-  // 旧共享 Promise 可能早于新 Agent 的 spawn 开始，复用这张进程表必然找不到
-  // 新 root 并退化为 unverified。只有严格晚于 root 启动的查询才具备可复用资格。
+  if (owner && !(await waitForWindowsProcessQuerySlot(owner, deadline))) return [];
   const startedAtMs = Date.now();
-  const request = new Promise<readonly ProcessIdentity[]>((resolve) => {
-    // 移除 WMIC 后直接走受支持的 CIM 后端，避免 ENOENT fallback 消耗 cleanup
-    // deadline；查询失败返回空身份，调用方继续沿 fail-closed 路径观察退出。
-    const timeoutMs = boundedWindowsLookupTimeoutMs(WINDOWS_PROCESS_LOOKUP_TIMEOUT_MS, options);
-    if (timeoutMs <= 0) {
-      resolve([]);
-      return;
-    }
-
-    execFile(
-      "powershell.exe",
-      [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "Get-CimInstance Win32_Process | ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().Ticks }",
-      ],
-      {
-        encoding: "utf8",
-        timeout: timeoutMs,
-        windowsHide: true,
-      },
-      (error, stdout, stderr) => {
-        if (error || !stdout) {
-          if (isHardCimUnavailable(error)) windowsCimCapability = "identity-unavailable";
-          warn(options, "查询 Windows runtime 进程表失败（异步）:", error ?? stderr);
-          resolve([]);
-          return;
-        }
-        const identities = parseWindowsProcessList(stdout);
-        if (identities.length === 0)
-          warn(options, "PowerShell 未返回可解析的 Windows runtime 进程表");
-        if (identities.length > 0) windowsCimCapability = "cim";
-        resolve(identities);
-      },
-    );
-  }).finally(() => {
-    if (windowsProcessListInFlight?.promise === request) windowsProcessListInFlight = undefined;
-  });
+  const timeout = Math.min(WINDOWS_PROCESS_LOOKUP_TIMEOUT_MS, Math.floor(deadline - startedAtMs));
+  if (timeout < 1) return [];
+  const request = queryWindowsProcesses(undefined, timeout, options)
+    .then((parsed) => (parsed?.complete ? parsed.identities : []))
+    .finally(() => {
+      if (windowsProcessListInFlight?.promise === request) windowsProcessListInFlight = undefined;
+    });
   windowsProcessListInFlight = { promise: request, startedAtMs };
-  return await awaitWindowsProcessListWithinDeadline(request, options);
+  return await beforeDeadline(owner ? trackQuery(owner, request) : request, deadline, []);
 }

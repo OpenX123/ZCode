@@ -48,6 +48,7 @@ export class ZCodeStdioTransport implements ZCodeProtocolTransport {
   private disposeAndWaitPromise: Promise<void> | undefined;
   private cleanupProcessTreeSnapshot: ProcessTreeSnapshot | undefined;
   private cleanupAttemptCount = 0;
+  private cleanupSnapshotCaptured = false;
   private childExitedAtMs: number | undefined;
 
   readonly onMessage = this.messageEmitter.event;
@@ -133,6 +134,7 @@ export class ZCodeStdioTransport implements ZCodeProtocolTransport {
     }
     // stdin EOF 可能让 CLI 根进程先退出，而 detached MCP 仍继续运行。
     // 必须在发 EOF 前保存树成员，否则根退出、后代被系统接管后无法再按 PPID 找回。
+    // 首次失败仍复用固定快照；最终 retry 不重复 EOF，保留原 1250ms 验证/命令窗口。
     this.cleanupAttemptCount += 1;
     const cleanupStartedAtMs = Date.now();
     const forceBudgetMs = this.cleanupAttemptCount > 1 ? 0 : PROCESS_TREE_FORCE_AFTER_MS;
@@ -146,11 +148,14 @@ export class ZCodeStdioTransport implements ZCodeProtocolTransport {
           PROCESS_TREE_WINDOWS_TASKKILL_TIMEOUT_MS +
           PROCESS_TREE_WINDOWS_EXIT_OBSERVATION_GRACE_MS
         : undefined;
-    this.cleanupProcessTreeSnapshot ??= await this.captureCleanupSnapshot(
-      windowsCleanupDeadlineAtMs,
-    );
+    if (!this.cleanupSnapshotCaptured) {
+      this.cleanupSnapshotCaptured = true;
+      this.cleanupProcessTreeSnapshot = await this.captureCleanupSnapshot(
+        windowsCleanupDeadlineAtMs,
+      );
+    }
     const processTreeSnapshot = this.cleanupProcessTreeSnapshot;
-    if (!this.hasChildExited()) {
+    if (!this.hasChildExited() && this.cleanupAttemptCount === 1) {
       // app-server --stdio 的正常退出边界是 stdin EOF。直接 taskkill
       // 进程树，既跳过 agent 自身 shutdown，也会让 host 固定等强杀兜底窗口。
       // 这里先请求协议入口自然收尾；短时间无响应再进入进程树兜底，仍保证不残留子进程。
@@ -173,10 +178,10 @@ export class ZCodeStdioTransport implements ZCodeProtocolTransport {
       ...(this.options?.ownedProcessGroupId
         ? { ownedProcessGroupId: this.options.ownedProcessGroupId }
         : {}),
-      ...(this.options?.ownedProcessStartedAtMs
+      ...(this.options?.ownedProcessStartedAtMs !== undefined
         ? {
             ownedProcessStartedAtMs: this.options.ownedProcessStartedAtMs,
-            ownedProcessExitedAtMs: this.childExitedAtMs ?? Date.now(),
+            ownedProcessExitedAtMs: this.childExitedAtMs,
           }
         : {}),
       ...(processTreeSnapshot ? { snapshot: processTreeSnapshot } : {}),
@@ -381,7 +386,7 @@ export class ZCodeStdioTransport implements ZCodeProtocolTransport {
       log: processTreeLogger,
       ...(windowsCleanupDeadlineAtMs === undefined ? {} : { windowsCleanupDeadlineAtMs }),
       ownedProcessStartedAtMs: this.options?.ownedProcessStartedAtMs,
-      ownedProcessExitedAtMs: this.childExitedAtMs ?? Date.now(),
+      ownedProcessExitedAtMs: this.childExitedAtMs,
     });
     if (exitedTree) {
       return exitedTree;
