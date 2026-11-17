@@ -74,7 +74,10 @@ export function parseWindowsCreationTicks(startTime: string): bigint | undefined
   return dotNetTicks >= 0n && dotNetTicks <= 3_155_378_975_999_999_999n ? ticks : undefined;
 }
 
-export function parseWindowsProcessList(stdout: string): {
+export function parseWindowsProcessList(
+  stdout: string,
+  fullDiscovery = false,
+): {
   identities: ProcessIdentity[];
   complete: boolean;
 } {
@@ -84,6 +87,16 @@ export function parseWindowsProcessList(stdout: string): {
     if (!line.trim()) continue;
     const fields = line.trim().split(/\s+/);
     const [pidText, parentPidText, rawStartTime] = fields;
+    // 实测全表含合法 System Idle 行；只在首次无筛选发现忽略它，避免整表失效。
+    // 定向响应仍须拒绝 PID 0，否则过滤后的空表会把未知身份误判为 gone。
+    if (
+      fullDiscovery &&
+      fields.length === 3 &&
+      pidText === "0" &&
+      parentPidText === "0" &&
+      normalizeWindowsStartTime(rawStartTime) !== undefined
+    )
+      continue;
     const pid = /^(0|[1-9]\d*)$/u.test(pidText ?? "") ? Number(pidText) : NaN;
     if (!isWindowsPid(pid)) {
       complete = false;
@@ -246,7 +259,7 @@ function readWindowsProcessList(options: ProcessTreeTerminatorOptions): readonly
     Date.now() >= options.windowsCleanupDeadlineAtMs
   )
     return [];
-  const parsed = parseWindowsProcessList(result.stdout);
+  const parsed = parseWindowsProcessList(result.stdout, true);
   if (!parsed.complete) return [];
   const identities = parsed.identities;
   const cache = { identities, startedAtMs };

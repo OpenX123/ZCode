@@ -221,6 +221,97 @@ describe("terminateProcessTree Windows", () => {
     ).toHaveLength(1);
   });
 
+  it.each(["async", "sync"])("W18 %s 首次全表忽略合法Idle行并exact回收R/C/G", async (mode) => {
+    const child = fakeChild();
+    powershellResult =
+      "0 0 639303123216689210\n" +
+      powershellIdentity(4242, 1) +
+      powershellIdentity(5000, 4242) +
+      powershellIdentity(5001, 5000);
+    alivePids = new Set([4242, 5000, 5001]);
+    const snapshot =
+      mode === "sync"
+        ? captureProcessTreeSnapshot(child)
+        : await captureProcessTreeSnapshotAsync(child);
+    expect(snapshot?.identities.map(({ pid }) => pid)).toEqual([4242, 5000, 5001]);
+    const result = terminateProcessTreeAndWait(child, { snapshot });
+    await vi.advanceTimersByTimeAsync(4250);
+    await expect(result).resolves.toEqual({ remainingPids: [] });
+    expect(
+      taskkillCommands()
+        .filter(({ force }) => force)
+        .map(({ pid }) => pid),
+    ).toEqual([4242, 5000, 5001]);
+    expect(taskkillEffect).not.toContain(0);
+    expect(alivePids.size).toBe(0);
+    expect(queryEvents.filter(({ pids }) => pids.length === 0)).toHaveLength(
+      mode === "sync" ? 0 : 1,
+    );
+    expect(spawnSyncMock).toHaveBeenCalledTimes(mode === "sync" ? 1 : 0);
+  });
+
+  it.each([
+    "0 0 639303123216689210\n",
+    "0 0 639303123216689210\n4242 1 639204876000000000\n",
+    "0 1 639303123216689210\n",
+    "0 0 malformed\n",
+    "0 0 639303123216689210 extra\n",
+    "-1 0 639303123216689210\n",
+  ])("W18 定向坏行整批unknown且不产生gone：%s", async (response) => {
+    const identities = [
+      { pid: 4242, parentPid: 1, startTime: "windows-utc-100ns:17848908000000000" },
+    ];
+    targetedPowerShellResult = response;
+    const result = await verifyWindowsProcessIdentitiesAsync(identities, Date.now() + 750, {}, {});
+    expect(result.currentIdentities).toEqual([]);
+    expect(result.goneIdentities).toEqual([]);
+    expect(result.unknownIdentities).toEqual(identities);
+    expect(taskkillCommands()).toEqual([]);
+  });
+
+  it.each(["async", "sync"])("W18 %s 全表不能忽略非规范Idle或坏PID行", async (mode) => {
+    for (const row of [
+      "0 1 639303123216689210",
+      "00 0 639303123216689210",
+      "0 0 malformed",
+      "0 0 3155378976000000000",
+      "0 0 639303123216689210 extra",
+      "0 0",
+      "bad 0 639303123216689210",
+      "4294967296 0 639303123216689210",
+    ]) {
+      powershellResult = row + "\n" + powershellIdentity(4242, 1);
+      const snapshot =
+        mode === "sync"
+          ? captureProcessTreeSnapshot(fakeChild())
+          : await captureProcessTreeSnapshotAsync(fakeChild());
+      expect(snapshot).toBeUndefined();
+      await Promise.resolve();
+    }
+    expect(taskkillCommands()).toEqual([]);
+  });
+
+  it.each([false, true])("W18 定向Idle响应mixed=%s保留整批remaining且不发信号", async (mixed) => {
+    const child = fakeChild();
+    child.exitCode = 0;
+    const identities = [
+      { pid: 5000, parentPid: 4242, startTime: "windows-utc-100ns:17848908000000000" },
+      { pid: 5001, parentPid: 5000, startTime: "windows-utc-100ns:17848908000000000" },
+    ];
+    alivePids = new Set([5000, 5001]);
+    targetedPowerShellResult =
+      "0 0 639303123216689210\n" +
+      (mixed ? powershellIdentity(5000, 4242) + powershellIdentity(5001, 5000) : "");
+    const result = terminateProcessTreeAndWait(child, {
+      snapshot: { rootPid: 4242, descendantPids: [5000, 5001], identities },
+    });
+    await vi.advanceTimersByTimeAsync(4250);
+    await expect(result).resolves.toEqual({ remainingPids: [5000, 5001] });
+    expect(taskkillCommands()).toEqual([]);
+    expect(taskkillEffect).toEqual([]);
+    expect(alivePids).toEqual(new Set([5000, 5001]));
+  });
+
   it("非等待式回收到 force deadline 后不使用旧快照强杀 root", async () => {
     const child = {
       exitCode: null,

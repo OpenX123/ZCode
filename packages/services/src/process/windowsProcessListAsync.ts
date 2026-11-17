@@ -133,7 +133,7 @@ function queryWindowsProcesses(
           return;
         }
         windowsCimCapability = "cim";
-        resolve(parseWindowsProcessList(stdout));
+        resolve(parseWindowsProcessList(stdout, filter === undefined));
       },
     );
   });
