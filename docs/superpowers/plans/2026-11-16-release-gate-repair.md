@@ -1,5 +1,14 @@
 # 1.4.1 发布门禁补充修复计划
 
+### Task 41: 手动 main 发布按次选择本机 Windows runner
+
+精确四文件：workflow、release-packaging spec、本计划、原workflow测试。writer不push/不派agent，不处理token/runner安装目录或常驻服务；controller负责仓库外短路径ephemeral runner。
+
+- [ ] freshness/architecture、先spec/plan；保留179720的native门及当前两桌面目标/十附件合同。
+- [ ] 先测试RED，输入boolean默认false；仅win+main+workflow_dispatch+true路由本机固定labels，其余托管；实求值事件/ref/输入/矩阵组合。
+- [ ] 最小workflow实现、四原node测试完整执行，定向lint/fmt/arch；提交报告交root，不取消仍有用旧run。
+- [ ] controller root type/lint/arch及自然179720 hook、注册/启动一次性runner，最终新HEAD local_windows=true正式dispatch；生产发布/安装仍须真实产物验收。
+
 ### Task 40: 修复 macOS 交叉包的宿主 SSH optional native
 
 仅六文件：release-packaging spec、本计划、native-package-policy、app-asar-repack及两者原测试；基线6cf25eae并发变更全部保留。writer不push、不派agent，不决定发布平台。

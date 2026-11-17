@@ -6,6 +6,25 @@ GitHub Actions 仅为 macOS ARM64、Windows x64 构建桌面安装包；远程 S
 
 ## 发布身份与唯一所有者
 
+### Task41 按次选择本机 Windows runner
+
+- `workflow_dispatch` 增加 boolean 输入 `local_windows`，默认 false。只有 `matrix.os == 'win'`、事件为 `workflow_dispatch`、ref 为 `refs/heads/main` 且该输入为 true 时，package job 选择 `[self-hosted, Windows, X64, ycode-windows]`；其余情况继续使用该行原托管 runner。
+- push、PR、非 main 手动运行以及 macOS 矩阵均不能通过此开关路由到本机；不信任 `github.event.inputs` 的字符串真假值，使用 GitHub 类型化 `inputs` 上下文。
+- 本机 runner 的注册、短路径工作目录与按次 ephemeral 生命周期由 controller 在仓库外管理；不在仓库保存 token、机器目录或安装常驻服务。workflow 不生成第二套构建或上传路径。
+- 构建命令、目标矩阵、版本唯一 owner、descriptor、预算、CPU 门和当前十附件合同保持不变。该开关只选择执行宿主，不代表构建或安装验收完成。
+- 测试实际求值 workflow 的 runs-on 表达式：main 手动 true/false/缺省，push/PR带true、分支/tag手动true、macOS true 均检查正确路由，同时锁定 boolean/default 与现有托管矩阵。
+
+```mermaid
+flowchart LR
+    A[package 矩阵行与可信事件 ref] --> B{win 且 main手动且 local_windows?}
+    B -- 是 --> C[本机按次 ephemeral Windows runner]
+    B -- 否 --> D[原托管 runner]
+    C --> E[同一构建校验上传流程]
+    D --> E
+```
+
+Task41 精确四文件：build.yml、本 spec、现 release-gate-repair 计划、github-release-workflow.test.mjs。最终 root 检查、自然远端179720基线真实push hook、本机注册验证及新HEAD正式dispatch仍由controller完成，不绕过旧门禁或使用旧产物冒充本次构建。
+
 - 资源 job 是本轮 Source Server 归档与 descriptor 的唯一生成者，使用现有 `prepare:remote-assets` 一次生成四个目标；桌面 job 不重新生成资源。
 - 正式应用版本从 `1.0.0` 起。仅 main 的 `workflow_dispatch` 是正式发版入口，push / PR 不发版；路径过滤与操作入口见 [GitHub 桌面构建与发布](github-release-spec.md)。每轮新的正式构建由资源 job 唯一分配版本：查询本仓库全部 `v1.0.<patch>` Git 标签，无则使用 `1.0.0`，否则使用最大 patch 加一；标签为 `v<version>`。正式发版使用独立于 push / PR 的并发组，同组串行且不取消正在执行的正式构建，避免同一版本被并发分配。
 - 版本分配后只在 CI 工作区更新根 `package.json`；两种桌面目标与最终发布 job 从同一资源 job 输出恢复版本，不重新计算。Desktop metadata、Vite、Host、Server 编译常量及资源目录从根版本派生，独立 Agent CLI 包版本不在此流程修改。
