@@ -64,10 +64,12 @@ afterEach(() => {
   cleanup();
 });
 
+// 冷模块装配在业务用例注册前完成，避免导入超时后迟到 render 脱离 cleanup 边界。
+const { ConversationStatusPanel } = await import("@/v4/ConversationStatusPanel.js");
+
 describe("ConversationStatusPanel Git review entry", () => {
   it("opens the preferred worktree source when Changes is clicked", async () => {
     const onOpenGitReview = vi.fn();
-    const { ConversationStatusPanel } = await import("@/v4/ConversationStatusPanel.js");
 
     render(
       createElement(ConversationStatusPanel, {

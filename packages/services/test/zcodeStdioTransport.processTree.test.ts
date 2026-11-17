@@ -72,6 +72,12 @@ describe("ZCodeStdioTransport POSIX retry 全mock", () => {
   });
 
   afterEach(() => {
+    // 工厂 vi.fn 上再次 spyOn 会返回原 mock；restoreAllMocks 不会撤销其实现改写。
+    // 由本 scope 恢复初始实现并清空 once 队列，供后续真实 ChildProcess 回归使用。
+    vi.mocked(childProcess.spawn).mockReset();
+    vi.mocked(childProcess.spawnSync).mockReset();
+    vi.mocked(childProcess.execFile).mockReset();
+    vi.mocked(processTreeTerminator.captureProcessTreeSnapshotAsync).mockReset();
     vi.useRealTimers();
     vi.unstubAllEnvs();
   });
