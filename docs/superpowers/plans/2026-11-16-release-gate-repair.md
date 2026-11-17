@@ -685,3 +685,12 @@ Task32 raw 收敛补充：新 raw 频繁调用原防抖会让恢复 full load �
 - [ ] Step 2: 原测试新增真实plain Node CLI回归，无继承NODE_OPTIONS、loader参数或node_modules注入；audit使用小安装器+四目标固定URL descriptor并核对报告原预算，offline import使用真实descriptor/archive并核对目标缓存内容。先保存各自ERR_MODULE_NOT_FOUND RED，再两个工具最小tsImport实际公开schema修复，中文根因注释，保存GREEN；不得伪造网络/发布或安装器构建成功。
 - [ ] Step 3: 执行两份工具原完整tests及全部github-release scripts tests，保留原校验/预算/平台skip；精确lint/fmt/diff/默认arch，自审限定提交；新原件仅scratch/task37，写task-37-implementation-report.md。无子agent/full/root type/lint/build/GUI/push。
 - [ ] Step 4: controller独审并执行root typecheck/lint/arch、strict tracked-tree等价/原f7五SHA+native+92项重核。新对dac差异仅上述六文件；对f7为Task35/36既有七文件加两工具两测试合计十一文件，其余path/mode/type/blob一致，否则停止复用重建重验。旧f7 buildCommit/metadata不改；76be原完整gate/remote与dac自然hook/remote仅作祖先证据。新实际push用自然远端dac基线原hook，保存自然exit/remote，不伪原1af全量；正式GH从最终HEAD重构建。
+
+### Task 38: Windows ZIP 解包绕过 PowerShell 模块污染
+
+**Evidence / scope:** run44096940862 attempt2 winarm64 job134101965971原件 `scratch/github-44096940862-attempt2-win-arm64-job.log:905-916`：powershell.exe的Expand-Archive加载PowerShell7模块，.NET Framework三参数ExtractToDirectory重载不存在，随后误报找不到ugrep.exe。仅extract工具、原prepare-native-search-tools.test.ts、本release-packaging spec/plan四文件。禁止生产、workflow、依赖、预算/timeout/retry/fallback变化。
+
+- [ ] Step 1: Node24.14/pnpm10.33.2 freshness/默认arch与日志/现有extract/download调用合同调查。先提交spec/plan，明确对f33精确4/对f7精确13 allowlist与新旧真实二进制等价证明条件；不能自动复用旧候选。
+- [ ] Step 2: 修前clean WindowsPS module path以plain Node实际prepare抽取本地正式ARM64归档，保存旧输出/SHA；新增自有污染PSModulePath模块触发三参数重载错误，真实子进程RED。原SHA-before-extract、PE-before-copy和cleanup保持，并覆盖错误SHA/损坏ZIP/校验失败不覆盖有效目标。新模块仅测试temp内自有fixture，不修改系统或node_modules。
+- [ ] Step 3: Windows ZIP最小替换为显式Add-Type、ErrorActionPreference Stop、.NET ZipFile两参ExtractToDirectory，避免模块autoload；中文注释写清已证故障机制。新plain Node GREEN、固定归档SHA/PE核验、新旧逐字节/SHA一致，原prepare/download完整suite与必要相关测试、精确lint/fmt/diff/arch；不执行ARM64二进制或声称其运行验收。
+- [ ] Step 4: 自审限定提交，task-38-implementation-report.md与scratch/task38新原件交controller。无agent/root type/lint/full/build/GUI/push；controller独审/root检查、新产出+tracked-tree等价桥及原f7五SHA/native/92项证据重核后才能沿用f33前真实门禁链。实际push自然远端f33为原hook基线；正式GH从最终HEAD重构建。任何其它diff或产出差异停止复用重建重验，旧包/buildCommit/原件均不改。

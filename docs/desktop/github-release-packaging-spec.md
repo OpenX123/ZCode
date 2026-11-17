@@ -91,3 +91,13 @@ Task37 延续上节纯工具增量的证据分层，但自然远端基线为已�
 - `docs/superpowers/plans/2026-11-16-release-gate-repair.md`
 
 相对 f7 的 allowlist 为 Task36 上述七文件再加本节两个工具及两个测试，合计精确十一文件。全部其余 tracked path/mode/type/blob 必须一致；任何生产、依赖、配置或其它差异都停止复用、重建重验。原 f7 五 SHA、native、92 项保护及证据哈希须重新核验，旧候选 `buildCommit=f7` 与 metadata 非等价的边界不变。76be原八步/remote及dac自然hook/remote原件只保留真实祖先属性，不改写历史。新 HEAD 重新执行 root typecheck/lint/architecture、全部相关发布脚本与两份工具测试及独立审查，再以自然远端 dac 为实际 hook 基线正常 push，保存自然退出与 remote SHA；不伪装重跑原1af全套。正式 GitHub assets 必须从本次最终 HEAD 重构建。
+
+## Task38 Windows 归档解压与验证边界
+
+Windows 预编译 ZIP 归档仍由 `scripts/prebuilt-binary-extract.mjs` 唯一解包，下载链与仓库链共享此入口。归档先通过原固定 SHA 校验，在新建临时目录解压，临时二进制通过原目标 PE 验证后才覆盖目标；失败仍清理原临时目录且不得覆盖有效目标。Windows 分支显式加载 .NET `System.IO.Compression.FileSystem`，使用 `ZipFile.ExtractToDirectory(archivePath, extractDir)` 两参数重载；PowerShell `$ErrorActionPreference='Stop'` 令解压错误直接失败。不得调用依赖 PSModulePath 自动选源的 Expand-Archive，不引入覆盖重载、重试、扩时或新的 fallback。POSIX unzip/tar、归档 SHA、目标校验与 cleanup 合同保持。
+
+回归必须以真实 plain Node 子进程抽取本地正式 ARM64 ZIP，验证固定归档 SHA、产出 PE machine 与文件字节；自有污染 PSModulePath 模块复现 Windows PowerShell 对三参数重载不可用的故障，新路径不加载该模块。损坏 ZIP、错误 SHA 与验证失败均不得覆盖原目标，临时目录须收口。ARM64 静态验证不等于目标架构可执行运行验证。
+
+本任务相对已推送 `f33d8b55469539e1d6257e87dddf02cefab33af2` 的 tracked 差异精确为 `scripts/prebuilt-binary-extract.mjs`、`packages/desktop/test/prepare-native-search-tools.test.ts`、本规格及 `docs/superpowers/plans/2026-11-16-release-gate-repair.md` 四文件；相对 f7 为 Task37 十一文件再加该工具与测试，合计精确十三文件，其余 tracked path/mode/type/blob 必须一致。因为修改了解包工具，必须另有新旧实际实现对同一固定归档抽取的产出逐字节/SHA一致证据；不能仅凭 allowlist 自动认定生产内容等价。
+
+只有新桥同时满足该产出等价、严格 tree allowlist、原 f7 五 SHA/native/92 项及原件哈希重新核验，才允许继承 f33 之前真实门禁/remote链和本地候选证据；保持原 `buildCommit=f7`、metadata 非等价及旧包/原件不改。任意额外生产/依赖/配置差异或二进制差异都停止复用并重建重验。新 HEAD 仍须通过本工具真实污染/归档/失败测试、root typecheck/lint/architecture 与独审；实际 push 以自然远端 f33 为原 hook 基线并保留自然退出和 remote 回读，不冒称原1af全套再次运行。正式 GitHub assets 必须从最终 HEAD 重构建。
