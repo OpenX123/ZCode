@@ -44,7 +44,7 @@ import {
 } from "@zcode/shared/node";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 
-import { createSubagentRuntimeConfigCache } from "./subagentRuntimeConfig.js";
+import { createSubagentRuntimeConfigCache } from "./runtime-config/index.js";
 
 const subagentLogger = createServiceLogger("subagents");
 

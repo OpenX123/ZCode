@@ -7,23 +7,15 @@ import {
   type SubagentRuntimeState,
 } from "@zcode/shared";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
+import type { ConfigReader, Workspace } from "./contract.js";
 import {
   createSubagentConfigScope,
   type SubagentFileChanges,
   type SubagentConfigLoadContext,
-} from "#src/subagents/subagentConfigScope.js";
+} from "./subagentConfigScope.js";
 
 const logger = createServiceLogger("subagentRuntimeConfig");
 const INITIAL_LOAD_WAIT_MS = 5000;
-interface Workspace {
-  workspacePath: string;
-  workspaceIdentity?: string;
-}
-interface ConfigReader {
-  readUserRoot(): Promise<string>;
-  readStatePath(): Promise<string>;
-  readState(path: string): Promise<SubagentRuntimeState>;
-}
 type Profiles = Map<string, ReturnType<typeof parseAgentProfileFromMarkdown>>;
 type Scope<T> = ReturnType<typeof createSubagentConfigScope<T>>;
 

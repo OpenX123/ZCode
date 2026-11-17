@@ -8,8 +8,8 @@ import { EventEmitter, on } from "node:events";
 import { watch } from "chokidar";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as shared from "@zcode/shared";
-import { createSubagentRuntimeConfigCache } from "../src/subagents/subagentRuntimeConfig.js";
-import { createSubagentConfigScope } from "../src/subagents/subagentConfigScope.js";
+import { createSubagentRuntimeConfigCache } from "../src/subagents/runtime-config/index.js";
+import { createSubagentConfigScope } from "../src/subagents/runtime-config/subagentConfigScope.js";
 
 const parentEvents = vi.hoisted(() => new Map<string, Set<EventEmitter>>());
 vi.mock("node:fs/promises", async (importOriginal) => {

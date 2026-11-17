@@ -945,6 +945,20 @@ modules:
     layers:
       ui: .
     owner: conversation
+  # subagent-runtime-config：由 architecture:adopt 登记
+  - id: subagent-runtime-config
+    roots:
+      - packages/services/src/subagents/runtime-config
+    managed: true
+    requires:
+      - services
+      - shared
+    publicEntrypoints:
+      - packages/services/src/subagents/runtime-config/index.ts
+      - packages/services/src/subagents/runtime-config/contract.ts
+    layers:
+      adapters: .
+    owner: conversation
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
