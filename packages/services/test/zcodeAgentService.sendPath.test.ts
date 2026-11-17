@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Emitter } from "@zcode/rpc";
 import type { ModelSelectionView } from "@zcode/provider";
-import { zcodeProtocolMethods } from "@zcode/shared";
+import {
+  resolveWorkspaceKey,
+  zcodeProtocolMethods,
+  type ZCodeRuntimeActivitySnapshot,
+} from "@zcode/shared";
 import { V4_METHODS } from "@zcode/shared/zcode-protocol-v4";
 import type { BrowserAmbientContextExecutor } from "../src/zcode-agent/zcodeAgentBrowserAmbientContext.js";
 
@@ -27,6 +32,8 @@ type FakeClient = {
   request: ReturnType<typeof vi.fn>;
   transportKind: "stdio";
   isDisposed?: boolean;
+  runtimeActivitySnapshot: ZCodeRuntimeActivitySnapshot | undefined;
+  onRuntimeActivityChanged: Emitter<ZCodeRuntimeActivitySnapshot>["event"];
   onNotification: () => { dispose(): void };
   onRequest: () => { dispose(): void };
   onClose: () => { dispose(): void };
@@ -55,6 +62,9 @@ function createFakeClient(sessions: Array<{ sessionId: string; engine?: string }
   return {
     request,
     transportKind: "stdio",
+    // 根因：发送前会订阅运行事实；未发通知的替身保留 undefined，并提供可释放订阅。
+    runtimeActivitySnapshot: undefined,
+    onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
     onNotification: () => ({ dispose() {} }),
     onRequest: () => ({ dispose() {} }),
     onClose: () => ({ dispose() {} }),
@@ -68,18 +78,26 @@ async function setup(options: {
 }) {
   const queue = [...options.clients];
   let current = queue.shift()!;
-  const getClient = vi.fn(async () => {
+  type MockWorkspace = { workspacePath: string; workspaceIdentity?: string };
+  const getClient = vi.fn(async (_workspace: MockWorkspace) => {
     if (current.isDisposed && queue.length > 0) current = queue.shift()!;
     return current;
   });
   vi.resetModules();
   vi.doMock("#src/zcode-agent/zcodeAgentProcessManager.js", () => ({
     ZCodeAgentProcessManager: class {
+      private readonly clients = new Map<string, FakeClient>();
       // 1.1 闲置回收：service 取得 client 时续期计时（host-idle-resources-1.1-spec §2）。
       noteActivity() {}
-      getClient = getClient;
-      getExistingClient() {
-        return current;
+      async getClient(workspace: MockWorkspace) {
+        const client = await getClient(workspace);
+        this.clients.set(resolveWorkspaceKey(workspace), client);
+        return client;
+      }
+      getExistingClient(workspace: MockWorkspace) {
+        // 已预置供下一次启动使用的 client 不是已存在 runtime，失效 client 也不可复用。
+        const client = this.clients.get(resolveWorkspaceKey(workspace));
+        return client?.isDisposed ? undefined : client;
       }
       onRuntimeLifecycle() {
         return { dispose() {} };
@@ -88,9 +106,15 @@ async function setup(options: {
         return { dispose() {} };
       }
       markReady() {}
-      disposeAll() {}
-      async disposeAllAndWait() {}
-      async disposeWorkspace() {}
+      disposeAll() {
+        this.clients.clear();
+      }
+      async disposeAllAndWait() {
+        this.disposeAll();
+      }
+      async disposeWorkspace(workspace: MockWorkspace) {
+        this.clients.delete(resolveWorkspaceKey(workspace));
+      }
     },
   }));
   const { createZCodeAgentService } = await import("#src/zcode-agent/zcodeAgentService.js");

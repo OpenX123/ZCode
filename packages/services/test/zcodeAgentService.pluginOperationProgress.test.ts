@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import { Emitter } from "@zcode/rpc";
 import {
   zcodeProtocolMethods,
   zcodeProtocolNotifications,
   type ZCodePluginOperationProgressNotification,
+  type ZCodeRuntimeActivitySnapshot,
 } from "@zcode/shared";
 
 describe("zcodeAgentService Plugin operation progress", () => {
@@ -43,11 +45,18 @@ describe("zcodeAgentService Plugin operation progress", () => {
           return {
             request,
             transportKind: "stdio",
+            // 根因：plugin lane 也要提供可释放的运行事实订阅，不能让进度接线提前中断。
+            runtimeActivitySnapshot: undefined,
+            onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
             onNotification: (
               listener: (notification: { method: string; params?: unknown }) => void,
             ) => {
               notificationListener = listener;
-              return { dispose() {} };
+              return {
+                dispose() {
+                  if (notificationListener === listener) notificationListener = null;
+                },
+              };
             },
             onRequest: () => ({ dispose() {} }),
             onClose: () => ({ dispose() {} }),

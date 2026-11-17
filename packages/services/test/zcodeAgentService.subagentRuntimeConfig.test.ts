@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Emitter } from "@zcode/rpc";
 import {
+  resolveWorkspaceKey,
   subagentRuntimeConfigSchema,
   zcodeProtocolMethods,
   type SubagentRuntimeConfig,
+  type ZCodeRuntimeActivitySnapshot,
 } from "@zcode/shared";
 import { offPeakSelectionView } from "./fixtures/offPeakSelection.js";
+
+type MockWorkspace = { workspacePath: string; workspaceIdentity?: string };
 
 afterEach(() => {
   vi.doUnmock("../src/zcode-agent/zcodeAgentProcessManager.js");
@@ -20,8 +25,29 @@ describe("subagent runtime config reverse RPC", () => {
       );
     const respond = vi.fn(async () => {}),
       respondError = vi.fn(async () => {});
+    const client = {
+      request: async (_method: string, params: unknown) => params,
+      respond,
+      respondError,
+      transportKind: "stdio",
+      // 根因：反向 RPC 接线之前先订阅运行事实；未发通知时不能伪造已收到 idle 快照。
+      runtimeActivitySnapshot: undefined,
+      onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
+      onNotification: () => ({ dispose() {} }),
+      onClose: () => ({ dispose() {} }),
+      onRequest: (handler: (typeof handlers)[number]) => {
+        handlers.push(handler);
+        return {
+          dispose() {
+            const index = handlers.indexOf(handler);
+            if (index >= 0) handlers.splice(index, 1);
+          },
+        };
+      },
+    };
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class {
+        private readonly clients = new Map<string, typeof client>();
         // 1.1 闲置回收：service 取得 client 时续期计时（host-idle-resources-1.1-spec §2）。
         noteActivity() {}
         onRuntimeLifecycle() {
@@ -31,20 +57,15 @@ describe("subagent runtime config reverse RPC", () => {
           return { dispose() {} };
         }
         markReady() {}
-        disposeAll() {}
-        async getClient() {
-          return {
-            request: async (_method: string, params: unknown) => params,
-            respond,
-            respondError,
-            transportKind: "stdio",
-            onNotification: () => ({ dispose() {} }),
-            onClose: () => ({ dispose() {} }),
-            onRequest: (handler: (typeof handlers)[number]) => {
-              handlers.push(handler);
-              return { dispose() {} };
-            },
-          };
+        disposeAll() {
+          this.clients.clear();
+        }
+        async getClient(workspace: MockWorkspace) {
+          this.clients.set(resolveWorkspaceKey(workspace), client);
+          return client;
+        }
+        getExistingClient(workspace: MockWorkspace) {
+          return this.clients.get(resolveWorkspaceKey(workspace));
         }
       },
     }));

@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+import { Emitter } from "@zcode/rpc";
 import {
   buildRemoteWorkspaceIdentity,
+  resolveWorkspaceKey,
   zcodeProtocolMethods,
   createDynamicWorkflowClientConfig,
   type DynamicWorkflowClientConfig,
   type DynamicWorkflowMode,
+  type ZCodeRuntimeActivitySnapshot,
 } from "@zcode/shared";
 import { V4_METHODS } from "@zcode/shared/zcode-protocol-v4";
 
@@ -57,7 +60,30 @@ function ordinarySelectionView(): ModelSelectionView {
 
 const WORKSPACE_PATH = "/workspace/app";
 
+type MockWorkspace = { workspacePath: string; workspaceIdentity?: string };
+
 class MockProcessManagerBase {
+  private readonly clients = new Map<string, { request: unknown }>();
+
+  // 根因：运行事实接线只观察已登记 client；初始化前不可见，取得后按 workspace 隔离。
+  protected trackClient<T extends { request: unknown }>(
+    getClient: (workspace: MockWorkspace) => Promise<T>,
+  ) {
+    return async (workspace: MockWorkspace) => {
+      const client = await getClient(workspace);
+      this.clients.set(resolveWorkspaceKey(workspace), client);
+      return client;
+    };
+  }
+
+  getExistingClient(workspace: MockWorkspace) {
+    return this.clients.get(resolveWorkspaceKey(workspace));
+  }
+
+  disposeAll() {
+    this.clients.clear();
+  }
+
   onRuntimeLifecycle() {
     return { dispose() {} };
   }
@@ -115,6 +141,9 @@ async function setup(params: {
   const getClient = vi.fn(async () => ({
     request,
     transportKind: "stdio" as const,
+    // 本夹具不发送运行事实；undefined 表示尚未收到快照，订阅仍须能真正释放。
+    runtimeActivitySnapshot: undefined,
+    onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
     onNotification: () => ({ dispose() {} }),
     onRequest: () => ({ dispose() {} }),
     onClose: () => ({ dispose() {} }),
@@ -122,8 +151,7 @@ async function setup(params: {
   vi.resetModules();
   vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
     ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-      getClient = getClient;
-      disposeAll() {}
+      getClient = this.trackClient(getClient);
     },
   }));
   const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");

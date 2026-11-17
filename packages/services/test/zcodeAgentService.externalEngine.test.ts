@@ -1,9 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildRemoteWorkspaceIdentity, zcodeProtocolMethods } from "@zcode/shared";
+import { Emitter } from "@zcode/rpc";
+import {
+  buildRemoteWorkspaceIdentity,
+  resolveWorkspaceKey,
+  zcodeProtocolMethods,
+  type ZCodeRuntimeActivitySnapshot,
+} from "@zcode/shared";
 import { V4_METHODS } from "@zcode/shared/zcode-protocol-v4";
 import type { ExternalEngineStatus } from "@zcode/shared/external-engine";
 
 const disposers: Array<() => void> = [];
+type MockWorkspace = { workspacePath: string; workspaceIdentity?: string };
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
   vi.doUnmock("../src/zcode-agent/zcodeAgentProcessManager.js");
@@ -22,26 +29,44 @@ async function setup(ready: boolean, supported = true) {
   const client = {
     request,
     transportKind: "stdio",
+    // 根因：client 接线要求运行事实订阅；未发通知时仍保持“尚无快照”，不虚构 idle。
+    runtimeActivitySnapshot: undefined,
+    onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
     onNotification: () => ({ dispose() {} }),
     onRequest: () => ({ dispose() {} }),
     onClose: () => ({ dispose() {} }),
   };
-  const getClient = vi.fn(async () => client);
+  const getClient = vi.fn(async (_workspace: MockWorkspace) => client);
   vi.resetModules();
   vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
     ZCodeAgentProcessManager: class {
+      private readonly clients = new Map<string, typeof client>();
       // 1.1 闲置回收：service 取得 client 时续期计时（host-idle-resources-1.1-spec §2）。
       noteActivity() {}
-      getClient = getClient;
+      // 仅暴露 getClient 已完成登记的本工作区 client，保留外部引擎启动门禁顺序。
+      async getClient(workspace: MockWorkspace) {
+        const client = await getClient(workspace);
+        this.clients.set(resolveWorkspaceKey(workspace), client);
+        return client;
+      }
+      getExistingClient(workspace: MockWorkspace) {
+        return this.clients.get(resolveWorkspaceKey(workspace));
+      }
       onRuntimeLifecycle() {
         return { dispose() {} };
       }
       onRuntimeRestarted() {
         return { dispose() {} };
       }
-      disposeAll() {}
-      async disposeAllAndWait() {}
-      async disposeWorkspace() {}
+      disposeAll() {
+        this.clients.clear();
+      }
+      async disposeAllAndWait() {
+        this.disposeAll();
+      }
+      async disposeWorkspace(workspace: MockWorkspace) {
+        this.clients.delete(resolveWorkspaceKey(workspace));
+      }
     },
   }));
   const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");

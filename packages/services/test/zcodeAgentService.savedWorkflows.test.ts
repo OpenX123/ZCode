@@ -4,12 +4,22 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { zcodeProtocolMethods } from "@zcode/shared";
+import { Emitter } from "@zcode/rpc";
+import {
+  resolveWorkspaceKey,
+  zcodeProtocolMethods,
+  type ZCodeRuntimeActivitySnapshot,
+} from "@zcode/shared";
+
+type MockWorkspace = { workspacePath: string; workspaceIdentity?: string };
 
 async function createServiceWithRequest(request: ReturnType<typeof vi.fn>) {
   const getClient = vi.fn(async () => ({
     request,
     transportKind: "stdio" as const,
+    // 根因：read-only/plugin client 也会接线运行事实订阅；本夹具尚未收到快照。
+    runtimeActivitySnapshot: undefined,
+    onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
     onNotification: () => ({ dispose() {} }),
     onRequest: () => ({ dispose() {} }),
     onClose: () => ({ dispose() {} }),
@@ -17,16 +27,26 @@ async function createServiceWithRequest(request: ReturnType<typeof vi.fn>) {
   vi.resetModules();
   vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
     ZCodeAgentProcessManager: class {
+      private readonly clients = new Map<string, Awaited<ReturnType<typeof getClient>>>();
       // 1.1 闲置回收：service 取得 client 时续期计时（host-idle-resources-1.1-spec §2）。
       noteActivity() {}
-      getClient = getClient;
+      async getClient(workspace: MockWorkspace) {
+        const client = await getClient();
+        this.clients.set(resolveWorkspaceKey(workspace), client);
+        return client;
+      }
+      getExistingClient(workspace: MockWorkspace) {
+        return this.clients.get(resolveWorkspaceKey(workspace));
+      }
       onRuntimeLifecycle() {
         return { dispose() {} };
       }
       onRuntimeRestarted() {
         return { dispose() {} };
       }
-      disposeAll() {}
+      disposeAll() {
+        this.clients.clear();
+      }
     },
   }));
   const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");

@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
+import { Emitter } from "@zcode/rpc";
 import {
   ProviderConfig,
   ProviderConfigMap,
   ZhipuAccountAccessConfig,
   type ModelSelectionView,
 } from "@zcode/provider";
-import { zcodeProtocolMethods } from "@zcode/shared";
+import {
+  resolveWorkspaceKey,
+  zcodeProtocolMethods,
+  type ZCodeRuntimeActivitySnapshot,
+} from "@zcode/shared";
 import { V4_METHODS } from "@zcode/shared/zcode-protocol-v4";
 
 const START_PLAN_PROVIDER_ID = "account:zai-start-plan";
@@ -30,7 +35,36 @@ type RegistryFixture = {
     models: Array<{ modelId: string }>;
   }>;
 };
+type MockWorkspace = { workspacePath: string; workspaceIdentity?: string };
+type MockClient = { request: unknown; isDisposed?: boolean };
+
 class MockProcessManagerBase {
+  // 未发送 process/runtimeActivity 的夹具保留 undefined；Emitter 提供真实的可释放订阅。
+  private readonly clients = new Map<string, MockClient>();
+
+  // 根因：运行事实接线只读取已登记 client；夹具必须等 getClient 完成后按 workspace 登记，
+  // 不能在初始化前返回 client，也不能让同路径的不同远端 identity 互相借用。
+  protected trackClient<T extends MockClient>(getClient: (workspace: MockWorkspace) => Promise<T>) {
+    return async (workspace: MockWorkspace) => {
+      const client = await getClient(workspace);
+      this.clients.set(resolveWorkspaceKey(workspace), client);
+      return client;
+    };
+  }
+
+  getExistingClient(workspace: MockWorkspace) {
+    const client = this.clients.get(resolveWorkspaceKey(workspace));
+    return client?.isDisposed ? undefined : client;
+  }
+
+  async disposeWorkspace(workspace: MockWorkspace) {
+    this.clients.delete(resolveWorkspaceKey(workspace));
+  }
+
+  disposeAll() {
+    this.clients.clear();
+  }
+
   // Bug 原因：service 现在订阅 runtime unavailable 生命周期来清理旧 client；这些 provider
   // 用例只验证 registry/model 语义，mock 必须提供同形状的空订阅，避免在业务断言前失败。
   onRuntimeLifecycle() {
@@ -233,16 +267,17 @@ describe("createZCodeAgentService provider registry", () => {
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        async getClient() {
+        getClient = this.trackClient(async () => {
           return {
             request,
             transportKind: "stdio",
+            runtimeActivitySnapshot: undefined,
+            onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
             onNotification: () => ({ dispose() {} }),
             onRequest: () => ({ dispose() {} }),
             onClose: () => ({ dispose() {} }),
           };
-        }
-        disposeAll() {}
+        });
       },
     }));
     const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
@@ -279,6 +314,8 @@ describe("createZCodeAgentService provider registry", () => {
         throw new Error("Unexpected request");
       }),
       transportKind: "stdio" as const,
+      runtimeActivitySnapshot: undefined,
+      onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
       onNotification: () => ({ dispose() {} }),
       onRequest: () => ({ dispose() {} }),
       onClose: () => ({ dispose() {} }),
@@ -286,8 +323,7 @@ describe("createZCodeAgentService provider registry", () => {
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        getClient = getClient;
-        disposeAll() {}
+        getClient = this.trackClient(getClient);
       },
     }));
     const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
@@ -328,8 +364,7 @@ describe("createZCodeAgentService provider registry", () => {
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        getClient = getClient;
-        disposeAll() {}
+        getClient = this.trackClient(getClient);
       },
     }));
     const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
@@ -357,6 +392,8 @@ describe("createZCodeAgentService provider registry", () => {
     const getClient = vi.fn(async () => ({
       request: vi.fn(),
       transportKind: "stdio" as const,
+      runtimeActivitySnapshot: undefined,
+      onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
       onNotification: () => ({ dispose() {} }),
       onRequest: () => ({ dispose() {} }),
       onClose: () => ({ dispose() {} }),
@@ -364,8 +401,7 @@ describe("createZCodeAgentService provider registry", () => {
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        getClient = getClient;
-        disposeAll() {}
+        getClient = this.trackClient(getClient);
       },
     }));
     const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
@@ -404,6 +440,8 @@ describe("createZCodeAgentService provider registry", () => {
       const getClient = vi.fn(async () => ({
         request,
         transportKind: "stdio" as const,
+        runtimeActivitySnapshot: undefined,
+        onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
         onNotification: () => ({ dispose() {} }),
         onRequest: () => ({ dispose() {} }),
         onClose: () => ({ dispose() {} }),
@@ -411,8 +449,7 @@ describe("createZCodeAgentService provider registry", () => {
       vi.resetModules();
       vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
         ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-          getClient = getClient;
-          disposeAll() {}
+          getClient = this.trackClient(getClient);
         },
       }));
       const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
@@ -465,6 +502,8 @@ describe("createZCodeAgentService provider registry", () => {
     const getClient = vi.fn(async () => ({
       request: vi.fn(),
       transportKind: "stdio" as const,
+      runtimeActivitySnapshot: undefined,
+      onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
       onNotification: () => ({ dispose() {} }),
       onRequest: () => ({ dispose() {} }),
       onClose: () => ({ dispose() {} }),
@@ -472,9 +511,7 @@ describe("createZCodeAgentService provider registry", () => {
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        getClient = getClient;
-        async disposeWorkspace() {}
-        disposeAll() {}
+        getClient = this.trackClient(getClient);
       },
     }));
     const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
@@ -509,6 +546,8 @@ describe("createZCodeAgentService provider registry", () => {
       const client = {
         request,
         transportKind: "stdio" as const,
+        runtimeActivitySnapshot: undefined,
+        onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
         onNotification: () => ({ dispose() {} }),
         onRequest: () => ({ dispose() {} }),
         onClose: () => ({ dispose() {} }),
@@ -519,8 +558,7 @@ describe("createZCodeAgentService provider registry", () => {
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        getClient = getClient;
-        disposeAll() {}
+        getClient = this.trackClient(getClient);
       },
     }));
     const selectionSource = createModelSelectionChangeSource({
@@ -576,6 +614,8 @@ describe("createZCodeAgentService provider registry", () => {
     const getClient = vi.fn(async () => ({
       request: vi.fn(),
       transportKind: "stdio" as const,
+      runtimeActivitySnapshot: undefined,
+      onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
       onNotification: () => ({ dispose() {} }),
       onRequest: () => ({ dispose() {} }),
       onClose: () => ({ dispose() {} }),
@@ -583,8 +623,7 @@ describe("createZCodeAgentService provider registry", () => {
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        getClient = getClient;
-        disposeAll() {}
+        getClient = this.trackClient(getClient);
       },
     }));
     const selectionSource = createModelSelectionChangeSource({ revision: 1, providers: [] });
@@ -607,17 +646,21 @@ describe("createZCodeAgentService provider registry", () => {
     const getClient = vi.fn(async () => ({
       request: vi.fn(),
       transportKind: "stdio" as const,
+      runtimeActivitySnapshot: undefined,
+      onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
       onNotification: () => ({ dispose() {} }),
       onRequest: () => ({ dispose() {} }),
       onClose: () => ({ dispose() {} }),
     }));
-    const disposeWorkspace = vi.fn(async () => {});
+    const disposeWorkspace = vi.fn(async (_workspace: MockWorkspace) => {});
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        getClient = getClient;
-        disposeWorkspace = disposeWorkspace;
-        disposeAll() {}
+        getClient = this.trackClient(getClient);
+        async disposeWorkspace(workspace: MockWorkspace) {
+          await super.disposeWorkspace(workspace);
+          await disposeWorkspace(workspace);
+        }
       },
     }));
     const selectionSource = createModelSelectionChangeSource({
@@ -664,6 +707,8 @@ describe("createZCodeAgentService provider registry", () => {
     const getClient = vi.fn(async () => ({
       request,
       transportKind: "stdio" as const,
+      runtimeActivitySnapshot: undefined,
+      onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
       onNotification: () => ({ dispose() {} }),
       onRequest: () => ({ dispose() {} }),
       onClose: () => ({ dispose() {} }),
@@ -671,8 +716,7 @@ describe("createZCodeAgentService provider registry", () => {
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        getClient = getClient;
-        disposeAll() {}
+        getClient = this.trackClient(getClient);
       },
     }));
     const selectionSource = createModelSelectionChangeSource({
@@ -728,16 +772,17 @@ describe("createZCodeAgentService provider registry", () => {
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        async getClient() {
+        getClient = this.trackClient(async () => {
           return {
             request,
             transportKind: "stdio",
+            runtimeActivitySnapshot: undefined,
+            onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
             onNotification: () => ({ dispose() {} }),
             onRequest: () => ({ dispose() {} }),
             onClose: () => ({ dispose() {} }),
           };
-        }
-        disposeAll() {}
+        });
       },
     }));
     const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
@@ -815,6 +860,8 @@ describe("createZCodeAgentService provider registry", () => {
       const client = {
         request,
         transportKind: "stdio",
+        runtimeActivitySnapshot: undefined,
+        onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
         onNotification: () => ({ dispose() {} }),
         onRequest: () => ({ dispose() {} }),
         onClose: () => ({ dispose() {} }),
@@ -822,10 +869,9 @@ describe("createZCodeAgentService provider registry", () => {
       vi.resetModules();
       vi.doMock("#src/zcode-agent/zcodeAgentProcessManager.js", () => ({
         ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-          async getClient() {
+          getClient = this.trackClient(async () => {
             return client;
-          }
-          disposeAll() {}
+          });
         },
       }));
       const { createZCodeAgentService } = await import("#src/zcode-agent/zcodeAgentService.js");
@@ -905,16 +951,17 @@ describe("createZCodeAgentService provider registry", () => {
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class extends MockProcessManagerBase {
-        async getClient() {
+        getClient = this.trackClient(async () => {
           return {
             request,
             transportKind: "stdio",
+            runtimeActivitySnapshot: undefined,
+            onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
             onNotification: () => ({ dispose() {} }),
             onRequest: () => ({ dispose() {} }),
             onClose: () => ({ dispose() {} }),
           };
-        }
-        disposeAll() {}
+        });
       },
     }));
     const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
@@ -970,6 +1017,8 @@ describe("createZCodeAgentService provider registry", () => {
       .mockResolvedValueOnce({
         request: firstRequest,
         transportKind: "stdio",
+        runtimeActivitySnapshot: undefined,
+        onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
         onNotification: () => ({ dispose() {} }),
         onRequest: () => ({ dispose() {} }),
         onClose: () => ({ dispose() {} }),
@@ -977,16 +1026,18 @@ describe("createZCodeAgentService provider registry", () => {
       .mockResolvedValue({
         request: secondRequest,
         transportKind: "stdio",
+        runtimeActivitySnapshot: undefined,
+        onRuntimeActivityChanged: new Emitter<ZCodeRuntimeActivitySnapshot>().event,
         onNotification: () => ({ dispose() {} }),
         onRequest: () => ({ dispose() {} }),
         onClose: () => ({ dispose() {} }),
       });
     vi.resetModules();
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
-      ZCodeAgentProcessManager: class {
+      ZCodeAgentProcessManager: class extends MockProcessManagerBase {
         // 1.1 闲置回收：service 取得 client 时续期计时（host-idle-resources-1.1-spec §2）。
         noteActivity() {}
-        getClient = getClient;
+        getClient = this.trackClient(getClient);
         // Bug 原因同共享 mock：service 构造期新增 runtime 生命周期订阅；本用例只驱动
         // stdio 重试，因此用空 disposable 补齐局部测试桩契约。
         onRuntimeLifecycle() {
@@ -997,7 +1048,6 @@ describe("createZCodeAgentService provider registry", () => {
         onRuntimeRestarted() {
           return { dispose() {} };
         }
-        disposeAll() {}
       },
     }));
     const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
