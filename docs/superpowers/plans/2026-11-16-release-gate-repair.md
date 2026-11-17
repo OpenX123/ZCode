@@ -656,3 +656,12 @@ Task32 raw 收敛补充：新 raw 频繁调用原防抖会让恢复 full load �
 - [ ] Step 5: 自审、提交限定文件并写 task-33-report.md，报告 commits、真实命令/退出/skip、迁移差异和限制后停止。不得派子 agent、运行全量、构建、清理进程、push 或发布；根 typecheck/lint、聚合独审及最终冻结门禁由 controller 统一执行。
 
 **Controller 最终执行顺序（仅工作流优化，不改产品或门禁）：** 同一冻结 HEAD 先执行 root frozen 静态/closure 预检 7 步，再验收匹配候选原生包；通过后由实际 git push 的原 `.husky/pre-push` 运行第 8 步完整 `verify:pre-push`，固定原 BASE `1af`。hook 非 0 不上传，保留原 hook、全部门禁和预算；避免同 HEAD standalone verify 后 push 重复执行。controller 使用 ignored `Run-FrozenReleasePreflight.ps1` 与 `Complete-FrozenReleaseWithPush.ps1`，不改旧 `Run-FrozenReleaseGate`、根 package、hook 或测试选择器；完整闭环仍要求最终 results 8 步及 remote SHA 读回。
+
+### Task 35: 修复 GitReview 装配与 POSIX 工厂 mock 隔离
+
+**Evidence / scope:** `f7c38cbe` 原真实 push hook 已自然 exit 1/drain，完整错误确认 GitReview 30000ms timeout 与 ProcessTree 后续真实 spawn 命中 POSIX 禁止 OS 调用实现。只改本计划、gate spec 及原 `v4ConversationStatusPanelGitReview.test.ts`、`zcodeStdioTransport.processTree.test.ts`；不改生产源码、配置、依赖、预算、retry、skip 或业务断言。遵循 W21，不归因具体冷依赖或生产 Git 回调。
+
+- [ ] Step 1: 固定 Node24.14.0/pnpm10.33.2，freshness、原默认架构基线、读相关合同及已安装 Vitest mock 语义；精确运行原 ProcessTree 文件取得 RED，GitReview 使用原完整门禁 RED。先独立提交 spec/plan。
+- [ ] Step 2: GitReview 所有 mock 初始化后、describe 前顶层 await import 真实面板，移除 it 内导入；保留唯一 it 与所有原断言。POSIX scope afterEach 对其改写的四个工厂 mock 显式 mockReset；原普通 spy/timer/env 与真实 child teardown 保持。
+- [ ] Step 3: 执行两个完整文件 GREEN、局部 lint/fmt、diff 和架构检查；审查 once 队列、初始真实实现恢复与所有原断言/预算保留，提交两份测试。日志新建 scratch/task35，不覆盖原件；报告 `task-35-implementation-report.md` 列 commits、命令/自然 exit/原件、文件与风险。
+- [ ] Step 4: 交 controller 独立复审和根 typecheck/lint、最终冻结门禁。writer 不派 agent、不跑全量/root type/lint/build/GUI/push，不改变旧包或历史证据。
