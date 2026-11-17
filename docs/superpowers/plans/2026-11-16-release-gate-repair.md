@@ -105,7 +105,9 @@ pnpm exec vitest run packages/desktop/test/sourceServerReleaseResolver.test.ts -
 
 ```ts
 try {
-  await reaper.writeFile(JSON.stringify({ pid: process.pid, token: randomUUID() }));
+  await reaper.writeFile(
+    JSON.stringify({ pid: process.pid, token: randomUUID() }),
+  );
 } finally {
   await reaper.close();
 }
@@ -618,3 +620,19 @@ Task 2 结果形成后，controller 在任何后续代码修改前把有证据�
 - [ ] Step 1: 全mock POSIX Transport retry确定性RED，首轮快照不可得/清理残留，第二轮恢复快照并保留仍活child的EOF等待。实际调用公开disposeAndWait与受控exit，不伪造内部状态或mock被测orchestration成功；系统边界全替身。
 - [ ] Step 2: 只将首次发现前置锁及仅首轮EOF规则限定win32；POSIX恢复原空值快照重取及仍活时EOF等待，已有snapshot保留；Windows同tick/跨attempt不变量保持。中文注释给出跨平台误应用原因。
 - [ ] Step 3: 新POSIX全mock回归和Windows108完整GREEN，定向格式/lint/架构/diff，自审提交。Task30报告后交原整体reviewer scoped复审WSR-I1及新破坏。所有真实验证由controller后续完成；不自行build/发布或派agent。
+
+### Task 31: 调查完整门禁新暴露的 watcher 与 Settings 测试失败（只读）
+
+已由 `task-31-watcher-investigation.md`、`task-31-settings-investigation.md` 记录当前0a2e8380源码链与原件；controller定向51项47pass/1fail/3既存skip，watcher case-only rename仍失败，Settings23/23。本次不将无trace的原生事件顺序或冷导入具体最慢模块当作已确认根因，不重复原失败归因或运行。
+
+### Task 32: 闭合文件名大小写缓存与 Settings 测试冷导入生命周期
+
+**Authority / evidence:** 用户已授权修好全部既有门禁再发布；Task31确认的实际输出与源码充分链路。基础HEAD `0a2e8380627934281dbfa51320b3aa6996a5b2ce`。恢复既有case-only rename/真实目录隔离合同，不新增平台策略或架构owner。
+
+**Files:** `docs/subagent-runtime-refresh.md`（owning合同及I/O表）、`docs/testing/1.4.1-gate-repair-spec.md`（新验收）、`packages/services/src/subagents/subagentRuntimeConfig.ts`、原 `packages/services/test/subagentRuntimeConfig.test.ts`、原 `packages/ui/test/settingsPageIntegratedTerminalShell.test.ts`。必要时原 `subagentRuntimeConfigWatcher.test.ts` 只测试侧事件诊断，不改其业务断言/timeout/skip。`subagentConfigScope.ts`仅直接证据表明现有取消接口不足时报告controller，不自行改。无新生产/测试文件、依赖、架构policy或新owner。
+
+- [ ] Step 1: 先更新owning spec：增量事件批至多一次agents根depth0真实名称枚举，casefold只选受影响候选组、不是身份key；按真实目录项对账旧/新拼写，实际并存的不同大小写文件均保留。无关Markdown内容不重读，不递归、不常驻扫描/定时兜底、不查询文件身份、不维护alias map，保留单scope串行load与取消/迟到拒绝。Settings共享冷模块装配在测试用例边界外完成，超时业务用例不得留迟到render写共享状态。spec提交后才动测试/源码。
+- [ ] Step 2: 复用现有watcher EventEmitter及fs替身，确定性RED覆盖旧拼写change读到new后新拼写unlink、仅add新拼写、混合顺序、实际大小写敏感双文件/双目录、同批无关文件、取消迟到；casefold不能合并真实独立项。枚举一次/无关内容零额外读断言保留。不能用timer等候原生事件猜顺序。
+- [ ] Step 3: 最小loadDocuments受影响组对账实现，沿现有context取消；不按platform统一lowercase。中文注释说明别名字符串键残留的充分原因，不宣称已采集原native顺序。Settings所有mock初始化后统一装配真实模块，移出各it内重复冷导入，23条业务断言/用例名保留；清除失效的“第二条才是首import”说明，不扩任何timeout/retry/skip。
+- [ ] Step 4: 新确定性GREEN、现有RuntimeConfig全文件、原生Watcher整文件、Settings23项，必要直接scope回归；准确保存RED/GREEN/skip与各自然exit。真实原生case-only rename必须通过且不改等待，不以mock替代。仅文件I/O与原watcher，不启动child/runtime/build/E2E/进程清理。根type/lint最终controller统一；定向fmt/lint/diff/架构、自审限定提交、task-32-report.md。
+- [ ] Step 5: controller独立spec/quality审查本增量后，新最终冻结根门禁及新匹配候选。旧6a完整gate自然exit1及HEAD漂移、三个新失败保持原属性；不得把定向Settings通过当原全gate已关闭。
