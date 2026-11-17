@@ -13,6 +13,77 @@ function evaluate(expression, github) {
   return runInNewContext(expression.slice(3, -2), { github });
 }
 
+test("独立Windows本机构建复用指定descriptor且不具备正式发布路径", async () => {
+  const local = parse(
+    await readFile(
+      new URL("../../.github/workflows/build-windows-local.yml", import.meta.url),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(Object.keys(local.on), ["workflow_dispatch"]);
+  assert.deepEqual(local.permissions, { contents: "read", actions: "read" });
+  assert.deepEqual(Object.keys(local.jobs), ["build"]);
+  const job = local.jobs.build;
+  assert.equal(job.permissions, undefined);
+  assert.deepEqual(job["runs-on"], ["self-hosted", "Windows", "X64", "ycode-windows"]);
+  for (const [event, ref, expected] of [
+    ["workflow_dispatch", "refs/heads/main", true],
+    ["workflow_dispatch", "refs/heads/feature", false],
+    ["push", "refs/heads/main", false],
+    ["pull_request", "refs/pull/1/merge", false],
+  ])
+    assert.equal(evaluate(job.if, { event_name: event, ref }), expected);
+  assert.equal(job.env.SOURCE_RUN_ID, "44137427217");
+  assert.equal(job.env.RELEASE_VERSION, "1.4.1");
+  assert.equal(job.env.RELEASE_TAG, `v${job.env.RELEASE_VERSION}`);
+  assert.equal(job.env.ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY, "1");
+  const steps = job.steps;
+  assert.equal(steps[0].uses, "actions/checkout@v7");
+  assert.equal(steps[0].with["persist-credentials"], false);
+  assert.equal(steps.find((step) => step.uses === "pnpm/action-setup@v6").with.version, "10.33.2");
+  assert.equal(
+    steps.find((step) => step.uses === "actions/setup-node@v7").with["node-version"],
+    "24.14.0",
+  );
+  const validation = steps.find((step) => step.name === "Validate source identity");
+  assert.equal(validation.shell, "node {0}");
+  runInNewContext(validation.run, { process: { env: job.env } });
+  for (const bad of [
+    { SOURCE_RUN_ID: "x;echo bad" },
+    { SOURCE_RUN_ID: "" },
+    { RELEASE_VERSION: "../../bad" },
+    { RELEASE_VERSION: "1.4.1\n" },
+    { RELEASE_TAG: "v1.4.2" },
+  ]) {
+    assert.throws(
+      () => runInNewContext(validation.run, { process: { env: { ...job.env, ...bad } } }),
+      /Invalid source/,
+    );
+  }
+  assert.ok(steps.some((step) => step.run === "pnpm install --frozen-lockfile"));
+  assert.ok(steps.some((step) => step.run === "node scripts/github-release-version.mjs apply"));
+  const descriptor = steps.find((step) => step.uses === "actions/download-artifact@v8");
+  assert.deepEqual(descriptor.with, {
+    name: "source-server-descriptor-v${{ env.RELEASE_VERSION }}",
+    path: "packages/desktop/mock-cdn/releases/${{ env.RELEASE_VERSION }}",
+    "run-id": "${{ env.SOURCE_RUN_ID }}",
+    "github-token": "${{ github.token }}",
+  });
+  assert.ok(steps.some((step) => step.run === "pnpm bundle:desktop -- --os win --arch x64"));
+  const uploads = steps.filter((step) => step.uses === "actions/upload-artifact@v7");
+  assert.deepEqual(
+    uploads.map((step) => step.with.path),
+    ["packages/desktop/dist/*.exe", "packages/desktop/dist/*.size-report.json"],
+  );
+  assert.ok(uploads.every((step) => step.with["if-no-files-found"] === "error"));
+  assert.ok(
+    steps.every(
+      (step) => !/\b(?:allocate|publish|release create|tag create)\b/.test(step.run ?? ""),
+    ),
+  );
+  assert.ok(steps.every((step) => !step.run?.includes("${{")));
+});
+
 test("本机Windows路由只允许main手动显式开启，默认和其他上下文仍托管", () => {
   const input = workflow.on.workflow_dispatch.inputs.local_windows;
   assert.equal(input.type, "boolean");
