@@ -657,6 +657,8 @@ Task32 raw 收敛补充：新 raw 频繁调用原防抖会让恢复 full load �
 
 **Controller 最终执行顺序（仅工作流优化，不改产品或门禁）：** 同一冻结 HEAD 先执行 root frozen 静态/closure 预检 7 步，再验收匹配候选原生包；通过后由实际 git push 的原 `.husky/pre-push` 运行第 8 步完整 `verify:pre-push`，固定原 BASE `1af`。hook 非 0 不上传，保留原 hook、全部门禁和预算；避免同 HEAD standalone verify 后 push 重复执行。controller 使用 ignored `Run-FrozenReleasePreflight.ps1` 与 `Complete-FrozenReleaseWithPush.ps1`，不改旧 `Run-FrozenReleaseGate`、根 package、hook 或测试选择器；完整闭环仍要求最终 results 8 步及 remote SHA 读回。
 
+仅 Task35 的一次性匹配候选例外：相对 f7 只有下述精确四份 test/spec/plan 文件差异、其它全部 tracked blob/paths 一致，原 f7 五 SHA、原 native 与 92 项保护核验通过，才允许以新 `production-content-equivalence` 桥复用 f7 本地候选验收。保留原 `builtFrom`/`buildCommit=f7`，HEAD/time 元数据不等价；不改旧 stamp/base/包/证据，不声称新 HEAD 构建或 cache 命中。出现任何其它 diff 或生产内容变化必须重建重验。新 HEAD 仍执行完整 required 门禁与真实 hook exit 0、remote SHA 读回；正式 GitHub assets 必须由新 HEAD 构建。
+
 ### Task 35: 修复 GitReview 装配与 POSIX 工厂 mock 隔离
 
 **Evidence / scope:** `f7c38cbe` 原真实 push hook 已自然 exit 1/drain，完整错误确认 GitReview 30000ms timeout 与 ProcessTree 后续真实 spawn 命中 POSIX 禁止 OS 调用实现。只改本计划、gate spec 及原 `v4ConversationStatusPanelGitReview.test.ts`、`zcodeStdioTransport.processTree.test.ts`；不改生产源码、配置、依赖、预算、retry、skip 或业务断言。遵循 W21，不归因具体冷依赖或生产 Git 回调。
