@@ -1,7 +1,18 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -38,6 +49,7 @@ import {
 } from "../../../scripts/native-search-tools-config.mjs";
 import { prepareNativeSearchTools } from "../../../scripts/prepare-native-search-tools.mjs";
 import { verifyPrebuiltArchiveSha256 } from "../../../scripts/prebuilt-binary-extract.mjs";
+import { verifyNativeSearchBinaryTarget } from "../../../scripts/native-search-tools-verify.mjs";
 import {
   LEGACY_REMOTE_RIPGREP_ARCHIVE_SHA256_BY_TARGET,
   LEGACY_REMOTE_RIPGREP_VERSION,
@@ -233,5 +245,125 @@ describe("prepareNativeSearchTools", () => {
       prepareNativeSearchTools({ prebuiltPlan: plan, source: "repository" }),
     ).rejects.toThrow(/Invalid local native search archive/u);
     expect(plan.artifacts.some((artifact) => existsSync(artifact.binaryPath))).toBe(false);
+  });
+});
+
+describe.skipIf(process.platform !== "win32")("Windows ZIP plain Node 与模块污染", () => {
+  async function windowsFixture() {
+    const root = await createTemporaryDirectory();
+    const moduleRoot = join(root, "module path ' fixture");
+    const moduleDir = join(moduleRoot, "Microsoft.PowerShell.Archive");
+    const marker = join(root, "archive-module-loaded");
+    const temporary = join(root, "temp path ' fixture");
+    mkdirSync(moduleDir, { recursive: true });
+    mkdirSync(temporary);
+    // 自有模块只复现 CI 中 PS7 Archive 调用 Framework 不存在的三参数重载，不改系统模块。
+    writeFileSync(
+      join(moduleDir, "Microsoft.PowerShell.Archive.psm1"),
+      `function Expand-Archive {
+  param([string]$LiteralPath, [string]$DestinationPath, [switch]$Force)
+  [System.IO.File]::WriteAllText($env:ZCODE_TEST_ARCHIVE_MARKER, 'loaded')
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($LiteralPath)
+  try { [System.IO.Compression.ZipFileExtensions]::ExtractToDirectory($archive, $DestinationPath, $true) }
+  finally { $archive.Dispose() }
+}
+Export-ModuleMember -Function Expand-Archive
+`,
+    );
+    const env: NodeJS.ProcessEnv = Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([key]) => !["PSMODULEPATH", "NODE_OPTIONS", "TEMP", "TMP"].includes(key.toUpperCase()),
+      ),
+    );
+    Object.assign(env, {
+      PSModulePath: `${moduleRoot};${join(process.env.SystemRoot!, "System32/WindowsPowerShell/v1.0/Modules")}`,
+      ZCODE_TEST_ARCHIVE_MARKER: marker,
+      TEMP: temporary,
+      TMP: temporary,
+      ZCODE_DEPS_BASE_URL: "",
+      INTRANET_MACHINE_HOST: "",
+      NATIVE_SEARCH_TOOLS_DOWNLOAD_BASE_URL: "",
+    });
+    const outputDir = join(root, "tools");
+    const plan = resolveNativeSearchPrebuiltPlan({ platform: "win32", arch: "arm64", outputDir });
+    return { root, marker, temporary, env, outputDir, plan };
+  }
+
+  it("污染 PSModulePath 时 plain Node 仍抽取真实 ARM64 归档且不加载 Archive 模块", async () => {
+    const f = await windowsFixture();
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../../../scripts/prepare-native-search-tools.mjs", import.meta.url)),
+        "--platform",
+        "win32",
+        "--arch",
+        "arm64",
+        "--output-dir",
+        f.outputDir,
+      ],
+      { env: f.env, encoding: "utf8" },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(f.marker)).toBe(false);
+    for (const artifact of f.plan.artifacts) {
+      verifyPrebuiltArchiveSha256(artifact.archivePath, artifact.archiveSha256);
+      expect(() =>
+        verifyNativeSearchBinaryTarget(artifact.binaryPath, { platform: "win32", arch: "arm64" }),
+      ).not.toThrow();
+      const bytes = readFileSync(artifact.binaryPath);
+      expect(bytes.readUInt16LE(bytes.readUInt32LE(0x3c) + 4)).toBe(0xaa64);
+      expect(readSources(artifact).binary.origin).toBe("repository-archive");
+    }
+    expect(readdirSync(f.temporary)).toEqual([]);
+  });
+
+  it.each(["sha", "zip", "validation"])("%s 失败不覆盖原二进制并清理临时目录", async (failure) => {
+    const f = await windowsFixture();
+    const artifact = f.plan.artifacts[0]!;
+    const binaryPath = join(f.root, "kept", artifact.binaryName);
+    mkdirSync(dirname(binaryPath));
+    writeFileSync(binaryPath, "previous-valid-output");
+    const invalidZip = join(f.root, "invalid.zip");
+    writeFileSync(invalidZip, "not a ZIP archive");
+    const options = {
+      ...artifact,
+      archivePath: failure === "zip" ? invalidZip : artifact.archivePath,
+      archiveSha256:
+        failure === "sha"
+          ? "0".repeat(64)
+          : failure === "zip"
+            ? createHash("sha256").update(readFileSync(invalidZip)).digest("hex")
+            : artifact.archiveSha256,
+      binaryPath,
+      targetPlatform: "win32",
+    };
+    const worker = join(f.root, "extract-worker.mjs");
+    writeFileSync(
+      worker,
+      `
+import { extractPrebuiltBinary } from ${JSON.stringify(new URL("../../../scripts/prebuilt-binary-extract.mjs", import.meta.url).href)};
+import { verifyNativeSearchBinaryTarget } from ${JSON.stringify(new URL("../../../scripts/native-search-tools-verify.mjs", import.meta.url).href)};
+await extractPrebuiltBinary({ ...${JSON.stringify(options)}, validateBinary(path) {
+  verifyNativeSearchBinaryTarget(path, { platform: 'win32', arch: 'arm64' });
+  if (${JSON.stringify(failure)} === 'validation') throw new Error('fixture validation rejected');
+}});
+`,
+    );
+    const result = spawnSync(process.execPath, [worker], { env: f.env, encoding: "utf8" });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      failure === "sha"
+        ? "Archive SHA-256 mismatch"
+        : failure === "validation"
+          ? "fixture validation rejected"
+          : "ExtractToDirectory",
+    );
+    expect(result.stderr).not.toContain("Failed to locate");
+    expect(readFileSync(binaryPath, "utf8")).toBe("previous-valid-output");
+    expect(existsSync(f.marker)).toBe(false);
+    expect(readdirSync(f.temporary)).toEqual([]);
   });
 });

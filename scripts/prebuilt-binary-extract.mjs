@@ -45,7 +45,9 @@ export function extractPrebuiltArchive({ archivePath, archiveExt, extractDir, cw
         "-ExecutionPolicy",
         "Bypass",
         "-Command",
-        `Expand-Archive -LiteralPath '${archivePath.replaceAll("'", "''")}' -DestinationPath '${extractDir.replaceAll("'", "''")}' -Force`,
+        // Windows PowerShell 会沿污染的 PSModulePath 加载 PS7 Archive 模块，调用 Framework
+        // 不存在的三参数重载后仍继续；新临时目录无需覆盖，直接用内置两参数 API 并让异常终止。
+        `$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('${archivePath.replaceAll("'", "''")}', '${extractDir.replaceAll("'", "''")}')`,
       ]);
       return;
     }
