@@ -572,6 +572,29 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] Step 3: 将设计审查17项验收逐项映射到可达生产入口与全mock系统边界，补充定向批量查询上限/超长集合/单批失败/最终retry/绝对截止测试。明确 sync snapshot→async filtering/force 组合和合法child/grandchild活性断言，不仅检查目标列表，还检查模拟原生扩树effect。
 - [ ] Step 4: 仅对四文档执行格式检查及 git diff --check；不启动测试/runtime/CIM/taskkill/build。提交本任务四文档并自审，写 `task-27-spec-report.md`，给出完整预算公式、拟实现文件清单/内部合同、具体命令与真实结果、未覆盖限制。独立 spec/quality 审查通过后，controller 另写 Task28 实现 brief，不能自行进入生产代码或派子agent。
 
+### Task 28: 实现 Windows 固定身份与单 PID 有界清理
+
+**Authority:** 用户已批准安全方案。Task27最终规格 HEAD `3400565af5f65be943068ed57db8ba358cbbaed2` 已独审 Spec compliant / quality Approved / C0I0M0。绑定合同为 `docs/superpowers/specs/2026-09-01-windows-cim-cleanup-alerts-design.md`、`docs/windows-agent-process-cleanup-state-machine.md` 与 `docs/testing/1.4.1-gate-repair-spec.md` 的 W01–W17；shutdown owning spec同步生效。`task-27-spec-report.md`及Fix1附录仅作导航，不替代规格，不重读历史全计划。
+
+**Files:** 仅现有 `packages/services/src/process/processTreeSnapshot.ts`、`processTreeSnapshotAsync.ts`、`windowsProcessListAsync.ts`、`processTreeOwnership.ts`、`processTreeTerminator.ts`、`processTreeWaiter.ts`、`windowsTaskkillRunner.ts`；`processTreeTypes.ts`仅确需的内部结果类型；`packages/services/src/zcode-agent/zcodeStdioTransport.ts`仅可信exit/首快照标志/最终retry不重复EOF的必要局部；`zcodeAgentProcessManager.ts`只旧 `/T` 注释。测试仅现有 `packages/services/test/processTreeTerminator.windows.test.ts`，必要时 `zcodeStdioTransport.processTree.test.ts`。不得新增文件、修改架构policy或重写Manager/Transport/Waiter；隔离缝隙若确实不足，先向controller报告具体证据，不能私自扩边界。
+
+**Interfaces / Global constraints（原Task27约束及以下精确合同共同绑定）：**
+
+- 保留既有唯一owner、公开Terminator options/result/runner外形、POSIX/owner/lease/workspaceIdentity/remoteSessionId语义。Windows canonical为 `windows-utc-100ns:<unixTicks>`，raw .NET ticks减 `621355968000000000n`，有效范围 `0..3155378975999999999`。严格整数/无歧义解析、每条直接父子边比较、root锚点、可信 `[spawn,exit)`、相等保留、整枝拒绝、sync→async可组合。不能降低来源精度、加epsilon或为无生产caller的旧token编造兼容路径。
+- 固定候选K与阶段证据M分开，内部matched/gone/unknown完整传递；unknown不能被初始空过滤或force回调丢掉，EPERM不当ESRCH。仅完整成功响应或明确退出证据能证明gone。公开remainingPids不变；保留合法reparent及child/grandchild活性，固定候选之后未知晚生进程不猜测认领。
+- 全链 graceful/force/root例外实际命令都无 `/T`。live root只给原受管root exact graceful，不能由旧snapshot给后代graceful；root-exited仅本阶段matched可graceful。原root例外仍受unverified/已证换代/原始spawn对象/exit与真实存活门槛约束，不授予子树；按数值PID发命令不宣传为原子OS句柄操作。
+- 原入口先固定 `Dl=entryStartedAt+F+L+G`，`D=min(调用方原绝对截止（若有）,Dl)`；F默认2000、L默认2000（transport1000）、G默认250，均按规格校验。`nominalForceAt=entryStartedAt+F`，`s=max(实际调度时刻,nominalForceAt-750)`。s>=D不得启动阶段；否则 `R=max(0,floor(D-s))`、`O=min(G,floor(R/3))`、`V=min(750,floor((R-O)/2))`、`C=min(L,R-O-V)`；验证截止s+V，命令截止D-O，终态D。force不早于nominalForceAt，实际命令timeout夹在L与当时命令截止余量；及时M可在验证截止后、命令截止前使用，迟到结果不得新增信号/计时器。禁止不足750ms就全跳过或重新起算总时间。
+- root-exited前置过滤只用 `Dg=min(now+750,nominalForceAt-750,D)` 的正余量；无余量直接force，不吃掉短窗口。只有完全unavailable且无固定候选、原root例外不适用时才走原纯观察上限。K非空而M空仍保留验证/命令预算。首轮transport总3250ms、最终retry1250ms、外层Host4000ms不扩大，不宣称两次最坏4500ms能全部落入4000ms。
+- 全表只用于一次首次发现，失败不补扫；retry复用首快照、跳过重复EOF宽限，首轮EOF不变。定向批上限64、每批一个OR filter，同一受管进程/固定快照cleanup链（含retry）的底层物理在途查询峰值≤1。旧查询跨D1未确认结束时retry只观察、不得开第二查询或新增信号（含root例外）；等占用扣D2，释放后新attempt按实际s重新算余量，不用旧M。旧callback只收口旧资源，不能污染新占用/主动派发。无全局Host队列/第二owner、不增retry或逐PID/全表fallback。
+- 真实系统边界先全mock。禁止真实spawn/CIM/taskkill、Service/Transport实际runtime suite、build/pack/E2E/push/发布/安装；用户现场Docker/WSL不参与。不要增加skip、削弱业务断言、扩超时，或用测试夹具成功冒充实际清理。中文注释写清bug原因与依据，遵守当前架构与公开入口。
+
+- [ ] Step 1: 固定Node24.14/pnpm10.33.2，执行freshness/架构baseline并读services context；读精确规格及直接函数，不重读历史计划。任何测试前确保execFile、spawnSync、spawn、process.kill均全替身，未知系统调用直接fail。先写并观察新缺口的预期RED，不能先改生产。
+- [ ] Step 2: 按W01–W17建立行为证据，可按独立缺口分小批RED→GREEN；已有正确不变量可记baseline GREEN，不能伪造RED。CIM mock解析完整OR集合，taskkill mock模拟含 `/T` 时沿受控PPID树扩张effect。旧 `not.toHaveBeenCalledWith([.../T,/F])` 不可保留为恒真保护；按实际目标PID+force语义及effect检查。因新合同修改旧参数/输入期望须逐项说明，不批量删弱原断言。
+- [ ] Step 3: 最小实现规格的canonical/发现/内部结果、exact runner、批量查询与跨attempt占用、入口D及force调度、Waiter未决观察/settle隔离。必须覆盖合法reparent、同步snapshot→异步force、无显式transport D入口；不引入新accepted集合、后台扫描或私有跨包捷径。
+- [ ] Step 4: 全mock实际Transport第二次dispose组合。首轮保留合法R/C/G到截止reject；第二次root仍活忽略EOF，但不重复EOF/全表，合法后代经当前验证exact force并remaining空。对照unknown无信号/原纯观察。再测旧查询物理在途跨D1=3250、retry到D2=4500：旧在3300结束时只能释放后新验证且峰值≤1；旧到4501才结束时无第二查询/信号、unknown保留、晚callback不复活或污染占用。不以mock terminator成功或仅forceAfter=0替代组合。
+- [ ] Step 5: 完整相关全mock suite GREEN，变更文件format/lint/diff及架构检查；根typecheck/lint由controller统一（若自行执行须真实记录）。禁止自动进入真实验证。按规格W01–W17逐项记录入口、RED或既存GREEN、最终结果和覆盖限制。
+- [ ] Step 6: 自审、只提交限定正式文件，写 `task-28-report.md`：命令/自然exit/日志、每个根因RED→GREEN、W01–W17映射、原断言变化、时序与预算、批量/跨attempt峰值、未覆盖平台/性能及OS非原子残余。不得派子agent；DONE仅交controller独立spec/quality安全审查，不表示可发布。设计若不闭合，向controller给证据，不再问用户已授权的一般实施细节。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
