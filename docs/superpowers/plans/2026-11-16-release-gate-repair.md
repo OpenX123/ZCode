@@ -608,3 +608,13 @@ Task 2 结果形成后，controller 在任何后续代码修改前把有证据�
 - [ ] Step 1: 读取新增规范、直接parser/full-discovery/targeted调用与现有mock。全系统边界替身，新增异步和同步首次发现PID0+合法R/C/G的确定性RED；定向PID0单独/混合、坏行/坏PID/坏时间反向回归保持严格。
 - [ ] Step 2: 最小上下文修正，只有无筛选全表可忽略规范明确的系统行；定向仍unknown。保留同一parser和状态owner，不引入第二发现、后台扫描或宽松通用过滤。中文注释说明实证根因。
 - [ ] Step 3: 完整既有Windows全mock套件，精确format/lint/diff/架构；自审、提交限定文件、写task-29-report.md，保存RED/GREEN和命令自然exit。不得自行真实OS/build/发布或派子agent。controller独立spec/quality审查后进入原真实回归。
+
+### Task 30: 恢复 POSIX Transport retry 的既定退出语义
+
+**Evidence / spec:** `final-windows-supplement-review.md` 的 WSR-I1；Task28原约束明确POSIX路径保持原样。此任务恢复现行规格，无新安全策略。Manager→ProtocolClient→Transport重试在POSIX可达；首轮remaining后，原仍活child在第二轮仍有EOF自然退出等待，不能由Windows优化跳过。
+
+**Files:** 仅 `packages/services/src/zcode-agent/zcodeStdioTransport.ts`、既有 `packages/services/test/zcodeStdioTransport.processTree.test.ts`。不修改原真实用例、预算/timeout/skip、POSIX Terminator、Windows 108项安全断言或其它正式文件。
+
+- [ ] Step 1: 全mock POSIX Transport retry确定性RED，首轮快照不可得/清理残留，第二轮恢复快照并保留仍活child的EOF等待。实际调用公开disposeAndWait与受控exit，不伪造内部状态或mock被测orchestration成功；系统边界全替身。
+- [ ] Step 2: 只将首次发现前置锁及仅首轮EOF规则限定win32；POSIX恢复原空值快照重取及仍活时EOF等待，已有snapshot保留；Windows同tick/跨attempt不变量保持。中文注释给出跨平台误应用原因。
+- [ ] Step 3: 新POSIX全mock回归和Windows108完整GREEN，定向格式/lint/架构/diff，自审提交。Task30报告后交原整体reviewer scoped复审WSR-I1及新破坏。所有真实验证由controller后续完成；不自行build/发布或派agent。
