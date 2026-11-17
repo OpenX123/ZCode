@@ -640,3 +640,5 @@ Task 2 结果形成后，controller 在任何后续代码修改前把有证据�
 controller 于 2026-11-17 根据 `scratch/task32/native-trace.log` 授权将 `subagentConfigScope.ts` 纳入白名单。原用例删除时 raw rename researcher.md 已到两个当前 watcher，而 all 无对应 unlink；只做实际名称对账仍残留新拼写，故原 Task32 不闭合。先提交本补充，再确定性 raw RED→最小实现→原 native 全文件。
 
 仅当前 direct 文档根、直接 Markdown 文件、有效 details.watchedPath 为当前根/对应文件的 rename/change 提示走原 pending。允许同 scope 待稳定候选集合（事件元数据，不是第二 snapshot owner），随批次捕获清理、失败重排保留；all 不取消 raw 稳定要求。复用既有 1000/500ms 稳定函数、取消和迟到保护，不独立 timer、重绑或轮询。新增半写不提前发布、raw-only 更新/删除、合并与无效来源拒绝回归，移除临时 native 诊断，保留日志；原断言/预算/skip不改。
+
+Task32 raw 收敛补充：新 raw 频繁调用原防抖会让恢复 full load 饥饿（原 native shared recovery stat=0）；controller授权 schedule 窄门槛：raw只建立首个计时、不推迟已有timer，all保持原样。先fake time raw@0/200→300启动RED，再修并验证原整文件，不扩大等待或新增计时机制。
