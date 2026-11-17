@@ -24,7 +24,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (!parentEvents.has(path)) parentEvents.set(path, new Set());
       parentEvents.get(path)!.add(emitter);
       try {
-        for await (const [event] of on(emitter, "change", { signal: options.signal })) yield event;
+        for await (const [event] of on(emitter, "change", {
+          signal: options.signal,
+        }))
+          yield event;
       } finally {
         parentEvents.get(path)?.delete(emitter);
       }
@@ -36,7 +39,9 @@ const readiness = vi.hoisted(() => ({ automatic: true }));
 const watched = vi.hoisted(() => new Set<EventEmitter>());
 vi.mock("chokidar", () => ({
   watch: vi.fn(() => {
-    const watcher = Object.assign(new EventEmitter(), { close: vi.fn(async () => {}) });
+    const watcher = Object.assign(new EventEmitter(), {
+      close: vi.fn(async () => {}),
+    });
     watched.add(watcher);
     if (readiness.automatic) queueMicrotask(() => watcher.emit("ready"));
     return watcher;
@@ -91,7 +96,17 @@ async function fixture() {
   const emit = (path: string, event = "change", _rootPath = userRoot) =>
     [...watched].forEach((watcher) => watcher.emit("all", event, path));
   const read = () => cache.read(workspace);
-  return { root, userRoot, statePath, state, readState, cache, workspace, emit, read };
+  return {
+    root,
+    userRoot,
+    statePath,
+    state,
+    readState,
+    cache,
+    workspace,
+    emit,
+    read,
+  };
 }
 
 describe("Host incremental subagent snapshots", () => {
@@ -100,7 +115,11 @@ describe("Host incremental subagent snapshots", () => {
     const volumeRoot = parse(resolve(tmpdir())).root;
     const parent = join(volumeRoot, `subagent-missing-${randomUUID()}`);
     const root = join(parent, "agents");
-    const scope = createSubagentConfigScope({ root, load: async () => [], onSettled: vi.fn() });
+    const scope = createSubagentConfigScope({
+      root,
+      load: async () => [],
+      onSettled: vi.fn(),
+    });
     cleanup.push(() => scope.dispose());
     await scope.ready;
     const [anchor, options] = vi.mocked(watch).mock.calls.at(-1)!;
@@ -110,9 +129,11 @@ describe("Host incremental subagent snapshots", () => {
     expect(ignored(volumeRoot)).toBe(false);
     expect(options?.depth).toBe(0);
     expect(ignored(parent, { isDirectory: () => true } as Stats)).toBe(false);
-    expect(ignored(join(volumeRoot, "unrelated"), { isDirectory: () => true } as Stats)).toBe(
-      false,
-    );
+    expect(
+      ignored(join(volumeRoot, "unrelated"), {
+        isDirectory: () => true,
+      } as Stats),
+    ).toBe(false);
     expect(
       ignored(join(volumeRoot, "unrelated.md"), {
         isDirectory: () => false,
@@ -158,7 +179,7 @@ describe("Host incremental subagent snapshots", () => {
     );
     expect(vi.mocked(fs.readFile).mock.calls.filter(([p]) => p === path)).toHaveLength(1);
     expect(vi.mocked(fs.readFile).mock.calls.filter(([p]) => p === temporary)).toHaveLength(0);
-    expect(vi.mocked(fs.readdir).mock.calls.filter(([p]) => p === project)).toHaveLength(1);
+    expect(vi.mocked(fs.readdir).mock.calls.filter(([p]) => p === project)).toHaveLength(2);
     const reads = vi.mocked(fs.readFile).mock.calls.length;
     parentWatcher.emit("all", "change", path);
     await Promise.all([f.read(), f.read()]);
@@ -213,7 +234,9 @@ describe("Host incremental subagent snapshots", () => {
         await writeFile(path, markdown("aaa", "latest"));
         obsolete.emit("all", "unlinkDir", project);
         await until(async () =>
-          expect(await f.read()).toMatchObject({ profiles: [{ systemPrompt: "latest" }] }),
+          expect(await f.read()).toMatchObject({
+            profiles: [{ systemPrompt: "latest" }],
+          }),
         );
         expect((obsolete as unknown as { close: unknown }).close).toHaveBeenCalledOnce();
       }
@@ -250,7 +273,9 @@ describe("Host incremental subagent snapshots", () => {
     );
     gate.resolve(markdown("aaa", "obsolete"));
     await until(async () =>
-      expect(await f.read()).toMatchObject({ profiles: [{ systemPrompt: "replacement" }] }),
+      expect(await f.read()).toMatchObject({
+        profiles: [{ systemPrompt: "replacement" }],
+      }),
     );
     expect(
       vi
@@ -274,8 +299,301 @@ describe("Host incremental subagent snapshots", () => {
     await writeFile(path, markdown("aaa", "recreated"));
     f.emit(f.userRoot, "addDir");
     await until(async () =>
-      expect(await f.read()).toMatchObject({ profiles: [{ systemPrompt: "recreated" }] }),
+      expect(await f.read()).toMatchObject({
+        profiles: [{ systemPrompt: "recreated" }],
+      }),
     );
+  });
+
+  it.each([
+    ["old spelling change", [["change", "Researcher.MD"]]],
+    ["new spelling add", [["add", "researcher.md"]]],
+    [
+      "remove then reads",
+      [
+        ["unlink", "Researcher.MD"],
+        ["add", "researcher.md"],
+        ["change", "Researcher.MD"],
+      ],
+    ],
+    [
+      "reads then remove",
+      [
+        ["change", "Researcher.MD"],
+        ["add", "researcher.md"],
+        ["unlink", "Researcher.MD"],
+      ],
+    ],
+  ] as const)(
+    "reconciles actual filename after %s and removes its old cached spelling",
+    async (_name, events) => {
+      const f = await fixture();
+      const oldPath = join(f.userRoot, "Researcher.MD");
+      const newPath = join(f.userRoot, "researcher.md");
+      const other = join(f.userRoot, "other.md");
+      await writeFile(oldPath, markdown("researcher", "old"));
+      await writeFile(other, markdown("other", "old-other"));
+      await f.cache.prepare(f.workspace);
+      const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+      const entries = await actual.readdir(f.userRoot, { withFileTypes: true });
+      let names = ["researcher.md", "other.md"];
+      // 模拟不区分大小写卷：旧拼写仍能读到同一文件；事件序列是确定性边界，不冒充 native trace。
+      vi.mocked(fs.readdir).mockImplementation((path, options) =>
+        path === f.userRoot
+          ? (Promise.resolve(
+              names.map((name) =>
+                Object.assign(Object.create(Object.getPrototypeOf(entries[0]!)), entries[0], {
+                  name,
+                }),
+              ),
+            ) as ReturnType<typeof fs.readdir>)
+          : actual.readdir(path, options),
+      );
+      vi.mocked(fs.readFile).mockImplementation((path, options) => {
+        if (path === oldPath || path === newPath)
+          return (
+            names.includes("researcher.md")
+              ? Promise.resolve(markdown("researcher", "new"))
+              : Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }))
+          ) as ReturnType<typeof fs.readFile>;
+        return actual.readFile(path, options);
+      });
+      vi.mocked(fs.readdir).mockClear();
+      vi.mocked(fs.readFile).mockClear();
+      const watcher = initialWatcherFor(f.userRoot);
+      await writeFile(other, markdown("other", "new-other"));
+      for (const [event, name] of events) watcher.emit("all", event, join(f.userRoot, name));
+      watcher.emit("all", "change", other);
+      await until(async () =>
+        expect(await f.read()).toMatchObject({
+          profiles: [
+            { name: "other", systemPrompt: "new-other" },
+            { path: newPath, name: "researcher", systemPrompt: "new" },
+          ],
+        }),
+      );
+      expect(vi.mocked(fs.readdir).mock.calls.filter(([path]) => path === f.userRoot)).toHaveLength(
+        1,
+      );
+      expect(
+        vi
+          .mocked(fs.readFile)
+          .mock.calls.map(([path]) => path)
+          .sort(),
+      ).toEqual([newPath, other].sort());
+      names = ["other.md"];
+      watcher.emit("all", "unlink", newPath);
+      await until(async () =>
+        expect(await f.read()).toMatchObject({ profiles: [{ name: "other" }] }),
+      );
+      expect(
+        vi
+          .mocked(fs.readFile)
+          .mock.calls.map(([path]) => path)
+          .sort(),
+      ).toEqual([newPath, other].sort());
+    },
+  );
+
+  it("preserves two actual filenames differing only in case and removes only the missing entry", async () => {
+    const f = await fixture();
+    const upper = join(f.userRoot, "Researcher.MD"),
+      lower = join(f.userRoot, "researcher.md");
+    await writeFile(upper, markdown("upper"));
+    await f.cache.prepare(f.workspace);
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const [entry] = await actual.readdir(f.userRoot, { withFileTypes: true });
+    let names = ["Researcher.MD", "researcher.md"];
+    vi.mocked(fs.readdir).mockImplementation((path, options) =>
+      path === f.userRoot
+        ? (Promise.resolve(
+            names.map((name) =>
+              Object.assign(Object.create(Object.getPrototypeOf(entry!)), entry, { name }),
+            ),
+          ) as ReturnType<typeof fs.readdir>)
+        : actual.readdir(path, options),
+    );
+    vi.mocked(fs.readFile).mockImplementation((path, options) =>
+      path === lower
+        ? (Promise.resolve(markdown("lower")) as ReturnType<typeof fs.readFile>)
+        : actual.readFile(path, options),
+    );
+    const watcher = initialWatcherFor(f.userRoot);
+    watcher.emit("all", "add", lower);
+    await until(async () => {
+      const result = await f.read();
+      expect(result.kind === "ready" && result.profiles.map(({ path }) => path).sort()).toEqual(
+        [upper, lower].sort(),
+      );
+    });
+    names = ["Researcher.MD"];
+    watcher.emit("all", "unlink", lower);
+    await until(async () =>
+      expect(await f.read()).toMatchObject({
+        profiles: [{ path: upper, name: "upper" }],
+      }),
+    );
+  });
+
+  it.each(["dispose", "reload"])("rejects a late filename enumeration after %s", async (action) => {
+    const f = await fixture();
+    const path = join(f.userRoot, "a.md");
+    await writeFile(path, markdown("aaa", "old"));
+    await f.cache.prepare(f.workspace);
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const entries = await actual.readdir(f.userRoot, { withFileTypes: true });
+    const gate = Promise.withResolvers<typeof entries>();
+    let entered = false;
+    vi.mocked(fs.readdir).mockImplementationOnce(() => {
+      entered = true;
+      return gate.promise as ReturnType<typeof fs.readdir>;
+    });
+    initialWatcherFor(f.userRoot).emit("all", "change", path);
+    try {
+      await until(() => expect(entered).toBe(true));
+      if (action === "dispose") f.cache.dispose();
+      else {
+        await writeFile(path, markdown("aaa", "replacement"));
+        await f.cache.prepare(f.workspace);
+      }
+    } finally {
+      gate.resolve(entries);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    if (action === "dispose") await expect(f.read()).rejects.toThrow(/disposed/i);
+    else
+      expect(await f.read()).toMatchObject({
+        profiles: [{ systemPrompt: "replacement" }],
+      });
+  });
+
+  it.each([
+    ["rename", false],
+    ["change", true],
+  ] as const)(
+    "settles raw-only %s hints without publishing partial writes (all=%s)",
+    async (rawEvent, withAll) => {
+      const f = await fixture();
+      const path = join(f.userRoot, "a.md");
+      await writeFile(path, markdown("aaa", "old"));
+      await f.cache.prepare(f.workspace);
+      const watcher = initialWatcherFor(f.userRoot);
+      vi.mocked(fs.readFile).mockClear();
+      vi.mocked(fs.readdir).mockClear();
+      vi.mocked(fs.stat).mockClear();
+      await writeFile(path, markdown("aaa", "partial"));
+      watcher.emit("raw", rawEvent, "a.md", { watchedPath: f.userRoot });
+      if (withAll) watcher.emit("all", "change", path);
+      await until(() =>
+        expect(
+          vi.mocked(fs.stat).mock.calls.filter(([p]) => p === path).length,
+        ).toBeGreaterThanOrEqual(2),
+      );
+      expect(fs.readFile).not.toHaveBeenCalled();
+      expect(await f.read()).toMatchObject({ profiles: [{ systemPrompt: "old" }] });
+      await writeFile(path, markdown("aaa", "complete"));
+      await until(async () =>
+        expect(await f.read()).toMatchObject({ profiles: [{ systemPrompt: "complete" }] }),
+      );
+      expect(vi.mocked(fs.readFile).mock.calls.map(([p]) => p)).toEqual([path]);
+      expect(vi.mocked(fs.readdir).mock.calls.map(([p]) => p)).toEqual([f.userRoot]);
+      await rm(path);
+      watcher.emit("raw", "rename", "a.md", { watchedPath: path });
+      await until(async () => expect(await f.read()).toMatchObject({ profiles: [] }));
+      expect(fs.readFile).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("starts a raw batch at its original deadline despite more raw hints", async () => {
+    const f = await fixture();
+    await writeFile(join(f.userRoot, "a.md"), markdown("aaa"));
+    await f.cache.prepare(f.workspace);
+    const watcher = initialWatcherFor(f.userRoot);
+    vi.mocked(fs.readdir).mockClear();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      watcher.emit("raw", "change", "a.md", { watchedPath: f.userRoot });
+      await vi.advanceTimersByTimeAsync(200);
+      watcher.emit("raw", "change", "a.md", { watchedPath: f.userRoot });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fs.readdir).toHaveBeenCalledWith(f.userRoot, { withFileTypes: true });
+    } finally {
+      f.cache.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["dispose", "reload"])("cancels raw stability checks on %s", async (action) => {
+    const f = await fixture();
+    const path = join(f.userRoot, "a.md");
+    await writeFile(path, markdown("aaa", "old"));
+    await f.cache.prepare(f.workspace);
+    vi.mocked(fs.stat).mockClear();
+    vi.mocked(shared.parseAgentProfileFromMarkdown).mockClear();
+    await writeFile(path, markdown("aaa", "partial"));
+    initialWatcherFor(f.userRoot).emit("raw", "rename", "a.md", { watchedPath: f.userRoot });
+    await until(() =>
+      expect(
+        vi.mocked(fs.stat).mock.calls.filter(([p]) => p === path).length,
+      ).toBeGreaterThanOrEqual(2),
+    );
+    if (action === "dispose") f.cache.dispose();
+    else {
+      await writeFile(path, markdown("aaa", "replacement"));
+      await f.cache.prepare(f.workspace);
+      expect(await f.read()).toMatchObject({ profiles: [{ systemPrompt: "replacement" }] });
+    }
+    expect(
+      vi
+        .mocked(shared.parseAgentProfileFromMarkdown)
+        .mock.calls.some(([input]) => input.content.includes("partial")),
+    ).toBe(false);
+    if (action === "dispose") await expect(f.read()).rejects.toThrow(/disposed/i);
+  });
+
+  it("ignores raw hints from unrelated paths, parent watchers and obsolete instances", async () => {
+    const f = await fixture();
+    await writeFile(join(f.userRoot, "a.md"), markdown("aaa"));
+    await f.cache.prepare(f.workspace);
+    const watcher = initialWatcherFor(f.userRoot);
+    const projectParent = initialWatcherFor(f.root);
+    const obsolete = watcher;
+    const invalid = () => {
+      for (const [event, path, details] of [
+        ["rename", "nested/a.md", { watchedPath: f.userRoot }],
+        ["rename", "a.md", { watchedPath: join(f.root, "USER") }],
+        ["rename", "a.md", {}],
+        ["rename", "a.md", undefined],
+        ["rename", "other.txt", { watchedPath: f.userRoot }],
+        ["unknown", "a.md", { watchedPath: f.userRoot }],
+      ] as const)
+        watcher.emit("raw", event, path, details);
+      projectParent.emit("raw", "rename", "a.md", { watchedPath: f.root });
+    };
+    vi.mocked(fs.readdir).mockClear();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      invalid();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(fs.readdir).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+    await f.cache.prepare(f.workspace);
+    vi.mocked(fs.readdir).mockClear();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      obsolete.emit("raw", "rename", "a.md", { watchedPath: f.userRoot });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(fs.readdir).not.toHaveBeenCalled();
+      f.cache.dispose();
+      for (const current of watched)
+        current.emit("raw", "rename", "a.md", { watchedPath: f.userRoot });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(fs.readdir).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("parses changed files once, never rereads other scopes, and returns independent memory copies", async () => {
@@ -302,7 +620,7 @@ describe("Host incremental subagent snapshots", () => {
       }),
     );
     expect(readFile.mock.calls.map(([path]) => path)).toEqual([a]);
-    expect(readdir).not.toHaveBeenCalled();
+    expect(readdir.mock.calls.map(([path]) => path)).toEqual([f.userRoot]);
     expect(parse).toHaveBeenCalledTimes(1);
     f.state.disabledAgentIds = ["user:user:aaa"];
     f.emit(f.statePath, "change", join(f.root, "state"));
@@ -312,7 +630,9 @@ describe("Host incremental subagent snapshots", () => {
     await Promise.all(Array.from({ length: 10 }, f.read));
     expect(f.readState).toHaveBeenCalledTimes(2);
     expect(f.readState).toHaveBeenLastCalledWith(f.statePath);
-    expect(before).toMatchObject({ profiles: [{ systemPrompt: "aaa" }, { name: "bbb" }] });
+    expect(before).toMatchObject({
+      profiles: [{ systemPrompt: "aaa" }, { name: "bbb" }],
+    });
     const changed = await f.read();
     if (changed.kind === "ready") changed.profiles.length = 0;
     expect(await f.read()).toMatchObject({ profiles: [{ name: "bbb" }] });
@@ -342,10 +662,14 @@ describe("Host incremental subagent snapshots", () => {
       for (const events of parentEvents.get(dirname(f.userRoot)) ?? [])
         events.emit("change", { eventType: "rename", filename: "unrelated" });
       await vi.advanceTimersByTimeAsync(100);
-      // 父目录检查不应重新开始文件批次的 300ms 合并窗口。
-      expect(fs.readFile).toHaveBeenCalledWith(path, "utf8");
+      // 父目录检查不应重新开始文件批次的 300ms 合并窗口；批次先浅列再读取。
+      expect(fs.readdir).toHaveBeenLastCalledWith(f.userRoot, {
+        withFileTypes: true,
+      });
       await until(async () =>
-        expect(await f.read()).toMatchObject({ profiles: [{ systemPrompt: "new" }] }),
+        expect(await f.read()).toMatchObject({
+          profiles: [{ systemPrompt: "new" }],
+        }),
       );
     } finally {
       vi.useRealTimers();
@@ -419,7 +743,10 @@ describe("Host incremental subagent snapshots", () => {
       retry.resolve(f.state);
     }
     await until(async () =>
-      expect(await f.read()).toMatchObject({ kind: "ready", profiles: [{ name: "aaa" }] }),
+      expect(await f.read()).toMatchObject({
+        kind: "ready",
+        profiles: [{ name: "aaa" }],
+      }),
     );
   });
 
@@ -462,7 +789,9 @@ describe("Host incremental subagent snapshots", () => {
       await f.cache.prepare(f.workspace);
       const before = await f.read();
       const gate = Promise.withResolvers<string>();
-      const others = ["b", "c"].map((name) => ({ workspacePath: join(f.root, name) }));
+      const others = ["b", "c"].map((name) => ({
+        workspacePath: join(f.root, name),
+      }));
       const projectPath = join(others[0]!.workspacePath, ".zcode", "agents", "b.md");
       await mkdir(dirname(projectPath), { recursive: true });
       await writeFile(projectPath, markdown("bbb", "project"));
@@ -493,10 +822,14 @@ describe("Host incremental subagent snapshots", () => {
           await vi.waitFor(() => expect(completed).toContain(others[0]!.workspacePath), {
             timeout: 6500,
           });
-          expect(await f.cache.read(others[0]!)).toEqual({ kind: "built-in-fallback" });
+          expect(await f.cache.read(others[0]!)).toEqual({
+            kind: "built-in-fallback",
+          });
           project.resolve(markdown("bbb", "project"));
         }
-        await vi.waitFor(() => expect(completed).toHaveLength(2), { timeout: 4000 });
+        await vi.waitFor(() => expect(completed).toHaveLength(2), {
+          timeout: 4000,
+        });
         expect(await f.read()).toEqual(before);
         expect(await f.cache.read(others[1]!)).toEqual(before);
         // B 超时过也应和 C 一样复用共享完整结果，不能等共享后台刷新结束才恢复。
@@ -532,7 +865,9 @@ describe("Host incremental subagent snapshots", () => {
       const f = await fixture();
       const path = join(f.userRoot, "a.md");
       await writeFile(path, markdown("aaa", "old"));
-      let before: Awaited<ReturnType<typeof f.read>> = { kind: "built-in-fallback" };
+      let before: Awaited<ReturnType<typeof f.read>> = {
+        kind: "built-in-fallback",
+      };
       if (mode === "reload") {
         await f.cache.prepare(f.workspace);
         before = await f.read();
@@ -554,7 +889,9 @@ describe("Host incremental subagent snapshots", () => {
           return snapshot;
         });
         expect(prepared).toBe(false);
-        await vi.waitFor(() => expect(prepared && readDone).toBe(true), { timeout: 6500 });
+        await vi.waitFor(() => expect(prepared && readDone).toBe(true), {
+          timeout: 6500,
+        });
         expect(performance.now() - started).toBeGreaterThanOrEqual(4900);
         expect(await reading).toEqual(before);
         const fileReads = vi.mocked(fs.readFile).mock.calls.length;
@@ -594,7 +931,9 @@ describe("Host incremental subagent snapshots", () => {
       else {
         await writeFile(path, markdown("aaa", "replacement"));
         await f.cache.prepare(f.workspace);
-        expect(await f.read()).toMatchObject({ profiles: [{ systemPrompt: "replacement" }] });
+        expect(await f.read()).toMatchObject({
+          profiles: [{ systemPrompt: "replacement" }],
+        });
       }
     } finally {
       // 已替换的读取不能用旧禁用状态覆盖新范围；销毁后不能重新发布。
@@ -604,7 +943,10 @@ describe("Host incremental subagent snapshots", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     if (action === "dispose") await expect(f.read()).rejects.toThrow(/disposed/i);
-    else expect(await f.read()).toMatchObject({ profiles: [{ systemPrompt: "replacement" }] });
+    else
+      expect(await f.read()).toMatchObject({
+        profiles: [{ systemPrompt: "replacement" }],
+      });
   });
 
   it("isolates project failure and workspace identities, ignores nested profiles and preserves duplicate precedence", async () => {
@@ -619,13 +961,18 @@ describe("Host incremental subagent snapshots", () => {
     }
     await writeFile(join(f.userRoot, "a.md"), markdown("same", "user"));
     await f.cache.prepare(f.workspace);
-    const other = { workspacePath: join(f.root, "other"), workspaceIdentity: "remote:other" };
+    const other = {
+      workspacePath: join(f.root, "other"),
+      workspaceIdentity: "remote:other",
+    };
     await f.cache.prepare(other);
     const own = await f.read();
     expect(own).toMatchObject({
       profiles: [{ systemPrompt: "user" }, { systemPrompt: "project" }],
     });
-    expect(await f.cache.read(other)).toMatchObject({ profiles: [{ systemPrompt: "user" }] });
+    expect(await f.cache.read(other)).toMatchObject({
+      profiles: [{ systemPrompt: "user" }],
+    });
     await f.cache.prepare(f.workspace);
     expect(await f.read()).toEqual(own);
     for (const directory of nestedDirectories) {
@@ -635,11 +982,15 @@ describe("Host incremental subagent snapshots", () => {
       );
     }
     const fail = vi.spyOn(fs, "readFile");
+    await writeFile(join(project, "bad.md"), markdown("bad"));
     fail.mockRejectedValueOnce(new Error("project unreadable"));
     f.emit(join(project, "bad.md"), "add", project);
     await until(async () => expect(await f.read()).toEqual({ kind: "built-in-fallback" }));
-    expect(await f.cache.read(other)).toMatchObject({ profiles: [{ systemPrompt: "user" }] });
+    expect(await f.cache.read(other)).toMatchObject({
+      profiles: [{ systemPrompt: "user" }],
+    });
     fail.mockRestore();
+    await rm(join(project, "bad.md"));
     f.emit(join(project, "bad.md"), "unlink", project);
     await until(async () => expect(await f.read()).toEqual(own));
   });
@@ -686,7 +1037,9 @@ describe("Host incremental subagent snapshots", () => {
     expect(await f.read()).toEqual(before);
     expect([...watched]).toEqual(watchers);
     await f.cache.prepare(f.workspace);
-    expect(await f.read()).toMatchObject({ profiles: [{ systemPrompt: "updated" }] });
+    expect(await f.read()).toMatchObject({
+      profiles: [{ systemPrompt: "updated" }],
+    });
     for (const watcher of watchers)
       expect((watcher as unknown as { close: unknown }).close).toHaveBeenCalled();
     for (const signal of subscriptions) expect(signal?.aborted).toBe(true);

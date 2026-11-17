@@ -50,14 +50,21 @@ async function loadDocuments(
     changes && previous
       ? new Map(previous)
       : new Map<string, ReturnType<typeof parseAgentProfileFromMarkdown>>();
-  const updates =
-    changes ?? new Map((await listDocuments(root)).map((path) => [path, "read" as const]));
+  const documents = await listDocuments(root);
+  context.signal.throwIfAborted();
+  // 事件可能沿用旧大小写拼写，字符串键直接删写会留下旧缓存；以本批真实目录项对账。
+  // fold 只筛相关组，实际并存的不同大小写文件仍分别保留，不建立第二份身份映射。
+  const affected = changes && new Set([...changes.keys()].map((path) => path.toLowerCase()));
+  const actualPaths = new Set(documents);
+  for (const path of next.keys())
+    if (affected?.has(path.toLowerCase()) && !actualPaths.has(path)) next.delete(path);
+  const updates = new Map(
+    documents
+      .filter((path) => !affected || affected.has(path.toLowerCase()))
+      .map((path) => [path, "read" as const]),
+  );
   await Promise.all(
-    [...updates].map(async ([path, action]) => {
-      if (action === "remove") {
-        next.delete(path);
-        return;
-      }
+    [...updates].map(async ([path]) => {
       if (!(await context.waitForStableFile(path))) {
         next.delete(path);
         return;

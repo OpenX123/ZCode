@@ -58,6 +58,7 @@ export function createSubagentConfigScope<T>(options: {
     reset = true;
   let value: T | undefined;
   const pending: SubagentFileChanges = new Map();
+  const rawPending = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let draining: Promise<void> | undefined;
   let initialized = false,
@@ -71,7 +72,9 @@ export function createSubagentConfigScope<T>(options: {
     replaceRequested = false;
   let loadController: AbortController | undefined;
 
-  function schedule() {
+  function schedule(debounce = true) {
+    // raw 持续写入不能反复推迟加载准入；写稳仍交由原稳定检查完成。
+    if (timer && !debounce) return;
     if (timer) clearTimeout(timer);
     if (!disposed && initialized && (reset || pending.size))
       timer = setTimeout(() => {
@@ -92,6 +95,8 @@ export function createSubagentConfigScope<T>(options: {
         const generation = revision;
         const full = reset || failed;
         const changes = new Map(pending);
+        const rawChanges = new Set(rawPending);
+        rawPending.clear();
         for (const path of changes.keys()) changedPaths.add(path);
         if (full) changedPaths.add(root);
         pending.clear();
@@ -102,9 +107,11 @@ export function createSubagentConfigScope<T>(options: {
         try {
           const next = await options.load(value, full ? undefined : changes, {
             signal: controller.signal,
-            // 新 watcher 的初次扫描不经过 awaitWriteFinish；仅目录恢复补扫显式等待稳定。
+            // 恢复补扫和未经 Chokidar 写稳的 raw 提示共用原稳定检查。
             waitForStableFile: (path) =>
-              needsStability ? waitForStableFile(path, controller.signal) : Promise.resolve(true),
+              needsStability || rawChanges.has(path.toLowerCase())
+                ? waitForStableFile(path, controller.signal)
+                : Promise.resolve(true),
           });
           if (disposed) return;
           if (controller.signal.aborted) continue;
@@ -114,6 +121,8 @@ export function createSubagentConfigScope<T>(options: {
         } catch (error) {
           if (disposed) return;
           if (controller.signal.aborted) continue;
+          // 失败后重排仍须写稳；all 事件不能抹掉同一 scope 已收到的 raw 要求。
+          for (const path of rawChanges) rawPending.add(path);
           if (generation !== revision) {
             for (const [path, action] of changes) if (!pending.has(path)) pending.set(path, action);
             if (full) reset = true;
@@ -144,7 +153,7 @@ export function createSubagentConfigScope<T>(options: {
     });
     return draining;
   }
-  function changed(event: string, path: string) {
+  function changed(event: string, path: string, raw = false) {
     const absolute = resolve(path);
     if (absolute === root && (event === "unlinkDir" || event === "add" || event === "unlink")) {
       void checkWatch(true);
@@ -158,8 +167,9 @@ export function createSubagentConfigScope<T>(options: {
     if (event === "unlink") pending.set(absolute, "remove");
     else if (event === "add" || event === "change") pending.set(absolute, "read");
     else return;
+    if (raw) rawPending.add(absolute.toLowerCase());
     revision++;
-    schedule();
+    schedule(!raw);
   }
   async function findAnchor() {
     let path = root;
@@ -237,8 +247,28 @@ export function createSubagentConfigScope<T>(options: {
           },
         });
         watcher = current;
-        current.on("raw", () => {
-          if (!direct && !disposed && watcher === current) void checkWatch();
+        current.on("raw", (event: unknown, path: unknown, details: unknown) => {
+          if (disposed || watcher !== current) return;
+          if (!direct) {
+            void checkWatch();
+            return;
+          }
+          if (file || (event !== "rename" && event !== "change") || typeof path !== "string")
+            return;
+          if (
+            !details ||
+            typeof details !== "object" ||
+            !("watchedPath" in details) ||
+            typeof details.watchedPath !== "string"
+          )
+            return;
+          const absolute = resolve(root, path);
+          const watchedPath = resolve(details.watchedPath);
+          if (dirname(absolute) !== root || (watchedPath !== root && watchedPath !== absolute))
+            return;
+          // case rename 后原生 raw 删除可没有 all/unlink；仅作为同一 pending 的提示。
+          // raw 尚未经过 Chokidar 写稳，相关实际文件在本 scope 加载时复用既有稳定检查。
+          changed("change", absolute, true);
         });
         // Windows 不报告空目录自身的移动；父目录只订阅原生结构事件，不枚举其内容。
         // 与 Chokidar 的文件索引分离，避免 AGENTS 被误当作逻辑 agents 的删除事件。
@@ -330,6 +360,7 @@ export function createSubagentConfigScope<T>(options: {
       releaseReady?.();
       if (timer) clearTimeout(timer);
       pending.clear();
+      rawPending.clear();
       const current = watcher;
       watcher = undefined;
       void current?.close().catch((error) =>

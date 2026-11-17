@@ -171,7 +171,10 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => ({
 
 const updateSharedSettings = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("@/hooks/useSettingService.js", () => ({
-  useSettings: () => ({ settings: sharedSettingsState.value, update: updateSharedSettings }),
+  useSettings: () => ({
+    settings: sharedSettingsState.value,
+    update: updateSharedSettings,
+  }),
 }));
 
 vi.mock("@/hooks/useModelProviders.js", () => ({
@@ -231,7 +234,9 @@ vi.mock("@/settings/UsageStatsSection.js", () => ({
 vi.mock("@/settings/SkillsSection.js", () => ({
   SkillsSection: () => null,
 }));
-vi.mock("@/project-sidebar/ArchiveManagement.js", () => ({ ArchiveManagement: () => null }));
+vi.mock("@/project-sidebar/ArchiveManagement.js", () => ({
+  ArchiveManagement: () => null,
+}));
 vi.mock("@/settings/PluginsSection.js", () => ({
   PluginsSection: () => null,
 }));
@@ -306,9 +311,11 @@ function flushPendingEffects() {
   }
 }
 
+// 冷导入须在业务用例注册前完成，避免用例超时后迟到 render 污染下一条共享 mock。
+const { SettingsPage } = await import("../src/SettingsPage.js");
+
 describe("SettingsPage integrated terminal shell", () => {
   it("设置侧栏只保留顶部返回工作区，不再挂载重复的底部导航", async () => {
-    const { SettingsPage } = await import("../src/SettingsPage.js");
     const html = renderToStaticMarkup(
       createElement(SettingsPage, { isDesktop: true, onBack: vi.fn() }),
     );
@@ -347,12 +354,7 @@ describe("SettingsPage integrated terminal shell", () => {
     localListIntegratedTerminalShells.mockResolvedValue([]);
   });
 
-  // Bugfix: 本用例是该文件第一个 import SettingsPage 的测试，独吞整棵设置页模块图的
-  // 冷启动（vitest 按文件隔离 worker，模块缓存不跨文件共享）；全量高负载下冷导入会
-  // 顶穿全局 testTimeout 30s。只放宽这一条冷启动用例，后续用例命中缓存不受影响。
   it("renders the settings navigation as labelled groups", async () => {
-    const { SettingsPage } = await import("../src/SettingsPage.js");
-
     const html = renderToStaticMarkup(createElement(SettingsPage, { isWindowsDesktop: true }));
 
     // Agent 引擎入口依据本机 externalEngineService 能力决定，平台外观标志不代表可安装。
@@ -370,10 +372,9 @@ describe("SettingsPage integrated terminal shell", () => {
     expect(html).toContain('id="settings-sidebar-group-basics"');
     // 职业引导组件已退役，设置不能继续提供只写状态的空入口。
     expect(html).not.toContain("settings.onboarding");
-  }, 90_000);
+  });
 
   it("defaults ToolSearch off and saves the selected mode through shared settings", async () => {
-    const { SettingsPage } = await import("../src/SettingsPage.js");
     renderToStaticMarkup(createElement(SettingsPage, {}));
     expect(generalSectionCapture.props?.toolSearchMode).toBe("off");
     const change = generalSectionCapture.props?.onToolSearchModeChange as (
@@ -381,21 +382,19 @@ describe("SettingsPage integrated terminal shell", () => {
     ) => Promise<void>;
     for (const mode of ["auto", "local", "off"] as const) {
       await change(mode);
-      expect(updateSharedSettings).toHaveBeenLastCalledWith({ toolSearchMode: mode });
+      expect(updateSharedSettings).toHaveBeenLastCalledWith({
+        toolSearchMode: mode,
+      });
     }
   });
 
   it("defaults message stream reasoning to visible before settings hydrate", async () => {
-    const { SettingsPage } = await import("../src/SettingsPage.js");
-
     renderToStaticMarkup(createElement(SettingsPage, {}));
 
     expect(generalSectionCapture.props?.messageStreamShowReasoning).toBe(true);
   });
 
   it("uses the local host system service for the global shell setting", async () => {
-    const { SettingsPage } = await import("../src/SettingsPage.js");
-
     renderToStaticMarkup(createElement(SettingsPage, {}));
     flushPendingEffects();
     await flushPromises();
@@ -407,8 +406,6 @@ describe("SettingsPage integrated terminal shell", () => {
   });
 
   it("shows inline window controls on Linux desktop", async () => {
-    const { SettingsPage } = await import("../src/SettingsPage.js");
-
     const html = renderToStaticMarkup(
       createElement(SettingsPage, {
         isDesktop: true,
@@ -429,8 +426,6 @@ describe("SettingsPage integrated terminal shell", () => {
       homedir: "C:\\Users\\local",
       platform: "win32",
     });
-
-    const { SettingsPage } = await import("../src/SettingsPage.js");
 
     renderToStaticMarkup(createElement(SettingsPage, {}));
     flushPendingEffects();
@@ -482,7 +477,6 @@ describe("SettingsPage integrated terminal shell", () => {
   ])(
     "persists Desktop %s on the base Host while Source is active",
     async (callback, value, patch) => {
-      const { SettingsPage } = await import("../src/SettingsPage.js");
       renderToStaticMarkup(createElement(SettingsPage, { isDesktop: true }));
       await (generalSectionCapture.props![callback] as (value: unknown) => Promise<void>)(value);
       expect(localServices.settingService.update).toHaveBeenCalledWith(patch);
@@ -491,7 +485,6 @@ describe("SettingsPage integrated terminal shell", () => {
   );
 
   it("keeps native directory migration on the Desktop", async () => {
-    const { SettingsPage } = await import("../src/SettingsPage.js");
     renderToStaticMarkup(createElement(SettingsPage, { isDesktop: true }));
     await (generalSectionCapture.props!.onDataBaseDirChange as (dir: string) => Promise<void>)(
       "/local/selected-folder",
@@ -504,7 +497,6 @@ describe("SettingsPage integrated terminal shell", () => {
 
   it("propagates local save failures without updating the tray or falling back to Source", async () => {
     localServices.settingService.update.mockRejectedValueOnce(new Error("local disk failure"));
-    const { SettingsPage } = await import("../src/SettingsPage.js");
     renderToStaticMarkup(createElement(SettingsPage, { isDesktop: true }));
     await expect(
       (
@@ -523,7 +515,6 @@ describe("SettingsPage integrated terminal shell", () => {
     ["onTaskAutoArchiveEnabledChange", true, { taskAutoArchiveEnabled: true }],
     ["onTaskAutoArchiveOlderThanDaysChange", 30, { taskAutoArchiveOlderThanDays: 30 }],
   ])("preserves target Environment ownership for %s", async (callback, value, patch) => {
-    const { SettingsPage } = await import("../src/SettingsPage.js");
     if (String(callback).startsWith("onTaskAutoArchive")) selectedSection.value = "archives";
     renderToStaticMarkup(createElement(SettingsPage, { isDesktop: true }));
     await (generalSectionCapture.props![callback] as (value: unknown) => Promise<void>)(value);
@@ -533,7 +524,6 @@ describe("SettingsPage integrated terminal shell", () => {
 
   it("persists embedded browser certificate policy on Desktop", async () => {
     selectedSection.value = "browser";
-    const { SettingsPage } = await import("../src/SettingsPage.js");
     renderToStaticMarkup(createElement(SettingsPage, { isDesktop: true }));
     await (
       generalSectionCapture.props!.onEmbeddedBrowserAllowInsecureCertificatesChange as (
@@ -548,7 +538,6 @@ describe("SettingsPage integrated terminal shell", () => {
 
   it("propagates local migration failure without invoking Source migration", async () => {
     localServices.settingService.updateDataBaseDir.mockRejectedValueOnce(new Error("copy denied"));
-    const { SettingsPage } = await import("../src/SettingsPage.js");
     renderToStaticMarkup(createElement(SettingsPage, { isDesktop: true }));
     await expect(
       (generalSectionCapture.props!.onDataBaseDirChange as (dir: string) => Promise<void>)(
@@ -570,7 +559,6 @@ describe("SettingsPage integrated terminal shell", () => {
       terminalFontFamily: "Source Mono",
       taskAutoArchiveOlderThanDays: 30,
     });
-    const { SettingsPage } = await import("../src/SettingsPage.js");
     renderToStaticMarkup(createElement(SettingsPage, { isDesktop: true }));
     flushPendingEffects();
     await flushPromises();
@@ -594,7 +582,6 @@ describe("SettingsPage integrated terminal shell", () => {
         completeSource = resolve;
       }),
     );
-    const { SettingsPage } = await import("../src/SettingsPage.js");
     renderToStaticMarkup(createElement(SettingsPage, { isDesktop: true }));
     const cleanups = pendingEffects.splice(0).map((effect) => effect());
     for (const cleanup of cleanups) cleanup?.();
