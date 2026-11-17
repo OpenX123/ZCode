@@ -2004,7 +2004,13 @@ manual/capture review 后再从 pending 转正。普通 Web 使用同一 rendere
 
 对应 [case catalog](../conversation-session-case-catalog.md) 的 SAT31–SAT34 与[多智能体展示规范](../desktop/multi-agent-display-spec.md)「对话行内 Subagent 工作卡」。
 候选 spec：`packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-subagent-work-card.test.ts`
-（内置引擎后台子智能体：工作卡 → 成员行打开右侧只读子会话并实时增长 → 停止；只做 typecheck，未运行，待人工 review 后整理 case-local fixture）。
+（内置引擎后台子智能体：工作卡 → 成员行打开右侧只读子会话并实时增长 → 停止。Task13 扩展同包两 runner/三配置，执行前仍为 E2E-pending，未晋升）。
+
+Task13 验收合同：完整原 spec 的 SAT31–SAT33 显式 mini + UX08 默认 auto；独立 HOME/runId 仅原 UX08 显式 panel。运行中真实 UI 切模式，结束事实来自 CLI；ended-only 先核其它有效摘要为空，再分别断言 shell 与活动入口。auto 必须实测父 conversation 容器跨 1280px，Side Pane 只隐藏不关 tab，恢复同一 child header/`UX08_RESULT_B`；panel 目录计数 2、各运行计数 0，真实收起后 mini 卸载。保留流式增长、部分/全部完成、SQLite/Timeline、刷新、语言/主题/窄屏键盘；导航/刷新重取可见父 scope，child 按实际 sessionId+完整 tab 身份验证。canonical manifest 镜像 case-local fixture 全部请求 metadata，pending replay 显式 common+case-local，保留 `maxMatches=1`。本行不宣称 GUI 已通过，执行后追加真实结果。
+
+R101 校准：panel 的内部 Agent 分区在运行数归零后沿既有规则折起；候选先真实展开唯一可见可用的 Agent trigger 并核 `aria-expanded=true`，再核目录唯一性/计数 2。目录可达不表示自动展开，原 panel 失败保留。
+
+2026-11-17 同包实测：`task13-mini-auto-20261117-120752-707` 完整 mini+auto 两 case GREEN；按 R102 成功语义不变证明保留，未重复运行。独立 `task13-panel-diagnostic-20261117-125150-120` 原 UX08 panel-only GREEN（1 passed/0 failed/无 retry），目录/同 child 最终正文/切 mini 卸载、SQLite/Timeline 刷新、键盘、中文浅色 1280 与英文深色窄屏断言全部通过；24 个只读窗口采样及内外层逐项清理均成功。此前两轮 panel FAIL 保留，R101 未采到的窗口变化原因不回填；新诊断不控制窗口状态。候选仍 pending，未晋升、未声称正式 CI 准入；根门禁与完整阶段独审另行执行。
 
 | Catalog ID | 覆盖状态 | 自动化                          | 备注                                                                                                                  |
 | ---------- | -------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------- |

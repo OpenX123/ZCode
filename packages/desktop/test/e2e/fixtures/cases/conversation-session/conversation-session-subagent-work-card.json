@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-subagent-work-card",
+  "spec": "./test/e2e/conversation-session/conversation-session-subagent-work-card.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/common.json",
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-subagent-work-card.json"
+  ],
+  "fileFixtures": [],
+  "requests": [
+    {
+      "id": "ux08-compact-E2E_UX08_LIFECYCLE",
+      "kind": "common",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "仅覆盖此case原生小窗口触发的摘要请求，保留原marker供既有通知matcher继续工作。"
+    },
+    {
+      "id": "ux08-compact-E2E_SUBAGENT_WORK_CARD_PARENT",
+      "kind": "common",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "仅覆盖此case原生小窗口触发的摘要请求，保留原marker供既有通知matcher继续工作。"
+    },
+    {
+      "id": "subagent-work-card-title",
+      "kind": "title",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "标题与工作卡断言无关，固定返回保证回放确定。"
+    },
+    {
+      "id": "subagent-work-card-memory-noop",
+      "kind": "subagent",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "与断言无关的后台记忆提取请求固定返回。"
+    },
+    {
+      "id": "subagent-work-card-parent-launch",
+      "kind": "main",
+      "timingPolicy": "fast-tool-use",
+      "source": "synthetic",
+      "syntheticReason": "固定派发单个可停的后台子智能体，覆盖 SAT31 单成员工作卡与停止入口。"
+    },
+    {
+      "id": "subagent-work-card-parent-launched",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "父轮结束后子智能体继续运行，工作卡需保持 running。"
+    },
+    {
+      "id": "subagent-work-card-parent-notification",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "停止后的父 continuation 与断言无关，固定文本避免未匹配请求。"
+    },
+    {
+      "id": "subagent-work-card-child-bash-01",
+      "kind": "subagent",
+      "timingPolicy": "fast-tool-use",
+      "source": "synthetic",
+      "syntheticReason": "E2E 上游模型上下文窗口只有 240 token，多步子会话会触发 mid-turn compact；只用两步长工具覆盖实时增长、计步与停止窗口。"
+    },
+    {
+      "id": "subagent-work-card-child-bash-02",
+      "kind": "subagent",
+      "timingPolicy": "fast-tool-use",
+      "source": "synthetic",
+      "syntheticReason": "同上；第二步足够长，保证 SAT33 停止时子智能体仍在运行。"
+    },
+    {
+      "id": "ux08-title",
+      "kind": "title",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+    },
+    {
+      "id": "ux08-launch",
+      "kind": "main",
+      "timingPolicy": "fast-tool-use",
+      "source": "synthetic",
+      "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+    },
+    {
+      "id": "ux08-launched",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+    },
+    {
+      "id": "ux08-notified",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+    },
+    {
+      "id": "ux08-child-A-work",
+      "kind": "subagent",
+      "timingPolicy": "fast-tool-use",
+      "source": "synthetic",
+      "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+    },
+    {
+      "id": "ux08-child-A-done",
+      "kind": "subagent",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+    },
+    {
+      "id": "ux08-child-B-work",
+      "kind": "subagent",
+      "timingPolicy": "fast-tool-use",
+      "source": "synthetic",
+      "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+    },
+    {
+      "id": "ux08-child-B-done",
+      "kind": "subagent",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "UX08 只固定模型响应；通过真实 CLI 子任务生命周期与持久化验证 Renderer 派生。"
+    }
+  ]
+}

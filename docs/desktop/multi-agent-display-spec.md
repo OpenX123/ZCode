@@ -78,6 +78,12 @@ sequenceDiagram
 - 展开态"智能体"分区：运行项左侧图标换成 16px 头像；标题、已运行时长、停止与"已结束 · N"行为不变。
 - 仅有已结束智能体时，不保留没有内容的收起态胶囊；已结束智能体不是 mini 的兜底项。自动模式在窄、宽 conversation 容器下均退场，只有用户显式展开的 panel 仍可单独保留“已结束”目录入口；存在其他摘要时，保持原自动模式和该分区。仅剩已结束工作流时沿既有 mini 优先级保留入口。此规则只影响摘要可见性，不关闭正在查看的子会话详情，不更改事实或停止任务。
 
+Task13 的真实交互验收沿原 Subagent 工作卡 pending 候选，不晋升：SAT31–SAT33 在运行中真实点击切为 mini，取消后分别验证父 summary shell 与活动入口卸载，同一 child tab/header 仍为 cancelled。UX08 默认 auto 在真实父 conversation 容器 `<1280px` 与 `>=1280px` 均卸载 ended-Agent-only shell；通过既有 Side Pane 可见性按钮取得宽度时保留完整 tab 身份，恢复后仍显示同一 child 的 `UX08_RESULT_B`。独立回放的显式 panel 保留已结束目录计数 2、各运行计数 0，再真实“收起为胶囊”后卸载，详情及正文保持。
+
+显式 panel 保留目录可达性，不要求内部 Agent 分区在运行数归零后自动展开；沿既有归零折叠规则，用户展开该分区后可访问已结束目录及计数。
+
+模式只由现有 React UI owner 接受真实点击；CLI/session 投影是终态与计数的唯一事实。测试先核没有 Git/Goal/Todo/计划、运行 Bash/工作流或已结束工作流等其它摘要资格，再断言卸载。父 scope 在打开 child 前保存；任务导航或刷新后按父 session 重新取得唯一可见 pane，不能使用缓存首项或跟随 child 焦点。测试变量 `ZCODE_E2E_TASK13_STATUS_PANEL_VARIANT` 仅允许 `auto|panel`（缺省 auto），只选择独立 runner 的验收分支，不写 store、Fiber 或 props；非法值立即失败。
+
 ## 对话行内 Subagent 工作卡（YCode 1.3，取代"对话行内派发行"）
 
 决策来源：[引擎、输入框与子智能体体验打磨](../plans/2026-11-09-engine-composer-subagent-polish.md) W8（Q7、D7、R2-4）。

@@ -4957,6 +4957,10 @@ YD-PREVIEW-01 accepted：桌面窄栏打开 Markdown/Python 后正文面板必�
 
 YD-SUBAGENT-01 accepted：运行中折叠保留各状态计数；滚动离开工作卡后输入工具栏仍有目录入口；全部结束后停止动画且保留历史入口。沿 SAT31/SAT32 manual-review 路径验收，不自动晋升 CI。
 
+Task13 accepted：原 `conversation-session-subagent-work-card` pending 候选补 ended-Agent-only 三配置。SAT31–SAT33 显式 mini 在真实停止后 shell/活动入口分别卸载，同一 child tab/header 保持 cancelled；UX08 默认 auto 在实测父 conversation `<1280px`/`>=1280px` 均卸载，隐藏再恢复 Side Pane 不换 child tab，仍显示 `UX08_RESULT_B`；独立 HOME/runId 仅 UX08 显式 panel 保留已结束目录 2 与全部运行计数 0，再真实收起 mini 后卸载且原详情保持。保留原流式增长、A/B 部分完成、SQLite/Timeline、刷新、语言/主题/窄屏键盘断言；运行前核其它摘要资格为空，父/child 查询不得命中隐藏缓存。此条登记验收合同，实际执行结果见 coverage matrix，不表示 promotion 或 CI 准入。
+
+显式 panel 的目录保留是可达性合同；内部 Agent 分区仍按既有归零规则折起，验收须通过真实 UI 展开后核目录计数，不要求产品自动展开。
+
 
 ## UX09 工作台标题统一（2026-11-15）
 

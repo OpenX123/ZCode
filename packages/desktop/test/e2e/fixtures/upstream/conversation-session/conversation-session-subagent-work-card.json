@@ -1,7 +1,7 @@
 {
   "version": 1,
   "caseName": "conversation-session-subagent-work-card",
-  "spec": "./test/e2e/conversation-session/manual-review/pending/conversation-session-subagent-work-card.test.ts",
+  "spec": "./test/e2e/conversation-session/conversation-session-subagent-work-card.test.ts",
   "fixtures": [
     {
       "id": "ux08-compact-E2E_UX08_LIFECYCLE",

@@ -368,6 +368,12 @@ fault-stream、性能/时序敏感、会污染全局配置或依赖特殊网络/
 
 ## 当前 MVP
 
+### 窗口用例的异常与清理证据
+
+窗口验收保留业务步骤的 primary 异常；各项已取得资源的清理独立尝试，失败作为附属异常保留，不能遮蔽 primary 或阻断其余清理。只有清理失败时用例同样失败。截图、诊断写入失败也不能替换 primary。尺寸设置 helper 在回滚前保留原尺寸/viewport 错误，回滚失败附属记录，不改变原尺寸操作、等待预算与验收断言。
+
+诊断只读采集精确目标 window id、content/bounds/normalBounds、最大化/全屏/最小化、min/max size、zoom/DPR、操作阶段及预期尺寸；不采输入、URL 查询、完整 DOM、配置或凭据。窗口状态只观察，不通过强制解除最大化、额外重试或延时改变验收前提。新增诊断先以真实调用路径回归验证 primary 与 cleanup 同时失败、仅 cleanup 失败及各清理均被调用，再做有因 GUI 验证。
+
 第一阶段只做 E2E 落地流水线的基础设施：
 
 1. WDIO 支持自动加载 case-local provider fixture。

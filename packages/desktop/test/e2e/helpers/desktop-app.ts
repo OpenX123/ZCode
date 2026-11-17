@@ -1159,10 +1159,16 @@ export async function setCurrentElectronRendererContentSize(
     Math.abs(result.appliedWidth - width) > 1 ||
     (height !== undefined && Math.abs(result.appliedHeight - height) > 1)
   ) {
-    await restoreElectronRendererContentSize(result.snapshot);
-    throw new Error(
+    const primary = new Error(
       `Electron renderer content size 没有应用: requested=${width}x${height ?? "preserve"}; applied=${result.appliedWidth}x${result.appliedHeight}`,
     );
+    // 回滚也可能失败；先保存原尺寸错误，不能让清理异常覆盖本次失败原因。
+    try {
+      await restoreElectronRendererContentSize(result.snapshot);
+    } catch (cleanup) {
+      throw new AggregateError([primary, cleanup], primary.message, { cause: primary });
+    }
+    throw primary;
   }
 
   const expectedRendererWidth = Math.round(result.appliedWidth / result.zoomFactor);
@@ -1187,11 +1193,17 @@ export async function setCurrentElectronRendererContentSize(
       },
     );
   } catch (error) {
-    await restoreElectronRendererContentSize(result.snapshot);
-    throw new Error(
+    const primary = new Error(
       `renderer viewport 没有收敛: expected=${expectedRendererWidth}x${height === undefined ? "preserve" : expectedRendererHeight}; actual=${JSON.stringify(latestRendererViewport)}; zoomFactor=${result.zoomFactor}`,
       { cause: error },
     );
+    // viewport 原异常与回滚错误分别保留；成功路径和原等待预算不变。
+    try {
+      await restoreElectronRendererContentSize(result.snapshot);
+    } catch (cleanup) {
+      throw new AggregateError([primary, cleanup], primary.message, { cause: primary });
+    }
+    throw primary;
   }
 
   return result.snapshot;
