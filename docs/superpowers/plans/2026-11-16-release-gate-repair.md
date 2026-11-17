@@ -550,6 +550,28 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] Step 3: 若现有测试mock缝隙能在不改生产、不新建跨模块helper的前提下控制CIM查询失败，补同fake的真实transport释放回归：保留原预算，查询失败时仍EOF退出且未发送未经验证的taskkill，原故意忽略EOF的反向安全测试保持。若缝隙不足，只报告精确风险与替代证据，不自建DI或伪造terminator成功；由controller裁决覆盖边界。
 - [ ] Step 4: 原Service文件完整GREEN，所改及必要的既有transport/windows安全回归、格式/lint/diff/架构。自审并只提交本任务文件；报告 `task-25-report.md` 列RED/GREEN、真实与受控边界和未复现原CIM慢因，独审后最终完整门禁决定关闭，不能由单例GREEN放行发布。不build/E2E/派子agent。
 
+### Task 27: 明确 Windows 归属与单 PID 清理的可实施规格
+
+**授权与依据：** 用户于 2026-11-17 明确选择“按此安全方案修复，再继续发布”。只读 `task-26-investigation.md` 已证陈旧 PPID 碰撞和实际 graceful `/T`；`task-27-design-review.md` 已证短 force 余量、同步身份编码与旧快照时序缺口。本任务仅形成完整产品规格，不实施代码，不运行真实进程回归。
+
+**Files:** `docs/desktop/agent-shutdown-latency.md`、`docs/superpowers/specs/2026-09-01-windows-cim-cleanup-alerts-design.md`、`docs/windows-agent-process-cleanup-state-machine.md`、`docs/testing/1.4.1-gate-repair-spec.md`。不改其它正式文件；必要生产/测试文件仅列入报告，下一任务由 controller 明确追加。
+
+**Interfaces / Global Constraints（本任务及后续实现共同遵守）：**
+
+- 维持 ProcessManager 唯一 spawn owner、Transport 首快照与 cleanup attempt owner、Ownership 固定成员解析、现有 Terminator / Waiter / Runner 路径，不引入常驻扫描、第二 owner、Job Object 或新公开 API。
+- Windows 首次发现逐条校验父子完整来源精度的创建时间，child 不得早于直接 parent；拒绝整枝。root 锚点、不可解析身份、循环、重复 PID 也须 fail-closed；同步/异步一致，生命周期为可信 `[spawn, exit)`，不以查询完成时间代替 exit。合法同精度相等保留；合法历史成员 reparent 后仍按创建身份复核。
+- 禁止本 process 清理链全部 graceful / force / root 例外的 `taskkill /T`。live root 只对原受管 root 发 exact graceful；旧快照不得直接授权 descendant graceful。已登记后代必须在原绝对 deadline 内得到有身份复核的 exact force 机会；root 已退出的当前身份过滤路径保持安全。
+- 保留原全链路预算和最终 retry，不新增超时或重试；750ms 是验证上限，不能成为不足即全跳过的准入门槛。明确验证、命令与终态观察共享原 absolute deadline 的公式，异步返回后必须再次核截止，late callback 不得发新信号。未验证身份不发信号，未知/超时不能误报完成，残留继续阻止 ownership 释放。
+- 完整进程表仅用于一次发现；后续验证只查询已登记 PID 集合，不回退完整扫描。批大小固定上限64、批内一个 CIM filter、并发上限1，各批共享同一验证绝对截止且每身份每阶段至多一次查询；18项一批。PID 入参必须是可证明的有效系统整数，不能拼接不可信字符串。不得为单个PID同时启动N个PowerShell。
+- POSIX 组、owner/lease、workspaceIdentity、远端语义和与本 services/process 路径无关的其它 taskkill 调用保持不变。只修当前可达安全缺口，不全仓机械删 `/T`。
+- 所有真实系统边界先全 mock；用户现场 Docker/WSL 不参与复现或清理。安全确定性 RED/GREEN 与独审完成后才允许有界自有真实子进程回归。不得增加skip、削弱原业务断言或把fixture成功冒充真实清理成功。
+- 诚实披露：固定快照之后从未登记的晚生后代、系统时钟/来源精度限制、身份查询到按数值 PID 发命令的非原子竞态；不承诺可靠清理所有未知进程，不把存在原 ChildProcess 对象宣传成 taskkill 使用了该句柄。
+
+- [ ] Step 1: 只读审查报告、上述 owning spec 和直接相关 process/transport 源码。核对现有预算与调用关系，为具体公式选择写出原因与短余量示例。正式代码不改。
+- [ ] Step 2: 同步更新四份规格的当前规范，清理与新策略冲突的 `/T` 例外、并发逐 PID 验证及旧编码说明；保留历史实测文字的历史属性。给出 owner / 事件顺序图，明确 fixed candidate 与 current verified 的差别、未知身份的观察/残留语义，以及初始 root-exited 过滤失败不能假成功的策略。必要的内部结果合同写明，不平行创建接受状态。
+- [ ] Step 3: 将设计审查17项验收逐项映射到可达生产入口与全mock系统边界，补充定向批量查询上限/超长集合/单批失败/最终retry/绝对截止测试。明确 sync snapshot→async filtering/force 组合和合法child/grandchild活性断言，不仅检查目标列表，还检查模拟原生扩树effect。
+- [ ] Step 4: 仅对四文档执行格式检查及 git diff --check；不启动测试/runtime/CIM/taskkill/build。提交本任务四文档并自审，写 `task-27-spec-report.md`，给出完整预算公式、拟实现文件清单/内部合同、具体命令与真实结果、未覆盖限制。独立 spec/quality 审查通过后，controller 另写 Task28 实现 brief，不能自行进入生产代码或派子agent。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
