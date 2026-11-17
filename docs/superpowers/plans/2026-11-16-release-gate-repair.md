@@ -667,3 +667,12 @@ Task32 raw 收敛补充：新 raw 频繁调用原防抖会让恢复 full load �
 - [ ] Step 2: GitReview 所有 mock 初始化后、describe 前顶层 await import 真实面板，移除 it 内导入；保留唯一 it 与所有原断言。POSIX scope afterEach 对其改写的四个工厂 mock 显式 mockReset；原普通 spy/timer/env 与真实 child teardown 保持。
 - [ ] Step 3: 执行两个完整文件 GREEN、局部 lint/fmt、diff 和架构检查；审查 once 队列、初始真实实现恢复与所有原断言/预算保留，提交两份测试。日志新建 scratch/task35，不覆盖原件；报告 `task-35-implementation-report.md` 列 commits、命令/自然 exit/原件、文件与风险。
 - [ ] Step 4: 交 controller 独立复审和根 typecheck/lint、最终冻结门禁。writer 不派 agent、不跑全量/root type/lint/build/GUI/push，不改变旧包或历史证据。
+
+### Task 36: 修复 GitHub 发布脚本的真实 TypeScript 加载入口
+
+**Evidence / scope:** 官方手动 run `44088173914` 的资源 job 在 `node scripts/github-release-assets.mjs pin --output release-resources` 失败；原件 `scratch/github-official-44088173914-failed.log` 明确为 Node24.14.0 原生导入 `release.ts` 时无法解析 `./errorCodes.js`，尚未发布 asset/tag。仅修改本计划、`docs/desktop/github-release-packaging-spec.md`、`scripts/github-release-assets.mjs`、既有 `scripts/test/github-release-assets.test.mjs`。复用已安装 `tsx/esm/api`，不改生产源码、schema、workflow、依赖/lock、预算、timeout 或 skip。
+
+- [ ] Step 1: 固定 Node24.14.0/pnpm10.33.2，freshness/默认架构基线，读取发布合同、实际脚本与既有测试；先独立提交 spec/plan。
+- [ ] Step 2: 在既有测试新增真实 plain Node 子进程，经实际脚本与公开共享 schema 对本地四归档 fixture 执行 pin；去掉继承 NODE_OPTIONS，检查自然退出、输出副本、固定 URL 和 SHA。先保存确定性 ERR_MODULE_NOT_FOUND RED，再最小改用 tsImport 并保留中文根因注释，保存 GREEN；不伪造 import 或网络/发布成功。
+- [ ] Step 3: 运行全部 github-release-assets/version/workflow 脚本测试，保留 pin/verify-release 与资源预算断言；定向 lint/format/diff 和默认架构检查，自审并提交限定脚本/测试。报告 `task-36-implementation-report.md`，新原件仅写 scratch/task36，列清真实命令、exit、提交和未执行项。writer 不派 agent、不跑全量/root type/lint/build/GUI/push。
+- [ ] Step 4: controller 执行新 HEAD root typecheck/lint/arch 与独立审查。原76be祖先的完整原BASE门禁（1128 files /12619 tests）只作为祖先证据保留，不声称新HEAD重跑全量。相对f7严格核对 tracked paths/blobs，只有Task35精确四文件（两份测试、gate spec、本计划）加本任务精确三文件（发布脚本、脚本测试、发布spec）差异时，才可携带原 f7 包/原生/92项保护证据并重新核验；保留 buildCommit=f7，不伪称新HEAD构建。任何其它或生产/dep/config差异均停止复用、重建重验。实际 push 以自然远端76be为base运行正常hook，不伪HEAD或跳hook；正式GitHub assets必须从最终HEAD重构建。
