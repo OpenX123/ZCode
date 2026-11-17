@@ -59,16 +59,46 @@ export async function waitForWindowsProcessQuerySlot(
   return false;
 }
 
-function trackQuery<T>(owner: object, request: Promise<T>): Promise<T> {
-  const physical = request.then(
-    () => undefined,
-    () => undefined,
-  );
-  queryFlights.set(owner, physical);
-  void physical.then(() => {
-    if (queryFlights.get(owner) === physical) queryFlights.delete(owner);
-  });
-  return request;
+async function runExclusiveQuery<T>(
+  owner: object,
+  deadline: number,
+  start: () => Promise<T>,
+  fallback: T,
+): Promise<T> {
+  while (Date.now() < deadline) {
+    const previous = queryFlights.get(owner);
+    if (previous) {
+      if (
+        !(await beforeDeadline(
+          previous.then(() => true),
+          deadline,
+          false,
+        ))
+      )
+        return fallback;
+      continue;
+    }
+    // 检查与预留必须在同一同步段完成；空闲 boolean 跨 await 会让两个入口同时启动。
+    let release!: () => void;
+    const physical = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    queryFlights.set(owner, physical);
+    const finish = () => {
+      if (queryFlights.get(owner) === physical) queryFlights.delete(owner);
+      release();
+    };
+    try {
+      const request = start();
+      // 逻辑 deadline 只结束调用方等待；只有本 token 的物理完成可以归还占用。
+      void request.then(finish, finish);
+      return await beforeDeadline(request, deadline, fallback);
+    } catch (error) {
+      finish();
+      throw error;
+    }
+  }
+  return fallback;
 }
 
 function queryWindowsProcesses(
@@ -115,16 +145,21 @@ export async function verifyWindowsProcessIdentitiesAsync(
   owner: object,
   options: ProcessTreeTerminatorOptions,
   isActive: () => boolean = () => true,
+  isIdentityGone: (identity: ProcessIdentity) => boolean = () => false,
 ): Promise<ProcessTreeOwnershipResolution> {
   const currentIdentities: ProcessIdentity[] = [];
   const goneIdentities: ProcessIdentity[] = [];
   const unknownIdentities: ProcessIdentity[] = [];
   for (let index = 0; index < identities.length; index += 64) {
-    const batch = identities.slice(index, index + 64);
-    if (!isActive() || !(await waitForWindowsProcessQuerySlot(owner, deadline)) || !isActive()) {
+    let batch = identities.slice(index, index + 64);
+    if (!isActive()) {
       unknownIdentities.push(...identities.slice(index));
       break;
     }
+    // 等占用期间出现的明确退出也会撤销查询资格，不能由下一批重新取得旧身份 M。
+    goneIdentities.push(...batch.filter(isIdentityGone));
+    batch = batch.filter((identity) => !isIdentityGone(identity));
+    if (batch.length === 0) continue;
     if (
       batch.some(
         (identity) =>
@@ -135,23 +170,24 @@ export async function verifyWindowsProcessIdentitiesAsync(
       unknownIdentities.push(...batch);
       continue;
     }
-    const timeout = Math.floor(deadline - Date.now());
-    if (timeout < 1) {
-      unknownIdentities.push(...identities.slice(index));
-      break;
-    }
-    const parsed = await beforeDeadline(
-      trackQuery(
-        owner,
-        queryWindowsProcesses(
+    const parsed = await runExclusiveQuery(
+      owner,
+      deadline,
+      () => {
+        // 真正取得 token 后重读退出事实和截止；排队不能复用旧的准入结论。
+        goneIdentities.push(...batch.filter(isIdentityGone));
+        batch = batch.filter((identity) => !isIdentityGone(identity));
+        const timeout = Math.floor(deadline - Date.now());
+        if (!isActive() || batch.length === 0 || timeout < 1) return Promise.resolve(undefined);
+        return queryWindowsProcesses(
           batch.map((identity) => identity.pid),
           timeout,
           options,
-        ),
-      ),
-      deadline,
+        );
+      },
       undefined,
     );
+    if (batch.length === 0) continue;
     if (
       !isActive() ||
       Date.now() >= deadline ||
@@ -206,25 +242,26 @@ export async function readWindowsProcessListAsync(
   if (windowsCimCapability === "identity-unavailable") return [];
   const deadline =
     options.windowsCleanupDeadlineAtMs ?? Date.now() + WINDOWS_PROCESS_LOOKUP_TIMEOUT_MS;
-  const spawn = options.ownedProcessStartedAtMs;
-  if (
-    windowsProcessListInFlight &&
-    (spawn === undefined || spawn < windowsProcessListInFlight.startedAtMs)
-  ) {
-    const request = owner
-      ? trackQuery(owner, windowsProcessListInFlight.promise)
-      : windowsProcessListInFlight.promise;
-    return await beforeDeadline(request, deadline, []);
-  }
-  if (owner && !(await waitForWindowsProcessQuerySlot(owner, deadline))) return [];
-  const startedAtMs = Date.now();
-  const timeout = Math.min(WINDOWS_PROCESS_LOOKUP_TIMEOUT_MS, Math.floor(deadline - startedAtMs));
-  if (timeout < 1) return [];
-  const request = queryWindowsProcesses(undefined, timeout, options)
-    .then((parsed) => (parsed?.complete ? parsed.identities : []))
-    .finally(() => {
-      if (windowsProcessListInFlight?.promise === request) windowsProcessListInFlight = undefined;
-    });
-  windowsProcessListInFlight = { promise: request, startedAtMs };
-  return await beforeDeadline(owner ? trackQuery(owner, request) : request, deadline, []);
+  const read = (): Promise<readonly ProcessIdentity[]> => {
+    const spawn = options.ownedProcessStartedAtMs;
+    // 共享全表同样先取得该 owner 的 token，不能覆盖它尚未结束的定向查询占用。
+    if (
+      windowsProcessListInFlight &&
+      (spawn === undefined || spawn < windowsProcessListInFlight.startedAtMs)
+    )
+      return windowsProcessListInFlight.promise;
+    const startedAtMs = Date.now();
+    const timeout = Math.min(WINDOWS_PROCESS_LOOKUP_TIMEOUT_MS, Math.floor(deadline - startedAtMs));
+    if (timeout < 1) return Promise.resolve([]);
+    const request = queryWindowsProcesses(undefined, timeout, options)
+      .then((parsed) => (parsed?.complete ? parsed.identities : []))
+      .finally(() => {
+        if (windowsProcessListInFlight?.promise === request) windowsProcessListInFlight = undefined;
+      });
+    windowsProcessListInFlight = { promise: request, startedAtMs };
+    return request;
+  };
+  return await (owner
+    ? runExclusiveQuery(owner, deadline, read, [])
+    : beforeDeadline(read(), deadline, []));
 }

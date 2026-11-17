@@ -100,6 +100,14 @@ export class ZCodeStdioTransport implements ZCodeProtocolTransport {
     if (this.disposed) {
       return;
     }
+    if (process.platform === "win32" && !this.hasChildExited()) {
+      // 协议 caller 可以同 tick 先 dispose 再等待；两入口必须复用首快照及同一清理链，
+      // 否则非等待式发现会与等待式查询并发，并使前者的清理动作游离于等待状态之外。
+      void this.disposeAndWait().catch((error: unknown) => {
+        processTreeLogger.warn(undefined, "Windows runtime 非等待关闭清理未完成:", error);
+      });
+      return;
+    }
     this.disposed = true;
     this.disposeLocalResources();
     void this.stderrCollector.waitForDrain(DISPOSE_STDERR_DRAIN_MS);

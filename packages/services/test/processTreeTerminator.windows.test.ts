@@ -27,6 +27,11 @@ import {
 import { filterCurrentProcessIdentities } from "../src/process/processTreeSnapshot.js";
 import { ZCodeStdioTransport } from "../src/zcode-agent/zcodeStdioTransport.js";
 import { defaultWindowsTaskkillRunner } from "../src/process/windowsTaskkillRunner.js";
+import {
+  hasWindowsProcessQueryInFlight,
+  readWindowsProcessListAsync,
+  verifyWindowsProcessIdentitiesAsync,
+} from "../src/process/windowsProcessListAsync.js";
 
 const DOTNET_UNIX_EPOCH_TICKS = 621_355_968_000_000_000n;
 
@@ -1159,6 +1164,177 @@ describe("terminateProcessTree Windows", () => {
     child.stderr.end();
     return { child, transport: new ZCodeStdioTransport(child as never) };
   }
+
+  it.each([0, 400])("Review1 I1 部分成员ESRCH后旧M延迟%s不得作用于复用PID", async (delay) => {
+    const child = fakeChild();
+    alivePids = new Set([4242, 5000, 5001]);
+    powershellResult += powershellIdentity(5000, 4242) + powershellIdentity(5001, 5000);
+    const snapshot = await captureProcessTreeSnapshotAsync(child);
+    child.exitCode = 0;
+    alivePids.delete(4242);
+    const result = terminateProcessTreeAndWait(child, {
+      snapshot,
+      forceAfterMs: 2000,
+      windowsTaskkillTimeoutMs: 1000,
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    targetedDelayMs = delay;
+    await vi.advanceTimersByTimeAsync(1249);
+    expect(queryEvents.at(-1)?.pids).toEqual(expect.arrayContaining([5000, 5001]));
+    await vi.advanceTimersByTimeAsync(249);
+    alivePids.delete(5000);
+    await vi.advanceTimersByTimeAsync(401);
+    alivePids.add(5000);
+    powershellResult = powershellIdentityAt(5000, 1, Date.now()) + powershellIdentity(5001, 1);
+    const effectBeforeForce = taskkillEffect.length;
+    await vi.advanceTimersByTimeAsync(1350);
+    await expect(result).resolves.toEqual({ remainingPids: [] });
+    expect(
+      taskkillCommands()
+        .filter(({ force }) => force)
+        .map(({ pid }) => pid),
+    ).toEqual([5001]);
+    expect(taskkillEffect.slice(effectBeforeForce)).toEqual([5001]);
+    expect(alivePids).toEqual(new Set([5000]));
+  });
+
+  it("Review1 I1 force后旧report不能把已ESRCH成员重新计入remaining", async () => {
+    const child = fakeChild();
+    alivePids = new Set([4242, 5000, 5001]);
+    powershellResult += powershellIdentity(5000, 4242) + powershellIdentity(5001, 5000);
+    const snapshot = await captureProcessTreeSnapshotAsync(child);
+    child.exitCode = 0;
+    alivePids.delete(4242);
+    taskkillEnabled = false;
+    const result = terminateProcessTreeAndWait(child, {
+      snapshot,
+      forceAfterMs: 2000,
+      windowsTaskkillTimeoutMs: 1000,
+    });
+    await vi.advanceTimersByTimeAsync(1499);
+    alivePids.delete(5000);
+    await vi.advanceTimersByTimeAsync(401);
+    alivePids.add(5000);
+    powershellResult = powershellIdentityAt(5000, 1, Date.now()) + powershellIdentity(5001, 1);
+    await vi.advanceTimersByTimeAsync(1350);
+    await expect(result).resolves.toEqual({ remainingPids: [5001] });
+    expect(
+      taskkillCommands()
+        .filter(({ force }) => force)
+        .map(({ pid }) => pid),
+    ).toEqual([5001]);
+    expect(alivePids).toEqual(new Set([5000, 5001]));
+  });
+
+  it("Review1 I1 连续OS探测中后一次ESRCH也必须持久撤销旧M", async () => {
+    const child = fakeChild();
+    child.exitCode = 0;
+    const start = Date.now();
+    alivePids = new Set([5000, 5001]);
+    powershellResult = powershellIdentity(5000, 4242) + powershellIdentity(5001, 5000);
+    const originalProbe = vi.mocked(process.kill).getMockImplementation()!;
+    let childProbes = 0;
+    vi.mocked(process.kill).mockImplementation((pid, signal) => {
+      if (pid === 5000 && Date.now() >= start + 1500 && ++childProbes === 2) {
+        powershellResult = powershellIdentityAt(5000, 1, Date.now()) + powershellIdentity(5001, 1);
+        throw Object.assign(new Error("old child exited before PID reuse"), { code: "ESRCH" });
+      }
+      return originalProbe(pid, signal);
+    });
+    const result = terminateProcessTreeAndWait(child, {
+      snapshot: {
+        rootPid: 4242,
+        descendantPids: [5000, 5001],
+        identities: [5000, 5001].map((pid) => ({
+          pid,
+          parentPid: 4242,
+          startTime: "windows-utc-100ns:17848908000000000",
+        })),
+      },
+      forceAfterMs: 2000,
+      windowsTaskkillTimeoutMs: 1000,
+    });
+    await vi.advanceTimersByTimeAsync(3250);
+    await expect(result).resolves.toEqual({ remainingPids: [] });
+    expect(
+      taskkillCommands()
+        .filter(({ force }) => force)
+        .map(({ pid }) => pid),
+    ).toEqual([5001]);
+    expect(alivePids).toEqual(new Set([5000]));
+  });
+
+  it("Review1 I2 同tick dispose与disposeAndWait共用首次发现及清理链", async () => {
+    const { transport } = transportFixture();
+    alivePids = new Set([4242, 5000, 5001]);
+    powershellResult += powershellIdentity(5000, 4242) + powershellIdentity(5001, 5000);
+    powershellDelayMs = 100;
+    taskkillEnabled = false;
+    transport.dispose();
+    const waiting = transport.disposeAndWait();
+    const checked = waiting.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(1);
+    const firstDiscoveryCount = queryEvents.filter(({ pids }) => pids.length === 0).length;
+    const firstPeak = peakQueries;
+    await vi.advanceTimersByTimeAsync(3249);
+    expect(await checked).toBeInstanceOf(Error);
+    expect(String(await checked)).toContain("remaining pid=4242,5000,5001");
+    expect(firstDiscoveryCount).toBe(1);
+    expect(firstPeak).toBe(1);
+    expect(queryEvents.filter(({ pids }) => pids.length === 0)).toHaveLength(1);
+    expect(peakQueries).toBe(1);
+  });
+
+  it("Review1 I2 同owner定向准入在await后排他且逻辑截止不释放物理占用", async () => {
+    const owner = fakeChild();
+    const start = Date.now();
+    const identities = [
+      { pid: 4242, parentPid: 1, startTime: "windows-utc-100ns:17848908000000000" },
+    ];
+    targetedDelayMs = 100;
+    const first = verifyWindowsProcessIdentitiesAsync(identities, start + 40, owner, {});
+    const second = verifyWindowsProcessIdentitiesAsync(identities, start + 80, owner, {});
+    await vi.advanceTimersByTimeAsync(40);
+    expect((await first).unknownIdentities).toEqual(identities);
+    expect(queryEvents).toHaveLength(1);
+    expect(peakQueries).toBe(1);
+    await vi.advanceTimersByTimeAsync(40);
+    expect((await second).unknownIdentities).toEqual(identities);
+    expect(hasWindowsProcessQueryInFlight(owner)).toBe(true);
+    expect(activeQueries).toBe(1);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(hasWindowsProcessQueryInFlight(owner)).toBe(false);
+    expect(queryEvents).toHaveLength(1);
+  });
+
+  it("Review1 I2 共享全表先结束不能覆盖同owner旧定向占用", async () => {
+    const owner = fakeChild();
+    const start = Date.now();
+    const identities = [
+      { pid: 4242, parentPid: 1, startTime: "windows-utc-100ns:17848908000000000" },
+    ];
+    targetedDelayMs = 100;
+    const targeted = verifyWindowsProcessIdentitiesAsync(identities, start + 40, owner, {});
+    await vi.advanceTimersByTimeAsync(1);
+    powershellDelayMs = 20;
+    const unrelated = readWindowsProcessListAsync({ windowsCleanupDeadlineAtMs: start + 80 }, {});
+    await vi.advanceTimersByTimeAsync(1);
+    const competing = readWindowsProcessListAsync(
+      { windowsCleanupDeadlineAtMs: start + 80 },
+      owner,
+    );
+    await vi.advanceTimersByTimeAsync(20);
+    await unrelated;
+    expect(hasWindowsProcessQueryInFlight(owner)).toBe(true);
+    await vi.advanceTimersByTimeAsync(58);
+    expect((await targeted).unknownIdentities).toEqual(identities);
+    await expect(competing).resolves.toEqual([]);
+    expect(hasWindowsProcessQueryInFlight(owner)).toBe(true);
+    expect(queryEvents).toHaveLength(2);
+    expect(taskkillCommands()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(hasWindowsProcessQueryInFlight(owner)).toBe(false);
+  });
 
   it("W14 真实Transport最终retry复用K且root仍活不重复EOF", async () => {
     const { child, transport } = transportFixture();

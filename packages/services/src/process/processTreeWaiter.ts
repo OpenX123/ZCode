@@ -22,10 +22,12 @@ interface WaitInternalOptions extends ProcessTreeTerminatorWaitOptions {
   windowsNominalForceAtMs?: number;
   windowsHadExplicitDeadline?: boolean;
   isCleanupActive?: () => boolean;
+  isIdentityGone?: (identity: ProcessIdentity) => boolean;
 }
 
 interface ForceCleanupResult {
   identities: ProcessIdentity[];
+  goneIdentities?: ProcessIdentity[];
   unknownIdentities?: ProcessIdentity[];
   unverifiedRootPid?: number;
 }
@@ -57,12 +59,12 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-function isPidConfirmedLive(pid: number): boolean {
+function observeWindowsPid(pid: number): "live" | "gone" | "unknown" {
   try {
     process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+    return "live";
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH" ? "gone" : "unknown";
   }
 }
 
@@ -118,6 +120,10 @@ export async function waitForProcessTreeTermination(
   // 强杀回调会用已复核身份替换跟踪集，禁止等待或重新认领裸 PID。
   return await new Promise<ProcessTreeTerminationResult>((resolve) => {
     let settled = false;
+    // ESRCH 是固定身份的单调退出事实；旧 M/晚回调不能重新认领该 PID 的新对象。
+    const identityKey = (identity: ProcessIdentity) => `${identity.pid}:${identity.startTime}`;
+    const goneIdentities = new Set((initialOwnership.goneIdentities ?? []).map(identityKey));
+    const isIdentityGone = (identity: ProcessIdentity) => goneIdentities.has(identityKey(identity));
     // M 仅授权本阶段信号；unknown 仍是固定 K 的未决责任，不能被空过滤或 force 回调丢掉。
     let trackedIdentities = isWindows
       ? initialOwnership.knownIdentities.filter(
@@ -156,14 +162,38 @@ export async function waitForProcessTreeTermination(
       cleanup();
       resolve({ remainingPids });
     };
+    const refreshWindowsExitEvidence = () => {
+      if (!isWindows) return;
+      // 每次 OS 探测都在此写入 gone；后续 some/remaining 不再重复探测并丢掉第二次 ESRCH。
+      trackedIdentities = trackedIdentities.filter((identity) => {
+        if (isIdentityGone(identity)) return false;
+        const state =
+          identity.pid === child.pid && ownedChildHasExited()
+            ? "gone"
+            : observeWindowsPid(identity.pid);
+        if (state === "gone") {
+          goneIdentities.add(identityKey(identity));
+          unknownPids.delete(identity.pid);
+          return false;
+        }
+        if (state === "unknown") unknownPids.add(identity.pid);
+        return true;
+      });
+      if (
+        unverifiedRootPid !== undefined &&
+        (ownedChildHasExited() || observeWindowsPid(unverifiedRootPid) === "gone")
+      )
+        unverifiedRootPid = undefined;
+    };
     const settleIfTreeExited = () => {
-      if (isWindows && ownedChildHasExited())
-        trackedIdentities = trackedIdentities.filter((identity) => identity.pid !== child.pid);
-      const hasRunningVerifiedProcess = trackedIdentities.some((identity) =>
-        isPidAlive(identity.pid),
-      );
+      refreshWindowsExitEvidence();
+      const hasRunningVerifiedProcess = isWindows
+        ? trackedIdentities.length > 0
+        : trackedIdentities.some((identity) => isPidAlive(identity.pid));
       const hasRunningUnverifiedRoot =
-        unverifiedRootPid !== undefined && !ownedChildHasExited() && isPidAlive(unverifiedRootPid);
+        unverifiedRootPid !== undefined &&
+        !ownedChildHasExited() &&
+        (isWindows || isPidAlive(unverifiedRootPid));
       if (!hasRunningVerifiedProcess && !hasRunningUnverifiedRoot) {
         // Windows 的 taskkill callback 可能先于 Node ChildProcess exit 事件。
         // OS 已无 PID 时继续等一轮 exit 投递，避免 transport/lifecycle 在清理 Promise
@@ -178,17 +208,18 @@ export async function waitForProcessTreeTermination(
       }
     };
     const collectRemainingPids = (): number[] => {
+      refreshWindowsExitEvidence();
       const remainingPids = trackedIdentities
         .filter(
           (identity) =>
             !(isWindows && identity.pid === child.pid && ownedChildHasExited()) &&
-            isPidAlive(identity.pid),
+            (isWindows || isPidAlive(identity.pid)),
         )
         .map((identity) => identity.pid);
       if (
         unverifiedRootPid !== undefined &&
         !ownedChildHasExited() &&
-        isPidAlive(unverifiedRootPid)
+        (isWindows || isPidAlive(unverifiedRootPid))
       ) {
         remainingPids.push(unverifiedRootPid);
       }
@@ -230,7 +261,7 @@ export async function waitForProcessTreeTermination(
         const remainingPids = collectRemainingPids();
         if (remainingPids.length > 0) {
           const unresolved = remainingPids.filter(
-            (pid) => unknownPids.has(pid) || pid === unverifiedRootPid || !isPidConfirmedLive(pid),
+            (pid) => unknownPids.has(pid) || pid === unverifiedRootPid,
           );
           const confirmedLive = remainingPids.filter((pid) => !unresolved.includes(pid));
           warn(
@@ -250,7 +281,10 @@ export async function waitForProcessTreeTermination(
       });
       // 这里必须替换而不是合并：旧快照身份可能已经失效，继续保留会把新进程
       // 错当成残留，并让后续等待/日志失去进程所有权语义。
-      trackedIdentities = result.identities;
+      for (const identity of result.goneIdentities ?? []) goneIdentities.add(identityKey(identity));
+      trackedIdentities = result.identities.filter(
+        (identity) => !isWindows || !isIdentityGone(identity),
+      );
       unknownPids = new Set((result.unknownIdentities ?? []).map((identity) => identity.pid));
       unverifiedRootPid = result.unverifiedRootPid;
       settleIfTreeExited();
@@ -268,6 +302,7 @@ export async function waitForProcessTreeTermination(
       knownIdentities,
       resolvedOwnership: initialOwnership,
       isCleanupActive: () => !settled,
+      isIdentityGone,
       onForceCleanup,
       onForceTimerScheduled: (timer) => {
         if (settled) clearTimeout(timer);

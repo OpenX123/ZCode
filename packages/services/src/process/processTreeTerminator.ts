@@ -68,10 +68,12 @@ interface InternalProcessTreeTerminatorOptions extends ProcessTreeTerminatorOpti
   windowsNominalForceAtMs?: number;
   windowsHadExplicitDeadline?: boolean;
   isCleanupActive?: () => boolean;
+  isIdentityGone?: (identity: ProcessIdentity) => boolean;
 }
 
 interface ForceCleanupResult {
   identities: ProcessIdentity[];
+  goneIdentities?: ProcessIdentity[];
   unknownIdentities?: ProcessIdentity[];
   unverifiedRootPid?: number;
 }
@@ -231,6 +233,9 @@ function originalLiveRootAvailable(
     typeof handle?.kill === "function" &&
     !hasOwnedChildExited(child, options) &&
     !ownership.goneIdentities?.some((identity) => identity.pid === child.pid) &&
+    !ownership.knownIdentities.some(
+      (identity) => identity.pid === child.pid && options.isIdentityGone?.(identity),
+    ) &&
     child.pid !== undefined &&
     isPidAlive(child.pid)
   );
@@ -261,19 +266,23 @@ function terminateWindowsProcessTreeWithOwnership(
   const active = () => Date.now() < deadline && (internal.isCleanupActive?.() ?? true);
   if (!active()) return;
   const rootPid = child.pid!;
-  const known = ownership.knownIdentities.filter(
-    (identity) => !ownership.goneIdentities?.some((gone) => gone.pid === identity.pid),
-  );
+  const isGone = (identity: ProcessIdentity) =>
+    Boolean(internal.isIdentityGone?.(identity)) ||
+    (identity.pid === rootPid && hasOwnedChildExited(child, options)) ||
+    Boolean(ownership.goneIdentities?.includes(identity));
+  const known = ownership.knownIdentities.filter((identity) => !isGone(identity));
   const report = (resolution: ProcessTreeOwnershipResolution) => {
     if (!active()) return;
     const unresolved = known.filter(
       (identity) =>
-        resolution.currentIdentities.includes(identity) ||
-        resolution.unknownIdentities?.includes(identity),
+        !isGone(identity) &&
+        (resolution.currentIdentities.includes(identity) ||
+          resolution.unknownIdentities?.includes(identity)),
     );
     internal.onForceCleanup?.({
       identities: unresolved,
-      unknownIdentities: resolution.unknownIdentities,
+      goneIdentities: resolution.goneIdentities,
+      unknownIdentities: resolution.unknownIdentities?.filter((identity) => !isGone(identity)),
       ...(ownership.childStillOwned && !known.some((identity) => identity.pid === rootPid)
         ? { unverifiedRootPid: rootPid }
         : {}),
@@ -285,7 +294,9 @@ function terminateWindowsProcessTreeWithOwnership(
       ? originalLiveRootAvailable(child, internal, ownership)
         ? [rootPid]
         : []
-      : ownership.currentIdentities.map((identity) => identity.pid);
+      : ownership.currentIdentities
+          .filter((identity) => !isGone(identity))
+          .map((identity) => identity.pid);
     const now = Date.now();
     const observation = Math.min(
       (options as ProcessTreeTerminatorWaitOptions).waitAfterForceMs ?? 250,
@@ -316,11 +327,12 @@ function terminateWindowsProcessTreeWithOwnership(
       const commandDeadline = deadline - o;
       if (v < 1 || commandDeadline <= nominalForceAt || commandDeadline - s < 1) return;
       const resolution = await verifyWindowsProcessIdentitiesAsync(
-        known,
+        known.filter((identity) => !isGone(identity)),
         s + v,
         child,
         options,
         active,
+        isGone,
       );
       if (!active()) return;
       report(resolution);
@@ -329,10 +341,10 @@ function terminateWindowsProcessTreeWithOwnership(
           report(resolution);
           return;
         }
-        // M 授权之后原 root 仍可能退出；真实 exit 使该原身份 gone，不能再向复用 PID 发信号。
+        // M 之后 Waiter 仍可能观察到部分成员 ESRCH；真正派发前必须撤销其旧授权。
         const targets = new Set(
           resolution.currentIdentities
-            .filter((identity) => identity.pid !== rootPid || !hasOwnedChildExited(child, options))
+            .filter((identity) => !isGone(identity))
             .map((identity) => identity.pid),
         );
         if (originalLiveRootAvailable(child, internal, resolution)) targets.add(rootPid);
