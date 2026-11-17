@@ -539,6 +539,17 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 - [ ] Step 2: 仅具体问题需要时执行一次精确 suite/case，不泛重跑、不泛 kill、不扩超时/重试/skip。
 - [ ] Step 3: 报告 `task-24-investigation.md`：根因证据或缺口、最小确定性 RED、建议 owning 修复及原预算。controller 有证据后另写具体任务，不以事后进程消失关闭失败。
 
+### Task 25: 修正初始化 stdio fake 的 EOF 生命周期
+
+**Files:** `packages/services/test/zcodeAgentService.test.ts`；若实际 transport 受控回归需要，可改 `packages/services/test/zcodeStdioTransport.test.ts`（须复用同一 fake，不能平行编造另一个成功脚本）。不改生产进程安全实现。
+
+**Interfaces:** 同一初始化 fake 由本单测拥有，stdin EOF 后自然 code0/signal null 退出；被测 Service 仍走真实 ProcessManager/ProtocolClient/Transport。参照 `task-24-investigation.md` 的已证触发链与未证CIM耗时来源。
+
+- [ ] Step 1: 读调查与真实 CLI EOF 合同。先为原 interval-only fake 的 EOF 不退出建立实际 Node 子进程确定性 RED；失败清理只终止本轮自己 spawn 的原始活句柄并 await exit，不沿裸PID泛杀。用同一个局部 script/fixture供原初始化case消费，不扩大成通用框架。
+- [ ] Step 2: 最小修正 fake：消费 stdin，EOF时清除自己的保活资源并自然退出。初始化、复用、唯一ready与真实disposeAllAndWait/onExit断言保留。不改生产代码、不mock service.dispose成功、不扩大预算/重试/skip。
+- [ ] Step 3: 若现有测试mock缝隙能在不改生产、不新建跨模块helper的前提下控制CIM查询失败，补同fake的真实transport释放回归：保留原预算，查询失败时仍EOF退出且未发送未经验证的taskkill，原故意忽略EOF的反向安全测试保持。若缝隙不足，只报告精确风险与替代证据，不自建DI或伪造terminator成功；由controller裁决覆盖边界。
+- [ ] Step 4: 原Service文件完整GREEN，所改及必要的既有transport/windows安全回归、格式/lint/diff/架构。自审并只提交本任务文件；报告 `task-25-report.md` 列RED/GREEN、真实与受控边界和未复现原CIM慢因，独审后最终完整门禁决定关闭，不能由单例GREEN放行发布。不build/E2E/派子agent。
+
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
