@@ -142,7 +142,7 @@ export class ZCodeStdioTransport implements ZCodeProtocolTransport {
     }
     // stdin EOF 可能让 CLI 根进程先退出，而 detached MCP 仍继续运行。
     // 必须在发 EOF 前保存树成员，否则根退出、后代被系统接管后无法再按 PPID 找回。
-    // 首次失败仍复用固定快照；最终 retry 不重复 EOF，保留原 1250ms 验证/命令窗口。
+    // Windows 首次失败仍复用固定快照；最终 retry 不重复 EOF，保留原 1250ms 验证/命令窗口。
     this.cleanupAttemptCount += 1;
     const cleanupStartedAtMs = Date.now();
     const forceBudgetMs = this.cleanupAttemptCount > 1 ? 0 : PROCESS_TREE_FORCE_AFTER_MS;
@@ -156,14 +156,23 @@ export class ZCodeStdioTransport implements ZCodeProtocolTransport {
           PROCESS_TREE_WINDOWS_TASKKILL_TIMEOUT_MS +
           PROCESS_TREE_WINDOWS_EXIT_OBSERVATION_GRACE_MS
         : undefined;
-    if (!this.cleanupSnapshotCaptured) {
-      this.cleanupSnapshotCaptured = true;
-      this.cleanupProcessTreeSnapshot = await this.captureCleanupSnapshot(
-        windowsCleanupDeadlineAtMs,
-      );
+    if (process.platform === "win32") {
+      if (!this.cleanupSnapshotCaptured) {
+        this.cleanupSnapshotCaptured = true;
+        this.cleanupProcessTreeSnapshot = await this.captureCleanupSnapshot(
+          windowsCleanupDeadlineAtMs,
+        );
+      }
+    } else {
+      // Windows 首次发现锁不能用于 POSIX：首次无快照时，retry 仍须按原语义重新捕获。
+      this.cleanupProcessTreeSnapshot ??= await this.captureCleanupSnapshot();
     }
     const processTreeSnapshot = this.cleanupProcessTreeSnapshot;
-    if (!this.hasChildExited() && this.cleanupAttemptCount === 1) {
+    // 只有 Windows retry 跳过 EOF 宽限；POSIX 每次仍活的 child 都保留自然退出窗口。
+    if (
+      !this.hasChildExited() &&
+      (process.platform !== "win32" || this.cleanupAttemptCount === 1)
+    ) {
       // app-server --stdio 的正常退出边界是 stdin EOF。直接 taskkill
       // 进程树，既跳过 agent 自身 shutdown，也会让 host 固定等强杀兜底窗口。
       // 这里先请求协议入口自然收尾；短时间无响应再进入进程树兜底，仍保证不残留子进程。
