@@ -276,8 +276,13 @@ Export-ModuleMember -Function Expand-Archive
         ([key]) => !["PSMODULEPATH", "NODE_OPTIONS", "TEMP", "TMP"].includes(key.toUpperCase()),
       ),
     );
+    // hook 传入 SYSTEMROOT 时，Vitest worker 的环境副本按大小写取键；沿 Windows 环境合同查找真实值。
+    const systemRoot = Object.entries(process.env).find(
+      ([key]) => key.toLowerCase() === "systemroot",
+    )?.[1];
+    expect(systemRoot).toBeDefined();
     Object.assign(env, {
-      PSModulePath: `${moduleRoot};${join(process.env.SystemRoot!, "System32/WindowsPowerShell/v1.0/Modules")}`,
+      PSModulePath: `${moduleRoot};${join(systemRoot!, "System32/WindowsPowerShell/v1.0/Modules")}`,
       ZCODE_TEST_ARCHIVE_MARKER: marker,
       TEMP: temporary,
       TMP: temporary,
