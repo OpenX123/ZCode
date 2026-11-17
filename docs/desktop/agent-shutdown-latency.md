@@ -51,14 +51,14 @@ Windows 普通退出属于高频交互，更新安装属于低频且必须释放
 - 协议先失效，stderr reader 保留到流关闭，child exit 后最多再 drain 250ms，再用旧 runtime 身份生成 exit tail。仅 stderr 失败不关闭健康协议。
 - 普通 EOF 宽限为 1800ms，覆盖 CLI 自首个关闭事件起 1500ms 的总退出上限；等待仍扣减原进程树总预算，重复信号不续时。coverage 保留独立的写盘宽限。
 - `ZCodeStdioTransport` 的 `send()`、stdout frame 分发和 stderr line 分发只负责协议 I/O，不得调用同步或异步的 `ps`、PowerShell、`taskkill` 等进程管理命令，也不得依据消息 method/type 猜测何时刷新进程树。退出快照只允许在 `dispose()` / `disposeAndWait()` 已开始后获取。
-- 进程所有权来自 Host 的 spawn 关系和 Agent 自身的 MCP/process adapter，不来自协议消息活跃度。POSIX Agent 必须继续运行在独立进程组；Windows 继续以 CLI 根 PID 的 task tree 为关闭边界。Agent 正常 EOF 收尾负责先关闭其登记的 MCP 进程树，Host 的退出前快照和进程组/task tree 信号负责强制兜底。
-- `terminateProcessTreeAndWait()` 的完成边界是“回收前快照中已归属该 runtime 的进程树全部退出”，不是仅直接 child 退出。根进程先退出时，已发现后代仍必须经过 graceful / force 回收和存活复核；返回值必须显式携带残留 PID，调用方不能把“记录 warning 后结束有界等待”误当成 cleanup 成功。
-- cleanup timeout 只是进入“终态观察”的边界，不等于已经证明存在持久残留。所有平台统一按下面的终态判定释放进程所有权；在观察预算内稍晚投递的正常 exit 仍然属于 cleanup 成功，只有截止时仍存活的快照身份才报告 `cleanup incomplete`：
+- 进程所有权来自 Host 的 spawn 关系和 Agent 自身的 MCP/process adapter，不来自协议消息活跃度。POSIX Agent 必须继续运行在独立进程组；Windows 以本次合法固定的创建身份集合为 Host 清理边界。Agent 正常 EOF 收尾负责先关闭其登记的 MCP 进程树，Host 的退出前快照与有身份门禁的 exact PID 信号负责 Windows 强制兜底。
+- `terminateProcessTreeAndWait()` 的完成边界是“回收前快照中已归属该 runtime 的成员全部确认退出”，不是仅直接 child 退出。根进程先退出时，已登记后代仍须取得原预算内的身份复核与 exact force 机会；未知身份保留观察责任。`remainingPids` 同时承载已知存活和未能确认退出的固定成员，调用方不能把 warning、查询超时或空匹配列表当成 cleanup 成功。
+- cleanup timeout 不证明原成员已经退出。观察预算内稍晚投递的正常 exit 仍可成功；到截止时，仍存活或退出事实未知的固定成员均报告 `cleanup incomplete`，日志区分这两种原因：
 
   ```text
   退出前身份快照 -> graceful / force 回收 -> 终态观察预算
                                             |-- 快照身份全部退出 -> success（含 late exit）
-                                            `-- deadline 时仍存活 -> remainingPids + 保留 ownership
+                                            `-- deadline 时存活或未知 -> remainingPids + 保留 ownership
   ```
 
   Windows 的快照、EOF、taskkill 和终态观察共享 transport 固定绝对 deadline；没有已验证
@@ -68,18 +68,31 @@ Windows 普通退出属于高频交互，更新安装属于低频且必须释放
   继续沿用既有 taskkill 绝对 deadline。macOS/Linux 继续使用既有 POSIX force + observation
   上界，本轮没有运行时证据支持扩大其等待时间。
 
-- 进程树快照不能只保存裸 PID：必须同时保存可复核的进程创建标识（Linux `/proc` start ticks；Darwin `lstart + command + PGID`；Windows `CreationDate`）和 POSIX PGID。延迟 graceful / force 回收前必须核对身份；PID 已复用时按“原成员已退出”处理，禁止重新沿复用后的 root PID 查树或向新进程发送信号。Windows force 阶段不得再启动完整进程表查询；必须在原 deadline 内预留固定窗口，对快照中的已知 PID 使用 `Get-CimInstance` 定向复核当前 `CreationDate`。后代只有确认创建身份匹配才允许 `taskkill /T /F`；查询失败、超时或身份不匹配时必须 fail closed。受管 root 是唯一例外：未进入 `unverifiedRootOnly`，且 Host 持有的原始 `ChildProcess` 仍满足 `exitCode/signalCode` 均为 `null`、句柄可发送信号并确认 PID 存活时，可仅对 root 执行 graceful `/T` 或 deadline `/T /F`；不得沿 root PID 重新发现后代或将未复核后代加入 `/F` 目标。
+- 进程树快照不能只保存裸 PID：必须同时保存可复核的进程创建标识（Linux `/proc` start ticks；Darwin `lstart + command + PGID`；Windows `CreationDate`）和 POSIX PGID。Windows sync/async 统一为 `windows-utc-100ns:<UTC Unix epoch 起的整数 ticks>`，保留 CIM 经 .NET ticks 输出的全部精度，用 BigInt 比较，不降为毫秒或添加 epsilon。来源只提供微秒时，该编码不增加真实精度。首次发现必须先验证 root 锚点，再逐条要求 `child.created >= directParent.created`；早于父节点、身份不可解析、循环或重复 PID 的歧义节点及依赖分支全部拒绝，合法同精度相等保留。
+- live root 的创建时间不得早于可信 spawn 起点；root 已退出（含查询期间退出）时不能采用同 PID 当前行，只能由真实 exit 事件提供可信 `[spawn, exit)`。边界须为非负安全整数毫秒且 `spawn < exit`，转换为 BigInt ticks 后比较；所有恢复候选仍限制在该生命周期内，并逐边验证，不扩展到 root 退出后新生孙代。同步入口也遵守该规则，查询完成时间不得代替 exit。同步阻塞期间尚未投递的 exit 是观测限制。
+- 首次合法快照是固定候选，不是发送时的当前证据。live root 只对原受管 root 发 exact graceful；EOF 前旧快照不得直接授权 descendant graceful。root 已退出时，只有本阶段定向过滤为 matched 的成员可发 exact graceful；短余量时跳过该前置 graceful 阶段并直接进入有验证的 force。所有仍未确认退出的已登记后代（含 reparent）都保留 force 验证资格，不能只从上一阶段 matched 子集挑选。
+- 本 services/process 清理链的 graceful、force、root 例外和默认 runner 全部禁止 `taskkill /T`。只使用 `taskkill /PID <pid>` 或 `taskkill /PID <pid> /F`，不得让原生命令重新扩树。受管 root 例外只作用于调用链传入的原始 spawn `ChildProcess`：未进入 `unverifiedRootOnly`、未证明身份换代、尚未观察 exit、句柄可用且 PID 存活；只有裸 PID、旧 snapshot 或具有 `kill` 方法的任意对象不能证明该前提。该例外也受命令绝对截止约束。外部 taskkill 仍按数值 PID 执行，不能宣称它使用了 ChildProcess 的原句柄。
+- Windows 后续身份验证只查固定候选 PID；每批最多 64 个、一个 `ProcessId = n OR ...` CIM filter、每个 cleanup attempt 内并发上限 1，所有批共享本阶段验证绝对截止，每身份每阶段至多查询一次。18 项必须一批；超长集合不能开 N 个 PowerShell、补全表或失败重试。PID 只能由已校验的系统整数序列化，详见 [Windows 状态机的预算和结果合同](../windows-agent-process-cleanup-state-machine.md)。
+- 验证内部结果必须区分 matched、gone 和 unknown。只有成功且完整的定向响应证实原身份缺失/换代，或明确的 OS 不存在证据，才将原成员视为 gone；超时、权限错误、无法解析或未查询均为 unknown。初始 root-exited 过滤若全部未知，也必须保留固定成员及命令预算，不能因 `currentIdentities=[]` 提前成功。历史成员的当前 PPID 改变不影响创建身份复核。
 - 系统进程表暂时不可用且尚未取得 root 创建标识时，本轮回收必须 fail closed：不得通过 `ChildProcess.kill()` 或 `taskkill` 向裸 PID 发信号，也不得在延迟 force 阶段重新发现该 PID 的进程树。快照必须显式标记 `identityVerification: "unavailable"`，在既有退出预算内继续观察原 `ChildProcess`；截止时仍未退出则通过 `remainingPids` 报告 cleanup incomplete，禁止把空身份误报为清理成功。
 - Agent 的“当前可复用 protocol client”与 Host 的“尚未确认退出的 OS 进程所有权”是两种状态。protocol close 可以立即解除 workspace 的 active client 绑定，但只有 cleanup 确认 root 与已登记树成员均退出后才能释放进程所有权。
-- timeout、protocol close、workspace restart 和 app quit 对同一 managed process 的回收必须幂等；失败的 cleanup Promise 不能永久缓存。app quit 必须等待 active 与正在退休的全部 owned process，并对先前报告残留的进程树执行一次直接进入 force 阶段的有界最终重试。
-- Windows 在 EOF 前通过系统进程表保存后代快照，继续使用 `taskkill /PID /T` 和 `/F` 兜底；若 root 在 protocol close 前已经退出，cleanup 边界允许沿 Win32_Process 保留的 `ParentProcessId` 找回后代，但候选成员的 `CreationDate` 必须落在 Host 记录的 root 生命周期内，并继续用 `CreationDate` 固定成员身份，避免 root PID 复用后认领无关进程。Windows 10+ 统一使用异步 PowerShell `Get-CimInstance Win32_Process`，同一轮多个 workspace 共享一个 in-flight 查询；CIM 不可用时显式进入 unverified fail-closed。POSIX 继续使用 Host spawn 时拥有的独立进程组和已发现后代进程兜底。
+- timeout、protocol close、workspace restart 和 app quit 对同一 managed process 的回收必须幂等；失败的 cleanup Promise 不能永久缓存。app quit 必须等待 active 与正在退休的全部 owned process，并对先前报告残留的进程树执行一次直接进入 force 阶段的有界最终重试。该 retry 复用首快照且不重复 EOF 宽限，root 仍活也不能先耗尽 1250ms 再进入 force。
+- Windows 在 EOF 前只做一次完整进程表发现，之后使用固定成员的定向验证与 exact PID 信号；root 已退出时仅按上述可信生命周期恢复成员。Windows 10+ 统一使用异步 PowerShell `Get-CimInstance Win32_Process`，多个 workspace 仅可共享晚于各自 spawn 起点的 in-flight 发现查询；不可用时显式进入 unverified fail-closed。POSIX 继续使用 Host spawn 时拥有的独立进程组和已发现后代进程兜底。
 - Windows 对多个 workspace Agent 执行 `taskkill` 时必须使用异步子进程并行等待，禁止用
   `spawnSync` 串行阻塞 Host 事件循环。Host 的 service phase timeout 必须能在清理命令卡住时
   准时触发；异步命令仍需设置单次超时，并在 graceful/force 命令完成后返回明确清理结果。
 - Windows 退出快照统一异步执行 `Get-CimInstance Win32_Process`；同一轮多个 workspace 共享一个
   in-flight 查询。查询耗时计入原有 force deadline，不得在查询结束后重新开始计算，否则机器负载
-  较高时会把进程表查询时间额外叠加到退出预算。首次成功快照是本轮唯一一次完整进程表查询；
-  force 阶段必须复用该快照，只允许对快照中的已知身份执行有界的定向 CIM 复核。
+  较高时会把进程表查询时间额外叠加到退出预算。每个 cleanup attempt 链只允许首次发现使用
+  完整进程表，成功或失败后均不得补扫；Transport 的最终 retry 复用首快照，只做定向复核。
+- 首轮 transport 绝对截止仍为 `t0 + 2000 + 1000 + 250 = t0 + 3250ms`；既有最终 retry
+  仍为 `tr + 0 + 1000 + 250 = tr + 1250ms`，不新增 retry。750ms 仅是验证上限，
+  不是准入门槛。按状态机定义，在 `s=max(now, nominalForceAt-750)` 令 `R=max(0,floor(D-s))`，
+  分配 `O=min(原观察预算,floor(R/3))`、`V=min(750,floor((R-O)/2))`、
+  `C=min(原命令上限,R-O-V)`，满足 `V+C+O<=R`。验证截止 `s+V`，命令截止 `D-O`，
+  终态截止 `D`；实际发送前重新核对截止，命令 timeout 不超过剩余命令窗口。
+  快照 50ms 加 EOF 1800ms 后虽只余 force 150ms，仍有 `R=1400,V=C=575,O=250`；
+  最终 retry 直接验证，满余量时 `R=1250,V=C=500,O=250`。不能把验证返回时刻当作新起点续时。
 - PowerShell/CIM 命令成功但没有可解析身份、被拒绝、不可用或超时时，返回
   `identityVerification: "unavailable"`，空身份不得表示清理完成。root 在同轮查询期间退出时，
   只有调用方已经提供可信的 `ownedProcessExitedAtMs`，或能在查询完成时从受管 ChildProcess 的
@@ -92,3 +105,8 @@ Windows 普通退出属于高频交互，更新安装属于低频且必须释放
 - 本轮不增加常驻进程轮询，也不从运行期消息流推断进程所有权。当前 MCP adapter 不使用 detached spawn，并在 Agent EOF 收尾时显式回收已登记的 stdio MCP 进程树；若未来新增需要脱离 Agent 进程组的托管进程，必须在对应 spawn adapter 中增加显式 ownership/close 契约，不能恢复运行期进程表扫描。
 - 本轮不改变 workspace 与 active Agent 的复用关系，不改变 MCP 配置及 session 连接语义。
 - 本轮不改变桌面端 `desktop-continuous` 与手机远控 `web-remote-replayable` 的消息交付边界。
+- 固定快照之后从未登记的晚生后代不在本次 Host 清理保证内，由 Agent 自身 spawn adapter/EOF
+  收尾负责；不得以取消 `/T` 后仍能可靠覆盖所有未知进程为承诺。系统时钟回拨、来源精度、缺失
+  中间父节点，以及身份查询到数值 PID 命令之间的非原子竞态仍存在，不能通过宽限或裸 PID 补树放开。
+- 本次只修当前 services/process 可达链；不改变无关 CLI/平台 taskkill、POSIX 组、owner/lease、
+  workspaceIdentity 或远端语义。安全确定性全 mock RED/GREEN 和独立审查完成前，不运行真实进程回归。
