@@ -676,3 +676,12 @@ Task32 raw 收敛补充：新 raw 频繁调用原防抖会让恢复 full load �
 - [ ] Step 2: 在既有测试新增真实 plain Node 子进程，经实际脚本与公开共享 schema 对本地四归档 fixture 执行 pin；去掉继承 NODE_OPTIONS，检查自然退出、输出副本、固定 URL 和 SHA。先保存确定性 ERR_MODULE_NOT_FOUND RED，再最小改用 tsImport 并保留中文根因注释，保存 GREEN；不伪造 import 或网络/发布成功。
 - [ ] Step 3: 运行全部 github-release-assets/version/workflow 脚本测试，保留 pin/verify-release 与资源预算断言；定向 lint/format/diff 和默认架构检查，自审并提交限定脚本/测试。报告 `task-36-implementation-report.md`，新原件仅写 scratch/task36，列清真实命令、exit、提交和未执行项。writer 不派 agent、不跑全量/root type/lint/build/GUI/push。
 - [ ] Step 4: controller 执行新 HEAD root typecheck/lint/arch 与独立审查。原76be祖先的完整原BASE门禁（1128 files /12619 tests）只作为祖先证据保留，不声称新HEAD重跑全量。相对f7严格核对 tracked paths/blobs，只有Task35精确四文件（两份测试、gate spec、本计划）加本任务精确三文件（发布脚本、脚本测试、发布spec）差异时，才可携带原 f7 包/原生/92项保护证据并重新核验；保留 buildCommit=f7，不伪称新HEAD构建。任何其它或生产/dep/config差异均停止复用、重建重验。实际 push 以自然远端76be为base运行正常hook，不伪HEAD或跳hook；正式GitHub assets必须从最终HEAD重构建。
+
+### Task 37: 闭合体积审计与离线导入的同类 plain Node loader
+
+**Evidence / scope:** CI `44091224098` Windows x64 安装器已生成，随后 bundle 实际 Node 调用 `audit-bundle-size.mjs` 因同一共享 release.ts/errorCodes.js 裸导入失败，原件 `scratch/github-44091224098-win-x64-job.log`。只读扫描根 workflow、bundle/prepare/runtime/electron-builder 及 mjs 入口确认另一同类为独立 `import-source-server-release.mjs`。controller批准精确六文件：两个工具、原 `auditBundleSize.test.ts`、`importSourceServerRelease.test.ts`、release-packaging spec、本计划。基线为已推送dac678cc，不重做Task36，不改共享生产、workflow、依赖、预算/timeout/skip。
+
+- [ ] Step 1: 固定Node24.14.0/pnpm10.33.2、freshness/默认arch；先扫描直接TS/共享release导入的发布与打包边界并交controller精确清单。先独立提交spec/plan，记录两工具loader和纯工具分层验证范围。
+- [ ] Step 2: 原测试新增真实plain Node CLI回归，无继承NODE_OPTIONS、loader参数或node_modules注入；audit使用小安装器+四目标固定URL descriptor并核对报告原预算，offline import使用真实descriptor/archive并核对目标缓存内容。先保存各自ERR_MODULE_NOT_FOUND RED，再两个工具最小tsImport实际公开schema修复，中文根因注释，保存GREEN；不得伪造网络/发布或安装器构建成功。
+- [ ] Step 3: 执行两份工具原完整tests及全部github-release scripts tests，保留原校验/预算/平台skip；精确lint/fmt/diff/默认arch，自审限定提交；新原件仅scratch/task37，写task-37-implementation-report.md。无子agent/full/root type/lint/build/GUI/push。
+- [ ] Step 4: controller独审并执行root typecheck/lint/arch、strict tracked-tree等价/原f7五SHA+native+92项重核。新对dac差异仅上述六文件；对f7为Task35/36既有七文件加两工具两测试合计十一文件，其余path/mode/type/blob一致，否则停止复用重建重验。旧f7 buildCommit/metadata不改；76be原完整gate/remote与dac自然hook/remote仅作祖先证据。新实际push用自然远端dac基线原hook，保存自然exit/remote，不伪原1af全量；正式GH从最终HEAD重构建。
