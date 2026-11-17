@@ -42,8 +42,14 @@ function fixture(extension = ".zip", version = "1.2.3") {
   const save = () =>
     writeFileSync(join(resources, "source-server-release.json"), JSON.stringify(descriptor));
   save();
-  const audit = (withResources = true, lightweight = false) =>
-    spawnSync(
+  const audit = (withResources = true, lightweight = false) => {
+    const env = {
+      ...process.env,
+      ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY: lightweight ? "1" : "0",
+    };
+    // CI 由 plain node 启动审计；不能继承父测试的 loader 掩盖真实共享源码加载故障。
+    delete env.NODE_OPTIONS;
+    return spawnSync(
       process.execPath,
       [
         script,
@@ -54,9 +60,10 @@ function fixture(extension = ".zip", version = "1.2.3") {
       {
         encoding: "utf8",
         timeout: 10_000,
-        env: { ...process.env, ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY: lightweight ? "1" : "0" },
+        env,
       },
     );
+  };
   const makeLightweight = () => {
     for (const archive of archives) {
       rmSync(join(resources, archive.fileName));
@@ -137,6 +144,36 @@ describe("安装包基础与离线资源预算", () => {
 });
 
 describe("轻量安装包直接预算和体积报告", () => {
+  it("plain Node CI 入口加载真实共享 schema 并审计小文件与正式 descriptor", () => {
+    const f = fixture(".exe", "1.4.1");
+    writeFileSync(f.artifact, "installer-fixture");
+    f.makeLightweight();
+    for (const archive of f.descriptor.archives) {
+      archive.urls = [
+        `https://github.com/OpenX123/ZCode/releases/download/v1.4.1/${archive.fileName}`,
+      ];
+    }
+    f.save();
+    const result = f.audit(true, true);
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Resource mode: descriptor-only");
+    const report = JSON.parse(readFileSync(`${f.artifact}.size-report.json`, "utf8"));
+    expect(report.artifact).toEqual({
+      path: f.artifact,
+      bytes: Buffer.byteLength("installer-fixture"),
+      limitBytes: 250_000_000,
+    });
+    expect(report.resourceMode).toBe("descriptor-only");
+    expect(report.bundledResourceBytes).toBe(
+      readFileSync(join(f.resources, "source-server-release.json")).length,
+    );
+    expect(report.declaredRemoteArchiveBytes).toBe(
+      f.descriptor.archives.reduce((sum, entry) => sum + entry.sizeBytes, 0),
+    );
+  });
+
   it("接受当前正式版本的固定URL，拒绝其他patch串包", () => {
     const f = fixture(".dmg", "1.0.0");
     f.makeLightweight();

@@ -1,7 +1,10 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { afterEach, expect, it, vi } from "vitest";
 import { ZCODE_VERSION } from "@zcode/shared";
 import { importSourceServerRelease } from "../scripts/import-source-server-release.mjs";
@@ -43,6 +46,41 @@ async function fixture(version = ZCODE_VERSION) {
   await writeFile(archivePath, content);
   return { root, content, descriptorPath, archivePath, cacheDir };
 }
+
+it("plain Node 离线 CLI 加载真实共享 schema 并校验导入缓存", async () => {
+  const f = await fixture();
+  const env = { ...process.env };
+  // 离线 CLI 必须独立加载真实 schema，不能从 Vitest 父进程继承 TS loader。
+  delete env.NODE_OPTIONS;
+  const { stdout, stderr } = await promisify(execFile)(
+    process.execPath,
+    [
+      fileURLToPath(new URL("../scripts/import-source-server-release.mjs", import.meta.url)),
+      "--descriptor",
+      f.descriptorPath,
+      "--archive",
+      f.archivePath,
+      "--cache-dir",
+      f.cacheDir,
+    ],
+    { env },
+  );
+  const sha256 = createHash("sha256").update(f.content).digest("hex");
+  const destination = join(
+    f.cacheDir,
+    "source-server",
+    ZCODE_VERSION,
+    "linux-x64",
+    sha256,
+    "zcode-server-linux-x64.tar.gz",
+  );
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(`已校验并导入：${destination}`);
+  const cached = await readFile(destination);
+  expect(cached.toString("utf8")).toBe(f.content);
+  expect(createHash("sha256").update(cached).digest("hex")).toBe(sha256);
+  expect(await readdir(join(destination, ".."))).toEqual(["zcode-server-linux-x64.tar.gz"]);
+});
 
 it("导入后正式版 resolver 完全离线命中已校验缓存", async () => {
   const fixtureData = await fixture();

@@ -6,7 +6,13 @@ import { copyFile, lstat, mkdir, readFile, rename, rm, stat } from "node:fs/prom
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
-import { sourceServerReleaseDescriptorSchema } from "@zcode/shared/source-server-release";
+import { tsImport } from "tsx/esm/api";
+
+// plain Node 不会解析共享 TS 的 .js 源码引用；复用已有 tsx，保留共享 schema 为唯一校验规则。
+const { sourceServerReleaseDescriptorSchema } = await tsImport(
+  import.meta.resolve("@zcode/shared/source-server-release"),
+  import.meta.url,
+);
 
 export async function importSourceServerRelease({ descriptorPath, archivePath, cacheDir }) {
   const descriptorStat = await lstat(descriptorPath);

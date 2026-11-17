@@ -4,11 +4,14 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, open, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import {
+import { tsImport } from "tsx/esm/api";
+
+// plain Node 不会把共享 TS 内的 .js 引用映射到 .ts；工具层用已有 tsx 加载实际公开 schema。
+const {
   SOURCE_SERVER_RELEASE_DESCRIPTOR_FILE_NAME,
   SOURCE_SERVER_RELEASE_TARGETS,
   sourceServerReleaseDescriptorSchema,
-} from "@zcode/shared/source-server-release";
+} = await tsImport(import.meta.resolve("@zcode/shared/source-server-release"), import.meta.url);
 
 const argv = process.argv.slice(2);
 
