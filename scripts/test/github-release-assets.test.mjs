@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import {
   pinReleaseDescriptor,
   releaseBaseUrl,
@@ -50,6 +53,56 @@ async function fixture(version = "1.2.3", tag = "build-8-1") {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+test("plain Node CI 入口加载真实共享 schema 并固定四归档 URL", async () => {
+  const { version: currentVersion } = JSON.parse(
+    await readFile(new URL("../../package.json", import.meta.url), "utf8"),
+  );
+  const releaseTag = `v${currentVersion}`;
+  const f = await fixture(currentVersion, releaseTag);
+  const output = join(f.options.directory, "release-resources");
+  const env = { ...process.env, GITHUB_REPOSITORY: repository, RELEASE_TAG: releaseTag };
+  // 子进程必须复现 CI 的 plain node，不能借父测试的 tsx 注册掩盖真实加载故障。
+  delete env.NODE_OPTIONS;
+  const { stdout, stderr } = await promisify(execFile)(
+    process.execPath,
+    [
+      fileURLToPath(new URL("../github-release-assets.mjs", import.meta.url)),
+      "pin",
+      "--directory",
+      f.options.directory,
+      "--output",
+      output,
+    ],
+    { env },
+  );
+  assert.match(stdout, /\[github-release-assets\] pin: .+ verified/u);
+  assert.equal(stderr, "");
+  const descriptorName = "source-server-release.json";
+  const descriptor = JSON.parse(await readFile(join(output, descriptorName), "utf8"));
+  assert.equal(descriptor.version, currentVersion);
+  assert.deepEqual(
+    descriptor.archives.map((archive) => archive.target),
+    targets,
+  );
+  assert.deepEqual(
+    (await readdir(output)).sort(),
+    [descriptorName, ...descriptor.archives.map((archive) => archive.fileName)].sort(),
+  );
+  assert.equal(
+    await readFile(join(output, descriptorName), "utf8"),
+    await readFile(join(f.options.directory, descriptorName), "utf8"),
+  );
+  for (const archive of descriptor.archives) {
+    const content = await readFile(join(output, archive.fileName));
+    assert.deepEqual(content, await readFile(join(f.options.directory, archive.fileName)));
+    assert.equal(archive.sizeBytes, content.length);
+    assert.equal(archive.sha256, createHash("sha256").update(content).digest("hex"));
+    assert.deepEqual(archive.urls, [
+      `https://github.com/${repository}/releases/download/${releaseTag}/${archive.fileName}`,
+    ]);
+  }
 });
 
 test("固定每轮 URL，保持相同版本不同 attempt 的内容身份", async () => {

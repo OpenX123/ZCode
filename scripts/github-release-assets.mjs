@@ -6,15 +6,18 @@ import { copyFile, lstat, mkdir, readFile, readdir, writeFile } from "node:fs/pr
 import { createRequire } from "node:module";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { tsImport } from "tsx/esm/api";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const requireFromDesktop = createRequire(join(repoRoot, "packages/desktop/package.json"));
+// Node 原生 TS 加载不会将共享源码的 .js 引用映射到 .ts；复用构建工具的 tsx 加载真实公开 schema。
 const {
   SOURCE_SERVER_RELEASE_DESCRIPTOR_FILE_NAME,
   SOURCE_SERVER_RELEASE_TARGETS,
   sourceServerReleaseDescriptorSchema,
-} = await import(
-  pathToFileURL(requireFromDesktop.resolve("@zcode/shared/source-server-release")).href
+} = await tsImport(
+  pathToFileURL(requireFromDesktop.resolve("@zcode/shared/source-server-release")).href,
+  import.meta.url,
 );
 
 export function releaseBaseUrl(repository, tag) {
