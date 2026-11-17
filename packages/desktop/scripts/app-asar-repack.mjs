@@ -1,4 +1,6 @@
 import { access, rename, rm } from "node:fs/promises";
+import { resolve } from "node:path";
+import { getDesktopOptionalHostNativeDirectories } from "./desktop-native-package-policy.mjs";
 
 export const ASAR_UNPACK_NATIVE_GLOB = "*.{node,dll,dylib,exe}";
 
@@ -27,6 +29,7 @@ export async function replaceAppAsarFromStaging({
   sourceDir,
   appAsarPath,
   targetPlatformKey,
+  hostPlatformKey,
   runAsarCommand,
 }) {
   const candidateAsarPath = `${appAsarPath}.next`;
@@ -39,6 +42,12 @@ export async function replaceAppAsarFromStaging({
   ]);
 
   try {
+    // Bugfix：afterPack 整包依赖注入会带回宿主 SSH 加速；每次 pack 前按同一 policy 清理 staging。
+    await Promise.all(
+      getDesktopOptionalHostNativeDirectories(targetPlatformKey, hostPlatformKey).map((directory) =>
+        rm(resolve(sourceDir, directory), { force: true, recursive: true }),
+      ),
+    );
     runAsarCommand(
       createAppAsarPackArgs({
         sourceDir,

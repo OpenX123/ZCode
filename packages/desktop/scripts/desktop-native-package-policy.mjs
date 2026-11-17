@@ -36,10 +36,24 @@ function assertSupportedTargetPlatformKey(targetPlatformKey) {
   }
 }
 
-export function createDesktopNativePackagePrunePatterns(targetPlatformKey) {
+// Bugfix：Intel→ARM64 的正式产物已证 sshcrypto 为宿主 CPU；两处均有上游明确支持的 JS/WASM fallback。
+// 单一清单同时用于初始 files、注入后的 staging 清理及最终拒绝，不能用通配删除未知 native。
+export function getDesktopOptionalHostNativeDirectories(
+  targetPlatformKey,
+  hostPlatformKey = `${process.platform}-${process.arch}`,
+) {
+  assertSupportedTargetPlatformKey(targetPlatformKey);
+  if (!targetPlatformKey.startsWith("darwin-") || targetPlatformKey === hostPlatformKey) return [];
+  return ["node_modules/ssh2/lib/protocol/crypto/build", "node_modules/cpu-features/build"];
+}
+
+export function createDesktopNativePackagePrunePatterns(targetPlatformKey, hostPlatformKey) {
   assertSupportedTargetPlatformKey(targetPlatformKey);
 
   return [
+    ...getDesktopOptionalHostNativeDirectories(targetPlatformKey, hostPlatformKey).map(
+      (path) => `!${path}/**`,
+    ),
     // PDF 预览已经由 Vite 打进 renderer，pdfjs-dist 的 Canvas optional dependency
     // 只服务 Node 渲染；pnpm 跨平台安装的 8 套 Canvas native 不应带进桌面安装包。
     "!node_modules/@napi-rs/canvas/**",
@@ -79,12 +93,25 @@ function isNativeRuntimeFile(path, targetPlatformKey) {
   return path === `/node_modules/node-pty/prebuilds/${targetPlatformKey}/spawn-helper`;
 }
 
-export function findDesktopNativePackageViolations(entries, targetPlatformKey) {
+export function findDesktopNativePackageViolations(entries, targetPlatformKey, hostPlatformKey) {
   assertSupportedTargetPlatformKey(targetPlatformKey);
   const violations = [];
+  const optionalHostDirectories = getDesktopOptionalHostNativeDirectories(
+    targetPlatformKey,
+    hostPlatformKey,
+  );
 
   for (const entry of entries) {
     const { packState, path } = entry;
+
+    if (
+      optionalHostDirectories.some(
+        (directory) => path === `/${directory}` || path.startsWith(`/${directory}/`),
+      )
+    ) {
+      violations.push(`不应打包交叉目标的可选 SSH 宿主加速: ${path}`);
+      continue;
+    }
 
     if (
       path === "/node_modules/@napi-rs/canvas" ||

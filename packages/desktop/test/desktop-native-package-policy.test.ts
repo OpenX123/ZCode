@@ -5,9 +5,48 @@ import {
   findDesktopRendererPackageViolations,
   findDesktopNativePackageViolations,
   parseAsarListWithPackState,
+  getDesktopOptionalHostNativeDirectories,
 } from "../scripts/desktop-native-package-policy.mjs";
 
 describe("desktop native package policy", () => {
+  it("仅 macOS 交叉目标排除两个已验证可选的宿主加速目录", () => {
+    const directories = [
+      "node_modules/ssh2/lib/protocol/crypto/build",
+      "node_modules/cpu-features/build",
+    ];
+    expect(getDesktopOptionalHostNativeDirectories("darwin-arm64", "darwin-x64")).toEqual(
+      directories,
+    );
+    expect(getDesktopOptionalHostNativeDirectories("darwin-x64", "darwin-arm64")).toEqual(
+      directories,
+    );
+    for (const target of [
+      "darwin-arm64",
+      "darwin-x64",
+      "win32-arm64",
+      "win32-x64",
+      "linux-arm64",
+      "linux-x64",
+    ]) {
+      expect(getDesktopOptionalHostNativeDirectories(target, target)).toEqual([]);
+    }
+    expect(getDesktopOptionalHostNativeDirectories("win32-arm64", "win32-x64")).toEqual([]);
+    const patterns = createDesktopNativePackagePrunePatterns("darwin-arm64", "darwin-x64");
+    for (const path of directories) expect(patterns).toContain(`!${path}/**`);
+    const entries = parseAsarListWithPackState(
+      [
+        "unpack : /node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node",
+        "unpack : /node_modules/cpu-features/build/Release/cpufeatures.node",
+        "pack : /node_modules/ssh2/lib/protocol/crypto/poly1305.js",
+        "unpack : /node_modules/other/build/Release/required.node",
+      ].join("\n"),
+    );
+    expect(findDesktopNativePackageViolations(entries, "darwin-arm64", "darwin-x64")).toEqual([
+      expect.stringContaining("可选 SSH 宿主加速"),
+      expect.stringContaining("可选 SSH 宿主加速"),
+    ]);
+    expect(findDesktopNativePackageViolations(entries, "darwin-x64", "darwin-x64")).toEqual([]);
+  });
   it("应裁剪 Canvas、node-pty 安装机产物和所有非目标平台 prebuild", () => {
     const patterns = createDesktopNativePackagePrunePatterns("darwin-arm64");
 
