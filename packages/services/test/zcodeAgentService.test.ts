@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import {
   existsSync,
   mkdtempSync,
@@ -14,8 +16,11 @@ import {
   ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
   type ZCodeSessionRuntimePreferencesScope,
 } from "@zcode/shared";
+import * as processTreeTerminator from "@zcode/services/process/processTreeTerminator";
 import { createZCodeAgentService } from "../src/zcode-agent/zcodeAgentService.js";
 import { ZCodeAgentProcessManager } from "../src/zcode-agent/zcodeAgentProcessManager.js";
+import { ZCodeStdioTransport } from "../src/zcode-agent/zcodeStdioTransport.js";
+import * as windowsTaskkillRunner from "../src/process/windowsTaskkillRunner.js";
 import type { ZCodeProtocolClient } from "../src/zcode-agent/zcodeProtocolClient.js";
 import { ZCODE_AGENT_MCP_STATUS_MODE_UNSUPPORTED_ERROR_CODE } from "../src/zcode-agent/zcodeAgentErrors.js";
 import type { ZCodeAgentServiceEvent } from "../src/zcode-agent/zcodeAgent.js";
@@ -32,6 +37,17 @@ const protocolModelProperties = {
   outputFormat: { supportsText: true },
 };
 const protocolModelPropertiesJson = JSON.stringify(protocolModelProperties);
+
+const INITIALIZE_STDIO_FAKE_AGENT = `
+const keepAlive = setInterval(() => {}, 1000);
+// 初始化 fake 也必须消费 stdin 并在 EOF 释放自己的保活资源，避免依赖 CIM 强杀成功。
+const stop = () => clearInterval(keepAlive);
+process.stdin.once("end", stop);
+process.stdin.once("close", stop);
+process.stdin.resume();
+if (process.argv[1]) require("node:fs").writeFileSync(process.argv[1], "ready");
+process.stdout.write(JSON.stringify({ id: "ready", result: {} }) + "\\n");
+`;
 
 function createReadyZCodeAgentService(options?: Parameters<typeof createZCodeAgentService>[0]) {
   return createZCodeAgentService({
@@ -1611,12 +1627,101 @@ describe("createZCodeAgentService", () => {
     });
   });
 
+  it("initialize stdio fake exits naturally after stdin EOF", async () => {
+    const child = spawn(process.execPath, ["-e", INITIALIZE_STDIO_FAKE_AGENT], {
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const exited = once(child, "exit");
+    const cleanup = async () => {
+      // 失败时只终止本用例刚创建且尚未退出的原始句柄，不沿裸 PID 清理其他进程。
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      await exited;
+    };
+    testCleanups.push(cleanup);
+
+    try {
+      const [ready] = await once(child.stdout, "data");
+      expect(ready.toString()).toBe(`${JSON.stringify({ id: "ready", result: {} })}\n`);
+      child.stdin.end();
+      await vi.waitFor(() => expect(child.exitCode).toBe(0));
+      expect(await exited).toEqual([0, null]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("initialize stdio fake exits through real transport when snapshot is unavailable", async () => {
+    const child = spawn(process.execPath, ["-e", INITIALIZE_STDIO_FAKE_AGENT], {
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const exited = once(child, "exit");
+    const transport = new ZCodeStdioTransport(child);
+    const ready = new Promise((resolve) => transport.onMessage(resolve));
+    const restoreMocks: Array<() => void> = [];
+    const cleanup = async () => {
+      try {
+        if (child.exitCode === null && child.signalCode === null) child.kill();
+        await exited;
+        transport.dispose();
+      } finally {
+        for (const restore of restoreMocks.splice(0).reverse()) restore();
+      }
+    };
+    testCleanups.push(cleanup);
+
+    try {
+      expect(await ready).toEqual({ id: "ready", result: {} });
+      const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+      restoreMocks.push(() => platformSpy.mockRestore());
+      const captureSnapshot = processTreeTerminator.captureProcessTreeSnapshotAsync;
+      let snapshotAtMs = 0;
+      const snapshotSpy = vi
+        .spyOn(processTreeTerminator, "captureProcessTreeSnapshotAsync")
+        .mockImplementation((owner, options) => {
+          if (owner !== child) return captureSnapshot(owner, options);
+          // 只控制本轮句柄的快照不可用；terminator、waiter 和退出事件仍真实执行。
+          snapshotAtMs = Date.now();
+          return Promise.resolve(undefined);
+        });
+      restoreMocks.push(() => snapshotSpy.mockRestore());
+      const terminateSpy = vi.spyOn(processTreeTerminator, "terminateProcessTreeAndWait");
+      restoreMocks.push(() => terminateSpy.mockRestore());
+      const taskkillSpy = vi.spyOn(windowsTaskkillRunner, "defaultWindowsTaskkillRunner");
+      restoreMocks.push(() => taskkillSpy.mockRestore());
+
+      await transport.disposeAndWait();
+
+      expect(await exited).toEqual([0, null]);
+      expect(snapshotSpy).toHaveBeenCalledTimes(1);
+      expect(terminateSpy).toHaveBeenCalledTimes(1);
+      const snapshotDeadline = snapshotSpy.mock.calls[0]![1]!.windowsCleanupDeadlineAtMs!;
+      expect(snapshotDeadline - snapshotAtMs).toBeGreaterThan(0);
+      expect(snapshotDeadline - snapshotAtMs).toBeLessThanOrEqual(3_250);
+      expect(terminateSpy.mock.calls[0]![1]).toMatchObject({
+        snapshot: {
+          rootPid: child.pid,
+          descendantPids: [],
+          identities: [],
+          identityVerification: "unavailable",
+        },
+        windowsTaskkillTimeoutMs: 1_000,
+        windowsCleanupDeadlineAtMs: snapshotDeadline,
+      });
+      expect(taskkillSpy).not.toHaveBeenCalled();
+    } finally {
+      await cleanup();
+    }
+  });
+
   it("starts stdio app-server during initialize", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "zcode-agent-service-"));
     createdDirs.push(workspacePath);
+    const readyPath = join(workspacePath, "initialize-agent.ready");
     const commandResolver = vi.fn(() => ({
       command: process.execPath,
-      args: ["-e", "setInterval(() => {}, 1000);"],
+      args: ["-e", INITIALIZE_STDIO_FAKE_AGENT, readyPath],
     }));
     const processLifecycleReporter = {
       onSpawn: vi.fn(),
@@ -1625,6 +1730,7 @@ describe("createZCodeAgentService", () => {
       onError: vi.fn(),
     };
     const service = createReadyZCodeAgentService({ commandResolver, processLifecycleReporter });
+    testCleanups.push(() => service.disposeAllAndWait());
 
     await expect(
       service.initialize({
@@ -1656,9 +1762,12 @@ describe("createZCodeAgentService", () => {
     ).resolves.toMatchObject({ available: true });
     expect(processLifecycleReporter.onReady).toHaveBeenCalledTimes(1);
 
+    await vi.waitFor(() => expect(existsSync(readyPath)).toBe(true));
     await service.disposeAllAndWait();
     await vi.waitFor(() => expect(processLifecycleReporter.onExit).toHaveBeenCalledTimes(1));
     expect(processLifecycleReporter.onExit.mock.calls[0]![0]).toMatchObject({
+      exitCode: 0,
+      signal: null,
       runtimeReady: true,
       runtimeInstanceId: processLifecycleReporter.onReady.mock.calls[0]![0].runtimeInstanceId,
     });
