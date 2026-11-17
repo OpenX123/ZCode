@@ -115,10 +115,9 @@ export async function pinReleaseDescriptor({ directory, output, version, reposit
 export async function verifyReleaseAssets(options) {
   const descriptor = await verifyDescriptor({ ...options, verifyArchives: true });
   const installers = [
-    ...["arm64", "x64"].flatMap((arch) =>
-      ["dmg", "zip"].map((extension) => `YCode-${options.version}-mac-${arch}.${extension}`),
-    ),
-    ...["arm64", "x64"].map((arch) => `YCode-${options.version}-win-${arch}.exe`),
+    `YCode-${options.version}-mac-arm64.dmg`,
+    `YCode-${options.version}-mac-arm64.zip`,
+    `YCode-${options.version}-win-x64.exe`,
   ];
   const names = [
     SOURCE_SERVER_RELEASE_DESCRIPTOR_FILE_NAME,
@@ -132,7 +131,7 @@ export async function verifyReleaseAssets(options) {
     entries.some((entry) => !entry.isFile() || !allowed.has(entry.name))
   ) {
     throw new Error(
-      "Release must contain exactly six installers, four remote archives and one descriptor",
+      "Release must contain exactly three installers, four remote archives and one descriptor",
     );
   }
   const lines = [];
@@ -151,18 +150,19 @@ export async function verifyReleaseAssets(options) {
     schemaVersion: 1,
     version: options.version,
     releaseUrl: `https://github.com/${options.repository}/releases/tag/${options.tag}`,
-    assets: ["darwin", "win32"].flatMap((platform) =>
-      ["arm64", "x64"].map((arch) => {
-        const fileName = `YCode-${options.version}-${platform === "darwin" ? "mac" : "win"}-${arch}.${platform === "darwin" ? "dmg" : "exe"}`;
-        return {
-          platform,
-          arch,
-          fileName,
-          url: `${base}/${fileName}`,
-          ...metadataByName.get(fileName),
-        };
-      }),
-    ),
+    assets: [
+      { platform: "darwin", arch: "arm64" },
+      { platform: "win32", arch: "x64" },
+    ].map(({ platform, arch }) => {
+      const fileName = `YCode-${options.version}-${platform === "darwin" ? "mac" : "win"}-${arch}.${platform === "darwin" ? "dmg" : "exe"}`;
+      return {
+        platform,
+        arch,
+        fileName,
+        url: `${base}/${fileName}`,
+        ...metadataByName.get(fileName),
+      };
+    }),
   };
   const manifestPath = join(options.directory, "ycode-update.json");
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);

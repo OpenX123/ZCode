@@ -17,10 +17,7 @@ test("macARM64 使用 Intel 宿主但保留目标 ARM64 与原 bundle 命令", (
   const targets = workflow.jobs.package.strategy.matrix.include;
   assert.deepEqual(
     targets.filter((entry) => entry.os === "mac"),
-    [
-      { os: "mac", arch: "arm64", runner: "macos-15-intel" },
-      { os: "mac", arch: "x64", runner: "macos-15-intel" },
-    ],
+    [{ os: "mac", arch: "arm64", runner: "macos-15-intel" }],
   );
   assert.equal(
     workflow.jobs.package.steps.find((step) => step.name === "Build installer").run,
@@ -96,4 +93,11 @@ test("普通构建可取消旧运行，main 手动发版独立串行且不被普
       `${event} ${ref}`,
     );
   }
+});
+
+test("桌面矩阵只发布 macOS ARM64 和 Windows x64", () => {
+  assert.deepEqual(
+    workflow.jobs.package.strategy.matrix.include.map(({ os, arch }) => `${os}-${arch}`),
+    ["mac-arm64", "win-x64"],
+  );
 });

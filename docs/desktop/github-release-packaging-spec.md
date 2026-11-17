@@ -2,13 +2,13 @@
 
 ## 目标与边界
 
-GitHub Actions 为 Windows/macOS 的 ARM64、x64 构建桌面安装包；远程 Source Server 归档从桌面安装包移出，四个桌面目标共享同轮生成的四目标 descriptor。普通本地构建默认继续携带完整离线资源；仅设置 `ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY=1` 的发行构建启用轻量模式。
+GitHub Actions 仅为 macOS ARM64、Windows x64 构建桌面安装包；远程 Source Server 归档从桌面安装包移出，两个桌面目标共享同轮生成的四目标 descriptor。普通本地构建默认继续携带完整离线资源；仅设置 `ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY=1` 的发行构建启用轻量模式。
 
 ## 发布身份与唯一所有者
 
 - 资源 job 是本轮 Source Server 归档与 descriptor 的唯一生成者，使用现有 `prepare:remote-assets` 一次生成四个目标；桌面 job 不重新生成资源。
 - 正式应用版本从 `1.0.0` 起。仅 main 的 `workflow_dispatch` 是正式发版入口，push / PR 不发版；路径过滤与操作入口见 [GitHub 桌面构建与发布](github-release-spec.md)。每轮新的正式构建由资源 job 唯一分配版本：查询本仓库全部 `v1.0.<patch>` Git 标签，无则使用 `1.0.0`，否则使用最大 patch 加一；标签为 `v<version>`。正式发版使用独立于 push / PR 的并发组，同组串行且不取消正在执行的正式构建，避免同一版本被并发分配。
-- 版本分配后只在 CI 工作区更新根 `package.json`；四种桌面目标与最终发布 job 从同一资源 job 输出恢复版本，不重新计算。Desktop metadata、Vite、Host、Server 编译常量及资源目录从根版本派生，独立 Agent CLI 包版本不在此流程修改。
+- 版本分配后只在 CI 工作区更新根 `package.json`；两种桌面目标与最终发布 job 从同一资源 job 输出恢复版本，不重新计算。Desktop metadata、Vite、Host、Server 编译常量及资源目录从根版本派生，独立 Agent CLI 包版本不在此流程修改。
 - `rerun failed jobs` 继续使用先前成功资源 job 的版本与清单；重跑全部 job 时重新查询标签。完整性校验后通过 GitHub Git refs API 原子创建 `v1.0.N` 指向当前提交，再用 `--verify-tag` 创建 draft；即使后续上传失败，标签也已占用，下一轮自动跳到新 patch。已公开版本和已占用标签不得覆盖，失败不公开 Release。
 - 若失败发生在标签占用后，仅重跑 publish 会明确失败并提示重跑全部 job 分配新 patch；不自动删除或覆盖旧标签、草稿或附件，不能把半成品当作最新正式版本。
 - push、PR 和非 main 的手动运行使用当前根版本和临时 `build-<run_number>-<run_attempt>` 身份，不分配或发布正式版本。历史 `build-*` Release 的资源 URL 保持有效；正式 descriptor 将 archive URL 固定到本仓库 `v1.0.N` 标签下，不能运行时用 `latest` 选择远程资源。
@@ -16,9 +16,9 @@ GitHub Actions 为 Windows/macOS 的 ARM64、x64 构建桌面安装包；远程 
 - `node scripts/github-release-assets.mjs` 是 CI 的实际入口；脚本经 Desktop 依赖解析共享包的公开 `@zcode/shared/source-server-release`，再使用仓库已有 `tsx/esm/api` 加载 TypeScript 及其 `.js` 源码引用，不依赖 Node 原生类型擦除提供扩展名映射。共享 schema 仍是唯一校验所有者，不复制 schema、不修改生产导入或 workflow 启动命令，也不把工具 loader 放入产品 bundle。
 - 安装器后的 `node packages/desktop/scripts/audit-bundle-size.mjs` 和独立离线导入 `node packages/desktop/scripts/import-source-server-release.mjs` 同样通过已有 `tsx/esm/api` 加载此公开共享 schema；三个工具统一遵守真实 plain Node 入口可用的边界。audit 的安装器字节预算、descriptor-only 与离线四归档校验规则保持；离线导入仍在原缓存 owner 下执行 size/SHA 验证与原子写入，不新增状态、校验副本或生产 loader。
 - 独立远程附件继续执行每目标 112 MiB、总量 400 MiB 的资源预算；拆出桌面包不意味着放宽远程附件限制。
-- 同一次发布收集四个远程归档、一份 descriptor、macOS 两个架构的 DMG/ZIP 和 Windows 两个架构的 EXE，先验证十一项输入，再从真实安装包生成 `ycode-update.json`；完整性与摘要检查通过后创建 draft Release，上传全部附件和校验清单，最后公开。
-- 更新清单格式为 `{schemaVersion:1,version,releaseUrl,assets}`。`assets` 精确包含 darwin/win32 的 arm64/x64 四种目标；各项字段为 `platform`、`arch`、`fileName`、`url`、`size`、`sha256`，macOS 使用 DMG、Windows 使用 EXE。URL 固定当前 Release，size/SHA 从本轮真实文件生成。
-- `SHA256SUMS` 覆盖六安装包、四远程归档、descriptor 和更新清单十二件内容。正式 Release 总计十三附件；GitHub `latest/download/ycode-update.json` 只用于发现最新应用版本，远程资源下载仍固定应用随包 descriptor。
+- 同一次发布收集四个远程归档、一份 descriptor、macOS ARM64 的 DMG/ZIP 和 Windows x64 的 EXE，先验证八项输入，再从真实安装包生成 `ycode-update.json`；完整性与摘要检查通过后创建 draft Release，上传全部附件和校验清单，最后公开。
+- 更新清单格式为 `{schemaVersion:1,version,releaseUrl,assets}`。`assets` 精确包含 darwin-arm64 和 win32-x64 两种目标；各项字段为 `platform`、`arch`、`fileName`、`url`、`size`、`sha256`，macOS 使用 DMG、Windows 使用 EXE。URL 固定当前 Release，size/SHA 从本轮真实文件生成。
+- `SHA256SUMS` 覆盖三安装包、四远程归档、descriptor 和更新清单九件内容。正式 Release 总计十附件；GitHub `latest/download/ycode-update.json` 只用于发现最新应用版本，远程资源下载仍固定应用随包 descriptor。
 - 不覆盖已公开的 Release、同名 Git 标签或失败草稿；检测到冲突时失败，不能静默 `--clobber`。
 
 ## 构建顺序
@@ -27,7 +27,7 @@ GitHub Actions 为 Windows/macOS 的 ARM64、x64 构建桌面安装包；远程 
 - 轻量模式必须先下载并校验 descriptor，然后只准备当前桌面目标的本地 Agent、插件、原生工具和 helper。
 - bundle 统一执行一次 `prepare:runtime-assets`，后续仅调用 `build:no-runtime-assets`；`--skip-prepare` 不允许经 build 再次隐式准备资源。
 - 轻量 `extraResources` 只复制 `releases/<version>/source-server-release.json`，不携带任何远程 tar；本地运行依赖和现有原生资源不受此开关影响。
-- 未被路径过滤的 push / PR 同样生成资源并构建四种桌面目标，但不公开 Release；其临时 descriptor 只用于验证打包，不能当作正式可下载产品分发。
+- 未被路径过滤的 push / PR 同样生成资源并构建两种桌面目标，但不公开 Release；其临时 descriptor 只用于验证打包，不能当作正式可下载产品分发。
 
 ```mermaid
 flowchart TD
@@ -44,7 +44,7 @@ flowchart TD
     G --> H[最终安装器体积与依赖检查]
     H --> I{main 手动运行?}
     I -- 否 --> J[保留 CI artifacts]
-    I -- 是 --> K[汇总并校验六安装包与四归档]
+    I -- 是 --> K[汇总并校验三安装包与四归档]
     K --> K1[生成四目标更新清单与校验摘要]
     K1 --> K2[Git refs API 原子占用正式版本标签]
     K2 --> L[verify-tag 创建不可覆盖的 draft Release]
@@ -53,7 +53,7 @@ flowchart TD
 
 ## Task39 macOS 跨架构构建
 
-- ARM64 与 x64 macOS job 均使用 `macos-15-intel`，ARM64 保留 `--os mac --arch arm64`。目标环境变量、依赖、四桌面目标、十三附件和全部预算不变。
+- macOS ARM64 job 使用 `macos-15-intel`，ARM64 保留 `--os mac --arch arm64`。目标环境变量、依赖和全部预算不变；桌面矩阵仅保留 macOS ARM64、Windows x64，正式发布为十附件。
 - bundle 是最终校验唯一调度者：electron-builder 后异步校验解包 `.app`，并实际解出本轮 DMG、ZIP 中的 `.app`，分别执行同一静态校验。不运行目标程序；容器缺失、损坏或包含零/多个应用均失败，临时目录和挂载点在 finally 清理。
 - Mach-O 解析覆盖 thin/fat/fat64、两种字节序，验证 slice 真实头部、CPU、边界、重复和冲突，不能只相信目录或 fat 表。文件及容器 IO 均异步。
 - 必需文件：主程序、Electron Framework、node-pty 目标 `pty.node` 和 `spawn-helper`、bfs/ugrep/rg 必须包含目标 CPU；`zcode-window-bounds` 必须同时含 ARM64、x64。缺失、非 Mach-O、错误 CPU 均失败。
@@ -66,7 +66,7 @@ flowchart LR
     B --> C[bundle 唯一调度]
     C --> D[解包 app 与真实 DMG ZIP]
     D --> E[同一静态架构门禁]
-    E --> F[原依赖体积与十三附件门禁]
+    E --> F[依赖体积与十附件门禁]
 ```
 
 fixture 覆盖 thin/fat/fat64/字节序、slice 伪报/越界/重复、错误目标、缺件、Swift 非 universal、asar 内隐藏错误 native、非目标可选 prebuild 与普通 native 的相反处理；正式交叉产物通过须由最终新 HEAD 的真实 CI 提供。
@@ -79,7 +79,7 @@ Task39 精确修改七文件：本 spec、现 release-gate-repair 计划、build
 - 固定 Node 24.14.0 下以不带 loader 参数、无继承 `NODE_OPTIONS` 的真实 Node 子进程执行上述入口，使用本地四归档 fixture 完成 `pin --directory ... --output ...` 并核对复制文件、摘要及固定 URL；测试不得替换共享模块、访问网络或执行发布操作。
 - 同一 plain Node 合同覆盖实际 audit CLI 的小安装器文件与四目标固定 URL descriptor，核对自然成功和相邻报告中的原固定预算；覆盖离线 import CLI 的本地 descriptor/archive 与目标缓存内容/摘要。两者均必须越过真实共享 schema 模块加载，不能从父测试继承 loader 或向 node_modules 注入替身；原预算、篡改、目录边界等整文件测试继续执行。
 - 轻量包中 remote-assets 只能存在当前 descriptor；最终安装器按独立固定预算审计，不再按远程归档字节增加额度。
-- 脚本测试覆盖首次 1.0.0、最大 patch 递增、标签过滤、跨 job 版本恢复、固定 URL、旧 build URL、篡改与缺件、六安装包完整性、四目标更新清单与摘要；安装器运行行为由安装态 smoke 与远程连接回归验证。
+- 脚本测试覆盖首次 1.0.0、最大 patch 递增、标签过滤、跨 job 版本恢复、固定 URL、旧 build URL、篡改与缺件、三安装包完整性、双目标更新清单及历史四目标兼容与摘要；安装器运行行为由安装态 smoke 与远程连接回归验证。
 - 生产 Release 资产齐全且可下载才算发布完成；Actions 成功不替代各平台已安装应用的运行验证。
 
 ## Task36 纯发布工具增量的验证边界

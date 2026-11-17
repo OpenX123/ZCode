@@ -21,7 +21,7 @@ const manifestSchema = z
     schemaVersion: z.literal(1),
     version: z.string().regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u),
     releaseUrl: z.string(),
-    assets: z.array(assetSchema).length(4),
+    assets: z.array(assetSchema).refine((assets) => assets.length === 2 || assets.length === 4),
   })
   .strict();
 export type GithubUpdateAsset = z.infer<typeof assetSchema>;
@@ -46,6 +46,10 @@ export function parseGithubUpdateManifest(input: unknown): GithubUpdateManifest 
     ) {
       throw new Error(`更新安装器地址或格式不属于当前 Release：${asset.fileName}`);
     }
+  }
+  // 发布矩阵已收敛为两目标；兼容历史四目标清单，但不能接受缺失当前必需目标的清单。
+  if (!targets.has("darwin-arm64") || !targets.has("win32-x64")) {
+    throw new Error("更新清单缺少 macOS ARM64 或 Windows x64 安装器");
   }
   return manifest;
 }

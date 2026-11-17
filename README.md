@@ -8,7 +8,7 @@
 [![Release](https://img.shields.io/github/v/release/OpenX123/ZCode?label=release&color=6366f1)](https://github.com/OpenX123/ZCode/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/OpenX123/ZCode/total?color=0ea5e9)](https://github.com/OpenX123/ZCode/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-![Platforms](https://img.shields.io/badge/macOS%20%7C%20Windows-ARM64%20%2B%20x64-18181b)
+![Platforms](https://img.shields.io/badge/macOS-ARM64%20%7C%20Windows%20x64-18181b)
 
   <p>简体中文 · <a href="README.en.md">English</a></p>
   <h3><a href="https://github.com/OpenX123/ZCode/releases/latest">下载安装包</a> · <a href="#快速开始">开发指南</a> · <a href="https://github.com/OpenX123/ZCode/actions/workflows/build.yml">构建状态</a></h3>
@@ -30,22 +30,22 @@ API 凭据由用户配置，模型费用遵循所选供应商规则；外部 CLI
 
 ## 下载与安装
 
-在 [GitHub Releases](https://github.com/OpenX123/ZCode/releases/latest) 下载对应架构的安装包。`main` 推送和 PR 仅做四平台构建验证，不会自动发版；纯根目录 README 与 README 截图改动跳过构建。正式发版需在 [GitHub Actions](https://github.com/OpenX123/ZCode/actions/workflows/build.yml) 点击 **Run workflow** 并选择 `main`；以下四个目标全部成功后才发布 Release，并附 `SHA256SUMS`。
+在 [GitHub Releases](https://github.com/OpenX123/ZCode/releases/latest) 下载对应架构的安装包。`main` 推送和 PR 仅做macOS ARM64 和 Windows x64 构建验证，不会自动发版；纯根目录 README 与 README 截图改动跳过构建。正式发版需在 [GitHub Actions](https://github.com/OpenX123/ZCode/actions/workflows/build.yml) 点击 **Run workflow** 并选择 `main`；以下两个目标全部成功后才发布 Release，并附 `SHA256SUMS`。
 
-版本从 **V1.0（`1.0.0`）** 开始，每次新的正式打包自动递增补丁号：`1.0.1`、`1.0.2`……四个平台共享同一版本；构建失败不会公开不完整的版本。
+版本从 **V1.0（`1.0.0`）** 开始，每次新的正式打包自动递增补丁号：`1.0.1`、`1.0.2`……两个目标共享同一版本；构建失败不会公开不完整的版本。
 
 从 `1.0.0` 起，桌面应用会在启动时和每 6 小时检查本仓库 GitHub Releases；发现新版后，侧栏显示更新按钮，也可从帮助菜单随时手动检查。点击更新后下载当前系统和架构的安装包，核验文件大小与 SHA-256 后打开安装器，由用户完成安装；不会强制退出正在运行的任务。macOS 仍按下方说明拖入「应用程序」，必要时重新执行 `xattr` 命令。检查或下载更新需要能访问 GitHub。
 
 旧 `3.16.2` / `build-*` 安装包不包含此更新入口，请先手动安装一次 `1.0.0`；覆盖安装时保留原有用户数据目录。
+
+旧客户端若要求四目标更新清单，切换到双目标发布时需从 Releases 手工安装一次新版。
 
 安装包内置本机编码运行时；远程运行资源作为同一 Release 的独立附件发布，首次连接 SSH / WSL / Docker 时仅下载对应系统与架构，校验后缓存复用。默认由本机下载后上传，远端无需访问 GitHub。完全离线首次部署需提前准备资源，见[离线导入说明](docs/desktop/offline-source-server-import-spec.md)。
 
 | 系统    | 设备                    | 安装包                                   |
 | ------- | ----------------------- | ---------------------------------------- |
 | macOS   | Apple Silicon（M 系列） | `YCode-<version>-mac-arm64.dmg` / `.zip` |
-| macOS   | Intel                   | `YCode-<version>-mac-x64.dmg` / `.zip`   |
 | Windows | Intel / AMD 64 位       | `YCode-<version>-win-x64.exe`            |
-| Windows | ARM64                   | `YCode-<version>-win-arm64.exe`          |
 
 ### macOS
 

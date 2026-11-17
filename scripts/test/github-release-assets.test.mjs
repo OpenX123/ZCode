@@ -43,10 +43,9 @@ async function fixture(version = "1.2.3", tag = "build-8-1") {
   await save();
   const options = { directory, version, repository, tag };
   const installers = [
-    ...["arm64", "x64"].flatMap((arch) =>
-      ["dmg", "zip"].map((extension) => `YCode-${version}-mac-${arch}.${extension}`),
-    ),
-    ...["arm64", "x64"].map((arch) => `YCode-${version}-win-${arch}.exe`),
+    `YCode-${version}-mac-arm64.dmg`,
+    `YCode-${version}-mac-arm64.zip`,
+    `YCode-${version}-win-x64.exe`,
   ];
   return { options, descriptor, save, installers };
 }
@@ -143,16 +142,16 @@ test("版本不匹配、重复目标和不安全发布身份均被拒绝", async
   assert.throws(() => releaseBaseUrl(repository, "v1.1.01"));
 });
 
-test("六种安装文件和四归档齐全后才输出逐文件 SHA256SUMS", async () => {
+test("两目标三份安装文件和四归档齐全后才输出逐文件 SHA256SUMS", async () => {
   const f = await fixture();
   await pinReleaseDescriptor(f.options);
-  await assert.rejects(verifyReleaseAssets(f.options), /exactly six installers/);
+  await assert.rejects(verifyReleaseAssets(f.options), /exactly three installers/);
   for (const name of f.installers)
     await writeFile(join(f.options.directory, name), `installer-${name}`);
   const names = await verifyReleaseAssets(f.options);
-  assert.equal(names.length, 12);
+  assert.equal(names.length, 9);
   const checksums = await readFile(join(f.options.directory, "SHA256SUMS"), "utf8");
-  assert.equal(checksums.trim().split("\n").length, 12);
+  assert.equal(checksums.trim().split("\n").length, 9);
   assert.match(checksums, /^[a-f0-9]{64}  YCode-/);
   const manifest = JSON.parse(
     await readFile(join(f.options.directory, "ycode-update.json"), "utf8"),
@@ -160,10 +159,10 @@ test("六种安装文件和四归档齐全后才输出逐文件 SHA256SUMS", asy
   assert.equal(manifest.schemaVersion, 1);
   assert.equal(manifest.version, version);
   assert.equal(manifest.releaseUrl, `https://github.com/${repository}/releases/tag/${tag}`);
-  assert.equal(manifest.assets.length, 4);
+  assert.equal(manifest.assets.length, 2);
   assert.deepEqual(
     manifest.assets.map((asset) => `${asset.platform}-${asset.arch}`),
-    ["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"],
+    ["darwin-arm64", "win32-x64"],
   );
   for (const asset of manifest.assets) {
     const content = await readFile(join(f.options.directory, asset.fileName));
@@ -223,5 +222,15 @@ test("最终白名单允许重新生成更新清单但拒绝其他文件", async
   );
   assert.equal(manifest.version, "1.0.1");
   await writeFile(join(f.options.directory, "unexpected.json"), "unexpected");
-  await assert.rejects(verifyReleaseAssets(f.options), /exactly six installers/);
+  await assert.rejects(verifyReleaseAssets(f.options), /exactly three installers/);
+});
+
+test("已移除的桌面架构不得混入发布产物", async () => {
+  for (const suffix of ["mac-x64.dmg", "mac-x64.zip", "win-arm64.exe"]) {
+    const f = await fixture();
+    await pinReleaseDescriptor(f.options);
+    for (const name of f.installers) await writeFile(join(f.options.directory, name), name);
+    await writeFile(join(f.options.directory, `YCode-${version}-${suffix}`), "retired");
+    await assert.rejects(verifyReleaseAssets(f.options), /exactly three installers/);
+  }
 });

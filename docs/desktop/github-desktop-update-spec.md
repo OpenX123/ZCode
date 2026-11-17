@@ -14,7 +14,7 @@ macOS 的 Main 仍是安装唯一 owner，重复点击复用同一次交接。�
 
 ## 清单与安全边界
 
-清单形状：`{schemaVersion:1,version,releaseUrl,assets:[{platform:'darwin'|'win32',arch:'arm64'|'x64',fileName,url,size,sha256}]}`。版本采用严格数字三段式 semver。清单最多 64 KiB；每个平台/架构最多一项且四种目标必须完整。安装器只接受当前运行架构，darwin 使用 `.dmg`，win32 使用 `.exe`；文件名不含路径。size 为正整数且不超过 512 MiB，sha256 为小写 64 位十六进制。
+清单形状：`{schemaVersion:1,version,releaseUrl,assets:[{platform:'darwin'|'win32',arch:'arm64'|'x64',fileName,url,size,sha256}]}`。版本采用严格数字三段式 semver。清单最多 64 KiB；每个平台/架构最多一项。新发布清单仅包含 darwin-arm64 和 win32-x64 两目标；新版客户端也兼容历史完整四目标清单，拒绝缺少必需目标、重复目标和三目标中间状态。安装器只接受当前运行架构，darwin 使用 `.dmg`，win32 使用 `.exe`；文件名不含路径。size 为正整数且不超过 512 MiB，sha256 为小写 64 位十六进制。旧客户端若强制四目标，首次迁移需从 Release 手工安装新版；不得伪造已移除目标的下载项。
 
 Release tag 必须等于 `v${version}`；文件名固定为 `YCode-${version}-${mac|win}-${arch}.${dmg|exe}`。releaseUrl 必须属于 `https://github.com/OpenX123/ZCode/releases/tag/<tag>`，安装器 URL 必须是同一 tag 的 `https://github.com/OpenX123/ZCode/releases/download/<tag>/<fileName>`。不接受外部仓库、任意 HTTP、认证信息、查询参数、fragment、伪装子域或路径穿越。入口 URL 校验后允许 GitHub 官方资源分发重定向；所有字节仍必须匹配清单 size/SHA。
 
@@ -36,7 +36,7 @@ sequenceDiagram
     participant F as 更新缓存
     participant S as 安装助手
     M->>G: 启动/6小时/节流唤醒检查清单
-    G-->>M: 固定版本与四平台校验清单
+    G-->>M: 固定版本与目标校验清单
     M-->>U: 可用更新快照
     U->>M: 下载并打开
     M->>G: 仅下载当前系统和架构

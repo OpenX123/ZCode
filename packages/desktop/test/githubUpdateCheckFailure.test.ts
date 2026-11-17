@@ -10,7 +10,9 @@ afterEach(async () => {
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
 });
 
-async function fixture(overrides: { fetch?: typeof globalThis.fetch } = {}) {
+async function fixture(
+  overrides: { fetch?: typeof globalThis.fetch; platform?: string; arch?: string } = {},
+) {
   const cacheDir = await mkdtemp(join(tmpdir(), "ycode-check-failure-"));
   const bytes = "installer";
   const version = "1.0.1";
@@ -51,7 +53,7 @@ async function fixture(overrides: { fetch?: typeof globalThis.fetch } = {}) {
     updater.dispose();
     await rm(cacheDir, { recursive: true, force: true });
   });
-  return { updater, fetch, openInstaller };
+  return { updater, fetch, openInstaller, manifest };
 }
 
 describe("更新清单失联回归", () => {
@@ -78,5 +80,36 @@ describe("更新清单失联回归", () => {
       version: "1.0.1",
     });
     expect(openInstaller).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("发布目标收敛", () => {
+  it.each([
+    { platform: "darwin", arch: "arm64" },
+    { platform: "win32", arch: "x64" },
+  ])("双目标清单仅下载本机架构：%j", async (target) => {
+    const { updater, fetch, openInstaller, manifest: release } = await fixture(target);
+    release.assets = release.assets.filter(
+      (asset) =>
+        (asset.platform === "darwin" && asset.arch === "arm64") ||
+        (asset.platform === "win32" && asset.arch === "x64"),
+    );
+    await expect(updater.checkForUpdates()).resolves.toMatchObject({ kind: "available" });
+    await updater.downloadUpdate();
+    const selected = release.assets.find((asset) => asset.platform === target.platform)!;
+    expect(fetch).toHaveBeenLastCalledWith(selected.url, expect.anything());
+    expect(openInstaller).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([1, 3])("拒绝不完整的 %s 目标清单", async (count) => {
+    const { updater, manifest: release } = await fixture();
+    release.assets = release.assets.slice(0, count);
+    await expect(updater.checkForUpdates()).resolves.toMatchObject({ kind: "error" });
+  });
+
+  it("拒绝缺少 Windows x64 的双目标清单", async () => {
+    const { updater, manifest: release } = await fixture();
+    release.assets = release.assets.slice(0, 2);
+    await expect(updater.checkForUpdates()).resolves.toMatchObject({ kind: "error" });
   });
 });

@@ -7,7 +7,7 @@
 [![Build](https://github.com/OpenX123/ZCode/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/OpenX123/ZCode/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/OpenX123/ZCode?color=6366f1)](https://github.com/OpenX123/ZCode/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-![Platforms](https://img.shields.io/badge/macOS%20%7C%20Windows-ARM64%20%2B%20x64-18181b)
+![Platforms](https://img.shields.io/badge/macOS-ARM64%20%7C%20Windows%20x64-18181b)
 
   <p><a href="README.md">简体中文</a> · English</p>
   <h3><a href="https://github.com/OpenX123/ZCode/releases/latest">Download YCode</a> · <a href="https://github.com/OpenX123/ZCode/actions/workflows/build.yml">Build status</a></h3>
@@ -21,16 +21,16 @@ Features include streaming conversations and tool output, project and task manag
 
 ## Download and install
 
-Get installers from [GitHub Releases](https://github.com/OpenX123/ZCode/releases/latest). Pushes to main and pull requests validate macOS ARM64/x64 and Windows ARM64/x64 builds without publishing; changes limited to root README files and README screenshots skip builds. To publish, select **Run workflow** on main in [GitHub Actions](https://github.com/OpenX123/ZCode/actions/workflows/build.yml). A release is published only after all four targets succeed, with SHA256SUMS included.
+Get installers from [GitHub Releases](https://github.com/OpenX123/ZCode/releases/latest). Pushes to main and pull requests validate macOS ARM64 and Windows x64 builds without publishing; changes limited to root README files and README screenshots skip builds. To publish, select **Run workflow** on main in [GitHub Actions](https://github.com/OpenX123/ZCode/actions/workflows/build.yml). A release is published only after both targets succeed, with SHA256SUMS included.
+
+Older clients that require a four-target update manifest need one manual installation from Releases when migrating to the two-target release.
 
 Local coding runtimes are included. Remote runtimes are separate assets in the same release: the first SSH / WSL / Docker connection downloads only the matching platform and architecture, verifies it, and caches it. The default path downloads locally and uploads to the target, so the remote machine does not need GitHub access. For a first deployment without network access, see the [offline import guide](docs/desktop/offline-source-server-import-spec.md) (Chinese).
 
 | System  | Architecture          | Package  |
 | ------- | --------------------- | -------- |
 | macOS   | Apple Silicon / ARM64 | DMG, ZIP |
-| macOS   | Intel / x64           | DMG, ZIP |
 | Windows | Intel / AMD x64       | EXE      |
-| Windows | ARM64                 | EXE      |
 
 On macOS, open the DMG and drag **YCode.app** into Applications. GitHub builds currently have no Developer ID signature or Apple notarization. After checking the download source, if macOS blocks the application, run:
 
@@ -42,7 +42,7 @@ Then open YCode again. Adjust the path if installed elsewhere. On Windows, run t
 
 ## Versioning and updates
 
-The new release series starts at **V1.0 (`1.0.0`)**. Each new official build increments the patch version (`1.0.1`, `1.0.2`, …), shared across all four desktop targets. Incomplete builds are not published.
+The new release series starts at **V1.0 (`1.0.0`)**. Each new official build increments the patch version (`1.0.1`, `1.0.2`, …), shared across both desktop targets. Incomplete builds are not published.
 
 Starting with `1.0.0`, the desktop app checks this repository's GitHub Releases at startup and every six hours. A sidebar update button appears when a newer release is available; the Help menu also offers a manual check at any time. Clicking update downloads the installer for the current system and architecture, verifies its size and SHA-256, and opens it for you to install. Running tasks are not forcibly closed. On macOS, replace the application through the DMG and follow the `xattr` instructions above if needed. GitHub access is required for checks and downloads.
 

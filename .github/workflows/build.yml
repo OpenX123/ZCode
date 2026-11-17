@@ -97,15 +97,9 @@ jobs:
           - os: mac
             arch: arm64
             runner: macos-15-intel
-          - os: mac
-            arch: x64
-            runner: macos-15-intel
           - os: win
             arch: x64
             runner: windows-2025
-          - os: win
-            arch: arm64
-            runner: windows-11-arm
 
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -234,5 +228,5 @@ jobs:
           gh release create "$RELEASE_TAG" release-assets/* \
             --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
             --title "YCode $RELEASE_TAG" \
-            --notes "由 GitHub Actions 从提交 $GITHUB_SHA 自动构建。包含 macOS / Windows 的 ARM64 与 x64 安装包，以及按需下载的四平台远程资源。安装说明见仓库 README。"
+            --notes "由 GitHub Actions 从提交 $GITHUB_SHA 自动构建。包含 macOS ARM64 与 Windows x64 安装包，以及按需下载的四平台远程资源。安装说明见仓库 README。"
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
