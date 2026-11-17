@@ -105,9 +105,7 @@ pnpm exec vitest run packages/desktop/test/sourceServerReleaseResolver.test.ts -
 
 ```ts
 try {
-  await reaper.writeFile(
-    JSON.stringify({ pid: process.pid, token: randomUUID() }),
-  );
+  await reaper.writeFile(JSON.stringify({ pid: process.pid, token: randomUUID() }));
 } finally {
   await reaper.close();
 }
@@ -636,3 +634,9 @@ Task 2 结果形成后，controller 在任何后续代码修改前把有证据�
 - [ ] Step 3: 最小loadDocuments受影响组对账实现，沿现有context取消；不按platform统一lowercase。中文注释说明别名字符串键残留的充分原因，不宣称已采集原native顺序。Settings所有mock初始化后统一装配真实模块，移出各it内重复冷导入，23条业务断言/用例名保留；清除失效的“第二条才是首import”说明，不扩任何timeout/retry/skip。
 - [ ] Step 4: 新确定性GREEN、现有RuntimeConfig全文件、原生Watcher整文件、Settings23项，必要直接scope回归；准确保存RED/GREEN/skip与各自然exit。真实原生case-only rename必须通过且不改等待，不以mock替代。仅文件I/O与原watcher，不启动child/runtime/build/E2E/进程清理。根type/lint最终controller统一；定向fmt/lint/diff/架构、自审限定提交、task-32-report.md。
 - [ ] Step 5: controller独立spec/quality审查本增量后，新最终冻结根门禁及新匹配候选。旧6a完整gate自然exit1及HEAD漂移、三个新失败保持原属性；不得把定向Settings通过当原全gate已关闭。
+
+#### Task32 范围补充：已捕获 raw 删除而 all 缺失
+
+controller 于 2026-11-17 根据 `scratch/task32/native-trace.log` 授权将 `subagentConfigScope.ts` 纳入白名单。原用例删除时 raw rename researcher.md 已到两个当前 watcher，而 all 无对应 unlink；只做实际名称对账仍残留新拼写，故原 Task32 不闭合。先提交本补充，再确定性 raw RED→最小实现→原 native 全文件。
+
+仅当前 direct 文档根、直接 Markdown 文件、有效 details.watchedPath 为当前根/对应文件的 rename/change 提示走原 pending。允许同 scope 待稳定候选集合（事件元数据，不是第二 snapshot owner），随批次捕获清理、失败重排保留；all 不取消 raw 稳定要求。复用既有 1000/500ms 稳定函数、取消和迟到保护，不独立 timer、重绑或轮询。新增半写不提前发布、raw-only 更新/删除、合并与无效来源拒绝回归，移除临时 native 诊断，保留日志；原断言/预算/skip不改。
