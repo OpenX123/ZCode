@@ -1,5 +1,5 @@
 import { installHandoffRpcProbe, callHandoffHost } from "#e2e/helpers/remote-project-handoff-probe";
-import { selectRemoteProjectDirectory } from "./project-sidebar.js";
+import { selectRemoteProjectDirectory, type SidebarProjectScope } from "./project-sidebar.js";
 /* eslint-disable max-lines -- SSH P0 helper 集中维护真实连接、远端身份、进程与 replay tunnel 生命周期，拆散会隐藏同一条安全边界。 */
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { Client as SSHClient, type ClientChannel, type TcpConnectionDetails } from "ssh2";
@@ -7,6 +7,7 @@ import {
   ServiceChannels,
   type SourceServerManagementSnapshot,
   parseRemoteWorkspaceIdentity,
+  remoteHostIdFromWorkspaceIdentity,
 } from "@zcode/shared";
 import {
   TID_CONFIRM_DIALOG_CONFIRM,
@@ -87,6 +88,119 @@ export interface RemoteTabSnapshot {
   secretPersistedInTab: boolean;
   workspaceIdentity: string | null;
   workspacePath: string | null;
+}
+
+export interface SSHCreationOriginDraft {
+  tabId: string;
+  workspacePath: string;
+  workspaceIdentity: string | null;
+}
+
+/** 只读现有导航桥和聚焦草稿 DOM；仅返回身份，不记录输入正文。 */
+async function readSSHCreationDraft(expected?: {
+  project: SidebarProjectScope;
+  workspacePath: string;
+  remoteSessionId: string;
+}): Promise<SSHCreationOriginDraft | null> {
+  return browser.execute((target) => {
+    type DraftTab = {
+      id?: string;
+      kind?: string;
+      workspacePath?: string;
+      workspaceIdentity?: string;
+      remoteSessionId?: string;
+    };
+    const bridge = window as Window & {
+      __zcodeTabStoreE2E?: {
+        getState(): {
+          activeTabId?: string | null;
+          activeWorkspacePath?: string | null;
+          activeWorkspaceIdentity?: string | null;
+          tabs?: DraftTab[];
+        };
+      };
+      __zcodeSessionStoreE2E?: {
+        getState(): { workspaces: Record<string, { activeTaskId?: string | null }> };
+      };
+    };
+    const state = bridge.__zcodeTabStoreE2E?.getState();
+    const path = state?.activeWorkspacePath;
+    const identity = state?.activeWorkspaceIdentity?.trim() || null;
+    const tabs = state?.tabs?.filter((tab) => tab.id === state.activeTabId) ?? [];
+    const tab = tabs[0];
+    if (
+      tabs.length !== 1 ||
+      !tab?.id ||
+      tab.kind !== "workspace" ||
+      !path ||
+      tab.workspacePath !== path ||
+      (tab.workspaceIdentity?.trim() || null) !== identity ||
+      bridge.__zcodeSessionStoreE2E?.getState().workspaces[identity || path]?.activeTaskId !== null
+    )
+      return null;
+    const visible = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden"
+      );
+    };
+    const shells = [
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-testid^="v4-pane-shell-"][data-focused="true"][data-group-active="true"]',
+      ),
+    ].filter(visible);
+    if (shells.length !== 1) return null;
+    const panes = shells[0]!.querySelectorAll<HTMLElement>('[data-testid^="v4-session-pane-"]');
+    const pane = panes[0];
+    const inputs = pane?.querySelectorAll<HTMLElement>('[data-testid="v4-composer-input"]') ?? [];
+    const input = inputs[0];
+    if (
+      panes.length !== 1 ||
+      pane?.dataset.sessionId !== "draft" ||
+      inputs.length !== 1 ||
+      !input ||
+      !visible(input) ||
+      input.textContent?.trim() ||
+      pane.querySelector('[data-testid="v4-stop"]')
+    )
+      return null;
+    const headerPath = shells[0]!
+      .querySelector("[data-workspace-abs-path]")
+      ?.getAttribute("data-workspace-abs-path");
+    if (headerPath && headerPath !== path) return null;
+    if (target) {
+      const sections = document.querySelectorAll(
+        `[data-project-id=${JSON.stringify(target.project.projectId)}]`,
+      );
+      const section = sections[0];
+      const triggers = pane.querySelectorAll('[data-testid="composer-workspace-trigger"]');
+      if (
+        path !== target.workspacePath ||
+        identity !== target.project.workspaceIdentity ||
+        tab.remoteSessionId !== target.remoteSessionId ||
+        sections.length !== 1 ||
+        section?.getAttribute("data-project-host") !== target.project.hostId ||
+        section.getAttribute("data-project-workspace-identity") !== identity ||
+        section.getAttribute("data-project-name") !== target.project.projectName ||
+        triggers.length !== 1 ||
+        triggers[0]?.textContent?.trim() !== target.project.projectName
+      )
+        return null;
+    }
+    return { tabId: tab.id, workspacePath: path, workspaceIdentity: identity };
+  }, expected);
+}
+
+export async function readSSHCreationOriginDraft(
+  caseMarker: string,
+): Promise<SSHCreationOriginDraft> {
+  const origin = await readSSHCreationDraft();
+  if (!origin) throw new Error(`${caseMarker}: 自动接续必须从归属明确的活动空草稿发起`);
+  return origin;
 }
 
 export interface ReplayTunnel {
@@ -644,8 +758,15 @@ export async function waitForSSHDirectoryStep(
 export async function selectSSHRemoteDirectory(
   workspacePath: string,
   caseMarker: string,
-  options: { waitForDialogClose?: boolean } = {},
+  options: {
+    waitForDialogClose?: boolean;
+    onProjectCreated?: (project: SidebarProjectScope) => void | Promise<void>;
+    completion?: { kind: "origin-draft"; origin: SSHCreationOriginDraft };
+  } = {},
 ): Promise<void> {
+  const originDraft = options.completion?.kind === "origin-draft";
+  if (originDraft && (!options.completion?.origin.tabId || options.waitForDialogClose === false))
+    throw new Error(`${caseMarker}: 自动接续要求有效原草稿并等待完成`);
   const before = new Set(
     await browser.execute(() =>
       [...document.querySelectorAll("[data-project-id]")].map((row) =>
@@ -714,19 +835,58 @@ export async function selectSSHRemoteDirectory(
           row.getAttribute("data-project-id"),
         ),
       );
-      projectId = ids.find((id) => !before.has(id)) ?? null;
+      const createdIds = [...new Set(ids.filter((id) => id && !before.has(id)))];
+      if ((options.onProjectCreated || originDraft) && createdIds.length > 1)
+        throw new Error(`${caseMarker}: 新远程项目必须唯一，实际 ${createdIds.length}`);
+      projectId = createdIds[0] ?? null;
       return Boolean(projectId);
     },
     { timeout: 30_000, timeoutMsg: `${caseMarker}: 保存远程项目后没有登记入口` },
   );
-  if (await $(`[data-testid="${TID_SETTINGS_BACK_BUTTON}"]`).isDisplayed()) {
+  if (!originDraft && (await $(`[data-testid="${TID_SETTINGS_BACK_BUTTON}"]`).isDisplayed())) {
     await clickTestIdByDom(TID_SETTINGS_BACK_BUTTON);
   }
   const project = $(`[data-project-id=${JSON.stringify(projectId)}]`);
   const projectIdentity = await project.getAttribute("data-project-workspace-identity");
   if (!projectIdentity) throw new Error(`${caseMarker}: 新远程项目缺少 workspace identity`);
-  await project.moveTo();
-  await project.$('[data-testid="virtual-project-create-task"]').click();
+  let projectScope: SidebarProjectScope | undefined;
+  if (options.onProjectCreated || originDraft) {
+    // 原因：显示名可被自动去重，必须传递已观察到的新项目 ID，不能事后由路径猜名称。
+    const observed = await browser.execute((id) => {
+      const sections = document.querySelectorAll(`[data-project-id=${JSON.stringify(id)}]`);
+      if (sections.length !== 1) throw new Error(`新远程项目必须唯一，实际 ${sections.length}`);
+      const section = sections[0]!;
+      return {
+        projectId: section.getAttribute("data-project-id"),
+        hostId: section.getAttribute("data-project-host"),
+        workspaceIdentity: section.getAttribute("data-project-workspace-identity"),
+        projectName: section.getAttribute("data-project-name"),
+      };
+    }, projectId);
+    if (
+      !observed.projectId ||
+      !observed.hostId ||
+      !observed.projectName ||
+      observed.workspaceIdentity !== projectIdentity ||
+      remoteHostIdFromWorkspaceIdentity(projectIdentity) !== observed.hostId ||
+      (originDraft &&
+        parseRemoteWorkspaceIdentity(projectIdentity)?.workspacePath !== workspacePath)
+    )
+      throw new Error(`${caseMarker}: 新远程项目 ID/Host/identity 关联无效`);
+    projectScope = {
+      projectId: observed.projectId,
+      hostId: observed.hostId,
+      workspaceIdentity: projectIdentity,
+      projectName: observed.projectName,
+    };
+    await options.onProjectCreated?.(projectScope);
+  }
+  // 产品会接续仍有效的原草稿；显式 A 策略只等待该意图，不能提前返回设置或再发侧栏新建。
+  // 这里只按当前 owner 的目标归属验收，不要求接续后的 Tab ID 与发起时恒等。
+  if (!originDraft) {
+    await project.moveTo();
+    await project.$('[data-testid="virtual-project-create-task"]').click();
+  }
   // 目录存在但历史冲突的负例需要直接观察失败页，不能先等待一个按合同不会发生的工作区就绪。
   if (options.waitForDialogClose === false) return;
   // 同路径的旧 Source 已 active 时，仅等 path 会提前返回旧 tab；新项目的 identity 才能区分目标。
@@ -734,6 +894,7 @@ export async function selectSSHRemoteDirectory(
     caseMarker,
     expectedIdentity: projectIdentity,
     expectedPath: workspacePath,
+    ...(originDraft ? { expectedDraftProject: projectScope } : {}),
   });
   await waitForWorkspaceApp(workspacePath, SSH_WORKSPACE_READY_TIMEOUT_MS);
 }
@@ -745,6 +906,7 @@ export async function waitForRemoteTab(options: {
   expectedRemoteSessionId?: string | null;
   requireActive?: boolean;
   timeoutMs?: number;
+  expectedDraftProject?: SidebarProjectScope;
 }): Promise<RemoteTabSnapshot> {
   let snapshot: RemoteTabSnapshot | null = null;
   try {
@@ -766,7 +928,15 @@ export async function waitForRemoteTab(options: {
             snapshot.remoteSessionId === options.expectedRemoteSessionId) &&
           (options.requireActive === false ||
             (snapshot.activeWorkspacePath === options.expectedPath &&
-              snapshot.activeWorkspaceIdentity === snapshot.workspaceIdentity))
+              snapshot.activeWorkspaceIdentity === snapshot.workspaceIdentity)) &&
+          (!options.expectedDraftProject ||
+            Boolean(
+              await readSSHCreationDraft({
+                project: options.expectedDraftProject,
+                workspacePath: options.expectedPath,
+                remoteSessionId: snapshot.remoteSessionId!,
+              }),
+            ))
         );
       },
       {

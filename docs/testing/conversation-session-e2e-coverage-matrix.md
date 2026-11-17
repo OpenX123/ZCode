@@ -2740,6 +2740,52 @@ transport fixture 无稳定注入点，保留为确定性单元/集成证据，�
 | SSH-P0-LIFE-02      | 远端 server 退出导致同组断连；重连一个 workspace 批量恢复 A/B                                                                        | Electron E2E + controlled SSH process fault                            | `conversation-session-ssh-remote-server-fault.test.ts`；只终止当前 case 新建且记录的 `zcode-server`，不操作 `sshd`；pending                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Pending |
 | SSH-P0-LIFE-03      | 移除已连接 workspace 后立即通过向导重连同一 identity；旧 session 不得污染或销毁新 session                                            | Electron E2E + real Ubuntu SSH；ownership race focused unit            | E2E spec 尚未编写（candidate，见 `docs/remote-workspace-provider-sync-hang.md`）；计划断言新 sessionId/唯一 tab/同 Window Host；pending-flight cancel、late waiter 和 superseded owner 由 `remoteWorkspaceProviderSync.test.ts` 确定性覆盖；待真实 SSH 人工审阅                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Pending |
 
+Task12 的 SSH-P0-LIFE-02 当前 pending 验收严格要求 auto-only：原预算内 A/B 自动换代且无
+manual fallback，同轮真实 Host/Main/Renderer attachment+ACK、detach、promotion、通知顺序及
+双方原 task 续发/replay 均有证据；上表历史手动组头恢复不可代替。
+顺序回归 `sshReconnectObservation.test.ts` 使用实际 export 与 install 回调：只有精确旧 session
+的真实 `connection-closed` 可选择旧 port→closed→同一旧 attachment 实际 Detach→新 Source；
+仍有效旧 port 保持新 ACK→实际旧 Detach→promotion。两分支均核新 Source→attach→port→
+精确 ACK→promotion→通知及窗口/identity/generation；缺因提前 Detach、错身份或漏 Detach
+不得通过，Main Detach 请求不等于 Host 销毁完成 ACK。独立
+Agent 枚举以同认证 UID/规范 server root/当前 Core 直接父子及前后 PID 代际识别规范
+`zcode-cli` title 或旧完整 argv，Node exe 等于 Core release Node，旧 native 仅接受 descriptor
+对应精确部署 realpath；不全局匹配、裁剪 HOME/deleted cwd、扩大预算或将权限/坏状态吞空。
+`remoteAgentProcesses.test.ts` 直接调用 export，覆盖身份/argv/代际/无 Core/错误边界；不能
+替代故障前 A/B 各独立进程和真实 auto-only。独立
+`r3-provisioning-gui` 首次 Desktop 连接前只读 SFTP journal applied ID 基线；hold 前核同 HOME
+基线保留，以新增唯一 applied 数与本 run 同 Environment 的完整 Main applied 数精确相等且
+大于零收口，不清旧历史、不放宽原 30 秒。`provisioningJournalEvidence.test.ts` 覆盖实际
+GUI seam 的旧61+新14、缺回应/多提交/重复计数、基线丢失、坏 schema/ID、错环境及精确
+SFTP 首装缺失/其它错误分类。Main 无 syncId，数值相等不证明逐笔双射或排除一漏一重抵消。
+HOME采用同client固定printf→exit0/无signal/有界合法绝对路径→标准SFTP realpath完全一致，
+exec ACK/data/close与SFTP open/realpath/read共原单60秒deadline，不另连或fallback。真实
+GUI helper fake transport覆盖各pending/路径/状态错误，不改依赖或保存自由stderr。
+`r3-provisioning-gui` 保留配置同步/失败/离线两次修改/显式重连合同。结果在真实两轮运行及
+独立审查前保持 Pending，不因已通过源码 UT 或最终 UI online 标 GREEN。
+本组测试定位通过真实创建观察贯穿稳定项目 ID/Host/identity，保留重名项目及错误身份不回退
+名称的确定性回归 `projectSidebarScope.test.ts`；该 helper 回归不替代真实 SSH 验收。
+PRV12 的持续目录写保护按真实 Main warning 精确要求 `rollback_failed` /
+`target-write-failed`；可选安全码兼容与严格分类由 `provisioningSyncEvidence.test.ts` 覆盖。
+两候选仅首次 A 显式等待有效原空草稿自动接续；发起前核原 Tab/workspace/聚焦未发送草稿，
+保存后不 settings-back、不重复侧栏新建，在原 120 秒内核新项目 ID/Host/identity/path、
+远端 session 与活动聚焦草稿归属，不要求新旧 Tab ID 恒等。B 和其他调用保留默认侧栏入口；
+观察回调无策略副作用，前置或目标不符均失败且无 fallback。
+`sshRemoteDirectoryCompletion.test.ts` 覆盖上述策略和错误 identity/session 的拒绝；不计真实验收。
+共享 `selectV4TaskById` 的默认导航等待每轮动态解析真实焦点；同一 browser-safe scope 算法
+仅选择唯一可见 focused/groupActive pane，pane-only 模式无候选 null、歧义拒绝，Composer
+默认仍严格核 workspace/identity/唯一 Composer。显式 paneId 不随焦点漂移，不能扫描隐藏
+目标 session 放行。真实 caller 的受控焦点迟到、隐藏候选优先、双可见非焦点栏、错误 session、
+歧义与显式 pane 回归由 `v4TaskNavigationScope.test.ts` 覆盖；R94 实际根因仍未确定。
+有 artifact 目录时，仅被动记录导航 click 前/返回后/等待完成或失败时的活动 Tab/workspace
+及 paneId/sessionId/focused/groupActive/rect/visibility；不读取输入正文，不重派点击或修正焦点。
+
+```text
+测试只读原 Tab/空草稿 → ProjectCreation 保存并核原草稿有效性 → 产品 owner 准备并提交远端目标
+测试显式 A 策略      └──────────────────────────────────────→ 原预算内只读等待精确目标
+测试默认 B 策略      → 保存完成 → 原 settings-back/侧栏新建意图 → 产品 owner 提交目标
+```
+
 ## R3R. Source Server 统一远程主链覆盖
 
 当前执行方案与用例矩阵见 [r3-remote-automation-plan.md](./r3-remote-automation-plan.md) 与

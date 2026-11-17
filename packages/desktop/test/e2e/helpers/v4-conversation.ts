@@ -1,4 +1,8 @@
 import { selectCombinedComposerThoughtLevel } from "./composer-model-picker.js";
+import {
+  readFocusedComposerScopeInBrowser,
+  recordTaskNavigationScope,
+} from "./composer-pane-scope.js";
 /* eslint-disable max-lines -- v4 conversation e2e helper 集中承载 pane/composer/queue/分屏等全部定位与断言原语，拆分会让 spec 的导入面漂移。 */
 // v4 竖切（protocol-v4）conversation e2e helper。
 // 与旧 conversation-session.ts 的区别：所有定位走 TID_V4_* 常量（testid contract v2，
@@ -1110,31 +1114,36 @@ export async function clickV4DeleteSession() {
 }
 
 /** 读取 Composer 当前 mode/模型选择显示。 */
-export function getV4ModelConfig(): Promise<{
+export function getV4ModelConfig(scopeSelector?: string): Promise<{
   mode: string | null;
   provider: string | null;
   model: string | null;
   source: string | null;
   thought: string | null;
 }> {
-  return browser.execute((modelTestId) => {
-    const el = document.querySelector<HTMLElement>(`[data-testid="${modelTestId}"]`);
-    return {
-      mode: el?.getAttribute("data-mode") ?? null,
-      provider: el?.getAttribute("data-provider") ?? null,
-      model: el?.getAttribute("data-model") ?? null,
-      source: el?.getAttribute("data-source") ?? null,
-      thought: el?.getAttribute("data-thought") ?? null,
-    };
-  }, TID_V4_MODEL_CONFIG);
+  return browser.execute(
+    (modelTestId, scope) => {
+      const root = scope ? document.querySelector(scope) : document;
+      const el = root?.querySelector<HTMLElement>(`[data-testid="${modelTestId}"]`);
+      return {
+        mode: el?.getAttribute("data-mode") ?? null,
+        provider: el?.getAttribute("data-provider") ?? null,
+        model: el?.getAttribute("data-model") ?? null,
+        source: el?.getAttribute("data-source") ?? null,
+        thought: el?.getAttribute("data-thought") ?? null,
+      };
+    },
+    TID_V4_MODEL_CONFIG,
+    scopeSelector ?? null,
+  );
 }
 
 /** 等待当前 Composer 已从持久 Draft 完成 mode/模型选择初始化。 */
-export async function waitForV4ComposerSelectionReady(timeout = 30_000) {
-  let latest = await getV4ModelConfig();
+export async function waitForV4ComposerSelectionReady(timeout = 30_000, scopeSelector?: string) {
+  let latest = await getV4ModelConfig(scopeSelector);
   await browser.waitUntil(
     async () => {
-      latest = await getV4ModelConfig();
+      latest = await getV4ModelConfig(scopeSelector);
       return (
         latest.source === "composer" &&
         Boolean(latest.mode?.trim()) &&
@@ -1966,28 +1975,39 @@ export async function waitForV4TurnNavigatorTooltip(
 // 命中 DOM 序第一个（primary）。以下 helper 一律先按 v4-pane-shell-<paneId>
 // 收口作用域再定位，焦点断言读外壳的 data-focused。
 
-/** 读取当前 focused pane 的 paneId（data-focused="true" 的外壳）；无外壳返回 null。 */
-export function getV4FocusedPaneId(): Promise<string | null> {
-  return browser.execute((shellPrefix) => {
-    const focused = document.querySelector<HTMLElement>(
-      `[data-testid^="${shellPrefix}-"][data-focused="true"]`,
-    );
-    return focused?.getAttribute("data-pane-id") ?? null;
-  }, TID_V4_PANE_SHELL);
+/** 与 Composer 共用唯一可见 focused/groupActive 算法；未就绪为 null，歧义拒绝。 */
+export async function getV4FocusedPaneId(): Promise<string | null> {
+  const scope = await browser.execute(
+    readFocusedComposerScopeInBrowser,
+    TID_V4_PANE_SHELL,
+    undefined,
+    "pane-only" as const,
+  );
+  return scope?.paneId ?? null;
 }
 
 /** 点击侧栏会话项并等待 primary pane 绑定到该 session。 */
 export async function selectV4TaskById(sessionId: string, taskListTimeout = 15000) {
+  await recordTaskNavigationScope("before-click", sessionId).catch(() => undefined);
   await clickTestIdByDom(testId(TID_TASK_ITEM, sessionId), {
     timeout: taskListTimeout,
     timeoutMsg: `任务列表没有可点击的 v4 task: ${sessionId}`,
   });
-  await waitForV4Pane(
-    (snapshot) => snapshot.sessionId === sessionId,
-    `点击侧栏 task 后 primary pane 没有切到 ${sessionId}`,
-    30000,
-    await resolveV4PaneId(),
-  );
+  await recordTaskNavigationScope("after-click", sessionId).catch(() => undefined);
+  try {
+    // 确定性风险：click 返回时焦点迁移可能尚未提交；默认每轮解析，不能固定这一刻的旧 pane。
+    // 这不补判既有实跑失败；其他显式 paneId 调用继续按原参数固定。
+    await waitForV4Pane(
+      (snapshot) => snapshot.sessionId === sessionId,
+      `点击侧栏 task 后 primary pane 没有切到 ${sessionId}`,
+      30000,
+    );
+  } catch (error) {
+    // 观察失败不能覆盖原等待错误，也不增加点击或修正焦点。
+    await recordTaskNavigationScope("failure", sessionId).catch(() => undefined);
+    throw error;
+  }
+  await recordTaskNavigationScope("settled", sessionId).catch(() => undefined);
 }
 
 /** 对 pane 外壳派发 pointerdown（Focus 层 onPointerDownCapture → focus 该 pane）。 */

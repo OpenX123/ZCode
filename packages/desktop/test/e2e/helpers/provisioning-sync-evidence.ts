@@ -1,8 +1,10 @@
 import {
   providerProvisioningResultSchema,
+  providerProvisioningErrorCodeSchema,
   providerProvisioningTriggerSchema,
   type ProviderProvisioningResult,
   type ProviderProvisioningTrigger,
+  type ProviderProvisioningErrorCode,
 } from "@zcode/shared";
 
 export interface ProvisioningSyncEvent {
@@ -11,6 +13,7 @@ export interface ProvisioningSyncEvent {
   trigger: ProviderProvisioningTrigger;
   status: ProviderProvisioningResult["status"];
   durationMs: number;
+  errorCode?: ProviderProvisioningErrorCode;
 }
 
 /** 只认 Main 完整落盘的结构化结果，保留重复事件，不转抄自由文本错误。 */
@@ -35,6 +38,7 @@ export function parseProvisioningSyncEvents(text: string): ProvisioningSyncEvent
     }
     const status = providerProvisioningResultSchema.shape.status.parse(context.status);
     const trigger = providerProvisioningTriggerSchema.parse(context.trigger);
+    const errorCode = providerProvisioningErrorCodeSchema.optional().parse(context.errorCode);
     const kind = match[2] === "completed" ? "completed" : "warning";
     const applied = status === "applied" || status === "already-applied";
     if ((kind === "completed") !== applied || match[1] !== (applied ? "info" : "warn")) {
@@ -46,7 +50,22 @@ export function parseProvisioningSyncEvents(text: string): ProvisioningSyncEvent
       trigger,
       status,
       durationMs: context.durationMs,
+      ...(errorCode ? { errorCode } : {}),
     });
   }
   return events;
+}
+
+/** 持续父目录拒写也阻止回滚；只认本故障的两阶段结果，不合并其它失败语义。 */
+export function isDirectoryWriteDeniedProvisioningWarning(
+  event: ProvisioningSyncEvent,
+  environmentKey: string,
+): boolean {
+  return (
+    event.environmentKey === environmentKey &&
+    event.kind === "warning" &&
+    event.trigger === "personal-config" &&
+    event.status === "rollback_failed" &&
+    event.errorCode === "target-write-failed"
+  );
 }

@@ -1,12 +1,16 @@
 /* eslint-disable max-lines -- SSH lifecycle case 共用 setup/teardown、身份与故障辅助逻辑，集中维护以保持同一安全边界。 */
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { getFocusedComposerScope } from "./composer-pane-scope.js";
 import {
   clickRemoteHostConnect,
   projectSectionSelector,
   waitForProjectRowGone,
   waitForTaskRowInProject,
+  type SidebarProjectScope,
 } from "./project-sidebar.js";
 import { removeRemoteProjectEntryForRow } from "./remote-project-handoff-probe.js";
-import { TID_TASK_SETTINGS_BUTTON } from "@zcode/shared/test-ids";
+import { TID_TASK_ITEM, TID_TASK_SETTINGS_BUTTON, testId } from "@zcode/shared/test-ids";
 import {
   waitForWorkspaceApp,
   switchToWorkspaceRendererWindow,
@@ -42,6 +46,7 @@ import {
   openSSHRemoteDialog,
   readHostProcesses,
   readRemoteTabSnapshot,
+  readSSHCreationOriginDraft,
   readSSHRuntimeConfig,
   runSSHCommand,
   selectSSHRemoteDirectory,
@@ -69,6 +74,7 @@ export interface SSHLifecycleTask {
   remoteSessionId: string;
   taskId: string;
   workspacePath: string;
+  projectScope?: SidebarProjectScope;
 }
 
 export interface SSHLifecycleProvider {
@@ -80,6 +86,74 @@ export interface SSHLifecycleProvider {
 export interface SSHLifecycleProviderOptions {
   apiType?: "openai-chat-completions" | "anthropic-messages";
   tunnelUsername?: string;
+}
+
+async function captureSSHModelSelectionFailure(label: "A" | "B") {
+  if (process.env.ZCODE_E2E_FAILURE_ARTIFACTS !== "1") return;
+  const artifactDir = resolve(process.env.ZCODE_E2E_ARTIFACT_DIR ?? ".e2e-artifacts");
+  const snapshot = await browser.execute(() => {
+    const describe = (element: Element | null) => {
+      if (!element) return { exists: false };
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        exists: true,
+        visible:
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.visibility !== "hidden" &&
+          style.display !== "none",
+        tag: element.tagName,
+        testId: element.getAttribute("data-testid"),
+        role: element.getAttribute("role"),
+        disabled: element instanceof HTMLButtonElement ? element.disabled : null,
+        ariaDisabled: element.getAttribute("aria-disabled"),
+        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      };
+    };
+    const trigger = document.querySelector('[data-testid="chat-model-select-trigger"]');
+    const rect = trigger?.getBoundingClientRect();
+    const centerElement = rect
+      ? document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+      : null;
+    return {
+      trigger: describe(trigger),
+      triggers: Array.from(
+        document.querySelectorAll('[data-testid="chat-model-select-trigger"]'),
+      ).map((button) => ({
+        ...describe(button),
+        paneId: button.closest("[data-pane-id]")?.getAttribute("data-pane-id") ?? null,
+      })),
+      centerElement: describe(centerElement),
+      triggerContainsCenter:
+        trigger !== null && centerElement !== null && trigger.contains(centerElement),
+      panes: Array.from(document.querySelectorAll("[data-pane-id]")).map((pane) => ({
+        ...describe(pane),
+        paneId: pane.getAttribute("data-pane-id"),
+        groupActive: pane.getAttribute("data-group-active"),
+        focused: pane.getAttribute("data-focused"),
+        restoredUnvalidated: pane.getAttribute("data-restored-unvalidated"),
+      })),
+      sshDialog: describe(document.querySelector('[data-testid="ssh-dialog"]')),
+      settingsPage: describe(document.querySelector('[data-testid="settings-page"]')),
+    };
+  });
+  await mkdir(artifactDir, { recursive: true });
+  await writeFile(
+    resolve(artifactDir, `ssh-model-selection-failure-${label}.json`),
+    JSON.stringify(snapshot, null, 2),
+  );
+  await browser.saveScreenshot(resolve(artifactDir, `ssh-model-selection-failure-${label}.png`));
+}
+
+async function recordSSHProjectScope(observation: Record<string, unknown>): Promise<void> {
+  const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
+  if (!artifactDir) return;
+  await mkdir(artifactDir, { recursive: true });
+  await appendFile(
+    resolve(artifactDir, "ssh-project-scope.ndjson"),
+    `${JSON.stringify(observation)}\n`,
+  );
 }
 
 export async function createSSHLifecycleProvider(
@@ -127,18 +201,50 @@ export async function connectSSHWorkspaceAndSendFirstTurn(options: {
   provider: SSHLifecycleProvider;
   label: "A" | "B";
   workspacePath: string;
+  captureProjectScope?: boolean;
+  completionStrategy?: "origin-draft";
 }): Promise<SSHLifecycleTask> {
+  const origin =
+    options.completionStrategy === "origin-draft"
+      ? await readSSHCreationOriginDraft(options.caseMarker)
+      : undefined;
+  if (origin)
+    await recordSSHProjectScope({
+      stage: "creation-origin-draft",
+      label: options.label,
+      ...origin,
+    });
   // 全局连接入口不依赖空草稿；避免为准备 SSH 额外创建本地目录和触发 workspace 切换。
   await openSSHRemoteDialog(options.caseMarker);
   await fillSSHPasswordSettings(options.config);
   await clickLastEnabledSSHDialogButton(options.caseMarker);
   await ensureSSHProjectDirectoryStep(options.config, options.caseMarker);
-  await selectSSHRemoteDirectory(options.workspacePath, options.caseMarker);
+  const projectObservation: { scope?: SidebarProjectScope } = {};
+  await selectSSHRemoteDirectory(options.workspacePath, options.caseMarker, {
+    ...(origin ? { completion: { kind: "origin-draft" as const, origin } } : {}),
+    ...(options.captureProjectScope
+      ? {
+          onProjectCreated: async (scope: SidebarProjectScope) => {
+            projectObservation.scope = scope;
+            await recordSSHProjectScope({
+              stage: "project-created",
+              label: options.label,
+              workspacePath: options.workspacePath,
+              ...scope,
+            });
+          },
+        }
+      : {}),
+  });
+  const projectScope = projectObservation.scope;
+  if (options.captureProjectScope && !projectScope)
+    throw new Error(`${options.caseMarker}: 缺少本次实际创建的项目身份`);
   await waitForWorkspaceApp(options.workspacePath, SSH_WORKSPACE_READY_TIMEOUT_MS);
 
   const tab = await waitForRemoteTab({
     caseMarker: options.caseMarker,
     expectedPath: options.workspacePath,
+    expectedIdentity: projectScope?.workspaceIdentity,
   });
   expect(tab.remoteKind).toBe("ssh");
   expect(tab.remoteHost).toBe(options.config.host);
@@ -150,14 +256,24 @@ export async function connectSSHWorkspaceAndSendFirstTurn(options: {
     throw new Error(`${options.caseMarker}: workspace ${options.label} 缺少稳定 workspaceIdentity`);
   }
 
-  await selectUpstreamProviderModelById(SSH_LIFECYCLE_MODEL_ID, {
-    includePlainModelFallback: false,
-    providerId: options.provider.id,
-    providerName: options.provider.name,
-  });
-  // Bug 原因：产品要求切换到新模型后由用户显式选择思考档位，未选时发送键保持禁用；
-  // 09-09 恢复 helper 时丢掉了这一步，首发在 sendV4Prompt 处等待发送键超时。
-  await selectUpstreamThoughtLevelValue(SSH_LIFECYCLE_THOUGHT_LEVEL);
+  try {
+    const composerScope = await getFocusedComposerScope({
+      workspacePath: options.workspacePath,
+      workspaceIdentity: tab.workspaceIdentity,
+    });
+    await selectUpstreamProviderModelById(SSH_LIFECYCLE_MODEL_ID, {
+      includePlainModelFallback: false,
+      providerId: options.provider.id,
+      providerName: options.provider.name,
+      composerScope,
+    });
+    // Bug 原因：切换到新模型后必须显式选择思考档位；和模型点击绑定同一活动 pane。
+    await selectUpstreamThoughtLevelValue(SSH_LIFECYCLE_THOUGHT_LEVEL, composerScope);
+  } catch (error) {
+    // 修复依据：原等待失败后 after 清理会销毁现场；只读白名单取证不能覆盖原始失败。
+    await captureSSHModelSelectionFailure(options.label).catch(() => undefined);
+    throw error;
+  }
   // 根因：项目创建已打开远端草稿，再点全局“新建任务”会切到本地未分类目录并重置模型，
   // 甚至让回放通过掩盖错误执行归属。复用项目草稿，并在发送前核对权威 workspace identity。
   const draft = await readRemoteTabSnapshot(tab.workspaceIdentity, options.workspacePath);
@@ -215,6 +331,7 @@ export async function connectSSHWorkspaceAndSendFirstTurn(options: {
     remoteSessionId: tab.remoteSessionId,
     taskId: running.taskId,
     workspacePath: options.workspacePath,
+    ...(projectScope ? { projectScope } : {}),
   };
 }
 
@@ -303,6 +420,7 @@ export async function waitForRemoteWorkspaceFaultSettled(
   caseMarker: string,
   staleSessionId: string | null,
   probeContext?: () => Promise<unknown>,
+  options: { requireAutomatic?: boolean } = {},
 ): Promise<RemoteWorkspaceFaultOutcome> {
   // 远端 server 挂掉后有两条都合法的路径：停在 disconnected 保留态等用户点重连，
   // 或者产品自己拉起新 server、换成新的 remoteSessionId。服务器上实测走的是后者
@@ -322,6 +440,8 @@ export async function waitForRemoteWorkspaceFaultSettled(
           };
           if (snapshot.workspaceIdentity !== identity) return false;
           if (snapshot.remoteSessionId === null) {
+            // 严格自动恢复专项仍使用原预算；短暂离线不是成功，也不能触发手动fallback。
+            if (options.requireAutomatic) return false;
             outcome = "retained-disconnected";
             return true;
           }
@@ -505,10 +625,45 @@ export async function readTaskRowInProject(
   task: SSHLifecycleTask,
   caseMarker: string,
 ): Promise<void> {
+  const { projectScope } = task;
+  if (projectScope && projectScope.workspaceIdentity !== task.identity)
+    throw new Error(`${caseMarker}: task ${task.label} 与显式项目 identity 不匹配`);
   await waitForTaskRowInProject(task.taskId, task.workspacePath, {
     timeout: 30_000,
     timeoutMsg: `${caseMarker}: task ${task.label} 没有恢复到正确项目`,
+    projectScope,
   });
+  if (projectScope) {
+    const observed = await browser.execute(
+      (selector, taskTestId) => {
+        const sections = document.querySelectorAll(selector);
+        if (sections.length !== 1) throw new Error(`显式项目必须唯一，实际 ${sections.length}`);
+        const section = sections[0]!;
+        const rows = Array.from(section.querySelectorAll("[data-testid]")).filter(
+          (row) => row.getAttribute("data-testid") === taskTestId,
+        );
+        if (rows.length !== 1) throw new Error(`显式项目内任务行必须唯一，实际 ${rows.length}`);
+        return {
+          projectId: section.getAttribute("data-project-id"),
+          hostId: section.getAttribute("data-project-host"),
+          workspaceIdentity: section.getAttribute("data-project-workspace-identity"),
+          projectName: section.getAttribute("data-project-name"),
+          sectionMatchCount: sections.length,
+          taskMatchCount: rows.length,
+          taskInProject: section.contains(rows[0]!),
+        };
+      },
+      projectSectionSelector(task.workspacePath, projectScope),
+      testId(TID_TASK_ITEM, task.taskId),
+    );
+    await recordSSHProjectScope({
+      stage: "task-row-in-project",
+      label: task.label,
+      workspacePath: task.workspacePath,
+      taskId: task.taskId,
+      ...observed,
+    });
+  }
 }
 
 export async function prepareSSHLifecycle(
@@ -579,39 +734,18 @@ export async function readRemoteCoreIdentity(
 export async function listRemoteAgentProcesses(
   config: SSHConnectionConfig,
 ): Promise<Array<RemoteProcessIdentity & { cwd: string }>> {
-  // 进程口径按 spawnArgs 定位:workspace agent 恒以 `app-server --stdio` 拉起,
-  // 与实现形态无关 —— 旧 dev 态是 `node zcode.cjs app-server`,3.12+ release 下
-  // 优先用 glm 原生二进制(bundledResourceDir "glm", resolveEntrySegments
-  // ["zcode-agent"]),只有缺二进制时才回落 node+zcode.cjs(server-cli.js 的
-  // ZCODE_AGENT_RUNTIME)。server daemon 跑 `serve --supervisor`(3.12 实测口径,早期写作
-  // `serve --daemon`),都不含 `app-server --stdio`,不会被误匹配。
-  const result = await runSSHCommand(
-    config,
-    "for pid in $(ps -eo pid=,args= | awk '/app-server --stdio/ {print $1}'); do " +
-      "ppid=$(ps -o ppid= -p \"$pid\" | tr -d ' '); " +
-      "ticks=$(awk '{print $22}' /proc/$pid/stat 2>/dev/null); " +
-      'cwd=$(readlink /proc/$pid/cwd 2>/dev/null); printf \'%s\\t%s\\t%s\\t%s\\n\' "$pid" "$ppid" "$ticks" "$cwd"; done',
-  );
-  if (result.code !== 0) throw new Error(`读取远端 Agent 进程失败: ${result.stderr}`);
-  return result.stdout
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .flatMap((line) => {
-      const [pidText, ppidText, ticksText, ...cwdParts] = line.split("\t");
-      const pid = Number.parseInt(pidText ?? "", 10);
-      const startTicks = Number.parseInt(ticksText ?? "", 10);
-      if (!Number.isSafeInteger(pid) || !Number.isSafeInteger(startTicks)) return [];
-      const ppid = Number.parseInt(ppidText ?? "", 10);
-      return [
-        {
-          pid,
-          ...(Number.isSafeInteger(ppid) ? { ppid } : {}),
-          startTicks,
-          cwd: cwdParts.join("\t"),
-        },
-      ];
-    });
+  const { REMOTE_AGENT_PROCESS_SCAN, parseRemoteAgentProcessEvidence } =
+    await import("./remote-agent-process-evidence.js");
+  // 原 ps 子串会漏掉 process.title=zcode-cli 的真实 Agent，还会命中查询 shell 自身。
+  // 只沿本 Core 的 UID/exe/代际边界识别；完整 cwd 留给 fault/hooks/soak/subagent 各自判断。
+  let result: Awaited<ReturnType<typeof runSSHCommand>>;
+  try {
+    result = await runSSHCommand(config, REMOTE_AGENT_PROCESS_SCAN);
+  } catch {
+    throw new Error("Remote Agent evidence: scan-failed");
+  }
+  if (result.code !== 0) throw new Error("Remote Agent evidence: scan-failed");
+  return parseRemoteAgentProcessEvidence(result.stdout);
 }
 
 export async function terminateRemoteProcess(

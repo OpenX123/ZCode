@@ -61,8 +61,9 @@ export async function startProjectPointerDrag(selector: string) {
  * 2026-09 虚拟项目重构后侧栏不再渲染真实目录节点（旧 TID_WORKSPACE_ITEM），
  * 老 workspace 首次迁移成「同名单 root 项目」：项目名 = 目录 basename
  * （与 packages/services/src/project-storage/migrate-projects.ts 同规则），
- * 项目 `<section>` 带 data-project-id / data-project-name。这里统一按项目名定位，
- * E2E 夹具的 workspace basename 彼此唯一（ZCodeProject、PassiveWorkspace-01…）。
+ * 项目 `<section>` 带 data-project-id / data-project-name。旧调用默认按项目名定位，
+ * 夹具的 workspace basename 彼此唯一（ZCodeProject、PassiveWorkspace-01…）；
+ * 需要允许既有重名项目的调用显式传递实际观察到的 SidebarProjectScope。
  */
 export function projectNameForWorkspace(workspacePath: string): string {
   return (
@@ -71,36 +72,65 @@ export function projectNameForWorkspace(workspacePath: string): string {
   );
 }
 
-export function projectSectionSelector(workspacePath: string): string {
+/** 真实创建后观察到的项目身份；显示名仅用于草稿标题核对，不参与身份定位。 */
+export interface SidebarProjectScope {
+  projectId: string;
+  hostId: string;
+  workspaceIdentity: string;
+  projectName: string;
+}
+
+export function projectSectionSelector(
+  workspacePath: string,
+  projectScope?: SidebarProjectScope,
+): string {
+  // 原因：合法同名项目会自动带后缀；显式 ID 必须连同 Host/identity 匹配，不能回退 basename。
+  if (projectScope) {
+    return `section[data-project-id=${JSON.stringify(projectScope.projectId)}][data-project-host=${JSON.stringify(projectScope.hostId)}][data-project-workspace-identity=${JSON.stringify(projectScope.workspaceIdentity)}]`;
+  }
   return `[data-project-id][data-project-name=${JSON.stringify(projectNameForWorkspace(workspacePath))}]`;
 }
 
-export function projectRowSelector(workspacePath: string): string {
-  return `${projectSectionSelector(workspacePath)} [data-testid="${TID_VIRTUAL_PROJECT_ROW}"]`;
+export function projectRowSelector(
+  workspacePath: string,
+  projectScope?: SidebarProjectScope,
+): string {
+  return `${projectSectionSelector(workspacePath, projectScope)} [data-testid="${TID_VIRTUAL_PROJECT_ROW}"]`;
 }
 
 interface WaitOptions {
   timeout?: number;
   timeoutMsg?: string;
+  projectScope?: SidebarProjectScope;
 }
 
-async function projectRowExists(workspacePath: string): Promise<boolean> {
+async function projectRowExists(
+  workspacePath: string,
+  projectScope?: SidebarProjectScope,
+): Promise<boolean> {
+  let count: number;
   try {
-    return await browser.execute(
-      (selector) => Boolean(document.querySelector(selector)),
-      projectRowSelector(workspacePath),
+    count = await browser.execute(
+      (selector) => document.querySelectorAll(selector).length,
+      projectRowSelector(workspacePath, projectScope),
     );
   } catch {
     // renderer reload 期间 WebDriver 会短暂失去执行上下文，按未就绪处理。
     return false;
   }
+  if (projectScope && count > 1) throw new Error(`显式项目行必须唯一，实际 ${count}`);
+  return count > 0;
 }
 
 export async function waitForProjectRow(
   workspacePath: string,
-  { timeout = 30_000, timeoutMsg = `侧栏没有显示项目: ${workspacePath}` }: WaitOptions = {},
+  {
+    timeout = 30_000,
+    timeoutMsg = `侧栏没有显示项目: ${workspacePath}`,
+    projectScope,
+  }: WaitOptions = {},
 ): Promise<void> {
-  await browser.waitUntil(() => projectRowExists(workspacePath), {
+  await browser.waitUntil(() => projectRowExists(workspacePath, projectScope), {
     timeout,
     interval: 100,
     timeoutMsg,
@@ -138,15 +168,24 @@ export async function waitForRestoredProjects(
   );
 }
 
-async function readProjectExpanded(workspacePath: string): Promise<boolean> {
+async function readProjectExpanded(
+  workspacePath: string,
+  projectScope?: SidebarProjectScope,
+): Promise<boolean> {
   return browser.execute(
-    (selector, toggleTestId) =>
-      document
-        .querySelector(selector)
-        ?.querySelector(`[data-testid="${toggleTestId}"]`)
-        ?.getAttribute("aria-expanded") === "true",
-    projectSectionSelector(workspacePath),
+    (selector, toggleTestId, requireUnique) => {
+      const sections = document.querySelectorAll(selector);
+      if (requireUnique && sections.length > 1)
+        throw new Error(`显式项目必须唯一，实际 ${sections.length}`);
+      return (
+        sections[0]
+          ?.querySelector(`[data-testid="${toggleTestId}"]`)
+          ?.getAttribute("aria-expanded") === "true"
+      );
+    },
+    projectSectionSelector(workspacePath, projectScope),
     TID_VIRTUAL_PROJECT_TOGGLE,
+    Boolean(projectScope),
   );
 }
 
@@ -224,9 +263,17 @@ export async function openProjectFileTree(
 /** 从项目行发起新建任务草稿（cwd = 项目主要目录）。 */
 export async function startDraftFromProject(
   workspacePath: string,
-  options: { workspaceIdentity?: string } = {},
+  options: { workspaceIdentity?: string; projectScope?: SidebarProjectScope } = {},
 ): Promise<void> {
-  const draftKey = options.workspaceIdentity?.trim() || workspacePath;
+  const { projectScope } = options;
+  if (
+    projectScope &&
+    options.workspaceIdentity &&
+    options.workspaceIdentity !== projectScope.workspaceIdentity
+  )
+    throw new Error("显式项目与草稿 workspace identity 不匹配");
+  const workspaceIdentity = projectScope?.workspaceIdentity ?? options.workspaceIdentity;
+  const draftKey = workspaceIdentity?.trim() || workspacePath;
   const previousDraftVersion = await browser.execute((key) => {
     const bridge = (
       window as unknown as {
@@ -237,7 +284,12 @@ export async function startDraftFromProject(
     ).__zcodeSessionStoreE2E;
     return bridge?.getState().workspaces[key]?.draftFocusVersion ?? 0;
   }, draftKey);
-  if (options.workspaceIdentity) {
+  if (projectScope) {
+    await waitForProjectRow(workspacePath, { projectScope });
+    const project = $(projectSectionSelector(workspacePath, projectScope));
+    await project.moveTo();
+    await project.$(`[data-testid="${TID_VIRTUAL_PROJECT_CREATE_TASK}"]`).click();
+  } else if (options.workspaceIdentity) {
     // 跨 Source 可以有同名同路径项目；显式 identity 时不能落到名称匹配的第一行。
     const project = $(
       `[data-project-workspace-identity=${JSON.stringify(options.workspaceIdentity)}]`,
@@ -304,8 +356,8 @@ export async function startDraftFromProject(
         TID_V4_COMPOSER_INPUT,
         TID_V4_SESSION_PANE,
         TID_COMPOSER_WORKSPACE_TRIGGER,
-        projectNameForWorkspace(workspacePath),
-        options.workspaceIdentity,
+        projectScope?.projectName ?? projectNameForWorkspace(workspacePath),
+        workspaceIdentity,
         draftKey,
         previousDraftVersion,
         TID_V4_PANE_SHELL,
@@ -376,13 +428,22 @@ export interface ProjectTaskRowState {
 export async function readProjectTaskRowState(
   taskId: string,
   workspacePath: string,
+  projectScope?: SidebarProjectScope,
 ): Promise<ProjectTaskRowState> {
   return browser.execute(
-    (taskTestId, sectionSelector) => {
-      const taskRow = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
-        (element) => element.dataset.testid === taskTestId,
-      );
-      const section = document.querySelector(sectionSelector);
+    (taskTestId, sectionSelector, requireUnique) => {
+      const sections = document.querySelectorAll(sectionSelector);
+      if (requireUnique && sections.length > 1)
+        throw new Error(`显式项目必须唯一，实际 ${sections.length}`);
+      const section = sections[0];
+      // 修复依据：任务只能由已核对身份的项目证明归属，全局首 task 可能属于同名兄弟项目。
+      const root = requireUnique ? section : document;
+      const taskRows = Array.from(
+        root?.querySelectorAll<HTMLElement>("[data-testid]") ?? [],
+      ).filter((element) => element.dataset.testid === taskTestId);
+      if (requireUnique && taskRows.length > 1)
+        throw new Error(`显式项目内任务行必须唯一，实际 ${taskRows.length}`);
+      const taskRow = taskRows[0];
       return {
         active: taskRow?.classList.contains("bg-selected") ?? false,
         error: Boolean(taskRow?.querySelector('[data-error-indicator="true"]')),
@@ -392,7 +453,8 @@ export async function readProjectTaskRowState(
       };
     },
     testId(TID_TASK_ITEM, taskId),
-    projectSectionSelector(workspacePath),
+    projectSectionSelector(workspacePath, projectScope),
+    Boolean(projectScope),
   );
 }
 
@@ -402,26 +464,31 @@ export async function waitForTaskRowInProject(
   {
     timeout = 30_000,
     timeoutMsg = `task ${taskId} 没有出现在项目 ${workspacePath} 下`,
+    projectScope,
   }: WaitOptions = {},
 ): Promise<void> {
-  await waitForProjectRow(workspacePath, { timeout });
+  await waitForProjectRow(workspacePath, { timeout, projectScope });
   await browser.waitUntil(
     async () => {
       // 远端项目在离线态下 toggle 被禁用、任务列表不渲染；这里只做尽力展开，
       // 由 task 行本身的出现作为 host 恢复在线且任务归位的判据。
-      if (!(await readProjectExpanded(workspacePath))) {
+      if (!(await readProjectExpanded(workspacePath, projectScope))) {
         await browser.execute(
-          (selector, toggleTestId) => {
-            const toggle = document
-              .querySelector(selector)
-              ?.querySelector<HTMLButtonElement>(`[data-testid="${toggleTestId}"]`);
+          (selector, toggleTestId, requireUnique) => {
+            const sections = document.querySelectorAll(selector);
+            if (requireUnique && sections.length > 1)
+              throw new Error(`显式项目必须唯一，实际 ${sections.length}`);
+            const toggle = sections[0]?.querySelector<HTMLButtonElement>(
+              `[data-testid="${toggleTestId}"]`,
+            );
             if (toggle && !toggle.disabled) toggle.click();
           },
-          projectSectionSelector(workspacePath),
+          projectSectionSelector(workspacePath, projectScope),
           TID_VIRTUAL_PROJECT_TOGGLE,
+          Boolean(projectScope),
         );
       }
-      const state = await readProjectTaskRowState(taskId, workspacePath);
+      const state = await readProjectTaskRowState(taskId, workspacePath, projectScope);
       return state.exists && state.inProject && !state.error;
     },
     { timeout, interval: 250, timeoutMsg },

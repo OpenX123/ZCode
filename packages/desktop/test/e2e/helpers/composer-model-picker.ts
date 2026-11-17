@@ -1,9 +1,12 @@
 import { TID_CHAT_MODEL_SELECT_TRIGGER, TID_V4_MODEL_CONFIG } from "@zcode/shared/test-ids";
 
 /** 合并入口与开关由真实点击驱动，滑杆由键盘驱动，不用 DOM 值覆盖伪造 React 状态。 */
-export async function selectCombinedComposerThoughtLevel(value: string): Promise<boolean> {
+export async function selectCombinedComposerThoughtLevel(
+  value: string,
+  scopeSelector?: string,
+): Promise<boolean> {
   const trigger = $(
-    `[data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"][data-composer-combined-model]`,
+    `${scopeSelector ? `${scopeSelector} ` : ""}[data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"][data-composer-combined-model]`,
   );
   if (!(await trigger.isExisting())) return false;
   if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
@@ -23,7 +26,9 @@ export async function selectCombinedComposerThoughtLevel(value: string): Promise
   }
   if (!(await slider.isExisting())) {
     // 仅 Off 的模型没有可调控件；只能接受当前真实投影，不能伪造一次选择。
-    const current = await $(`[data-testid="${TID_V4_MODEL_CONFIG}"]`).getAttribute("data-thought");
+    const current = await $(
+      `${scopeSelector ? `${scopeSelector} ` : ""}[data-testid="${TID_V4_MODEL_CONFIG}"]`,
+    ).getAttribute("data-thought");
     if (current !== value)
       throw new Error(`当前模型没有可调思考档位: ${value} (current=${current})`);
     await browser.keys("Escape");

@@ -1,4 +1,5 @@
-import { startDraftFromProject } from "#e2e/helpers/project-sidebar";
+import { startDraftFromProject, type SidebarProjectScope } from "#e2e/helpers/project-sidebar";
+import { getFocusedComposerScope } from "../../../helpers/composer-pane-scope.js";
 import { selectTaskOrganizeMode } from "../../../helpers/workspace-agent-warmup.js";
 import {
   openSSHSourceDirectory,
@@ -13,12 +14,18 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   parseProvisioningSyncEvents,
+  isDirectoryWriteDeniedProvisioningWarning,
   type ProvisioningSyncEvent,
 } from "#e2e/helpers/provisioning-sync-evidence";
 import { createHeldResponseProxy } from "#e2e/helpers/ssh-held-response-proxy";
 import {
+  captureProvisioningJournalBaseline,
+  readProvisioningJournalSettlement,
+} from "#e2e/helpers/provisioning-journal-evidence";
+import {
+  buildRemoteEnvironmentKey,
   parseRemoteWorkspaceIdentity,
-  providerProvisioningResultSchema,
+  stripRemoteTargetSecrets,
   type AppSettings,
 } from "@zcode/shared";
 import {
@@ -213,24 +220,6 @@ async function assertManagementAvailableBeforeHold(sourceId: string): Promise<vo
   await clickTestIdByDom(TID_SETTINGS_BACK_BUTTON, { timeout: 15_000 });
 }
 
-async function readAppliedSyncCount(config: SSHConnectionConfig): Promise<number> {
-  const result = await runSSHCommand(
-    config,
-    'cat "$HOME/.zcode/v2/runtime/provider/provisioning.json"',
-  );
-  expect(result.code).toBe(0);
-  const journal = JSON.parse(result.stdout) as {
-    records?: Array<{ syncId: string; result: unknown }>;
-  };
-  if (!Array.isArray(journal.records))
-    throw new Error(`${CASE_MARKER}: 缺少真实 Provisioning journal`);
-  return journal.records.filter((record) => {
-    const value = providerProvisioningResultSchema.parse(record.result);
-    expect(value.syncId).toBe(record.syncId);
-    return value.status === "applied";
-  }).length;
-}
-
 async function assertConnectedSyncFailureRecovery(options: {
   config: SSHConnectionConfig;
   desktopTarget: SSHConnectionConfig;
@@ -310,11 +299,9 @@ async function assertConnectedSyncFailureRecovery(options: {
     facts.connectedSyncLocalSaveCompleted = true;
     await browser.waitUntil(
       async () =>
-        (await readNewEvents()).some(
-          (event) =>
-            event.kind === "warning" &&
-            event.trigger === "personal-config" &&
-            event.status === "failed",
+        // 原因：父目录0555在整个观察期持续生效，写入与回滚均受阻；不能误等成仅写入失败。
+        (await readNewEvents()).some((event) =>
+          isDirectoryWriteDeniedProvisioningWarning(event, environmentKey),
         ),
       { timeout: 30_000, timeoutMsg: `${CASE_MARKER}: 真实写入失败后没有结构化同步 warning` },
     );
@@ -400,9 +387,9 @@ async function assertConnectedSyncFailureRecovery(options: {
     );
     const settled = await readNewEvents();
     facts.connectedSyncWarningsObserved = settled;
-    expect(settled.every((event) => event.kind === "warning" && event.status === "failed")).toBe(
-      true,
-    );
+    expect(
+      settled.every((event) => isDirectoryWriteDeniedProvisioningWarning(event, environmentKey)),
+    ).toBe(true);
     warningCount = settled.length;
     await browser.pause(10_000);
     expect(await readNewEvents()).toEqual(settled);
@@ -510,9 +497,15 @@ describe(`${CASE_MARKER}: 本地 Provider 保存/删除/断线期间修改经 Pr
     this.timeout(30 * 60_000);
     const prepared = await prepareSSHLifecycle(CASE_MARKER);
     provider = prepared.provider;
+    const journalBaseline = await captureProvisioningJournalBaseline(prepared.config);
+    facts.provisioningJournalBaseline = journalBaseline;
     // 模型回放隧道与控制探针仍走直连；只扣住 Desktop 产品链路上的旧同步 RPC 回包。
     proxy = await createHeldResponseProxy(prepared.config);
     const desktopConfig = { ...prepared.config, host: "127.0.0.1", port: proxy.port };
+    // 与 Host descriptor 相同，使用共享 secret stripping 与 Environment key 构造规则。
+    const environmentKey = buildRemoteEnvironmentKey(
+      stripRemoteTargetSecrets({ kind: "ssh", ...desktopConfig }),
+    );
     const [workspaceA] = prepared.config.workspacePaths;
     const taskA = await connectSSHWorkspaceAndSendFirstTurn({
       caseMarker: CASE_MARKER,
@@ -520,12 +513,28 @@ describe(`${CASE_MARKER}: 本地 Provider 保存/删除/断线期间修改经 Pr
       label: "A",
       provider,
       workspacePath: workspaceA,
+      captureProjectScope: true,
+      completionStrategy: "origin-draft",
     });
     const workspaceB = prepared.config.workspacePaths[1];
     await openSSHSourceDirectory(desktopConfig, CASE_MARKER);
     await waitForSSHDirectoryStep(CASE_MARKER);
-    await selectSSHRemoteDirectory(workspaceB, CASE_MARKER);
-    const initialB = await waitForRemoteTab({ caseMarker: CASE_MARKER, expectedPath: workspaceB });
+    const projectBObservation: { scope?: SidebarProjectScope } = {};
+    await selectSSHRemoteDirectory(workspaceB, CASE_MARKER, {
+      onProjectCreated: (scope) => {
+        projectBObservation.scope = scope;
+        facts.projectBCreated = { workspacePath: workspaceB, ...scope };
+      },
+    });
+    const projectB = projectBObservation.scope;
+    if (!projectB || !taskA.projectScope)
+      throw new Error(`${CASE_MARKER}: A/B 缺少本次实际创建的项目身份`);
+    facts.projectACreated = { workspacePath: workspaceA, ...taskA.projectScope };
+    const initialB = await waitForRemoteTab({
+      caseMarker: CASE_MARKER,
+      expectedPath: workspaceB,
+      expectedIdentity: projectB.workspaceIdentity,
+    });
     const initial = await waitForRemotePersonalConfig(
       prepared.config,
       (text) => text.includes(provider!.name),
@@ -559,15 +568,23 @@ describe(`${CASE_MARKER}: 本地 Provider 保存/删除/断线期间修改经 Pr
     // 先让该存量 Worker 刷新自己的 Registry，不能在后台 turn 阶段静默丢输入。
     // 测试缺陷：先在 A 的 Composer 切模再新建草稿，会把 A 的续发选择改成随后删除的
     // Provider，重连成功后续发也会被正确禁用。先新建 B-05 草稿，保留 A 的原始选择。
-    await startDraftFromProject(workspaceB, { workspaceIdentity: initialB.workspaceIdentity! });
+    await startDraftFromProject(workspaceB, {
+      workspaceIdentity: initialB.workspaceIdentity!,
+      projectScope: projectB,
+    });
+    const b05Scope = await getFocusedComposerScope({
+      workspacePath: workspaceB,
+      workspaceIdentity: initialB.workspaceIdentity!,
+    });
     await selectUpstreamProviderModelById("r3-online-model", {
       includePlainModelFallback: false,
       providerId: online.id,
       providerName: onlineName,
+      composerScope: b05Scope,
     });
     // 修复原因：切换模型会清除 thought（useDraftConfigControl），reasoningLevel 缺失时
     // submissionReady=false、发送键保持禁用，sendV4Prompt 会在等待发送键处超时。
-    await selectUpstreamThoughtLevelValue(B05_THOUGHT_LEVEL);
+    await selectUpstreamThoughtLevelValue(B05_THOUGHT_LEVEL, b05Scope);
     const b05Marker = `${CASE_MARKER}_STALE_WORKER`;
     const b05Query = {
       lastUserMessageIncludes: [b05Marker],
@@ -619,8 +636,12 @@ describe(`${CASE_MARKER}: 本地 Provider 保存/删除/断线期间修改经 Pr
     // 已发现设备管理冷加载会等待远端统计，保留后续 PRV-13 的失败而不绕过其 UI。
     await readTaskRowInProject(taskA, CASE_MARKER);
     await selectV4TaskById(taskA.taskId, 30_000);
-    await waitForV4ComposerSelectionReady();
-    expect(await getV4ModelConfig()).toMatchObject({
+    const originalScope = await getFocusedComposerScope({
+      workspacePath: taskA.workspacePath,
+      workspaceIdentity: taskA.identity,
+    });
+    await waitForV4ComposerSelectionReady(30_000, originalScope.selector);
+    expect(await getV4ModelConfig(originalScope.selector)).toMatchObject({
       provider: provider.id,
       model: SSH_LIFECYCLE_MODEL_ID,
     });
@@ -648,12 +669,14 @@ describe(`${CASE_MARKER}: 本地 Provider 保存/删除/断线期间修改经 Pr
     if (!logDirectory) throw new Error(`${CASE_MARKER}: 缺少本次 Main 日志目录`);
     await browser.waitUntil(
       async () => {
-        const applied = await readAppliedSyncCount(prepared.config);
-        return (
-          applied > 0 &&
-          (await readSyncEvents(logDirectory)).filter((event) => event.status === "applied")
-            .length === applied
-        );
+        const settlement = await readProvisioningJournalSettlement({
+          config: prepared.config,
+          baseline: journalBaseline,
+          environmentKey,
+          logDirectory,
+        });
+        facts.provisioningJournalSettlement = settlement;
+        return settlement.settled;
       },
       { timeout: 30_000, timeoutMsg: `${CASE_MARKER}: 既有 Provisioning RPC 未全部收口` },
     );
@@ -815,8 +838,12 @@ describe(`${CASE_MARKER}: 本地 Provider 保存/删除/断线期间修改经 Pr
     const resumed: SSHLifecycleTask = { ...taskA, remoteSessionId: reconnected.remoteSessionId! };
     await readTaskRowInProject(resumed, CASE_MARKER);
     await selectV4TaskById(resumed.taskId, 30_000);
-    await waitForV4ComposerSelectionReady();
-    const resumedModelConfig = await getV4ModelConfig();
+    const resumedScope = await getFocusedComposerScope({
+      workspacePath: resumed.workspacePath,
+      workspaceIdentity: resumed.identity,
+    });
+    await waitForV4ComposerSelectionReady(30_000, resumedScope.selector);
+    const resumedModelConfig = await getV4ModelConfig(resumedScope.selector);
     facts.resumedModelConfig = resumedModelConfig;
     expect(resumedModelConfig).toMatchObject({
       provider: provider.id,

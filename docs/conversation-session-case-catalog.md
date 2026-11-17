@@ -3189,6 +3189,49 @@ old generation resolves late ─────────────────
 | SSH-P0-LIFE-02 | A/B 共享在线 SSH Host                                                                   | 只终止本 case 启动的远端 server，再对 A 手动重连                                                  | Host transport 失败影响同组 workspace；重连一个 workspace 恢复仍打开的同组 workspace                                                                                                                    | A/B 同时 disconnected；本地不受影响；一次新 Host 建连；A/B 使用新且独立 session 恢复，路由不串                                                                                                        | ✅                                                                                                               |
 | SSH-P0-LIFE-03 | 历史关闭 workspace UI 场景                                                              | 旧的入口移除即释放 session 语义已退役                                                             | 当前入口移除沿 SSH-P0-TASK-02；待连请求取消沿 R3A-CON-03/04，runtime owner 仍由聚焦生命周期测试覆盖                                                                                                     | 不把 membership 移除当作 attachment 关闭                                                                                                                                                              | historical                                                                                                       |
 
+Task12 最终验收补充：上表 SSH-P0-LIFE-02 的历史组头手动恢复记录不作为自动恢复通过证据。
+当前同名 pending 候选采用严格 auto-only：A/B 在原预算内均自动更换 session，无 manual
+fallback；按实际 Source、attachment、Renderer ACK、旧 port detach、Main promotion 与通知的
+同轮记录核验顺序，并保留双方原 task 续发和独立 case-local replay。另以
+`r3-provisioning-gui` 单独覆盖配置失败/恢复及显式重连，二者不互相替代，保持 pending。
+真实 observer 只从同一 Host 消息记录固定 closed reason 与旧 session：失联须证明旧 port→
+`connection-closed`→同一旧 attachment 的实际 Detach→新 Source；仍有效旧 port 须新 ACK→
+实际旧 Detach→promotion。两者均核新 Source→attach→port→精确 ACK→promotion→通知及
+窗口/identity/generation，不以任意时刻 Detach 或最终 online 放行，也不声称取得销毁完成 ACK。
+`sshReconnectObservation.test.ts` 覆盖真实 export 判定和 install 回调采集/原样转发/恢复。
+独立 Agent 枚举须绑定当前 Core 直接父子、认证 UID、受控 exe 及前后启动代际；兼容旧完整
+`app-server`/`--stdio` token 与规范单 token `zcode-cli` title，不能全局子串命中查询自身。
+Node 与精确部署 native 的支持范围、无 Core/错误分类和原 HOME/deleted cwd 返回由
+`remoteAgentProcesses.test.ts` 真实 export 回归覆盖；A/B 的精确 cwd 存在性前置保持。
+这两条 pending 链路显式观察新项目 ID/Host/identity，后续项目/任务行按该身份唯一定位；
+合法重名后缀不影响归属，错误身份不回退名称。确定性回归见 `projectSidebarScope.test.ts`。
+PRV12 持续目录拒写精确断言 `rollback_failed` 与 `target-write-failed`，保留回滚失败和
+原写入阶段的区别；parser/分类回归见 `provisioningSyncEvidence.test.ts`，不以任意失败代替。
+两用例仅首次 A 显式选择“等待有效原草稿自动接续”：发起连接前以既有 Tab/Session 桥和
+聚焦 pane 核验活动 Tab 的 workspace 归属、未发送空草稿。保存后不提前返回设置，也不再点击
+侧栏新建；在原 120 秒内核验唯一新项目 ID/Host/identity/path、真实远端 session 和活动聚焦
+草稿的项目归属。原 Tab ID 只证明发起前置，不要求接续后 ID 恒等；失败不 fallback。
+B 已在 A 首发之后，继续默认侧栏创建，不补造 B 草稿；观察回调不选择策略。
+确定性回归见 `sshRemoteDirectoryCompletion.test.ts`，真实 GUI/fault 仍须独立验收。
+共享会话导航 helper 点击 task 后，默认等待须每轮解析当时唯一可见、focused 且 groupActive
+的 pane，不能在 click 返回时固定尚未迁移的旧 pane。复用 Composer scope 的同一只读算法，
+pane-only 模式允许无候选返回 null、歧义拒绝；默认 Composer 的完整 workspace/identity 与
+唯一 Composer 校验不变，显式 paneId 仍精确固定，不扫描隐藏 session 充当成功。
+`v4TaskNavigationScope.test.ts` 真实调用导航 helper 覆盖焦点迟到、隐藏缓存与负向边界；
+这些确定性风险不补判 R94 现场根因，也不代替 pending 真实验收。
+GUI 在首次 Desktop 连接前经只读 SFTP 捕获同 HOME journal 的 applied ID 基线，hold 前
+核基线保留，并以新增唯一 applied ID 数与本 run 同 Environment 的完整 Main applied 数
+精确相等且大于零收口；保留旧历史/原 30 秒与后续全部断言，不把持久化总数当本轮提交。
+仅初次明确 SFTP 2/ENOENT 可为空；权限/其它读取错、坏 schema、空/重复 ID、record/result
+ID 不符及后续丢失均拒绝。`provisioningJournalEvidence.test.ts` 经实际 GUI 读取/对账 seam
+覆盖旧61+新14、缺回应/多提交/重复计数、错环境及读取错误。Main 无 syncId，不能声称逐笔
+双射或排除一漏一重抵消；不增产品观察接口。真实 GUI/fault 结果另记，仍 pending。
+HOME 在同一认证 SSH client 上用固定 `printf '%s' "$HOME"` 取得，要求exit0/无signal、
+非空最多4096字节的规范POSIX绝对路径且无控制字符，再由标准SFTP realpath核完全一致；
+exec ACK/data/close 和SFTP open/realpath/read共用原单60秒控制界限，超时destroy/结束end。
+不拼用户路径进命令、不猜cwd/用户名、不fallback、不修改依赖；实际GUI helper回归覆盖所有
+pending阶段、HOME/规范路径与读取错误，不能用过时扩展mock替代真实操作合同。
+
 SSH-P0-LIFE-01 最终复验：2026-10-12 批次 `r3-server-20261012012923737-60d156` 的
 `coldreconnect` 已通过，覆盖活动 B 自动恢复、A 按需打开及双方原任务续聊。证据见
 [问题 11 最终验证](issues/remote-e2e-stability/11-ssh-credential-missing-after-restart.md)与

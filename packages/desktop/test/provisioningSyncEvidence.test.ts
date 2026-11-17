@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseProvisioningSyncEvents } from "./e2e/helpers/provisioning-sync-evidence.js";
+import {
+  isDirectoryWriteDeniedProvisioningWarning,
+  parseProvisioningSyncEvents,
+} from "./e2e/helpers/provisioning-sync-evidence.js";
 
 const context = {
   environmentKey: "env-a",
@@ -8,6 +11,18 @@ const context = {
   durationMs: 14,
 };
 const warning = `[2026-09-25 00:10:00] [warn] [pid:123] [main] [provider-provisioning] Environment sync did not apply ${JSON.stringify(context)}`;
+
+// 与真实 Main 结果同形；只用测试 Environment 和白名单阶段码，不携带远端自由错误。
+function directoryWriteDeniedLine(overrides: Record<string, unknown> = {}) {
+  return `[2026-11-17 08:39:08.577] [warn] [pid:123] [main] [provider-provisioning] Environment sync did not apply ${JSON.stringify(
+    {
+      ...context,
+      status: "rollback_failed",
+      errorCode: "target-write-failed",
+      ...overrides,
+    },
+  )}\n`;
+}
 
 describe("真实 Main Provisioning 结果取证", () => {
   it("保留成功与失败两类事件，供提交数和返回数对账", () => {
@@ -42,6 +57,49 @@ describe("真实 Main Provisioning 结果取证", () => {
   it("缺少 Environment 身份的完整记录必须报错", () => {
     expect(() =>
       parseProvisioningSyncEvents(`${warning.replace('"environmentKey":"env-a",', "")}\n`),
+    ).toThrow();
+  });
+
+  it("真实目录拒写的回滚失败保留独立状态及安全阶段码，丢弃自由错误", () => {
+    expect(
+      parseProvisioningSyncEvents(
+        directoryWriteDeniedLine({ errorMessage: "不得转抄的远端自由错误", extraPayload: "忽略" }),
+      ),
+    ).toEqual([
+      {
+        ...context,
+        kind: "warning",
+        status: "rollback_failed",
+        errorCode: "target-write-failed",
+      },
+    ]);
+  });
+
+  it.each(["unknown-stage", "", 42])("完整事件的非法安全码必须拒绝: %j", (errorCode) => {
+    expect(() => parseProvisioningSyncEvents(directoryWriteDeniedLine({ errorCode }))).toThrow();
+  });
+
+  it("PRV12 只接受当前 Environment 的持续目录拒写与回滚失败组合", () => {
+    const [event] = parseProvisioningSyncEvents(directoryWriteDeniedLine());
+    expect(isDirectoryWriteDeniedProvisioningWarning(event!, "env-a")).toBe(true);
+  });
+
+  it.each([
+    { environmentKey: "env-other" },
+    { trigger: "environment-online" },
+    { status: "failed" },
+    { status: "unsupported" },
+    { errorCode: "target-refresh-failed" },
+    { errorCode: "target-apply-failed" },
+    { errorCode: undefined },
+  ])("PRV12 不能泛化接受其它失败或旧缺码: %j", (overrides) => {
+    const [event] = parseProvisioningSyncEvents(directoryWriteDeniedLine(overrides));
+    expect(isDirectoryWriteDeniedProvisioningWarning(event!, "env-a")).toBe(false);
+  });
+
+  it("错误日志级别不能被状态分类器当作有效 warning", () => {
+    expect(() =>
+      parseProvisioningSyncEvents(directoryWriteDeniedLine().replace("[warn]", "[info]")),
     ).toThrow();
   });
 });

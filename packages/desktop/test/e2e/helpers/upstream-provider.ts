@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- Upstream E2E 初始化包含设置页、provider store、模型选择三段探针，集中维护方便失败诊断 */
 import { selectCombinedComposerThoughtLevel } from "./composer-model-picker.js";
+import { recordComposerScopeAction, type ComposerPaneScope } from "./composer-pane-scope.js";
 import { ZCODE_AGENT_PROVIDER, encodeCustomModelValue } from "@zcode/shared";
 import {
   TID_CHAT_MODEL_SELECT_GROUP,
@@ -589,6 +590,8 @@ export async function selectUpstreamModelById(
 }
 
 interface SelectUpstreamProviderModelOptions {
+  /** SSH pending 验收显式绑定当前活动 pane；其他调用保留原合同。 */
+  composerScope?: ComposerPaneScope;
   /** 团队行使用完整连接身份；普通 Provider 默认沿用 registry key。 */
   providerGroupKey?: string;
   afterModelItemClick?: () => Promise<boolean> | boolean;
@@ -600,6 +603,7 @@ interface SelectUpstreamProviderModelOptions {
 export async function selectRegistryProviderModelById(
   modelId: string,
   {
+    composerScope,
     afterModelItemClick,
     includePlainModelFallback = true,
     providerId = UPSTREAM_PROVIDER_ID,
@@ -614,15 +618,22 @@ export async function selectRegistryProviderModelById(
   const providerGroupTestIds = [testId(TID_CHAT_MODEL_SELECT_GROUP, providerGroupKey)];
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const trigger = $(sel(TID_CHAT_MODEL_SELECT_TRIGGER));
+    // 已证原因：缓存的隐藏 pane 保留同 test id，不能再让全局 first 抢占活动 SSH pane。
+    const trigger = $(
+      `${composerScope ? `${composerScope.selector} ` : ""}${sel(TID_CHAT_MODEL_SELECT_TRIGGER)}`,
+    );
+    if (composerScope) await recordComposerScopeAction(composerScope, "target-resolved");
     await trigger.waitForClickable({ timeout: 30000 });
     if (
       !(await isUpstreamModelSelected(modelId, {
         includePlainModelFallback,
         providerId,
+        composerScope,
       }))
     ) {
       await trigger.click();
+      if (composerScope)
+        await recordComposerScopeAction(composerScope, "webdriver-trigger-click-returned");
       try {
         await browser.waitUntil(
           async () =>
@@ -631,6 +642,7 @@ export async function selectRegistryProviderModelById(
             (await isUpstreamModelSelected(modelId, {
               includePlainModelFallback,
               providerId,
+              composerScope,
             })) || openModelMenuUntilModelVisible(providerGroupTestIds, modelItemTestIds),
           {
             timeout: 45000,
@@ -649,11 +661,18 @@ export async function selectRegistryProviderModelById(
       }
 
       const clickedModelItem = await clickFirstExistingTestId(modelItemTestIds);
+      if (composerScope && clickedModelItem)
+        await recordComposerScopeAction(
+          composerScope,
+          "model-item-click-returned",
+          clickedModelItem.testId,
+        );
       if (!clickedModelItem) {
         if (
           await isUpstreamModelSelected(modelId, {
             includePlainModelFallback,
             providerId,
+            composerScope,
           })
         ) {
           await waitForModelSwitchIdle(`${providerName} 模型 ${modelId} 已选中但持久化没有完成`);
@@ -661,6 +680,7 @@ export async function selectRegistryProviderModelById(
             await isUpstreamModelSelected(modelId, {
               includePlainModelFallback,
               providerId,
+              composerScope,
             })
           ) {
             return;
@@ -684,6 +704,7 @@ export async function selectRegistryProviderModelById(
       await waitForUpstreamModelSelected(modelId, {
         includePlainModelFallback,
         providerId,
+        composerScope,
       });
       if (
         (await trigger.getAttribute("data-composer-combined-model")) === "true" &&
@@ -697,6 +718,7 @@ export async function selectRegistryProviderModelById(
       await isUpstreamModelSelected(modelId, {
         includePlainModelFallback,
         providerId,
+        composerScope,
       })
     ) {
       return;
@@ -720,6 +742,7 @@ export const selectUpstreamProviderModelById = selectRegistryProviderModelById;
 export async function waitForUpstreamModelSelected(
   modelId: string,
   options: {
+    composerScope?: ComposerPaneScope;
     includePlainModelFallback?: boolean;
     providerId?: string;
   } = {},
@@ -733,9 +756,11 @@ export async function waitForUpstreamModelSelected(
 async function isUpstreamModelSelected(
   modelId: string,
   {
+    composerScope,
     includePlainModelFallback = true,
     providerId = UPSTREAM_PROVIDER_ID,
   }: {
+    composerScope?: ComposerPaneScope;
     includePlainModelFallback?: boolean;
     providerId?: string;
   } = {},
@@ -745,8 +770,9 @@ async function isUpstreamModelSelected(
     providerId,
   });
   return browser.execute(
-    (triggerTestId, expectedModel, modelValues) => {
-      const trigger = document.querySelector<HTMLElement>(`[data-testid="${triggerTestId}"]`);
+    (triggerTestId, expectedModel, modelValues, scopeSelector) => {
+      const root = scopeSelector ? document.querySelector(scopeSelector) : document;
+      const trigger = root?.querySelector<HTMLElement>(`[data-testid="${triggerTestId}"]`);
       const currentValue = trigger?.dataset.modelCurrentValue?.trim() ?? "";
       if (currentValue && modelValues.includes(currentValue)) {
         return true;
@@ -759,6 +785,7 @@ async function isUpstreamModelSelected(
     TID_CHAT_MODEL_SELECT_TRIGGER,
     modelId,
     expectedValues,
+    composerScope?.selector ?? null,
   );
 }
 
@@ -796,20 +823,28 @@ export async function selectUpstreamThoughtLevel() {
   await selectUpstreamThoughtLevelValue(UPSTREAM_THOUGHT_LEVEL);
 }
 
-export async function selectUpstreamThoughtLevelValue(thoughtLevel: string) {
+export async function selectUpstreamThoughtLevelValue(
+  thoughtLevel: string,
+  composerScope?: ComposerPaneScope,
+) {
   if (!thoughtLevel) {
     return;
   }
 
-  if (await selectCombinedComposerThoughtLevel(thoughtLevel)) {
-    await waitForUpstreamThoughtLevelSelectedValue(thoughtLevel);
+  if (await selectCombinedComposerThoughtLevel(thoughtLevel, composerScope?.selector)) {
+    await waitForUpstreamThoughtLevelSelectedValue(thoughtLevel, composerScope?.selector);
     return;
   }
-  await waitForTestIdByDom(TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER, {
-    timeout: 45000,
-    timeoutMsg: "聊天工具栏没有出现 上游 思考深度选择器",
-  });
-  if (await isUpstreamThoughtLevelSelected(thoughtLevel)) {
+  const scopedTrigger = composerScope
+    ? $(`${composerScope.selector} ${sel(TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER)}`)
+    : null;
+  if (scopedTrigger) await scopedTrigger.waitForExist({ timeout: 45000 });
+  else
+    await waitForTestIdByDom(TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER, {
+      timeout: 45000,
+      timeoutMsg: "聊天工具栏没有出现 上游 思考深度选择器",
+    });
+  if (await isUpstreamThoughtLevelSelected(thoughtLevel, composerScope?.selector)) {
     await waitForModelSwitchIdle(`上游 思考深度 ${thoughtLevel} 已选中但持久化没有完成`);
     return;
   }
@@ -817,10 +852,14 @@ export async function selectUpstreamThoughtLevelValue(thoughtLevel: string) {
   const itemTestId = testId(TID_CHAT_THOUGHT_LEVEL_SELECT_ITEM, thoughtLevel);
 
   for (let attempt = 0; attempt < UPSTREAM_THOUGHT_LEVEL_MAX_ATTEMPTS; attempt += 1) {
-    await clickTestIdByDom(TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER, {
-      timeout: 15000,
-      timeoutMsg: "聊天工具栏思考深度选择器不可点击",
-    });
+    if (scopedTrigger) {
+      await scopedTrigger.waitForClickable({ timeout: 15000 });
+      await scopedTrigger.click();
+    } else
+      await clickTestIdByDom(TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER, {
+        timeout: 15000,
+        timeoutMsg: "聊天工具栏思考深度选择器不可点击",
+      });
     await browser.pause(150);
 
     if (await hasUpstreamThoughtLevelItem(itemTestId)) {
@@ -831,6 +870,7 @@ export async function selectUpstreamThoughtLevelValue(thoughtLevel: string) {
       await waitForUpstreamThoughtLevelSelected(
         thoughtLevel,
         `上游 思考深度没有切换到 ${thoughtLevel}`,
+        composerScope?.selector,
       );
       await waitForModelSwitchIdle(`上游 思考深度 ${thoughtLevel} 切换持久化没有完成`);
       return;
@@ -838,7 +878,7 @@ export async function selectUpstreamThoughtLevelValue(thoughtLevel: string) {
 
     // 修复原因：小宽度/特定 toolbar 形态下思考深度是循环按钮，不会挂载
     // Radix SelectItem。此时一次 click 就是一次真实的用户切换动作。
-    if (await isUpstreamThoughtLevelSelected(thoughtLevel)) {
+    if (await isUpstreamThoughtLevelSelected(thoughtLevel, composerScope?.selector)) {
       await waitForModelSwitchIdle(`上游 思考深度 ${thoughtLevel} 切换持久化没有完成`);
       return;
     }
@@ -853,19 +893,30 @@ export async function selectUpstreamThoughtLevelValue(thoughtLevel: string) {
   );
 }
 
-export async function waitForUpstreamThoughtLevelSelectedValue(thoughtLevel: string) {
+export async function waitForUpstreamThoughtLevelSelectedValue(
+  thoughtLevel: string,
+  scopeSelector?: string,
+) {
   await waitForUpstreamThoughtLevelSelected(
     thoughtLevel,
     `上游 思考深度没有切换到 ${thoughtLevel}`,
+    scopeSelector,
   );
 }
 
-async function waitForUpstreamThoughtLevelSelected(thoughtLevel: string, timeoutMsg: string) {
+async function waitForUpstreamThoughtLevelSelected(
+  thoughtLevel: string,
+  timeoutMsg: string,
+  scopeSelector?: string,
+) {
   try {
-    await browser.waitUntil(async () => isUpstreamThoughtLevelSelected(thoughtLevel), {
-      timeout: 15000,
-      timeoutMsg,
-    });
+    await browser.waitUntil(
+      async () => isUpstreamThoughtLevelSelected(thoughtLevel, scopeSelector),
+      {
+        timeout: 15000,
+        timeoutMsg,
+      },
+    );
   } catch (error) {
     throw new Error(
       `${timeoutMsg}\n${JSON.stringify(
@@ -880,9 +931,16 @@ async function waitForUpstreamThoughtLevelSelected(thoughtLevel: string, timeout
   }
 }
 
-async function isUpstreamThoughtLevelSelected(thoughtLevel: string) {
+async function isUpstreamThoughtLevelSelected(thoughtLevel: string, scopeSelector?: string) {
   return browser.execute(
-    (triggerTestId, modelConfigTestId, expectedValue, expectedLabels, defaultWorkspace) => {
+    (triggerTestId, modelConfigTestId, expectedValue, expectedLabels, defaultWorkspace, scope) => {
+      if (scope) {
+        const current = document
+          .querySelector(scope)
+          ?.querySelector(`[data-testid="${modelConfigTestId}"]`)
+          ?.getAttribute("data-thought");
+        return current === expectedValue;
+      }
       const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
       const readCurrentThoughtLevel = () => {
         const e2eWindow = window as Window & {
@@ -968,6 +1026,7 @@ async function isUpstreamThoughtLevelSelected(thoughtLevel: string) {
     thoughtLevel,
     getUpstreamThoughtLevelLabels(thoughtLevel),
     DEFAULT_WORKSPACE,
+    scopeSelector ?? null,
   );
 }
 

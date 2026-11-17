@@ -56,8 +56,14 @@ dispose 旧 Provisioning 登记并登记新 session；随后配置重下发与 D
 不能等待未完成或失败的 `registration.initialSync` 才恢复已经重连的 Desktop。
 
 Desktop 恢复复用唯一 `attachRendererPort`：Renderer 注册新 scoped services 后，以当前
-窗口、sessionId 和 attachmentId ACK；Main 的 `confirmRendererAttachmentReady` 才提升候选、
-幂等拆除旧 attachment，然后通知 `RemoteSessionReconnected`。迟到旧 ACK、连续换代、
+窗口、sessionId 和 attachmentId ACK；Main 的 `confirmRendererAttachmentReady` 才提交候选，
+然后通知 `RemoteSessionReconnected`。旧连接仍有效时，旧 attachment 保留到新 ACK 后，
+实际发出旧 attachment 的 Detach 请求，再发布 attachment ready/promotion 与重连通知。
+若 Host 已先发旧 session 的 `connection-closed`，Main 当时立即清理旧 attachment 并保留
+离线路由，禁止对离线 session 重新 attachment；后续新 Source 的 ACK 不要求重复拆旧。
+这条失联分支须有同一旧 session 的真实 closed 事件，顺序为旧 port→closed→实际旧 Detach→
+新 Source；两分支都保留新 Source→attach→port→ACK→promotion→通知及精确窗口/身份关联。
+Detach 请求的观察不等于 Host 内部销毁完成 ACK。迟到旧 ACK、连续换代、
 route 关闭或 Host 退出都不能提升或通知旧 candidate；失败只清理该 candidate 并记录 warning，
 不能误拆后续代的 route。`mobileOnly` scope 只更新转发关联，不自动创建 `desktop-continuous`；
 桌面显式 adoption 仍沿既有首次 Provisioning 与 renderer ACK 屏障。
@@ -97,6 +103,11 @@ sequenceDiagram
   participant M as Main（route与请求关联）
   participant P as Environment lane
   participant R as Renderer（services投影）
+  opt 旧session已失联
+    H->>M: RemoteWorkspaceClosed(oldSession, connection-closed)
+    M->>H: 立即DetachServicePort(旧attachment)
+    Note over M: 保留离线路由，禁止离线复挂
+  end
   H->>M: RemoteWorkspaceReconnected(oldSession, descriptor)
   M->>M: 原route换新session；同步dispose旧登记
   M->>P: register(environmentKey, newSession)
@@ -108,8 +119,11 @@ sequenceDiagram
     M->>R: 新scoped port + attachmentId
     R->>R: 注册新services
     R-->>M: 当前窗口/session/attachment ACK
-    M->>M: 校验当前candidate并提升
-    M->>H: DetachServicePort(旧attachment)
+    M->>M: 校验当前candidate并提交
+    opt 仍持有有效旧attachment
+      M->>H: DetachServicePort(旧attachment)
+    end
+    M->>M: attachment ready/promotion
     M-->>R: RemoteSessionReconnected（仅仍当前代）
   end
 ```
@@ -148,6 +162,34 @@ Provider apply 尚未返回 -> Source 断开 -> 旧 ChannelClient.dispose
 
 远端配置文件已更新不等于整个 apply RPC 已结束；用户此时断开仍须满足上述契约。
 不得跳过首次同步屏障，也不得通过 UI 延时、清空同步队列或额外重试规避悬挂请求。
+
+`r3-provisioning-gui` 的 hold 前数值收口属于本轮观察：`prepareSSHLifecycle` 返回后、
+held proxy 和首次 Desktop 目标连接前，经同一认证 SSH client 的固定命令
+`printf '%s' "$HOME"` 取得 HOME，标准 SFTP `realpath(该绝对HOME)` 核验路径完全一致后只读捕获
+`.zcode/v2/runtime/provider/provisioning.json` 的 applied syncId 基线。后续读取核验同一
+HOME、合法 schema、非空且唯一的 record ID、共享 result schema 及 record/result ID 一致，
+并要求全部基线 applied ID 仍保留。以新增唯一 applied ID 数与本 run 完整落盘、同一
+Environment 的 Main applied 事件数精确相等且大于零作为原 30 秒等待的完成条件。
+旧历史和 already-applied 重放不构成本轮新提交，不能清 journal 或使用大于等于放行。
+只有初次 SFTP 文件读取明确返回 SSH_FX_NO_SUCH_FILE（2）或 ENOENT 才可记录空基线；
+权限、其它 IO/协议错误、后续文件消失及坏 JSON/schema 均失败，错误证据只保留固定阶段码。
+读取不依赖远端 Node、Python 或 shell 命令环境，不保存 journal 原文、配置或自由错误正文。
+HOME 命令须 exit0/无signal、返回非空且最多4096字节的规范 POSIX 绝对路径，无控制字符；
+不拼接用户路径进命令、不依赖cwd或按用户名猜HOME。exec ACK/data/close 与 SFTP
+open/realpath/文件读取整体沿原 SSH 控制操作的单个 60 秒界限，超时destroy、结束end；
+握手仍为原30秒，不另建连接扩大预算，不增加业务同步等待或重试。标准操作失败或路径不符
+均固定安全失败，无HOME fallback；不调用依赖中编码有误的扩展、不修改依赖，也不保存自由stderr。
+
+```text
+Target journal（持久化 owner） → 首连前 applied ID 基线
+             ↓ 后续只读              ↓ 核基线保留、求新增集合
+同 HOME 当前 journal ────────────→ 新增 applied 数
+本 run Main 完整日志 → 同 Environment parser → applied 数 → 精确数值收口 → 开始 hold
+```
+
+这维持数值收口合同，不代表 Main 已提供 syncId 的逐笔双射；可检出独立的缺回包或重复计数，
+但一漏一重抵消不能仅凭数值排除。后续 hold 前后 Main 数不变、断开清旧请求与释放旧 lane、
+离线两次修改、显式重连后的 A/B 新 scopes、原历史/模型/thought 与续发仍独立断言。
 WebSocket Server 与 SSH/WSL/Docker 共用的 Duplex 连接遵循同一规则；手机 relay 断线和
 replayable attachment 恢复不代表物理 Source 终结，不触发此清理。不修改 workspace identity、
 session 路由、desktop-continuous/web-remote-replayable 语义或持久化格式，无数据迁移。
@@ -155,6 +197,67 @@ session 路由、desktop-continuous/web-remote-replayable 语义或持久化格�
 回归覆盖：`serverRemoteConnectionLifecycle.test.ts` 以真实网络请求覆盖断开时未返回的 RPC、
 新连接的 Environment 同步、迟到响应与重复释放；`r3-provisioning-gui` 保留删除后立即断开、
 离线修改、组头重连、最新配置同步和继续对话的 GUI 断言。
+
+Task12 的 `SSH-P0-LIFE-02` pending 候选另执行严格 auto-only 验收：只终止本 case 新建的
+daemon/core，A/B 在原有就绪预算内都必须从旧 session 自动换代，手动重连动作数为零。
+中间 disconnected 只是观测，不提前结束自动恢复等待；超时仍离线或沿用旧 session 即失败。
+同轮测试观察器仅原样转发并记录实际 Host `RemoteWorkspaceReconnected`、Host attachment
+调用、Main scoped port 发布、Renderer ACK、原 Main promotion 日志与重连通知，按 session、
+attachment 和窗口关联验证先后顺序，不注入连接/ACK/配置事实，不新增产品 API 或 owner。
+旧 attachment 的 detach 必须来自实际 Host 调用，不能仅凭最终 online 推断；所有包装在 finally
+恢复。A/B 原 task 续发与 case-local replay 命中仍是独立断言。GUI 的显式重连不能替代此证明。
+
+故障前独立 Agent 的测试枚举以当前认证 UID、规范 server root 与合法 Core 的 PID/PPID、
+exe、启动代际为边界，只接受该 Core 的直接子进程。CLI 的规范 OS title 为 `zcode-cli`，
+会覆盖原 cmdline；不能再全局按 `app-server --stdio` 子串判断进程存在。保留旧相邻完整
+argv token 与新 `comm=zcode-cli` 且唯一非空 cmdline token 的两种识别；Node exe 必须精确
+等于已核 Core 的 release runtime Node。旧 native 仅接受共享 runtime descriptor 指定的认证
+HOME 下 `.zcode/server/agents/glm/zcode-agent` 精确规范路径，不承诺任意 env launcher。
+单次既有 SSH 控制命令采集 Core/候选前后代际，本地严格解析；漂移、权限、坏字段和未知 IO
+均失败，不新增连接、安装、启动、重试或远端 Node/Python/jq。首次路径明确缺失或合法
+stopped 可为空；其它状态/错误不能伪装为空。返回原实际 cwd（含 HOME/deleted），由各 caller
+执行既有工作区过滤，故障用例仍须精确证明 A/B 各有独立进程。枚举无持久状态，顺序为：
+
+```text
+同一 SSH 命令 → Core/status 前置身份 → 直接子进程前后快照 → Core/status 后置身份
+             → 本地严格校验 → caller 原 cwd/进程数断言
+```
+
+`remoteAgentProcesses.test.ts` 直接调用现 export 覆盖两种 argv、精确 native、查询进程与
+其它 Core/UID/exe、代际/父链漂移、错误/无 Core 和完整 cwd；不以 matcher 单测代替 fault。
+
+上述 pending 验收在原模型选择等待失败时，可以开启现有 failure artifacts，并在清理前保存
+白名单 DOM 观察和截图：仅模型按钮的存在、disabled、矩形及中心遮挡类型、当前 pane 的
+固定身份/可见属性、已知 SSH dialog 与设置页的存在/可见状态。不得读取输入值或全 DOM；
+取证后原样抛出原错误，取证失败也不能覆盖原失败，不改变原等待预算或重试该轮用例。
+
+GUI 取证已确认缓存的隐藏 pane 仍含相同模型按钮 test id，因此本组 SSH pending 用例的
+模型/思考操作及读取必须显式限定当前活动 Workspace、`data-focused=true` 且
+`data-group-active=true` 的唯一可见 composer pane。双栏同时可见时不能使用 first-visible；
+隐藏候选不能抢占目标，活动身份不符或候选不唯一必须失败。复用既有 pane test id 与只读
+活动 Workspace 观察接口，不改产品状态；记录实际限定目标和真实点击调用返回的白名单证据。
+原失败仍保留，新隔离 GUI 修正验证通过后才能另开严格 auto-only 验证，不能追认原 fault 同因。
+
+SSH 项目名可以因既有同名项目变为 `workspace-a (3)`，不能再以目录 basename 推断身份。
+本组 pending 用例通过可选观察回调接收 `selectSSHRemoteDirectory` 在真实保存前后已经找到的
+新 `projectId`、Host、Workspace identity 和实际显示名，贯穿 lifecycle task 与侧栏操作。
+显式项目定位必须唯一匹配 ID/Host/identity，任务行必须在该项目内；错误 ID 或 identity 不得
+回退 basename、猜名称后缀或选择第一项。未提供显式 ID 的旧调用保留原合同；不改名、删除
+既有项目来制造唯一性。真实运行保留创建关联与后续任务归属的白名单原件。
+
+`r3-provisioning-gui` 的 PRV12 持续将目标配置父目录设为 `0555`，写入和后续回滚均可能
+受阻；本故障精确期待 Main 的 `warn` / `Environment sync did not apply`、当前 Environment、
+`personal-config`、`status=rollback_failed` 与安全阶段码 `target-write-failed`。不能以宽泛的
+失败状态 OR 代替。取证 helper 用共享 schema 校验并保留可选 `errorCode`，兼容旧缺码结果；
+但本故障缺码、错误阶段或其它状态均不满足验收。远端原配置不变、原 A/B session、真实本机
+保存成功而无失败反馈、无定时重试、权限恢复后的旧任务续发、再保存与最新快照应用仍须分别
+断言，不因观察到 warning 省略。原失败与后续有因验证分别保留。
+
+```text
+持续目录拒写 → Target 写入失败 → 回滚失败 → Host 传递固定状态/阶段码
+                                             ↓
+Main 校验真实 pending owner → warn 落盘 → 只读 parser → PRV12 精确分类与恢复断言
+```
 
 ### Desktop 模型配置页
 
