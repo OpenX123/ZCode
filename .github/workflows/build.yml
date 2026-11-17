@@ -14,6 +14,11 @@ on:
       - "README.*.md"
       - "docs/images/readme/**"
   workflow_dispatch:
+    inputs:
+      local_windows:
+        description: Use the one-job local Windows runner for this main release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -88,7 +93,7 @@ jobs:
   package:
     name: Package ${{ matrix.os }} ${{ matrix.arch }}
     needs: resources
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.os == 'win' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.local_windows && fromJSON('["self-hosted","Windows","X64","ycode-windows"]') || matrix.runner }}
     timeout-minutes: 120
     strategy:
       fail-fast: false

@@ -13,6 +13,42 @@ function evaluate(expression, github) {
   return runInNewContext(expression.slice(3, -2), { github });
 }
 
+test("本机Windows路由只允许main手动显式开启，默认和其他上下文仍托管", () => {
+  const input = workflow.on.workflow_dispatch.inputs.local_windows;
+  assert.equal(input.type, "boolean");
+  assert.equal(input.default, false);
+  const localLabels = ["self-hosted", "Windows", "X64", "ycode-windows"];
+  for (const target of workflow.jobs.package.strategy.matrix.include) {
+    for (const [event, ref, enabled, local] of [
+      ["workflow_dispatch", "refs/heads/main", true, true],
+      ["workflow_dispatch", "refs/heads/main", false, false],
+      ["workflow_dispatch", "refs/heads/main", undefined, false],
+      ["push", "refs/heads/main", true, false],
+      ["pull_request", "refs/pull/1/merge", true, false],
+      ["pull_request_target", "refs/heads/main", true, false],
+      ["workflow_dispatch", "refs/heads/feature", true, false],
+      ["workflow_dispatch", "refs/tags/v1.0.0", true, false],
+    ]) {
+      const actual = runInNewContext(workflow.jobs.package["runs-on"].slice(3, -2), {
+        // event.inputs 是字符串；即使它被设为 true，也必须只按 typed inputs 路由。
+        github: { event_name: event, ref, event: { inputs: { local_windows: "true" } } },
+        matrix: target,
+        inputs: { local_windows: enabled },
+        fromJSON: JSON.parse,
+      });
+      assert.deepEqual(
+        actual,
+        target.os === "win" && local ? localLabels : target.runner,
+        `${target.os}/${event}/${ref}/${enabled}`,
+      );
+    }
+  }
+  assert.equal(
+    workflow.jobs.package.strategy.matrix.include.find((target) => target.os === "win").runner,
+    "windows-2025",
+  );
+});
+
 test("macARM64 使用 Intel 宿主但保留目标 ARM64 与原 bundle 命令", () => {
   const targets = workflow.jobs.package.strategy.matrix.include;
   assert.deepEqual(

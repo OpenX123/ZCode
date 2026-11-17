@@ -23,7 +23,7 @@ flowchart LR
     D --> E
 ```
 
-Task41 精确四文件：build.yml、本 spec、现 release-gate-repair 计划、github-release-workflow.test.mjs。最终 root 检查、自然远端179720基线真实push hook、本机注册验证及新HEAD正式dispatch仍由controller完成，不绕过旧门禁或使用旧产物冒充本次构建。
+Task41 精确四文件：build.yml、本 spec、现 release-gate-repair 计划、github-release-workflow.test.mjs。最终 root 检查、自然远端179720基线真实push hook、本机注册 online 与路由表达式验证由controller完成。接入本机不要求立刻再次正式发版，也不为验证runner多分配一个版本；当前在途发布可继续，下一次获授权的正式dispatch才使用本机开关。注册online只证明连接就绪，不冒称本机已执行构建，不绕过旧门禁或使用旧产物冒充本次构建。
 
 - 资源 job 是本轮 Source Server 归档与 descriptor 的唯一生成者，使用现有 `prepare:remote-assets` 一次生成四个目标；桌面 job 不重新生成资源。
 - 正式应用版本从 `1.0.0` 起。仅 main 的 `workflow_dispatch` 是正式发版入口，push / PR 不发版；路径过滤与操作入口见 [GitHub 桌面构建与发布](github-release-spec.md)。每轮新的正式构建由资源 job 唯一分配版本：查询本仓库全部 `v1.0.<patch>` Git 标签，无则使用 `1.0.0`，否则使用最大 patch 加一；标签为 `v<version>`。正式发版使用独立于 push / PR 的并发组，同组串行且不取消正在执行的正式构建，避免同一版本被并发分配。
