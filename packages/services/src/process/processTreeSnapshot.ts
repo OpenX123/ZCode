@@ -448,8 +448,9 @@ export function captureProcessTreeSnapshot(
   // POSIX detached root 是自己进程组的 leader；若它在 ps 扫描期间退出，
   // 后代会被 reparent，单靠 PPID 链会漏掉仍属于该 owned PGID 的进程。仅在
   // PGID === root PID 时合并同组成员，避免把普通 child 所在的宿主进程组纳入快照。
+  // Windows 分支已在上方返回，此处无需重复比较已被类型窄化排除的平台。
   const ownedProcessGroupIdentities =
-    process.platform !== "win32" && rootIdentity.processGroupId === child.pid
+    rootIdentity.processGroupId === child.pid
       ? processList.filter((identity) => identity.processGroupId === child.pid)
       : [];
   const snapshotCandidates = new Map(
