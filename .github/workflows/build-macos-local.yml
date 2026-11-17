@@ -1,0 +1,86 @@
+name: Build Mac ARM64 locally without publishing
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    name: Build local Mac ARM64 installers
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: [self-hosted, macOS, ARM64, zcode-macos]
+    timeout-minutes: 120
+    env:
+      ZCODE_ENV: production
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY: "1"
+      SOURCE_RUN_ID: "44137427217"
+      RELEASE_VERSION: "1.4.1"
+      RELEASE_TAG: "v1.4.1"
+      ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.33.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.14.0
+          cache: pnpm
+
+      - name: Validate source identity
+        shell: node {0}
+        run: |
+          const { SOURCE_RUN_ID, RELEASE_VERSION, RELEASE_TAG } = process.env;
+          if (!/^[1-9][0-9]*$/.test(SOURCE_RUN_ID)
+              || SOURCE_RUN_ID.trim() !== SOURCE_RUN_ID
+              || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(RELEASE_VERSION)
+              || RELEASE_VERSION.trim() !== RELEASE_VERSION
+              || RELEASE_TAG !== `v${RELEASE_VERSION}`) {
+            throw new Error("Invalid source run/version");
+          }
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore the shared application version
+        run: node scripts/github-release-version.mjs apply
+
+      - name: Download exact shared release descriptor
+        uses: actions/download-artifact@v8
+        with:
+          name: source-server-descriptor-v${{ env.RELEASE_VERSION }}
+          path: packages/desktop/mock-cdn/releases/${{ env.RELEASE_VERSION }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Build installer
+        run: pnpm bundle:desktop -- --os mac --arch arm64
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: local-macos-${{ env.RELEASE_VERSION }}-${{ github.run_id }}
+          path: |
+            packages/desktop/dist/*.dmg
+            packages/desktop/dist/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload package size audit
+        uses: actions/upload-artifact@v7
+        with:
+          name: local-macos-size-${{ env.RELEASE_VERSION }}-${{ github.run_id }}
+          path: packages/desktop/dist/*.size-report.json
+          if-no-files-found: error
+          retention-days: 14

@@ -13,10 +13,10 @@ function evaluate(expression, github) {
   return runInNewContext(expression.slice(3, -2), { github });
 }
 
-test("独立Windows本机构建复用指定descriptor且不具备正式发布路径", async () => {
+async function verifyLocalWorkflow(platform, labels, command, artifactPaths) {
   const local = parse(
     await readFile(
-      new URL("../../.github/workflows/build-windows-local.yml", import.meta.url),
+      new URL(`../../.github/workflows/build-${platform}-local.yml`, import.meta.url),
       "utf8",
     ),
   );
@@ -25,7 +25,7 @@ test("独立Windows本机构建复用指定descriptor且不具备正式发布路
   assert.deepEqual(Object.keys(local.jobs), ["build"]);
   const job = local.jobs.build;
   assert.equal(job.permissions, undefined);
-  assert.deepEqual(job["runs-on"], ["self-hosted", "Windows", "X64", "ycode-windows"]);
+  assert.deepEqual(job["runs-on"], labels);
   for (const [event, ref, expected] of [
     ["workflow_dispatch", "refs/heads/main", true],
     ["workflow_dispatch", "refs/heads/feature", false],
@@ -69,11 +69,11 @@ test("独立Windows本机构建复用指定descriptor且不具备正式发布路
     "run-id": "${{ env.SOURCE_RUN_ID }}",
     "github-token": "${{ github.token }}",
   });
-  assert.ok(steps.some((step) => step.run === "pnpm bundle:desktop -- --os win --arch x64"));
+  assert.ok(steps.some((step) => step.run === command));
   const uploads = steps.filter((step) => step.uses === "actions/upload-artifact@v7");
   assert.deepEqual(
     uploads.map((step) => step.with.path),
-    ["packages/desktop/dist/*.exe", "packages/desktop/dist/*.size-report.json"],
+    artifactPaths,
   );
   assert.ok(uploads.every((step) => step.with["if-no-files-found"] === "error"));
   assert.ok(
@@ -82,6 +82,27 @@ test("独立Windows本机构建复用指定descriptor且不具备正式发布路
     ),
   );
   assert.ok(steps.every((step) => !step.run?.includes("${{")));
+}
+
+test("独立Windows本机构建复用指定descriptor且不具备正式发布路径", async () => {
+  await verifyLocalWorkflow(
+    "windows",
+    ["self-hosted", "Windows", "X64", "ycode-windows"],
+    "pnpm bundle:desktop -- --os win --arch x64",
+    ["packages/desktop/dist/*.exe", "packages/desktop/dist/*.size-report.json"],
+  );
+});
+
+test("独立Mac ARM64本机构建复用同轮资源并上传DMG ZIP，仍无发布路径", async () => {
+  await verifyLocalWorkflow(
+    "macos",
+    ["self-hosted", "macOS", "ARM64", "zcode-macos"],
+    "pnpm bundle:desktop -- --os mac --arch arm64",
+    [
+      "packages/desktop/dist/*.dmg\npackages/desktop/dist/*.zip\n",
+      "packages/desktop/dist/*.size-report.json",
+    ],
+  );
 });
 
 test("本机Windows路由只允许main手动显式开启，默认和其他上下文仍托管", () => {
