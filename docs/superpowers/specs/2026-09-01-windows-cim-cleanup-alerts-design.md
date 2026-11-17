@@ -138,3 +138,9 @@ cleanup
 固定快照后从未登记的晚生后代由Agent自身spawn adapter/EOF收尾承担；本次不承诺Host可靠
 发现或清理全部未知进程。系统时钟回拨、来源精度、缺失中间parent，以及身份查询到数值PID命令
 之间的非原子竞态仍存在；保守漏认不能以裸PID、epsilon或额外全表扫描补救。
+
+### Task29：完整发现中的 Windows System Idle 行
+
+真实 Win32_Process 全表允许存在 ProcessId=0（System Idle Process）。仅首次无筛选全表发现可忽略字段结构完整、PID 字面量为 `0`、PPID 字面量为 `0`、CreationDate 可解析的系统行；它不构成可发信号身份，不进入固定候选 K，也不使其它合法行的完整性失效。同步与异步全表路径必须一致。除此之外的坏 PID、坏行、坏时间和歧义仍沿现有 fail-closed 规则，不扩大容错。
+
+定向身份查询的请求仍只允许 1..4294967295；响应出现 PID 0 仍是意外行，整个批次不能证明 matched 或 gone，须保持 unknown。不能在共享解析器中无条件丢弃 PID 0 后让定向空结果被误判为 gone。owner、首次发现、精度、批次、deadline 和禁止 `/T` 的合同均不变。

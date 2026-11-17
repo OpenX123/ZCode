@@ -598,3 +598,13 @@ pnpm exec vitest run packages/services/test/zcodeAgentService.test.ts -t 'restar
 ## 后续执行规则
 
 Task 2 结果形成后，controller 在任何后续代码修改前把有证据支持的具体实施任务写入本文、检查共享文件/接口冲突并生成独立 brief。Task 1 与 Task 2 分别为已定位夹具修复和只读调查，可并行；同时最多一个源码实施者。所有修复完成后执行根 typecheck/lint、架构、29 规格定向检查与原始基线的完整 pre-push，再进行一次补充差异整体审查。旧 FR-I1 的关闭结果不重做。
+
+### Task 29: 修复首次 Windows 全表的 System Idle 行解析
+
+**Evidence:** `task-28-runtime-investigation.md` 及 scratch/task28-runtime-investigation：真实成功全表538ms含 PID0系统行，parsed.complete=false导致K空，原4250ms内无taskkill；原wrapper4s失败仍未关闭。
+
+**Files:** 仅 `packages/services/src/process/processTreeSnapshot.ts`、`windowsProcessListAsync.ts`、既有 `packages/services/test/processTreeTerminator.windows.test.ts`；两份先行规格的格式修正可纳入。规范为 CIM设计 Task29 及 gate W18，不改其它生产路径、既有测试预算、skip、retry、架构policy。
+
+- [ ] Step 1: 读取新增规范、直接parser/full-discovery/targeted调用与现有mock。全系统边界替身，新增异步和同步首次发现PID0+合法R/C/G的确定性RED；定向PID0单独/混合、坏行/坏PID/坏时间反向回归保持严格。
+- [ ] Step 2: 最小上下文修正，只有无筛选全表可忽略规范明确的系统行；定向仍unknown。保留同一parser和状态owner，不引入第二发现、后台扫描或宽松通用过滤。中文注释说明实证根因。
+- [ ] Step 3: 完整既有Windows全mock套件，精确format/lint/diff/架构；自审、提交限定文件、写task-29-report.md，保存RED/GREEN和命令自然exit。不得自行真实OS/build/发布或派子agent。controller独立spec/quality审查后进入原真实回归。
