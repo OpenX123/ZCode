@@ -29,6 +29,24 @@ sequenceDiagram
     P->>P: 合并 inline / 内置 / 已加载插件，固定本轮
 ```
 
+## 受管模块边界
+
+`packages/services/src/subagents/runtime-config/` 是 `subagent-runtime-config` 受管模块，
+层为 `adapters`，owner 为 `conversation`。范围仅为既有 `subagentRuntimeConfig.ts` 缓存与
+`subagentConfigScope.ts` 文件监听实现；`subagentsService.ts` 及其他 subagents 存量代码不纳入。
+此次登记和路径迁移不改变上述产品行为、缓存状态、监听时序或取消规则。
+
+服务通过 `runtime-config/index.ts` 创建既有 `createSubagentRuntimeConfigCache(reader)`；
+`contract.ts` 暴露现有 reader、workspace 和缓存的 `prepare(workspace?)`、`read(workspace)`、
+`dispose()` 类型。`workspaceIdentity` 仍可选，`prepare`/`read` 仍异步；读取返回
+`structuredClone` 隔离副本，销毁后拒绝准备与读取。scope 只作模块内部实现，不增加公开 owner。
+
+Local Host subagents service 仍持有一个缓存实例；缓存仍唯一持有共享用户/state 范围、workspace
+范围及已发布 snapshot，各 scope 仍唯一持有该范围的 pending、串行 load 与取消信号。
+调用路径仍是 service → cache → scope → 文件系统 → 完整 snapshot → service RPC，
+不新建状态、包装 owner、事件链或运行时分支。模块依赖仅为 `shared` 的解析/协议类型及
+`services` 的既有 `#src/logger/serviceLogger`；两个实现文件之间使用模块内相对导入。
+
 ## 监听、解析与 I/O
 
 ### 启动准备与后台刷新

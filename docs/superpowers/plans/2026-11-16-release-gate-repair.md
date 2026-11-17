@@ -642,3 +642,15 @@ controller 于 2026-11-17 根据 `scratch/task32/native-trace.log` 授权将 `su
 仅当前 direct 文档根、直接 Markdown 文件、有效 details.watchedPath 为当前根/对应文件的 rename/change 提示走原 pending。允许同 scope 待稳定候选集合（事件元数据，不是第二 snapshot owner），随批次捕获清理、失败重排保留；all 不取消 raw 稳定要求。复用既有 1000/500ms 稳定函数、取消和迟到保护，不独立 timer、重绑或轮询。新增半写不提前发布、raw-only 更新/删除、合并与无效来源拒绝回归，移除临时 native 诊断，保留日志；原断言/预算/skip不改。
 
 Task32 raw 收敛补充：新 raw 频繁调用原防抖会让恢复 full load 饥饿（原 native shared recovery stat=0）；controller授权 schedule 窄门槛：raw只建立首个计时、不推迟已有timer，all保持原样。先fake time raw@0/200→300启动RED，再修并验证原整文件，不扩大等待或新增计时机制。
+
+### Task 33: 登记最小子智能体运行时配置受管边界
+
+**Authority / evidence:** Task32 已提交 `9f963620323e6d9b6c8a70909a8e2ce3cad89a41` 并完成唯一 writer 交接。默认 `origin/main` 架构检查实际报告两个 upstream introduced 文件的 `unmanaged-new-file`；不通过改 base、例外、baseline 或 snapshot 放宽准入。先提交本文与 `docs/subagent-runtime-refresh.md` 的边界说明，再执行纯迁移。
+
+**Files / ownership:** 仅将现有 `packages/services/src/subagents/subagentConfigScope.ts`、`subagentRuntimeConfig.ts` 迁入 `runtime-config/`，用官方 `architecture:adopt` 登记 `subagent-runtime-config`（`adapters`、owner `conversation`，requires 由实际 imports 推断）。新增真实五件套及窄 `index.ts`；其余只改 `subagentsService.ts` 的 factory import、`subagentRuntimeConfig.test.ts` 的两个 imports、架构策略的本模块登记，以及上述 owning spec。不得接管整个 subagents 目录。
+
+- [ ] Step 1: 固定 Node24.14.0/pnpm10.33.2，执行 freshness 和原默认 base 架构基线，阅读 services context；先独立提交正式计划和 owning spec，说明 service/cache/scope 现有唯一状态所有者、入口、依赖和不变时序。
+- [ ] Step 2: 原样迁移两个实现，仅将 scope import 改为模块内相对路径、既有 reader/workspace 类型提取至 contract；保留 factory 形状、可选字段、async、structuredClone、取消和 Task32 的全部行为。官方 adopt 登记窄根目录，禁止修改 exceptions/baseline/snapshot 或增加新状态、owner、运行时分支。
+- [ ] Step 3: 完成 module.ts、contract.ts、contract.example.ts、contract.test.ts、CONTRACT.md 和公开 factory index。契约测试经公开 factory 与文件 reader seam 验证 prepare → read 隔离快照 → dispose 拒读；不使用 manifest 自证、无意义 brand 或 TODO。原缓存 mock 和 native watcher 整文件保留业务断言，scope 仅测试内部导入。
+- [ ] Step 4: 执行新契约、原缓存 mock、原 native watcher 整文件和必要相关回归；执行定向格式/lint/diff、原默认 base architecture:check --changed 及 architecture:context subagent-runtime-config。保存原日志，新日志仅在本计划 scratch/task33/；用移前移后差异证明无行为变化。
+- [ ] Step 5: 自审、提交限定文件并写 task-33-report.md，报告 commits、真实命令/退出/skip、迁移差异和限制后停止。不得派子 agent、运行全量、构建、清理进程、push 或发布；根 typecheck/lint、聚合独审及最终冻结门禁由 controller 统一执行。
