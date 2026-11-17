@@ -1,5 +1,14 @@
 # 1.4.1 发布门禁补充修复计划
 
+### Task 39: Intel 宿主构建 mac ARM64 与静态产物门禁
+
+仅修改 release-packaging spec、本计划、workflow、bundle、新根 Mach-O 脚本及 fixture 测试、原 workflow 测试七文件。唯一 writer 为 task36_release_loader_fix，不派 agent、不 push；无产品/依赖/预算变化。
+
+- [ ] 先完成 freshness、默认架构基线、spec/plan，独立提交文档。
+- [ ] 先 fixture RED，再实现异步 thin/fat Mach-O 解析、必需资源及完整应用/asar 扫描；非目标可选 prebuild 明确豁免并测试反例。
+- [ ] bundle 同一入口校验解包 app、真实 DMG 与 ZIP；仅修改 macARM64 runner，保持 arch/构建命令/预算。相关脚本测试与格式、lint、架构验证后提交报告。
+- [ ] root 独审与 typecheck/lint/architecture，自然远端46a基线 push hook，最终新HEAD官方十三资产与真实cross门禁、本机新winx64安装验收。停止f7内容等价桥，保留旧UI历史，不重复旧全套UT。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 修复用户授权的 96 个既有失败断言与 3 个导入失败，通过真实发布门禁后继续原 1.4.1 发布与安装目标。

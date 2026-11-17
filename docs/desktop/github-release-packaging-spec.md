@@ -53,6 +53,28 @@ flowchart TD
 
 ## 验收
 
+### Task39 macOS 跨架构构建
+
+- ARM64 与 x64 macOS job 均使用 `macos-15-intel`，ARM64 保留 `--os mac --arch arm64`。目标环境变量、依赖、四桌面目标、十三附件和全部预算不变。
+- bundle 是最终校验唯一调度者：electron-builder 后异步校验解包 `.app`，并实际解出本轮 DMG、ZIP 中的 `.app`，分别执行同一静态校验。不运行目标程序；容器缺失、损坏或包含零/多个应用均失败，临时目录和挂载点在 finally 清理。
+- Mach-O 解析覆盖 thin/fat/fat64、两种字节序，验证 slice 真实头部、CPU、边界、重复和冲突，不能只相信目录或 fat 表。文件及容器 IO 均异步。
+- 必需文件：主程序、Electron Framework、node-pty 目标 `pty.node` 和 `spawn-helper`、bfs/ugrep/rg 必须包含目标 CPU；`zcode-window-bounds` 必须同时含 ARM64、x64。缺失、非 Mach-O、错误 CPU 均失败。
+- 扫描完整应用及实际展开的 `app.asar` 内全部 Mach-O，默认必须含目标 CPU。仅 `node_modules/<包>/prebuilds/<明确平台-架构>/` 与 `node_modules/koffi/build/koffi/<明确平台-架构>/` 下明确非目标的可选资源可豁免，并报告路径；普通 build/Release、目标 prebuild 和没有平台选择目录的 native 不豁免。原 native 边界门禁仍生效，不能放行 node-pty 其他目标残留。
+- 原 prepare owner 继续校验可信归档 SHA 和工具版本，本门禁不复制下载、descriptor schema 或运行时 owner。静态架构检查不证明 ABI、签名、运行行为或旧包逐字节等价。
+
+```mermaid
+flowchart LR
+    A[目标 arch 与固定依赖] --> B[Intel runner 交叉构建]
+    B --> C[bundle 唯一调度]
+    C --> D[解包 app 与真实 DMG ZIP]
+    D --> E[同一静态架构门禁]
+    E --> F[原依赖体积与十三附件门禁]
+```
+
+fixture 覆盖 thin/fat/fat64/字节序、slice 伪报/越界/重复、错误目标、缺件、Swift 非 universal、asar 内隐藏错误 native、非目标可选 prebuild 与普通 native 的相反处理；正式交叉产物通过须由最终新 HEAD 的真实 CI 提供。
+
+Task39 精确修改七文件：本 spec、现 release-gate-repair 计划、build.yml、bundle.mjs、新根脚本 `scripts/macos-package-architecture.mjs`、其 `scripts/test/macos-package-architecture.test.mjs`、原 workflow 测试。本次包含构建配置变化，停止 Task36–38 的 f7 内容等价桥。旧 UI 回归仅保留为历史；最终新 HEAD 必须官方重建全部资产、核架构并在本机完成新 winx64 安装验收。root 完成 typecheck/lint/architecture、相关测试、独审和自然远端 `46a2c862a6739d03411159a86285d54bd82eed0b` 基线的真实 push hook；无需重做旧完整 UT。
+
 - 缺少目标、同目标重复、归档 SHA/size 错误、URL 指向其他发布或版本不匹配，均终止构建或发布。
 - 固定 Node 24.14.0 下以不带 loader 参数、无继承 `NODE_OPTIONS` 的真实 Node 子进程执行上述入口，使用本地四归档 fixture 完成 `pin --directory ... --output ...` 并核对复制文件、摘要及固定 URL；测试不得替换共享模块、访问网络或执行发布操作。
 - 同一 plain Node 合同覆盖实际 audit CLI 的小安装器文件与四目标固定 URL descriptor，核对自然成功和相邻报告中的原固定预算；覆盖离线 import CLI 的本地 descriptor/archive 与目标缓存内容/摘要。两者均必须越过真实共享 schema 模块加载，不能从父测试继承 loader 或向 node_modules 注入替身；原预算、篡改、目录边界等整文件测试继续执行。
