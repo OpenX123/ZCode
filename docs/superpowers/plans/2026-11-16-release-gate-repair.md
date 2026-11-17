@@ -1,5 +1,14 @@
 # 1.4.1 发布门禁补充修复计划
 
+### Task 40: 修复 macOS 交叉包的宿主 SSH optional native
+
+仅六文件：release-packaging spec、本计划、native-package-policy、app-asar-repack及两者原测试；基线6cf25eae并发变更全部保留。writer不push、不派agent，不决定发布平台。
+
+- [ ] freshness/arch与真实CI/source调查；先独立提交spec/plan。
+- [ ] 先测试RED：cross-only固定两处目录应裁剪，实际staging注入native不得回流；确认同宿主/其他native不变。
+- [ ] 单清单复用files/最终检查/repack异步清理；真实ssh2依赖pack/extract后fresh Node执行三密码族loopback认证/exec，验证上游fallback而非mock。
+- [ ] 相关完整测试、lint/fmt/arch后提交；controller独审/root3与外部manifest测试、自然6cf hook、最终真实cross包CPU门/发布资产/新winx64安装验收。禁止CPU豁免、广泛删native或重用f7内容桥。
+
 ### Task 39: Intel 宿主构建 mac ARM64 与静态产物门禁
 
 仅修改 release-packaging spec、本计划、workflow、bundle、新根 Mach-O 脚本及 fixture 测试、原 workflow 测试七文件。唯一 writer 为 task36_release_loader_fix，不派 agent、不 push；无产品/依赖/预算变化。

@@ -73,6 +73,29 @@ fixture 覆盖 thin/fat/fat64/字节序、slice 伪报/越界/重复、错误目
 
 Task39 精确修改七文件：本 spec、现 release-gate-repair 计划、build.yml、bundle.mjs、新根脚本 `scripts/macos-package-architecture.mjs`、其 `scripts/test/macos-package-architecture.test.mjs`、原 workflow 测试。本次包含构建配置变化，停止 Task36–38 的 f7 内容等价桥。旧 UI 回归仅保留为历史；最终新 HEAD 必须官方重建全部资产、核架构并在本机完成新 winx64 安装验收。root 完成 typecheck/lint/architecture、相关测试、独审和自然远端 `46a2c862a6739d03411159a86285d54bd82eed0b` 基线的真实 push hook；无需重做旧完整 UT。
 
+## Task40 交叉构建中的可选 SSH 加速资源
+
+正式 run44129691318 的 macARM64 包被 Task39 CPU 门拒绝：`app.asar.unpacked/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node` 实际为 x64。安装脚本按宿主 Node/OpenSSL 编译，builder 的 `npmRebuild:false` 保留了它；afterPack 的整包复制和重打包也没有目标资源过滤。此证据不能推断所有 native 都可删除。
+
+- 仅当目标为 darwin 且显式 host platform/arch 与 target 不一致时，排除两个固定生成目录：`node_modules/ssh2/lib/protocol/crypto/build`、`node_modules/cpu-features/build`。同宿主目标的打包维持现状，其余 native（尤其 node-pty）、WASM、JS 和许可证保留。
+- 选择既有上游 fallback：ssh2 1.17.0 的 native require 在 try/catch 中，缺绑定使用 Node crypto；ChaCha20 的 Poly1305 使用随包 WASM。cpu-features 是 optional dependency，缺失只影响算法优先级。目标重建需额外建立 Electron ABI/OpenSSL 合同，当前不以仅指定 arch 冒称兼容。
+- 唯一排除清单归现有 desktop-native-package-policy 所有，初始 files 裁剪、最终 native 违规检查和 app-asar-repack 在实际 pack 前的异步 staging 清理均复用。host/target 是显式参数，调用省略 host 时才用实际进程平台；测试不改 process.arch。
+- 不改变 Task39 CPU 门、预算或发布平台集合；并发提交6cf25eae的发布平台与更新逻辑保留，是否采用由用户/controller决定。禁止把未知 native 加入通配豁免或删除全部 `.node`。
+
+```mermaid
+flowchart LR
+    A[显式 host 与 target] --> B[native policy 单一固定清单]
+    B --> C[初次 files 排除]
+    B --> D[注入后 staging 异步清理]
+    C --> E[实际 pack 与 sidecar 替换]
+    D --> E
+    E --> F[原 native 边界及 CPU 门]
+```
+
+验收：六目标/同宿主/交叉目标规则矩阵；真实 asar pack/unpack 中两处生成物消失、纯JS/WASM与目标 node-pty 保留，重打包旧 sidecar 不残留。复制实际 ssh2 依赖闭包到自有临时目录，经同一清理/pack/extract 后，以全新 Node 子进程确认无 sshcrypto/cpufeatures，真实 loopback SSH client/server 强制 AES-GCM、AES-CTR、ChaCha20 各完成密码认证、协商与 exec 往返；不替换 loader、上游源码或 node_modules。最终 macOS 交叉产物仍须新 HEAD 真实 CI 门禁通过；本地 fallback 测试不替代 ARM64 运行验收。
+
+Task40 精确六文件：本 spec、现计划、desktop-native-package-policy.mjs、app-asar-repack.mjs、两者原测试。root 最终 typecheck/lint/architecture、自然6cf远端基线 hook、真实发布构建和本机新winx64安装验收继续执行；旧 f7 内容桥不恢复。
+
 ## 验收
 
 - 缺少目标、同目标重复、归档 SHA/size 错误、URL 指向其他发布或版本不匹配，均终止构建或发布。
