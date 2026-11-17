@@ -1,13 +1,26 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { getFocusedComposerScope, type ComposerPaneScope } from "#e2e/helpers/composer-pane-scope";
 import { connectSSHWorkspaceAndSendFirstTurn } from "#e2e/helpers/ssh-remote-lifecycle";
+import {
+  selectUpstreamProviderModelById,
+  selectUpstreamThoughtLevelValue,
+} from "#e2e/helpers/upstream-provider";
 
 const state = vi.hoisted(() => {
   const sent: Array<{ identity: string; model: string }> = [];
+  const remoteIdentity = "remote:server:fixture:/work";
+  const composerScope: ComposerPaneScope = {
+    paneId: "ssh-draft-pane",
+    selector: '[data-testid="v4-pane-shell-ssh-draft-pane"]',
+    workspacePath: "/work",
+    workspaceIdentity: remoteIdentity,
+  };
   return {
     identity: "",
     model: "local-default",
     localDraftCreations: 0,
-    remoteIdentity: "remote:server:fixture:/work",
+    remoteIdentity,
+    composerScope,
     sent,
   };
 });
@@ -15,10 +28,14 @@ const state = vi.hoisted(() => {
 vi.mock("#e2e/helpers/project-sidebar", () => ({}));
 vi.mock("#e2e/helpers/desktop-app", () => ({ waitForWorkspaceApp: vi.fn() }));
 vi.mock("#e2e/helpers/custom-openai-provider", () => ({}));
+// scope 发现会读取真实 browser；这里只隔离 DOM 边界，仍执行真实 SSH 编排并核 pane 透传。
+vi.mock("#e2e/helpers/composer-pane-scope", () => ({
+  getFocusedComposerScope: vi.fn(async () => state.composerScope),
+}));
 vi.mock("#e2e/helpers/upstream-provider", () => ({
-  selectUpstreamProviderModelById: async (model: string) => {
+  selectUpstreamProviderModelById: vi.fn(async (model: string) => {
     state.model = model;
-  },
+  }),
   selectUpstreamThoughtLevelValue: vi.fn(),
 }));
 vi.mock("#e2e/helpers/conversation-session-network", () => ({
@@ -69,6 +86,7 @@ vi.mock("#e2e/helpers/ssh-remote-p0", () => ({
 }));
 
 beforeEach(() => {
+  vi.clearAllMocks();
   vi.stubGlobal("expect", expect);
   state.identity = "";
   state.model = "local-default";
@@ -90,6 +108,24 @@ it("远程项目首发保留新建项目草稿和已选模型，不跳到全局�
       tunnel: { baseURL: "http://127.0.0.1:43211", close: async () => {} },
     },
   });
+  expect(getFocusedComposerScope).toHaveBeenCalledTimes(1);
+  expect(getFocusedComposerScope).toHaveBeenCalledWith({
+    workspacePath: "/work",
+    workspaceIdentity: state.remoteIdentity,
+  });
+  expect(selectUpstreamProviderModelById).toHaveBeenCalledTimes(1);
+  expect(selectUpstreamProviderModelById).toHaveBeenCalledWith("e2e-ssh-remote-lifecycle-model", {
+    includePlainModelFallback: false,
+    providerId: "fixture-provider",
+    providerName: "Fixture provider",
+    composerScope: state.composerScope,
+  });
+  expect(vi.mocked(selectUpstreamProviderModelById).mock.calls[0]?.[1]?.composerScope).toBe(
+    state.composerScope,
+  );
+  expect(selectUpstreamThoughtLevelValue).toHaveBeenCalledTimes(1);
+  expect(selectUpstreamThoughtLevelValue).toHaveBeenCalledWith("disabled", state.composerScope);
+  expect(vi.mocked(selectUpstreamThoughtLevelValue).mock.calls[0]?.[1]).toBe(state.composerScope);
   expect(state.sent).toEqual([
     { identity: state.remoteIdentity, model: "e2e-ssh-remote-lifecycle-model" },
   ]);
