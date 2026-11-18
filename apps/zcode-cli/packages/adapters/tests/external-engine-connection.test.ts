@@ -22,6 +22,8 @@ import {
 import { createSharedZCodeCredentialStore } from "../src/auth/index.js";
 import {
   adapterLaunchArgs,
+  CLAUDE_GIT_BASH_ENV,
+  ensureClaudeGitBashPath,
   ensureNodeRuntimeOnPath,
   SCRUB_ELECTRON_RUN_AS_NODE_IMPORT,
   windowsNodeShimContent,
@@ -145,6 +147,42 @@ async function reported(port: ExternalEnginePort, input: ExternalEngineTurnInput
     env: Record<string, string | undefined>;
   };
 }
+
+describe("Claude Git Bash 路径", () => {
+  async function gitInstall() {
+    const root = await mkdtemp(join(tmpdir(), "zcode-git-bash-"));
+    roots.push(root);
+    await mkdir(join(root, "cmd"), { recursive: true });
+    await mkdir(join(root, "bin"), { recursive: true });
+    await writeFile(join(root, "cmd", "git.exe"), "");
+    await writeFile(join(root, "bin", "bash.exe"), "");
+    return root;
+  }
+
+  // 推导使用 win32 路径语义，只能在 Windows 上对真实临时文件验证。
+  test.skipIf(process.platform !== "win32")("Windows 从 PATH 上 git.exe 推导同一安装的 bin\\bash.exe，不使用 PATH 上的其他 bash", async () => {
+    const root = await gitInstall();
+    const wsl = await mkdtemp(join(tmpdir(), "zcode-wsl-bash-"));
+    roots.push(wsl);
+    await writeFile(join(wsl, "bash.exe"), "");
+    const env: NodeJS.ProcessEnv = { Path: [wsl, join(root, "cmd")].join(";") };
+    await ensureClaudeGitBashPath(env, "win32");
+    expect(env[CLAUDE_GIT_BASH_ENV]?.toLowerCase()).toBe(join(root, "bin", "bash.exe").toLowerCase());
+  });
+
+  test("已设置、非 Windows 或找不到时不修改环境", async () => {
+    const root = await gitInstall();
+    const preset: NodeJS.ProcessEnv = { PATH: join(root, "cmd"), [CLAUDE_GIT_BASH_ENV]: "D:\\custom\\bash.exe" };
+    await ensureClaudeGitBashPath(preset, "win32");
+    expect(preset[CLAUDE_GIT_BASH_ENV]).toBe("D:\\custom\\bash.exe");
+    const posix: NodeJS.ProcessEnv = { PATH: join(root, "cmd") };
+    await ensureClaudeGitBashPath(posix, "darwin");
+    expect(posix).not.toHaveProperty(CLAUDE_GIT_BASH_ENV);
+    const missing: NodeJS.ProcessEnv = { PATH: tmpdir() };
+    await ensureClaudeGitBashPath(missing, "win32");
+    expect(missing).not.toHaveProperty(CLAUDE_GIT_BASH_ENV);
+  });
+});
 
 describe("子智能体命名指令", () => {
   async function sessionParams(engine: "claude-code" | "codex", env: Record<string, string>) {

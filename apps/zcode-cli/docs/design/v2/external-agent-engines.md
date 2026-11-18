@@ -36,6 +36,8 @@ sequenceDiagram
 - 绑定：`createSession.config.engineConnectionProfileId` 只在草稿首次 `prepareExternalEngineSession` 前写入 runtime；未提供时 adapter 取该引擎的上次使用配置，旧原生会话无绑定时 Codex 为 `inherit`、Claude 为 `official`。解析结果经 `onConnectionProfile` 持久化到 external_engine_config entry，并在 `ExternalEngineConfigUpdated` 携带 `engineConnectionProfileId`，同一次准备的重试固定首次解析值。配置缺失或凭据缺失分别报 `configuration` / `authentication`，不回落其他身份。
 - 环境：共享 `buildEngineConnectionEnv` 按方式构造（Claude 沿用 CLI 保留 ANTHROPIC_*，官方登录剔除三项计费变量，API Key 只在子进程环境注入密钥；Codex 不变）。随后 `applyNetworkEgressEnv` 从 `ZCODE_TOOL_ENV_PASSTHROUGH_JSON` 恢复用户代理与证书变量，`ZCODE_HTTP_PROXY` / `ZCODE_NO_PROXY` / `ZCODE_AGENT_CA_CERT` 显式配置优先。
 - `ZCODE_EXTERNAL_ENGINE_NODE`：仅当 Windows 上 PATH 缺 node、adapter 前置 `node.cmd` 补位时，由 adapter 写入 ACP 子进程环境，值为当前运行时路径；`node.cmd` 以 `"%ZCODE_EXTERNAL_ENGINE_NODE%" %*` 调用它，保证批处理内容为纯 ASCII（cmd 按控制台代码页解码批处理，中文用户名路径不能内嵌）。继承值一律被覆盖，不读取用户设置；缺失时 node.cmd 启动失败并按 initialize / transport 失败上报。POSIX 仍使用指向当前运行时的符号链接 `node`。测试覆盖纯 ASCII 内容、继承值覆盖与中文空格路径下的真实执行。
+- `CLAUDE_CODE_GIT_BASH_PATH`（官方 Claude Code 自己的变量，不是新增 ZCODE 变量）：Windows 上未设置时，adapter 从 ACP 子进程 PATH 中 `git.exe` 推导同一安装的 `bin\bash.exe`（`<root>\cmd` 或 `<root>\mingw64\bin`），再查 `%ProgramFiles%`、`%ProgramFiles(x86)%`、`%LOCALAPPDATA%\Programs`、scoop 的 Git，首个存在者写入；已设置、非 Windows 或找不到时不修改。PATH 上的 `bash.exe`（可能是 WSL）不作为候选。依据：2026-11-19 实测找不到 Git Bash 时用户 PreToolUse hook 被交给 PowerShell 5.1 执行而失败，Agent 工具调用随之失败。
+- 子智能体命名指令：`session/new|resume|load|fork` 对 Claude 在 adapter 声明 `sessionCapabilities.systemPrompt` 时附 `systemPrompt {mode: "append"}`；对 Codex 仅 `session/new` 附 `_meta.jetbrains.air.customInstructions`。内容为常量 `SUBAGENT_NAMING_INSTRUCTIONS`（角色在前的 2–5 词英文标题；Codex 要求 prompt 首行 `Title: <title>`）。指令与会话无关，预建会话键不变。
 - 连接测试：JSON-RPC `externalEngine/testConnection {operationId, engine, connectionProfileId}` 与 `externalEngine/cancelConnectionTest {operationId}` 不进入串行队列。handler 用独立 `createExternalEnginePort` 与临时 cwd 调用 `runExternalEngineConnectionTest`：发送 `Reply with OK`，拒绝全部权限，首个原生失败（`_meta.codex.error`、AIR `sessionFailure`、prompt JSON-RPC 错误）即结束，90 秒超时；结束后 closeSession 并删除临时目录。返回 success / unexpectedReply（脱敏摘要）/ failed（EngineConnectionFailure）/ cancelled，不写 SQLite、任务索引或日志正文。
 
 ## 异步准备、备用进程与闲置关闭（2026-11-07，1.1）
@@ -60,7 +62,7 @@ sequenceDiagram
 
 冷恢复摘要：正常结束仍从 Agent output.result 读取；失败/取消/失联保留原 error 状态与文本，同时将派生摘要写入既有 settlement 的 state.metadata.summaryText。Bootstrap hydration 在 output 之后读取有效非空字符串，旧历史缺值按原 description/prompt 回退；只存父摘要，不另存 child 正文。
 
-UX03 最终结果：子 writer 在 finish 前经 `settleFinalReply(reply)` 将非空 reply 写入既有 message/part 与流事件。当前归一 reply 无原生正文身份，只与最后一段完整 text 逐字相等去重，禁止部分包含去重；不同 reply 单独写最终正文。TurnComplete.response 保留全部 text 按写入顺序累积的语义，父摘要优先非空 reply，否则已写正文。取消/失败的原终态与错误信息、嵌套先子后父与重复终态幂等不变，冷恢复复用同一持久化事实。
+UX03 最终结果（1.4.2 修订）：子会话已有正文时以最后一段正文（`writer.lastText`）为结果，reply 不再追加；只在子会话无任何正文时，子 writer 在 finish 前经 `settleFinalReply(reply)` 将非空 reply 写入既有 message/part 与流事件。依据：后台 Agent 的启动回执同样以 reply 送达（2026-11-19 本机会话库确认）。TurnComplete.response 保留全部 text 按写入顺序累积的语义；父摘要优先子会话最后一段正文，其次非空 reply。RFD 名称：title 为 `名称 (类型)` 时拆分，否则名称取 description、类型取 title，spawned 事件携带 `agentType`。取消/失败的原终态与错误信息、嵌套先子后父与重复终态幂等不变，冷恢复复用同一持久化事实。
 
 产品规则、事件顺序与验收见根仓 `docs/desktop/external-agent-engines-spec.md`「外部引擎原生子智能体」。CLI 侧要点：
 

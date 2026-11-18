@@ -19,7 +19,12 @@ import { spawnAcpProcess } from "../exec/acp-process.js";
 import { AcpConnection } from "./connection.js";
 import { resolveExternalEngineLaunch } from "@zcode/shared/node";
 import { resolveEngineConnectionIdentity } from "./connection-profile.js";
-import { adapterLaunchArgs, ensureNodeRuntimeOnPath, withNetworkEgressEnv } from "./adapter-env.js";
+import {
+  adapterLaunchArgs,
+  ensureClaudeGitBashPath,
+  ensureNodeRuntimeOnPath,
+  withNetworkEgressEnv,
+} from "./adapter-env.js";
 import type { ExternalEngineAdapterOptions } from "./contract.js";
 import type { ExternalEngineSpareKey } from "./process-pool.js";
 import type { ExternalEngineConfigCatalogKey } from "./config-catalog.js";
@@ -172,6 +177,7 @@ export function createExternalEnginePort(
     else delete childEnv[runtime.officialExecutableEnvVar];
     // 1.0.7 只在 macOS/Linux 补 node 入口：Windows 无系统 Node 时 adapter 自带的 codex.js 无法启动。
     await ensureNodeRuntimeOnPath(root, executable, childEnv);
+    if (input.engine === "claude-code") await ensureClaudeGitBashPath(childEnv);
     // 计费与网关变量按会话绑定的连接方式处理（含 APP_SERVER_LOGS），规则见共享 buildEngineConnectionEnv。
     const resolved = await identity.materialize(childEnv);
     // 修复前沿用 CLI 时 adapter 丢失用户的代理/证书变量；按工具子进程的既有规则恢复，YCode 显式配置优先。

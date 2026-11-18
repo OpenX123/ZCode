@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, realpath, symlink } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { mkdir, readFile, realpath, stat, symlink } from "node:fs/promises";
+import { delimiter, join, win32 as win32Path } from "node:path";
 import { ExternalEngineConnectionError } from "@zcode/contracts";
 import { atomicWritePrivateTextFile, resolveExternalEngineCli } from "@zcode/shared/node";
 import { applyNetworkEgressEnv } from "../network/subprocess-env.js";
@@ -11,6 +11,58 @@ export const EXTERNAL_ENGINE_NODE_ENV = "ZCODE_EXTERNAL_ENGINE_NODE";
 
 function pathKey(env: NodeJS.ProcessEnv): string {
   return Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+}
+
+/** Claude Code 在 Windows 上执行 Bash 工具与 hook 的 Git Bash 路径变量（官方 CLI 自己的变量）。 */
+export const CLAUDE_GIT_BASH_ENV = "CLAUDE_CODE_GIT_BASH_PATH";
+
+function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const key = Object.keys(env).find((item) => item.toUpperCase() === name.toUpperCase());
+  return key ? env[key]?.trim() || undefined : undefined;
+}
+
+async function isFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 修复（2026-11-19 真实帧）：YCode 拉起的 Claude 找不到 Git Bash 时，用户的 PreToolUse hook 被交给
+ * PowerShell 5.1 执行（不支持 `||`）而判定失败，Agent 等工具调用全部失败；终端里的 Claude Code 能找到。
+ * 只从 PATH 上的 git.exe 推导同一安装的 bin\bash.exe（PATH 上的 bash.exe 可能是 WSL，不能用），再查常见
+ * 安装位置；已设置或未找到时不修改环境。
+ */
+export async function ensureClaudeGitBashPath(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  if (platform !== "win32" || envValue(env, CLAUDE_GIT_BASH_ENV)) return;
+  const candidates: string[] = [];
+  for (const dir of (env[pathKey(env)] ?? "").split(";").filter(Boolean)) {
+    if (!(await isFile(win32Path.join(dir, "git.exe")))) continue;
+    // Git for Windows：<root>\cmd\git.exe 或 <root>\mingw64\bin\git.exe → <root>\bin\bash.exe。
+    candidates.push(
+      win32Path.join(dir, "..", "bin", "bash.exe"),
+      win32Path.join(dir, "..", "..", "bin", "bash.exe"),
+    );
+  }
+  for (const [base, ...rest] of [
+    ["ProgramFiles", "Git", "bin", "bash.exe"],
+    ["ProgramFiles(x86)", "Git", "bin", "bash.exe"],
+    ["LOCALAPPDATA", "Programs", "Git", "bin", "bash.exe"],
+    ["USERPROFILE", "scoop", "apps", "git", "current", "bin", "bash.exe"],
+  ] as const) {
+    const root = envValue(env, base);
+    if (root) candidates.push(win32Path.join(root, ...rest));
+  }
+  for (const candidate of candidates)
+    if (await isFile(candidate)) {
+      env[CLAUDE_GIT_BASH_ENV] = win32Path.normalize(candidate);
+      return;
+    }
 }
 
 /**
