@@ -117,7 +117,7 @@ describe("subagent side pane tabs", () => {
     expect(requests).toHaveLength(3);
   });
 
-  it("opens more than four child tabs and reuses a child identity", () => {
+  it("reuses the single subagent tab for many children and selects the latest", () => {
     let state = null;
     for (let index = 1; index <= 6; index += 1) {
       state = openSubagentSessionSidePane(state, {
@@ -138,9 +138,11 @@ describe("subagent side pane tabs", () => {
       title: "Updated task title",
     });
 
-    expect(reopened.tabs).toHaveLength(6);
-    expect(reopened.activeTabId).toContain("child-2");
+    // 1.4：不再每个子智能体一个 tab，同一 root 只有一个"子智能体"Tab，打开即选中。
+    expect(reopened.tabs).toHaveLength(1);
     expect(reopened.tabs.find((tab) => tab.id === reopened.activeTabId)).toMatchObject({
+      type: "subagent-directory",
+      childSessionId: "child-2",
       title: "Updated task title",
     });
     const reopenedWithoutTitle = openSubagentSessionSidePane(reopened, {
@@ -183,12 +185,12 @@ describe("subagent side pane tabs", () => {
         workspaceKey: "/workspace",
         ownerTaskId: "parent-a",
       }).map((tab) => tab.id),
-    ).toEqual(["git", expect.stringContaining("child-a")]);
+    ).toEqual(["git", expect.stringContaining("parent-a")]);
     const selectedA = selectSidePaneTabsForScope(withB, {
       workspaceKey: "/workspace",
       ownerTaskId: "parent-a",
     });
-    expect(selectedA?.activeTabId).toContain("child-a");
+    expect(selectedA?.activeTabId).toContain("parent-a");
 
     const closedVisibleA = closeSidePaneTabs(
       selectedA,
@@ -200,8 +202,9 @@ describe("subagent side pane tabs", () => {
     );
     expect(closedVisibleA?.tabs).toHaveLength(1);
     expect(closedVisibleA?.tabs[0]).toMatchObject({
-      type: "subagent-session",
+      type: "subagent-directory",
       parentSessionId: "parent-b",
+      childSessionId: "child-b",
     });
     expect(closedVisibleA?.activeTabId).toBe("");
   });
@@ -254,7 +257,15 @@ describe("subagent side pane tabs", () => {
       subagentType: "Explore",
       title: "Explore child",
     });
-    const tab = state.tabs.find((candidate) => candidate.type === "subagent-session");
+    const directoryTab = state.tabs.find((candidate) => candidate.type === "subagent-directory");
+    expect(directoryTab).toMatchObject({ childSessionId: "child-session" });
+    const tab = {
+      ...directoryTab!,
+      id: `${directoryTab!.id}:child-session`,
+      childSessionId: "child-session",
+      subagentType: "Explore",
+      title: "Explore child",
+    };
 
     const html = renderToStaticMarkup(
       createElement(SubagentSessionSidePane, {

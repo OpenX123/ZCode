@@ -79,12 +79,26 @@ const tab = {
   title: "Explore structure",
 } satisfies SubagentSessionSidePaneTab;
 
-async function renderHeader() {
+async function renderHeader(onBack?: () => void) {
   const { SubagentSessionHeader } = await import("@/subagent-display/index.js");
-  return render(createElement(SubagentSessionHeader, { tab }));
+  return render(createElement(SubagentSessionHeader, { tab, onBack }));
 }
 
 describe("SubagentSessionHeader", () => {
+  it("1.4：在子智能体 Tab 内左上角显示返回目录箭头；旧版 tab 不显示", async () => {
+    const onBack = vi.fn();
+    const inTab = await renderHeader(onBack);
+    const back = inTab.getByTestId("v4-subagent-session-back");
+    expect(back.getAttribute("aria-label")).toBe("subagentDisplay.sidePane.back");
+    const header = inTab.getByTestId("v4-subagent-session-header");
+    expect(header.firstElementChild).toBe(back);
+    await act(async () => back.click());
+    expect(onBack).toHaveBeenCalledTimes(1);
+    inTab.unmount();
+    const legacy = await renderHeader();
+    expect(legacy.queryByTestId("v4-subagent-session-back")).toBeNull();
+  });
+
   it("运行中：头像同序号同轮廓、名称、状态、实时耗时，可停时经父会话 cancelBackgroundWork 停止", async () => {
     harness.snapshots.set("parent", {
       subagents: {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ArrowLeftIcon,
   BanIcon,
   CheckCircle2Icon,
   CircleAlertIcon,
@@ -9,11 +10,13 @@ import {
   SquareIcon,
 } from "lucide-react";
 import {
+  TID_V4_SUBAGENT_SESSION_BACK,
   TID_V4_SUBAGENT_SESSION_HEADER,
   TID_V4_SUBAGENT_SESSION_MODEL,
   TID_V4_SUBAGENT_SESSION_STOP,
 } from "@zcode/shared/test-ids";
 import { formatBackgroundTaskElapsedLabel } from "@/BackgroundTaskElapsedLabel.js";
+import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { SubagentSessionSidePaneTab } from "@/lib/workspaceSidePane.js";
@@ -70,7 +73,17 @@ function HeaderStatusIcon({ status }: { status: SubagentDisplayStatus }) {
  * 右侧子智能体详情头部（docs/desktop/multi-agent-display-spec.md「右侧详情」）：头像、名称、
  * 状态、耗时与可停时的停止。只读父/子会话投影，适用于任意引擎的 childSessionId。
  */
-export function SubagentSessionHeader({ tab }: { tab: SubagentSessionSidePaneTab }) {
+export function SubagentSessionHeader({
+  tab,
+  onBack,
+}: {
+  tab: Pick<
+    SubagentSessionSidePaneTab,
+    "parentSessionId" | "childSessionId" | "subagentType" | "title"
+  >;
+  /** "子智能体"Tab 的详情视图：左上角返回目录；旧版逐子智能体 tab 不传。 */
+  onBack?: () => void;
+}) {
   const { intl } = useZCodeIntl();
   const { sendCommand } = useV4Conversation();
   const parentSnapshot = useSessionProjection(tab.parentSessionId);
@@ -151,8 +164,25 @@ export function SubagentSessionHeader({ tab }: { tab: SubagentSessionSidePaneTab
       data-child-session-id={tab.childSessionId}
       data-status={model.status ?? ""}
       data-face-variant={model.variant}
-      className="flex shrink-0 items-center gap-2.5 border-b border-border bg-background px-4 py-2.5"
+      className={cn(
+        "flex shrink-0 items-center gap-2.5 border-b border-border bg-background py-2.5 pr-4",
+        onBack ? "pl-2" : "pl-4",
+      )}
     >
+      {onBack ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          data-testid={TID_V4_SUBAGENT_SESSION_BACK}
+          aria-label={intl.formatMessage({ id: "subagentDisplay.sidePane.back" })}
+          title={intl.formatMessage({ id: "subagentDisplay.sidePane.back" })}
+          onClick={onBack}
+          className="shrink-0 text-foreground-subtle"
+        >
+          <ArrowLeftIcon aria-hidden className="size-4" />
+        </Button>
+      ) : null}
       <SubagentFace
         animated={active}
         avatarIndex={model.avatarIndex}

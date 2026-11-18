@@ -173,7 +173,7 @@ feature-scoped token family:
 
 ### Agent avatars
 
-All subagent surfaces (status capsule, conversation spawn row and Agent card icon, Agents
+All subagent surfaces (status capsule, conversation subagent rows, spawn row and Agent card icon, Agents
 section rows, subagent directory, side-pane detail header) share one avatar: the code-drawn
 tile face (`WorkflowAgentFace`). Spec: [multi-agent display](docs/desktop/multi-agent-display-spec.md).
 
@@ -188,8 +188,8 @@ tile face (`WorkflowAgentFace`). Spec: [multi-agent display](docs/desktop/multi-
 - **Sizes**: 16px in conversation rows and panel rows, 20px in the capsule stack and directory,
   24px in the detail header. The workflow timeline keeps its own 20px minimum.
 - **Stacks** overlap by 6px, at most three faces, separated by a ring in the host surface colour.
-- **Motion**: idle face motion only in the detail header while running; still elsewhere; none
-  under `prefers-reduced-motion`, hidden tabs or off-screen.
+- **Motion**: idle face motion in the detail header and in conversation subagent rows while
+  running; still elsewhere; none under `prefers-reduced-motion`, hidden tabs or off-screen.
 - Per-type colours in `lib/subagentColors.ts` colour the agent type label text only, never avatars.
 - A compile-feedback row (a script that did not compile, so nothing ran) uses a hollow lamp:
   `--color-warning` while it is the latest draft, `--color-foreground-subtlest` once a newer

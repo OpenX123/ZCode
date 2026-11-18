@@ -162,20 +162,15 @@ describe("外部引擎原生子智能体（Codex AIR / Claude RFD）", () => {
       `${paneSelector} [data-testid^="chat-assistant-history-trigger-"]`,
     );
     if ((await history.getAttribute("data-history-open")) === "false") await history.click();
-    const toggle = await displayed(
-      `${paneSelector} [data-testid^="v4-subagent-work-card-toggle-"]`,
-    );
-    if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
     const member = await displayed(`[data-testid="v4-subagent-open-side-pane-${childId}"]`);
     await member.scrollIntoView({ block: "center" });
     await member.waitForClickable({ timeout: 30000 });
-    await browser.waitUntil(async () => (await member.getText()).includes(finalText), {
+    // 1.4：成功行只显示"已完成"，最终正文在右侧详情中查看。
+    await browser.waitUntil(async () => (await member.getText()).includes("已完成"), {
       timeout: 30000,
-      timeoutMsg: "父成员行没有投影同一最终摘要",
+      timeoutMsg: "父成员行没有投影已完成",
     });
-    expect(await member.getText()).toContain(`结果：${finalText}`);
     expect(await member.getText()).not.toContain("原因：");
-    expect(await member.getText()).toContain("查看结果");
     await member.click();
     const child = await displayed(`[data-session-id="${childId}"]`);
     await browser.waitUntil(async () => (await child.getText()).includes(finalText), {

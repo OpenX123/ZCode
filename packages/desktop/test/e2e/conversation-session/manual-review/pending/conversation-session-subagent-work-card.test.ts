@@ -166,9 +166,14 @@ async function readChildIdentity(childSessionId: string) {
       ).filter((node) => node.dataset.sessionId === sessionId);
       if (panes.length !== 1) throw new Error("原 child header 没有唯一关联的正文 pane");
       const tabId = panes[0]!.dataset.testid!.slice("v4-session-pane-".length);
+      // 1.4：详情 pane id 为 "<子智能体 Tab id>:<childSessionId>"，旧版逐 child tab 的 pane id 即 tab id。
       const tabs = Array.from(
         document.querySelectorAll<HTMLElement>("[data-side-pane-tab-id]"),
-      ).filter((node) => node.dataset.sidePaneTabId === tabId);
+      ).filter(
+        (node) =>
+          node.dataset.sidePaneTabId === tabId ||
+          `${node.dataset.sidePaneTabId}:${sessionId}` === tabId,
+      );
       if (tabs.length !== 1 || tabs[0]!.dataset.state !== "active")
         throw new Error("原 child 完整 tab 身份未激活");
       return { childSessionId: sessionId, tabId, status: header.dataset.status ?? "" };
@@ -763,7 +768,7 @@ describe("Subagent 工作卡 manual review", () => {
           await assertCacheRecoveryPackagedAgentProof(process.env.ZCODE_E2E_ARTIFACT_DIR!),
         );
 
-        // SAT31：单个带子会话的派发也渲染为工作卡；后台子智能体可停，"停止全部"出现。
+        // SAT31：单个带子会话的派发渲染为一行子智能体行；后台子智能体可停，行尾有停止（1.4 无"停止全部"）。
         let state: WorkCardState | null = null;
         try {
           await browser.waitUntil(
@@ -774,7 +779,7 @@ describe("Subagent 工作卡 manual review", () => {
                 state.state === "running" &&
                 state.memberCount === 1 &&
                 state.openActions === 1 &&
-                state.stopAll === 1 &&
+                state.stopAll === 0 &&
                 state.memberStops === 1
               );
             },
@@ -795,12 +800,12 @@ describe("Subagent 工作卡 manual review", () => {
         const activity = pane.$('[data-testid="subagent-activity-trigger"]');
         await activity.waitForDisplayed();
         expect(await activity.getAttribute("aria-label")).toContain("运行中");
-        const toggle = pane.$('[data-testid^="v4-subagent-work-card-toggle-"]');
-        await toggle.click();
-        expect(await toggle.getAttribute("aria-expanded")).toBe("false");
-        expect(await toggle.getText()).toContain("运行中");
+        // 1.4：行组没有折叠开关；运行中状态直接在行上。
+        expect(await pane.$('[data-testid^="v4-subagent-work-card-toggle-"]').isExisting()).toBe(
+          false,
+        );
+        expect((await readWorkCardState(parentPaneId)).text).toContain("运行中");
         await activity.waitForDisplayed();
-        await toggle.click();
         // MA15：父轮结束后「已工作 N 秒」收起其它工作项，运行中的工作卡仍在折叠摘要之下可见。
         await browser.waitUntil(async () => (await readHistoryOpen(parentPaneId)) === "false", {
           timeout: 30000,
@@ -815,7 +820,8 @@ describe("Subagent 工作卡 manual review", () => {
         );
         expect(
           await browser.execute(
-            () => document.querySelectorAll('[data-side-pane-tab-id^="subagent-session:"]').length,
+            () =>
+              document.querySelectorAll('[data-side-pane-tab-id^="subagent-directory:"]').length,
           ),
         ).toBe(0);
         await member.click();
@@ -844,14 +850,8 @@ describe("Subagent 工作卡 manual review", () => {
             timeoutMsg: "SAT32 右侧子会话没有实时增长",
           },
         );
-        // 步骤数随子工具调用出现（镜像计步，见规范「引擎无关合同」第 6 条）。
-        await browser.waitUntil(
-          async () => /\d+ (个步骤|steps?)/u.test((await readWorkCardState(parentPaneId)).text),
-          {
-            timeout: 60000,
-            timeoutMsg: "SAT31 工作卡没有显示步骤数",
-          },
-        );
+        // 1.4：步骤数不再进入时间线行；运行中行显示"运行中 · 用时"。
+        expect((await readWorkCardState(parentPaneId)).text).toMatch(/运行中 · \d+/u);
         const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
         if (artifactDir) {
           await browser.saveScreenshot(
@@ -871,7 +871,10 @@ describe("Subagent 工作卡 manual review", () => {
             timeoutMsg: "SAT33 详情头部没有变为已停止",
           },
         );
-        // UX08：手动打开跨终态保留，外层“已工作”不得吞掉正在看的卡；详情也不关闭。
+        // 1.4：停止后行组随轮次折叠（无手动展开 override）；详情 Tab 不关闭。
+        await activity.waitForExist({ reverse: true });
+        expect(await readHistoryOpen(parentPaneId)).toBe("false");
+        await pane.$('[data-testid^="chat-assistant-history-trigger-"]').click();
         await browser.waitUntil(
           async () => (await readWorkCardState(parentPaneId)).state === "ended",
           {
@@ -882,9 +885,8 @@ describe("Subagent 工作卡 manual review", () => {
         const ended = await readWorkCardState(parentPaneId);
         expect(ended.stopAll).toBe(0);
         expect(ended.openActions).toBe(1);
-        await activity.waitForExist({ reverse: true });
         expect(await header.isDisplayed()).toBe(true);
-        expect(await readHistoryOpen(parentPaneId)).toBe("false");
+        expect(await readHistoryOpen(parentPaneId)).toBe("true");
         const endedFacts = await assertEndedOnly(parentPaneId, parentSessionId, 1);
         expect(endedFacts.mode).toBe("mini");
         await assertSummaryAbsent(parentPaneId);
@@ -933,11 +935,8 @@ describe("Subagent 工作卡 manual review", () => {
           `task13-${ux08Variant}-packaged-agent-proof.json`,
           await assertCacheRecoveryPackagedAgentProof(process.env.ZCODE_E2E_ARTIFACT_DIR!),
         );
-        let toggle = await card.$('[data-testid^="v4-subagent-work-card-toggle-"]');
-        await toggle.click();
-        await toggle.click();
-        const members = await card.$$('[data-testid^="v4-subagent-open-side-pane-"]');
-        const child = members[1]!;
+        let members = await card.$$('[data-testid^="v4-subagent-open-side-pane-"]');
+        let child = members[1]!;
         const childSessionId = (await child.getAttribute("data-child-session-id"))!;
         await child.click();
         const header = await $(
@@ -955,8 +954,17 @@ describe("Subagent 工作卡 manual review", () => {
           timeout: 60000,
         });
         await activity.waitForExist({ reverse: true });
-        expect(await toggle.getAttribute("aria-expanded")).toBe("true");
         expect(await header.isDisplayed()).toBe(true);
+        // 1.4：行组不可折叠、没有手动展开 override，全部成功结束后回到「已工作」折叠内；
+        // 展开历史回看同一行组（详情 Tab 不受影响）。
+        const endedHistory = await pane.$('[data-testid^="chat-assistant-history-trigger-"]');
+        if ((await endedHistory.getAttribute("data-history-open")) === "false") {
+          await endedHistory.click();
+        }
+        card = await pane.$('[data-testid^="v4-subagent-work-card-"][data-member-count="2"]');
+        await card.waitForDisplayed();
+        members = await card.$$('[data-testid^="v4-subagent-open-side-pane-"]');
+        child = members[1]!;
         const persisted = readBuiltinWorkCardParts(parentSessionId);
         const liveRows = await readBuiltinTimelineRows(parentPaneId);
         const artifactDir = process.env.ZCODE_E2E_ARTIFACT_DIR;
@@ -986,11 +994,11 @@ describe("Subagent 工作卡 manual review", () => {
             ),
           ).toMatchObject({ status: "success", summaryText: `UX08 task ${label}` });
         }
-        expect((await card.getText()).match(/已完成，可查看过程/gu)).toHaveLength(2);
-        expect(await card.getText()).not.toContain("结果：");
+        expect((await card.getText()).match(/已完成/gu)).toHaveLength(2);
+        expect(await card.getText()).not.toContain("原因：");
         await assertRetainedChild(childIdentity, "done", "UX08_RESULT_B");
         await verifyEndedPresentation(parentPaneId, parentSessionId, childIdentity);
-        expect(await readHistoryOpen(parentPaneId)).toBe("false");
+        expect(await readHistoryOpen(parentPaneId)).toBe("true");
         if (artifactDir)
           await browser.saveScreenshot(join(artifactDir, "ux08-success-retained-detail.png"));
 
@@ -1028,12 +1036,8 @@ describe("Subagent 工作卡 manual review", () => {
         const history = await pane.$('[data-testid^="chat-assistant-history-trigger-"]');
         await history.click();
         card = await pane.$('[data-testid^="v4-subagent-work-card-"][data-member-count="2"]');
-        toggle = await card.$('[data-testid^="v4-subagent-work-card-toggle-"]');
         await card.waitForDisplayed();
-        expect(await toggle.getAttribute("aria-expanded")).toBe("false");
-        await toggle.click();
-        expect((await card.getText()).match(/已完成，可查看过程/gu)).toHaveLength(2);
-        expect(await card.getText()).toContain("查看结果");
+        expect((await card.getText()).match(/已完成/gu)).toHaveLength(2);
         const refreshedRows = await readBuiltinTimelineRows(parentPaneId);
         expect(refreshedRows).toEqual(liveRows);
         if (artifactDir)
@@ -1141,7 +1145,7 @@ async function verifyUx08Appearance(
         expect(layout.cardWidth).toBeGreaterThan(0);
         expect(layout.left).toBeGreaterThanOrEqual(0);
         expect(layout.right).toBeLessThanOrEqual(layout.width + 1);
-        expect(await card.getText()).toContain(locale === "zh-CN" ? "查看结果" : "View result");
+        expect(await card.getText()).toContain(locale === "zh-CN" ? "已完成" : "Completed");
         if (artifactDir) {
           await writeFile(
             join(artifactDir, `ux08-layout-${width}.json`),

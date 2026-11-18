@@ -39,7 +39,7 @@ describe("UX08 活动与已登记 manifest 边界", () => {
       undefined,
     );
     expect(model.active).toBe(true);
-    expect(model.endedCount).toBe(0);
+    expect(model.members.filter((member) => member.status !== "pending")).toHaveLength(0);
     expect(model.members[0]).toMatchObject({ status: "pending" });
     expect(model.members[0]?.childSessionId).toBeUndefined();
   });
@@ -58,7 +58,7 @@ describe("UX08 活动与已登记 manifest 边界", () => {
     ];
     const first = buildSubagentWorkCardModel(inputs, undefined);
     expect(first.active).toBe(false);
-    expect(first.endedCount).toBe(1);
+    expect(first.members[0]?.status).not.toBe("running");
     expect(buildSubagentWorkCardModel(inputs, undefined)).toEqual(first);
   });
 });

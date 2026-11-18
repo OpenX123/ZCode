@@ -30,7 +30,7 @@ import {
 } from "./model.js";
 import { describeAgentSpawnMember } from "./spawnGroups.js";
 import { SubagentFace } from "./SubagentFace.js";
-import { SubagentWorkCard } from "./SubagentWorkCard.js";
+import { SubagentWorkRows } from "./SubagentWorkRows.js";
 
 const EMPTY_AVATAR_INDEX = buildSubagentAvatarIndex(undefined);
 const NAMES_SENTINEL = "\u0000";
@@ -90,7 +90,7 @@ export function ConversationAgentCard({
 
 /**
  * 同一轮相邻派发合并后的一项（docs/desktop/multi-agent-display-spec.md）：任一成员有子会话时为
- * Subagent 工作卡，否则为旧的"A、B 和 C 开始工作"行。时间线渲染入口保持不变。
+ * 连续的子智能体行（每个子智能体一行），否则为旧的"A、B 和 C 开始工作"行。时间线渲染入口保持不变。
  */
 export function ConversationAgentSpawnRow({
   item,
@@ -100,7 +100,7 @@ export function ConversationAgentSpawnRow({
   context: ConversationRowRenderContext;
 }) {
   return item.presentation === "workCard" ? (
-    <SubagentWorkCard item={item} context={context} />
+    <SubagentWorkRows item={item} context={context} />
   ) : (
     <AgentSpawnSentenceRow item={item} context={context} />
   );

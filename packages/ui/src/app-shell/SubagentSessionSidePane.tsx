@@ -13,8 +13,23 @@ import { SubagentSessionHeader } from "@/subagent-display/index.js";
 import { SessionPane } from "@/v4/SessionPane.js";
 import { V4PaneConversationProvider } from "@/v4/V4ConversationContext.js";
 
+/** 详情视图需要的身份：旧版逐子智能体 tab 与"子智能体"Tab 的选择都能提供。 */
+export type SubagentSessionDetailTarget = Pick<
+  SubagentSessionSidePaneTab,
+  | "id"
+  | "workspacePath"
+  | "workspaceIdentity"
+  | "remoteSessionId"
+  | "rootSessionId"
+  | "parentSessionId"
+  | "childSessionId"
+  | "subagentType"
+  | "title"
+>;
+
 export const SubagentSessionSidePane = memo(function SubagentSessionSidePane({
   tab,
+  onBack,
   focused,
   visible = true,
   compactForRemoteControl = false,
@@ -24,7 +39,9 @@ export const SubagentSessionSidePane = memo(function SubagentSessionSidePane({
   onOpenSubagentSession,
   onOpenBackgroundBash,
 }: {
-  tab: SubagentSessionSidePaneTab;
+  tab: SubagentSessionDetailTarget;
+  /** 在"子智能体"Tab 内时返回目录。 */
+  onBack?: () => void;
   focused: boolean;
   visible?: boolean;
   compactForRemoteControl?: boolean;
@@ -48,7 +65,7 @@ export const SubagentSessionSidePane = memo(function SubagentSessionSidePane({
     <V4PaneConversationProvider scope={scope}>
       <div className="flex size-full min-h-0 flex-col">
         {/* 头部只读父/子投影（头像、状态、耗时、可停时的父会话停止），与引擎无关。 */}
-        <SubagentSessionHeader tab={tab} />
+        <SubagentSessionHeader tab={tab} onBack={onBack} />
         <div className="min-h-0 flex-1">
           <SessionPane
             paneId={tab.id}
