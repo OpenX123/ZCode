@@ -30,6 +30,7 @@ import {
   createExternalEnginePort,
   runExternalEngineConnectionTest,
 } from "../src/external-engine/index.js";
+import { SUBAGENT_NAMING_INSTRUCTIONS } from "../src/external-engine/connection.js";
 import nativeCatalog from "./fixtures/codex-native-config-options.json";
 
 const roots: string[] = [];
@@ -47,11 +48,13 @@ const mode = process.env.FIXTURE_MODE || "ok";
 const nativeCatalog = JSON.parse(process.env.FIXTURE_CONFIG_OPTIONS || "[]");
 if (process.env.FIXTURE_CWD_FILE) fs.writeFileSync(process.env.FIXTURE_CWD_FILE, process.cwd());
 let prompt;
+let sessionParams;
 const text = (value) => send({ method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: value } } } });
 const info = (meta) => send({ method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "session_info_update", _meta: meta } } });
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
-  if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { resume: {} } } } });
+  if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { resume: {}, ...(process.env.FIXTURE_SYSTEM_PROMPT_CAP ? { systemPrompt: {} } : {}) } } } });
+  else if (message.method === "session/new" && mode === "session-params") { sessionParams = message.params; send({ id: message.id, result: { sessionId: sid } }); }
   else if ((message.method === "session/new" || message.method === "session/resume") && mode.startsWith("native-catalog")) {
     if (mode === "native-catalog-notification-first") {
       send({ method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "config_option_update", configOptions: nativeCatalog } } });
@@ -67,6 +70,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     const env = {};
     for (const key of ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ELECTRON_RUN_AS_NODE", "ZCODE_TOOL_ENV_PASSTHROUGH_JSON"]) env[key] = process.env[key];
     if (mode === "report") { text(JSON.stringify({ argv: process.argv.slice(1), execArgv: process.execArgv, env })); send({ id: message.id, result: { stopReason: "end_turn" } }); }
+    else if (mode === "session-params") { text(JSON.stringify(sessionParams)); send({ id: message.id, result: { stopReason: "end_turn" } }); }
     else if (mode === "codex-error") {
       // 重试中的 warning 不结束测试；Codex 重试用尽后发终态 error（willRetry=false）。
       info({ codex: { error: { message: "unexpected status 401 Unauthorized: bad key sk-abcdefghijklmnop request id: req_123", httpStatus: 401, willRetry: true } } });
@@ -141,6 +145,43 @@ async function reported(port: ExternalEnginePort, input: ExternalEngineTurnInput
     env: Record<string, string | undefined>;
   };
 }
+
+describe("子智能体命名指令", () => {
+  async function sessionParams(engine: "claude-code" | "codex", env: Record<string, string>) {
+    const { port } = await setup(engine, { FIXTURE_MODE: "session-params", ...env });
+    const input = turn(engine);
+    const updates: Record<string, unknown>[] = [];
+    try {
+      await port.runTurn({ ...input, onUpdate: async (update) => void updates.push(update) });
+    } finally {
+      await port.closeSession(input.sessionId);
+    }
+    const chunk = updates.find((update) => update.sessionUpdate === "agent_message_chunk");
+    return JSON.parse((chunk?.content as { text: string }).text) as Record<string, unknown>;
+  }
+
+  test("Claude 声明 systemPrompt 能力时以 append 追加命名指令", async () => {
+    const params = await sessionParams("claude-code", { FIXTURE_SYSTEM_PROMPT_CAP: "1" });
+    expect(params.systemPrompt).toEqual({
+      mode: "append",
+      content: [{ type: "text", text: SUBAGENT_NAMING_INSTRUCTIONS["claude-code"] }],
+    });
+    expect(params).not.toHaveProperty("_meta");
+  });
+
+  test("Claude 未声明 systemPrompt 能力时不发送该字段", async () => {
+    const params = await sessionParams("claude-code", {});
+    expect(params).not.toHaveProperty("systemPrompt");
+  });
+
+  test("Codex 新会话经 AIR customInstructions 追加命名指令", async () => {
+    const params = await sessionParams("codex", {});
+    expect(params._meta).toEqual({
+      jetbrains: { air: { customInstructions: SUBAGENT_NAMING_INSTRUCTIONS.codex } },
+    });
+    expect(params).not.toHaveProperty("systemPrompt");
+  });
+});
 
 describe("adapter 子进程环境", () => {
   test("沿用 CLI 恢复用户代理与证书变量；YCode 显式代理覆盖同名变量", async () => {

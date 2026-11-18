@@ -76,6 +76,16 @@ function configOptions(value: unknown): EngineConfigOption[] {
   return parsed.data;
 }
 type SessionMethod = NonNullable<EngineConnectionFailure["method"]>;
+/**
+ * 子智能体命名约束（docs/desktop/external-agent-engines-spec.md「跨轮观察与引擎自发续跑」）：
+ * 原生帧只带模型自填的名称，未约束时多为类型名或空；追加为系统/开发者指令，界面直接展示。
+ */
+export const SUBAGENT_NAMING_INSTRUCTIONS: Record<ExternalSessionEngine, string> = {
+  "claude-code":
+    "When you delegate work with the Agent tool, set its description to a short English title of 2-5 words that starts with the subagent's role, for example \"Backend auth fix\", \"Frontend layout check\", \"Analyst log review\" or \"Reviewer scoped check\". Give parallel subagents distinct titles.",
+  codex:
+    "When you spawn a subagent, begin its task prompt with a first line `Title: <title>` where <title> is a short English title of 2-5 words that starts with the subagent's role, for example \"Backend auth fix\", \"Frontend layout check\", \"Analyst log review\" or \"Reviewer scoped check\". Give parallel subagents distinct titles.",
+};
 /** 已建立（或已预建）的原生会话；回调与配置恢复由 execute 继续完成。 */
 interface OpenedSession {
   method: SessionMethod;
@@ -577,7 +587,10 @@ export class AcpConnection {
     const initialized = await this.initialize(input.engine);
     const initializeMs = Date.now() - initializeStartedAt;
     const capabilities = initialized.agentCapabilities as
-      | { loadSession?: boolean; sessionCapabilities?: { resume?: unknown; fork?: unknown } }
+      | {
+          loadSession?: boolean;
+          sessionCapabilities?: { resume?: unknown; fork?: unknown; systemPrompt?: unknown };
+        }
       | undefined;
     if (parentExternalSessionId && !capabilities?.sessionCapabilities?.fork)
       throw new ExternalEngineConnectionError({ code: "unsupported", method: "session/fork" });
@@ -588,11 +601,21 @@ export class AcpConnection {
         : capabilities?.loadSession && !capabilities.sessionCapabilities?.resume
           ? "session/load"
           : "session/resume";
+    const instructions = SUBAGENT_NAMING_INSTRUCTIONS[input.engine];
     const params = {
       cwd: input.cwd,
       mcpServers: [],
       ...(parentExternalSessionId || input.externalSessionId
         ? { sessionId: parentExternalSessionId ?? input.externalSessionId }
+        : {}),
+      // Claude 0.95.0 声明 sessionCapabilities.systemPrompt：new/resume/load/fork 都会重新应用，
+      // 每次握手都传；未声明的旧 adapter 不发，避免 invalid_params。
+      ...(input.engine === "claude-code" && capabilities?.sessionCapabilities?.systemPrompt
+        ? { systemPrompt: { mode: "append", content: [{ type: "text", text: instructions }] } }
+        : {}),
+      // Codex 2.2.2 只在 session/new 读取 AIR customInstructions（作为 developerInstructions）。
+      ...(input.engine === "codex" && method === "session/new"
+        ? { _meta: { jetbrains: { air: { customInstructions: instructions } } } }
         : {}),
     };
     this.loadingHistory = method === "session/load" || method === "session/fork";
