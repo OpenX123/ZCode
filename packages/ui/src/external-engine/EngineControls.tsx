@@ -47,7 +47,26 @@ export function EngineControls({
   const methodSummary = connectionFailure?.method
     ? ` (${connectionFailure.method}${connectionFailure.rpcCode !== undefined ? `, RPC ${connectionFailure.rpcCode}` : ""})`
     : "";
-  const [activePicker, setActivePicker] = useState<string | null>(null);
+  // Bug 修复：SessionPane 跨 YCode/外部引擎复用同一个 EngineControls，YCode 时弹层整体卸载，
+  // Radix 卸载不回调 onOpenChange(false)，旧 activePicker 残留为打开；从 YCode 菜单切回外部引擎时
+  // 新入口一挂载就带着 open=true 自动弹出（只有切换行的小浮层盖在输入框 placeholder 上，像第二个入口）。
+  // 打开态按入口控件族限定 scope：族变化即视为关闭；外部引擎之间切换仍复用同一弹层、保持打开。
+  const pickerScope = engine === "zcode" ? "zcode" : "external";
+  const [pickerState, setPickerState] = useState<{ scope: string; picker: string | null }>({
+    scope: pickerScope,
+    picker: null,
+  });
+  if (pickerState.scope !== pickerScope) setPickerState({ scope: pickerScope, picker: null });
+  const activePicker = pickerState.scope === pickerScope ? pickerState.picker : null;
+  const setActivePicker = (next: string | null | ((current: string | null) => string | null)) =>
+    setPickerState((current) => {
+      // 旧控件族的退出回调晚到时不得改写新 scope 的打开态。
+      if (current.scope !== pickerScope) return current;
+      return {
+        scope: current.scope,
+        picker: typeof next === "function" ? next(current.picker) : next,
+      };
+    });
   const configDisabled = Boolean(
     disabled || loading || configPending || failureMessage || !onConfigChange,
   );

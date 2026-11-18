@@ -626,7 +626,9 @@ function ConversationComposerImpl({
         ? `${V4_DRAFT_SCOPE_ROOT}:${rootDraftScopeKey}`
         : V4_DRAFT_SCOPE_ROOT);
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
-  const configPickerScopeKey = `${workspaceKey}\0${draftScopeId}`;
+  // Bug 修复：草稿在 YCode 与外部引擎之间切换时，YCode 模型菜单随工具栏整体卸载，残留的 "model"
+  // 打开态会在切回 YCode 时让新菜单一挂载就自动弹出。把入口控件族纳入 scope，族变化即归零。
+  const configPickerScopeKey = `${workspaceKey}\0${draftScopeId}\0${externalEngine ? "external" : "zcode"}`;
   const [text, setText] = useState("");
   const [pendingSubmission, setPendingSubmission] = useState<{
     text: string;

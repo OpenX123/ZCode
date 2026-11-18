@@ -28,7 +28,7 @@ import type { ComposerModelOptions } from "@/chat-input-toolbar/ComposerModelMen
 import { Button } from "@/components/ui/button.js";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu.js";
 import { ChatContextUsage } from "@/chat-input-toolbar/display.js";
-import { TaskClientLogo } from "@/external-engine/index.js";
+import { ENGINE_SWITCH_HOST_CLASS, TaskClientLogo } from "@/external-engine/index.js";
 
 import {
   getNextThoughtLevelValue,
@@ -438,6 +438,7 @@ function V4ComposerModelControlsImpl({
           <DropdownMenuItem
             className="block px-1 py-1 focus:bg-transparent"
             data-testid="composer-engine-switch-item"
+            data-engine-switch-host=""
             onSelect={(event) => event.preventDefault()}
             onFocus={(event) => {
               if (event.target !== event.currentTarget) return;
@@ -585,6 +586,8 @@ function V4ComposerModelControlsImpl({
           triggerIconClassName="hidden group-data-[composer-model-icon=true]/toolbar:inline-flex"
           triggerIcon={engineTriggerIcon}
           contentHeader={engineSwitchHeader}
+          // 与外部引擎弹层同一宽度规则：有切换行时按其内容撑宽，三段等宽、「Claude Code」不截断。
+          composerContentWidthClassName={engineSwitchRow ? ENGINE_SWITCH_HOST_CLASS : undefined}
           focusSelectorOnClose={V4_COMPOSER_INPUT_SELECTOR}
           providerSubmenuClassName={providerSubmenuClassName}
         />
