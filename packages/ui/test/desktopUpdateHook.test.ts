@@ -194,6 +194,56 @@ describe("桌面更新 hook", () => {
     await act(() => result.current.activate());
     expect(platform.installUpdate).toHaveBeenCalledTimes(1);
   });
+  it("发布矩阵外的平台侧栏提示手动下载，点击只打开 Release 页面", async () => {
+    const platform = createPlatform();
+    const openExternal = vi.fn();
+    mocks.platform = { ...mocks.platform, openExternal } as IPlatformService;
+    const releaseUrl = "https://github.com/OpenX123/ZCode/releases/tag/v1.0.9";
+    render(createElement(DesktopUpdateButton));
+    act(() =>
+      platform.emit({
+        kind: "update-available",
+        enabled: true,
+        version: "1.0.9",
+        manualDownload: true,
+        releaseUrl,
+      }),
+    );
+    expect(screen.getByTestId("desktop-update-action").textContent).toBe(
+      "desktopUpdate.manualDownload",
+    );
+    expect(screen.getByTestId("desktop-update-status").textContent).toBe(
+      "desktopUpdate.manualDownloadHint",
+    );
+    await act(async () => fireEvent.click(screen.getByTestId("desktop-update-action")));
+    expect(openExternal).toHaveBeenCalledWith(releaseUrl);
+    expect(platform.downloadUpdate).not.toHaveBeenCalled();
+    expect(screen.getByTestId("desktop-update-dismiss")).toBeTruthy();
+  });
+
+  it("手动检查得到手动下载结果时给出 info 提示与打开 Release 动作", async () => {
+    const platform = createPlatform();
+    const openExternal = vi.fn();
+    mocks.platform = { ...mocks.platform, openExternal } as IPlatformService;
+    preferences.settings = { dismissedDesktopUpdateVersion: "1.0.9" } as AppSettings;
+    const releaseUrl = "https://github.com/OpenX123/ZCode/releases/tag/v1.0.9";
+    platform.checkForUpdates.mockResolvedValueOnce({
+      kind: "manual-download",
+      version: "1.0.9",
+      releaseUrl,
+    });
+    const { result } = renderHook(() => useDesktopUpdates());
+    await act(() => result.current.check());
+    expect(preferences.update).toHaveBeenCalledWith({ dismissedDesktopUpdateVersion: null });
+    expect(mocks.toast).toHaveBeenCalledWith(
+      "desktopUpdate.manualDownloadFound",
+      expect.objectContaining({ variant: "info", actionLabel: "desktopUpdate.openRelease" }),
+    );
+    const options = mocks.toast.mock.calls.at(-1)![1] as { onAction: () => void };
+    options.onAction();
+    expect(openExternal).toHaveBeenCalledWith(releaseUrl);
+  });
+
   it("未知目标的失败重试检查，最新版本提供 toast，不虚构可用版本", async () => {
     const platform = createPlatform();
     const { result } = renderHook(() => useDesktopUpdates());

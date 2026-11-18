@@ -21,6 +21,16 @@ interface Candidate {
   asset: GithubUpdateAsset;
 }
 
+/** 发布矩阵外的平台只记录版本与 releaseUrl，绝不选择其他架构的安装器。 */
+interface ManualCandidate {
+  manifest: GithubUpdateManifest;
+  asset: null;
+}
+
+function manualResult(manifest: GithubUpdateManifest): UpdateCheckResultPayload {
+  return { kind: "manual-download", version: manifest.version, releaseUrl: manifest.releaseUrl };
+}
+
 async function verifyInstaller(path: string, asset: GithubUpdateAsset): Promise<boolean> {
   const info = await stat(path).catch(() => null);
   if (!info?.isFile() || info.size !== asset.size) return false;
@@ -62,7 +72,7 @@ export function createGithubDesktopUpdater(
   const lifetime = new AbortController();
   const listeners = new Set<(state: UpdateStatePayload) => void>();
   let state: UpdateStatePayload = { kind: "idle", enabled, currentVersion: options.currentVersion };
-  let candidate: Candidate | null = null;
+  let candidate: Candidate | ManualCandidate | null = null;
   let checkFlight: Promise<UpdateCheckResultPayload> | undefined;
   let downloadFlight: Promise<UpdateCheckResultPayload> | undefined;
   let lastCheckAt: number | undefined;
@@ -96,6 +106,7 @@ export function createGithubDesktopUpdater(
         progress: state.progress,
       };
     if (state.kind === "update-downloaded") return { kind: "ready", version: state.version };
+    if (candidate && !candidate.asset) return manualResult(candidate.manifest);
     return candidate
       ? { kind: "available", version: candidate.manifest.version }
       : { kind: "up-to-date", currentVersion: options.currentVersion };
@@ -112,14 +123,26 @@ export function createGithubDesktopUpdater(
       });
       const manifest = parseGithubUpdateManifest(await readManifest(response, signal));
       lifetime.signal.throwIfAborted();
-      const asset = manifest.assets.find(
-        (item) => item.platform === options.platform && item.arch === options.arch,
-      );
-      if (!asset) throw new Error("更新清单没有当前系统和架构的安装器");
       if (!isNewerVersion(manifest.version, options.currentVersion)) {
         candidate = null;
         publish({ kind: "idle", enabled });
         return { kind: "up-to-date", currentVersion: options.currentVersion };
+      }
+      const asset = manifest.assets.find(
+        (item) => item.platform === options.platform && item.arch === options.arch,
+      );
+      if (!asset) {
+        // 原因：发布矩阵收敛为 darwin-arm64 / win32-x64 后，mac-x64 与 win-arm64 客户端
+        // 曾把合法的两目标清单当作错误（“更新清单没有当前系统和架构的安装器”）。
+        // 修复：沿用“发现新版”状态并标记仅可手动下载，由 UI 打开 releaseUrl，不下载其他架构。
+        candidate = { manifest, asset: null };
+        publish({
+          kind: "update-available",
+          enabled,
+          version: manifest.version,
+          manualDownload: true,
+        });
+        return manualResult(manifest);
       }
       const selected = { manifest, asset };
       const cached = await verifyInstaller(installerPath(selected), asset);
@@ -240,7 +263,9 @@ export function createGithubDesktopUpdater(
       try {
         if (checkFlight) await checkFlight;
         if (!candidate) return { kind: "error", message: "请先检查并选择可用更新" };
-        const selected = candidate;
+        // 发布矩阵外的平台没有可校验的安装器，只返回手动下载结果，不改变状态。
+        if (!candidate.asset) return manualResult(candidate.manifest);
+        const selected: Candidate = candidate;
         if (download) {
           publish({
             kind: "download-progress",

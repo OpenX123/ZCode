@@ -1,5 +1,8 @@
 name: Build Mac ARM64 locally without publishing
 
+# 在正式标签 ref 上手动运行：gh workflow run build-macos-local.yml --ref v<version>
+# 版本取自该标签处的 package.json；本 job 同时生成本轮唯一的 Source Server 资源与 descriptor，
+# 不依赖其他 run 的会过期 artifact。Windows 本机构建通过 source_run_id 复用这里的 descriptor。
 on:
   workflow_dispatch:
 
@@ -9,17 +12,13 @@ permissions:
 
 jobs:
   build:
-    name: Build local Mac ARM64 installers
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    name: Build local Source Server resources and Mac ARM64 installers
+    if: ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/v1.') }}
     runs-on: [self-hosted, macOS, ARM64, zcode-macos]
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
       ZCODE_ENV: production
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY: "1"
-      SOURCE_RUN_ID: "44137427217"
-      RELEASE_VERSION: "1.4.1"
-      RELEASE_TAG: "v1.4.1"
       ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
     steps:
       - name: Checkout
@@ -38,39 +37,50 @@ jobs:
           node-version: 24.14.0
           cache: pnpm
 
-      - name: Validate source identity
-        shell: node {0}
-        run: |
-          const { SOURCE_RUN_ID, RELEASE_VERSION, RELEASE_TAG } = process.env;
-          if (!/^[1-9][0-9]*$/.test(SOURCE_RUN_ID)
-              || SOURCE_RUN_ID.trim() !== SOURCE_RUN_ID
-              || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(RELEASE_VERSION)
-              || RELEASE_VERSION.trim() !== RELEASE_VERSION
-              || RELEASE_TAG !== `v${RELEASE_VERSION}`) {
-            throw new Error("Invalid source run/version");
-          }
+      - name: Resolve release identity from package.json and tag
+        run: node scripts/github-release-version.mjs local-identity
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Restore the shared application version
-        run: node scripts/github-release-version.mjs apply
+      - name: Generate all four remote targets once
+        run: pnpm prepare:remote-assets
 
-      - name: Download exact shared release descriptor
-        uses: actions/download-artifact@v8
+      - name: Verify archives and pin release URLs
+        run: node scripts/github-release-assets.mjs pin --output release-resources
+
+      - name: Upload remote release resources
+        uses: actions/upload-artifact@v7
         with:
-          name: source-server-descriptor-v${{ env.RELEASE_VERSION }}
-          path: packages/desktop/mock-cdn/releases/${{ env.RELEASE_VERSION }}
-          run-id: ${{ env.SOURCE_RUN_ID }}
-          github-token: ${{ github.token }}
+          name: source-server-resources-${{ env.RELEASE_TAG }}
+          path: release-resources/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload shared desktop descriptor
+        uses: actions/upload-artifact@v7
+        with:
+          name: source-server-descriptor-${{ env.RELEASE_TAG }}
+          path: release-resources/source-server-release.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Keep only the pinned descriptor for the lightweight build
+        run: |
+          set -euo pipefail
+          rm -rf "packages/desktop/mock-cdn/releases/$RELEASE_VERSION"
+          mkdir -p "packages/desktop/mock-cdn/releases/$RELEASE_VERSION"
+          cp release-resources/source-server-release.json "packages/desktop/mock-cdn/releases/$RELEASE_VERSION/"
 
       - name: Build installer
         run: pnpm bundle:desktop -- --os mac --arch arm64
+        env:
+          ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY: "1"
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
         with:
-          name: local-macos-${{ env.RELEASE_VERSION }}-${{ github.run_id }}
+          name: ycode-mac-arm64-${{ env.RELEASE_TAG }}
           path: |
             packages/desktop/dist/*.dmg
             packages/desktop/dist/*.zip
@@ -80,7 +90,7 @@ jobs:
       - name: Upload package size audit
         uses: actions/upload-artifact@v7
         with:
-          name: local-macos-size-${{ env.RELEASE_VERSION }}-${{ github.run_id }}
+          name: package-size-report-mac-arm64-${{ env.RELEASE_TAG }}
           path: packages/desktop/dist/*.size-report.json
           if-no-files-found: error
           retention-days: 14

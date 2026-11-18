@@ -3,11 +3,12 @@ import type { UpdateStatePayload } from "@zcode/shared";
 /** Main 是更新状态唯一所有者；UI 只决定当前状态对应的用户动作。 */
 export function getDesktopUpdateAction(
   state: UpdateStatePayload | null,
-): "check" | "download" | "install" | null {
+): "check" | "download" | "install" | "open-release" | null {
   if (!state?.enabled) return null;
   switch (state.kind) {
     case "update-available":
-      return "download";
+      // 当前平台不在发布矩阵内时没有可自动安装的安装器，只能打开 Release 页面。
+      return state.manualDownload ? (state.releaseUrl ? "open-release" : null) : "download";
     case "update-downloaded":
       return "install";
     case "error":

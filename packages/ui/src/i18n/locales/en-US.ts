@@ -2274,6 +2274,12 @@ const enUS: Record<string, string> = {
     "Download, verify, and install the update; macOS restarts automatically",
   "desktopUpdate.downloadHint.windows": "Download and verify, then open the installer",
   "desktopUpdate.readyHint": "Installer ready. Click to install the update",
+  "desktopUpdate.manualDownload": "Download v{version}",
+  "desktopUpdate.manualDownloadHint":
+    "Download this platform's build manually from the Release page",
+  "desktopUpdate.manualDownloadFound":
+    "v{version} is available. Download this platform's build manually from the Release page.",
+  "desktopUpdate.openRelease": "Open Release page",
   "desktopUpdate.progress": "Update download progress",
   "desktopUpdate.up-to-date": "v{version} is up to date",
   "desktopUpdate.dev-skipped": "Updates are disabled in development",
