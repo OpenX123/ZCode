@@ -138,6 +138,46 @@ export async function ensureNodeRuntimeOnPath(
   env[key] = [bin, env[key]].filter(Boolean).join(platform === "win32" ? ";" : delimiter);
 }
 
+const CODEX_CONFIG_ENV = "CODEX_CONFIG";
+const CODEX_NATIVE_SUBAGENT_FEATURE = "multi_agent_v2";
+
+/**
+ * 修复前 Codex 子智能体只显示不可点击的工具行：codex-acp 2.2.2 的 `subagent_spawned` 只由 Codex
+ * `multi_agent_v2` 产生的 `subAgentActivity` 触发，而该特性默认关闭（2026-11-19 真实帧核查，见
+ * docs/desktop/external-agent-engines-spec.md「能力声明与协议形态」）。`CODEX_CONFIG` 是 adapter
+ * 随 thread/start 下发的会话配置 JSON：合并该特性、保留其余键（如 API Key 配置的 model），不写用户
+ * `config.toml`。它与 initialize 的 AIR `nativeSubagentSessions` 必须成对，因此覆盖同名设置；
+ * 非 JSON 对象原样保留，由 adapter 按既有行为报错。
+ */
+export function withCodexNativeSubagentConfig(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const keys = Object.keys(env).filter((key) => key.toUpperCase() === CODEX_CONFIG_ENV);
+  const raw = keys.map((key) => env[key]).find((value) => value !== undefined);
+  let config: Record<string, unknown> = {};
+  if (raw !== undefined && raw.trim()) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return env;
+      config = parsed as Record<string, unknown>;
+    } catch {
+      return env;
+    }
+  }
+  const features = config.features;
+  const next = {
+    ...config,
+    features: {
+      ...(features !== null && typeof features === "object" && !Array.isArray(features)
+        ? (features as Record<string, unknown>)
+        : {}),
+      [CODEX_NATIVE_SUBAGENT_FEATURE]: true,
+    },
+  };
+  const result = { ...env };
+  for (const key of keys) delete result[key];
+  result[CODEX_CONFIG_ENV] = JSON.stringify(next);
+  return result;
+}
+
 /**
  * 运行时启动时已把用户的代理/证书变量封存进 ZCODE_TOOL_ENV_PASSTHROUGH_JSON；adapter 与官方 CLI
  * 沿用工具子进程的既有恢复规则：恢复用户原值，YCode 显式代理、No Proxy 或 CA 覆盖对应变量。

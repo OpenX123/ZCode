@@ -1,0 +1,122 @@
+{
+  "_comment": "2026-11-19 codex-acp 2.2.2 + Codex CLI 0.156.0（multi_agent_v2 + AIR nativeSubagentSessions）真实帧脱敏：ID、cwd 与 messageId 已替换，帧形状与顺序保持原样。",
+  "mainSessionId": "019b0000-0000-7000-8000-00000000root",
+  "prompt": [
+    {
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": { "codex": { "threadStatus": { "type": "active", "activeFlags": [] } } }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "subagent_spawned",
+        "subagentSessionId": "019b0000-0000-7000-8000-00000backend",
+        "name": "Backend",
+        "task": "Delegated task for Backend",
+        "capabilities": {}
+      }
+    },
+    {
+      "sessionId": "019b0000-0000-7000-8000-00000backend",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": { "codex": { "threadStatus": { "type": "active", "activeFlags": [] } } }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "subagent_spawned",
+        "subagentSessionId": "019b0000-0000-7000-8000-0000reviewer",
+        "name": "Reviewer",
+        "task": "Delegated task for Reviewer",
+        "capabilities": {}
+      }
+    },
+    {
+      "sessionId": "019b0000-0000-7000-8000-00000backend",
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call_backend_sleep",
+        "name": "exec_command",
+        "kind": "execute",
+        "title": "powershell -NoProfile -Command Start-Sleep 20",
+        "status": "in_progress",
+        "content": [{ "type": "terminal", "terminalId": "call_backend_sleep" }],
+        "rawInput": {
+          "command": "powershell -NoProfile -Command Start-Sleep 20",
+          "cwd": "workspace"
+        },
+        "_meta": { "terminal_info": { "cwd": "workspace", "terminal_id": "call_backend_sleep" } }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "messageId": "msg_root_final",
+        "content": { "type": "text", "text": "已启动 Backend 和 Reviewer 两个子代理。" },
+        "_meta": { "jetbrains": { "air": { "version": 1, "phase": "final_answer" } } }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": { "codex": { "threadStatus": { "type": "idle" } } }
+      }
+    },
+    {
+      "sessionId": "019b0000-0000-7000-8000-00000backend",
+      "update": {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call_backend_sleep",
+        "status": "completed",
+        "_meta": {
+          "terminal_exit": { "exit_code": 0, "signal": null, "terminal_id": "call_backend_sleep" }
+        }
+      }
+    },
+    {
+      "sessionId": "019b0000-0000-7000-8000-00000backend",
+      "update": { "sessionUpdate": "usage_update", "used": 20640, "size": 258400 }
+    },
+    {
+      "sessionId": "019b0000-0000-7000-8000-00000backend",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "messageId": "msg_backend_final",
+        "content": { "type": "text", "text": "完成" },
+        "_meta": { "jetbrains": { "air": { "version": 1, "phase": "final_answer" } } }
+      }
+    },
+    {
+      "sessionId": "019b0000-0000-7000-8000-00000backend",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": { "codex": { "threadStatus": { "type": "idle" } } }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "subagent_state_update",
+        "subagentSessionId": "019b0000-0000-7000-8000-00000backend",
+        "state": "completed"
+      }
+    },
+    {
+      "sessionId": "019b0000-0000-7000-8000-0000reviewer",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "messageId": "msg_reviewer_final",
+        "content": { "type": "text", "text": "完成" },
+        "_meta": { "jetbrains": { "air": { "version": 1, "phase": "final_answer" } } }
+      }
+    },
+    {
+      "update": {
+        "sessionUpdate": "subagent_state_update",
+        "subagentSessionId": "019b0000-0000-7000-8000-0000reviewer",
+        "state": "completed"
+      }
+    }
+  ]
+}

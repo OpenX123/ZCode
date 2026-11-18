@@ -108,7 +108,10 @@ test("只为 Codex 声明 AIR sessionFailure 与 terminal_output_delta，两家�
     plan: {},
     subagents: {},
     _meta: {
-      jetbrains: { air: { version: 1, capabilities: ["sessionFailure"] } },
+      // codex-acp 只认 AIR nativeSubagentSessions（SDK schema 剥离 `subagents`）。
+      jetbrains: {
+        air: { version: 1, capabilities: ["sessionFailure", "nativeSubagentSessions"] },
+      },
       terminal_output_delta: true,
     },
   });
