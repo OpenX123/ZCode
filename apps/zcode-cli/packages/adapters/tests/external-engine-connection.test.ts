@@ -27,6 +27,7 @@ import {
   ensureNodeRuntimeOnPath,
   SCRUB_ELECTRON_RUN_AS_NODE_IMPORT,
   windowsNodeShimContent,
+  withCodexNativeSubagentConfig,
 } from "../src/external-engine/adapter-env.js";
 import {
   createExternalEnginePort,
@@ -76,7 +77,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   else if (message.method === "session/prompt") {
     prompt = message;
     const env = {};
-    for (const key of ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ELECTRON_RUN_AS_NODE", "ZCODE_TOOL_ENV_PASSTHROUGH_JSON"]) env[key] = process.env[key];
+    for (const key of ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ELECTRON_RUN_AS_NODE", "ZCODE_TOOL_ENV_PASSTHROUGH_JSON", "CODEX_CONFIG"]) env[key] = process.env[key];
     if (mode === "report") { text(JSON.stringify({ argv: process.argv.slice(1), execArgv: process.execArgv, env })); send({ id: message.id, result: { stopReason: "end_turn" } }); }
     else if (mode === "session-params") { text(JSON.stringify(sessionParams)); send({ id: message.id, result: { stopReason: "end_turn" } }); }
     else if (mode === "idle-push") {
@@ -333,6 +334,33 @@ describe("adapter 子进程环境", () => {
     expect(fromYcode.env.HTTPS_PROXY).toBe("http://ycode-proxy.example:7890");
     expect(fromYcode.env.HTTP_PROXY).toBe("http://ycode-proxy.example:7890");
     expect(fromYcode.env.NO_PROXY).toBe("localhost,.corp.example");
+  });
+
+  test("Codex adapter 的 CODEX_CONFIG 启用 multi_agent_v2 并保留既有键，Claude 不注入", async () => {
+    const codex = await setup("codex", {
+      FIXTURE_MODE: "report",
+      CODEX_CONFIG: JSON.stringify({ model: "model-a", features: { multi_agent_v2: false, x: 1 } }),
+    });
+    const fromCodex = await reported(codex.port, turn("codex"));
+    expect(JSON.parse(fromCodex.env.CODEX_CONFIG ?? "{}")).toEqual({
+      model: "model-a",
+      features: { multi_agent_v2: true, x: 1 },
+    });
+    const claude = await setup("claude-code", { FIXTURE_MODE: "report" });
+    const fromClaude = await reported(claude.port, turn("claude-code"));
+    expect(fromClaude.env.CODEX_CONFIG).toBeUndefined();
+  });
+
+  test("CODEX_CONFIG 合并：缺省新建、大小写不敏感去重、非 JSON 对象原样保留", () => {
+    expect(withCodexNativeSubagentConfig({ PATH: "p" })).toEqual({
+      PATH: "p",
+      CODEX_CONFIG: '{"features":{"multi_agent_v2":true}}',
+    });
+    expect(withCodexNativeSubagentConfig({ codex_config: '{"model":"m"}' })).toEqual({
+      CODEX_CONFIG: '{"model":"m","features":{"multi_agent_v2":true}}',
+    });
+    for (const raw of ["not json", "[1]", "null"])
+      expect(withCodexNativeSubagentConfig({ CODEX_CONFIG: raw })).toEqual({ CODEX_CONFIG: raw });
   });
 
   test("Claude API Key 只出现在 adapter 环境，不进入 argv 或回调", async () => {

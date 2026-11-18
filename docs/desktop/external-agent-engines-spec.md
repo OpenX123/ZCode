@@ -1144,8 +1144,15 @@ sequenceDiagram
 
 ### 能力声明与协议形态
 
-- 两家 initialize 都声明 `clientCapabilities.subagents: {}`。AIR 决策不变：仅 Codex 声明 `_meta.jetbrains.air`（sessionFailure）与 `terminal_output_delta`；Claude 不声明 AIR。
+- 两家 initialize 都声明 `clientCapabilities.subagents: {}`。AIR 决策不变：仅 Codex 声明 `_meta.jetbrains.air` 与 `terminal_output_delta`；Claude 不声明 AIR。Codex 的 AIR `capabilities` 为 `["sessionFailure", "nativeSubagentSessions"]`。
+- Codex 原生子会话需要两项同时成立（2026-11-19 本机 codex-acp 2.2.2 + Codex CLI 0.156.0 真实帧核查）：
+  - 客户端能力：codex-acp 用 SDK 的 `zClientCapabilities` 解析 initialize，该 schema 不含 `subagents`，`subagents: {}` 在 adapter 内被剥离；adapter 只认 AIR `capabilities` 中的 `nativeSubagentSessions`。只声明 `subagents: {}` 时 adapter 走旧工具行（multi-agent v1 为 `spawnAgent`，v2 为 `Start subagent <name>` / `Complete subagent <name>`）。
+  - Codex 特性：`subagent_spawned` 只由 app-server 的 `subAgentActivity` 条目触发，该条目来自 `multi_agent_v2`（Codex CLI `features list` 中为 stable、默认 false）。v1 的 `spawnAgent` 只登记待宣告子会话，子线程通知被缓冲后随子轮结束丢弃，因此只声明能力而不启用 v2 会比降级展示更差。
+  - 启用方式：YCode 启动 Codex adapter 时在 `CODEX_CONFIG`（codex-acp 读取的会话配置 JSON，随 `thread/start` 下发，不写任何 `config.toml`）合并 `features.multi_agent_v2 = true`，保留其余键（如 API Key 配置的 `model`）；该值覆盖用户或继承环境里的同名设置，因为能力声明与特性必须成对。`CODEX_CONFIG` 不是合法 JSON 对象时原样保留，由 adapter 按既有行为报错。不新增 `ZCODE_` 环境变量，不修改用户全局 `~/.codex/config.toml`。
+  - 已核查的其他开关：`codex -c features.multi_agent_v2=true` 只能加在 app-server 启动参数上，adapter 不开放该入口；adapter 没有专门的环境变量或 initialize 选项。
 - 因此 Codex 2.2.2 走 AIR 草案形态：父会话收到 `subagent_spawned {subagentSessionId, name, task, prompt?, capabilities}` 与 `subagent_state_update {subagentSessionId, state: completed|failed|cancelled|disconnected}`；子会话的正文、工具、usage 与权限请求以子 sessionId（Codex thread id）到达；重开的子会话 ID 为 `<thread>:generation:N`；嵌套子会话的 spawned 发在其直接父子会话上；`session/load` 先回放 spawned、子会话历史，再以 `disconnected` 收尾未终止的子会话。Codex 声明的 `capabilities` 为空，不支持取消。
+- Codex v2 真实形状（2026-11-19 抓帧，脱敏）：主会话不再出现派发工具行；`subagent_spawned {subagentSessionId: <子 thread id>, name: "Backend", task: "Delegated task for Backend", capabilities: {}}`，`name` 由 adapter 从 v2 `agentPath`（如 `/root/backend`）末段首字母大写得到，`agentPath` 为空时为 `Agent <thread 末 8 位>`；v2 派发不经 `spawnAgent`，adapter 没有委派提示，`task` 固定为 `Delegated task for <name>`，不带 `prompt`。子会话随后以子 thread id 发 `session_info_update`、`tool_call`（`exec_command`）、`tool_call_update`、`agent_message_chunk`、`usage_update`；子轮结束时父会话收到 `subagent_state_update {state: "completed"}`。主会话的 prompt 在全部子会话结束后才返回（adapter 等待未结束子会话，上限 10 分钟后按失败收尾）。
+- 名称规则：取 AIR `name`；`name` 缺失或等于 adapter 的兜底名 `Agent <末 8 位>` 时，若帧带 `prompt` 且首个非空行为 `Title: <title>`，取该标题；否则用兜底名。当前 v2 帧不带 `prompt`，标题实际来自 `agentPath`，主会话指令中的 `Title:` 约定只在 adapter 开始转发提示词后生效。
 - Claude 0.95.0 走 RFD 形态：父会话收到 `subagent_update {sessionId, title?, description?, capabilities?, state?}`（首条宣告子会话，`capabilities.cancel` 表示可经 `session/cancel {sessionId: 子}` 停止当前工作），`state` 取值 running / requires_action / idle（stopReason end_turn|cancelled|error，或缺省）/ unknown；提示词以 `session_message` 同时投给父（发送视图）与子（接收视图，`recipientSessionId=子`），前台子会话的回答以 `session_message {messageId:"<launch>:reply", senderSessionId:子}` 发回父会话。RFD 形态隐藏父会话中的 Agent/Task 工具行；idle 子会话可再次 running 并沿用原 sessionId。
 - 未声明原生形态的旧 adapter 仍发普通工具行（Codex `spawnAgent` / `sendInput` / `resumeAgent` / `followupTask`，`Start subagent X`），只作降级展示，见“界面降级识别”。
 
@@ -1271,6 +1278,7 @@ sequenceDiagram
 - 嵌套子会话挂在直接父子会话；`:generation:N` 建新记录；RFD 同 ID 再运行沿用记录；`session/load` 回放不新增子会话行。
 - 子会话权限进入父会话待处理交互并带来源，应答回原生 optionId；可取消/不可取消两种 Stop；未知子 ID 丢弃；父 + 子冷恢复后 `snapshot.subagents`、Agent 行与子正文一致；界面识别 camelCase `spawnAgent`。
 - reply-only、最终正文逐字相同/不同/仅部分包含、空白 reply、重复终态、取消/失败和嵌套回归须同时检查持久化 part、writer.response 对应的 TurnComplete.response、父摘要与冷恢复投影；最终正文必须先于 assistant 终态和 TurnComplete/TurnError 落库。
+- Codex 启用：initialize 的 AIR `capabilities` 含 `nativeSubagentSessions`；adapter 子进程的 `CODEX_CONFIG` 含 `features.multi_agent_v2 = true` 且保留既有 `model`，Claude 不注入；v2 真实形状脱敏夹具（无 `prompt`、`task` 为 `Delegated task for <name>`、子会话 `exec_command` 工具与正文、`completed` 收尾）建出以 AIR `name` 为标题的子会话并在结束后 running 变 ended；`name` 缺失时取 `prompt` 首行 `Title:`。
 - 夹具通过不等于真实供应商验收：真实 Claude/Codex 子智能体、Windows 整机需另行验证。
 
 # ACP 输出媒体（UX05）

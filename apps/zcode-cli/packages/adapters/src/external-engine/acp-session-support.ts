@@ -22,13 +22,26 @@ type JsonObject = Record<string, unknown>;
  * - Claude 的 AIR 会去掉审批预览/读取结果正文并切换子智能体协议，因此仍不声明。
  * 1.1.0 两家都声明 `subagents`：Codex 作为 AIR 客户端得到 AIR 草案形态，Claude 得到 RFD 形态
  * （docs/desktop/external-agent-engines-spec.md「外部引擎原生子智能体」）。
+ * 修复：codex-acp 2.2.2 的 SDK schema 剥离 `subagents`，只认 AIR `nativeSubagentSessions`，此前 Codex
+ * 子智能体一直走旧工具行；该能力须与启动时启用的 `multi_agent_v2`（adapter-env.ts）成对。
  */
+const CODEX_AIR_CAPABILITY_META = {
+  jetbrains: {
+    air: {
+      ...AIR_SESSION_FAILURE_CAPABILITY_META.jetbrains.air,
+      capabilities: [
+        ...AIR_SESSION_FAILURE_CAPABILITY_META.jetbrains.air.capabilities,
+        "nativeSubagentSessions",
+      ],
+    },
+  },
+};
 export function clientCapabilities(engine: ExternalEngineSessionInput["engine"]): JsonObject {
   return engine === "codex"
     ? {
         plan: {},
         subagents: {},
-        _meta: { ...AIR_SESSION_FAILURE_CAPABILITY_META, terminal_output_delta: true },
+        _meta: { ...CODEX_AIR_CAPABILITY_META, terminal_output_delta: true },
       }
     : { plan: {}, subagents: {} };
 }

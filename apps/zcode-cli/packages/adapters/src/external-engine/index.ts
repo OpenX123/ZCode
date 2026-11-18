@@ -23,6 +23,7 @@ import {
   adapterLaunchArgs,
   ensureClaudeGitBashPath,
   ensureNodeRuntimeOnPath,
+  withCodexNativeSubagentConfig,
   withNetworkEgressEnv,
 } from "./adapter-env.js";
 import type { ExternalEngineAdapterOptions } from "./contract.js";
@@ -192,6 +193,8 @@ export function createExternalEnginePort(
     const resolved = await identity.materialize(childEnv);
     // 修复前沿用 CLI 时 adapter 丢失用户的代理/证书变量；按工具子进程的既有规则恢复，YCode 显式配置优先。
     childEnv = withNetworkEgressEnv(resolved.env, env);
+    // Codex 原生子会话需要 multi_agent_v2 与 AIR nativeSubagentSessions 成对启用（adapter-env.ts）。
+    if (input.engine === "codex") childEnv = withCodexNativeSubagentConfig(childEnv);
     // 命中只检查已解析绝对入口的文件身份，不重复扫描 PATH 或重新解析 Windows shim。
     const paths = [entry, executable, ...(official && isAbsolute(official) ? [official] : [])];
     const fingerprints = await Promise.all(

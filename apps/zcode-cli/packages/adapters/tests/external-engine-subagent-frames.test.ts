@@ -62,6 +62,66 @@ describe("AIR 草案形态（Codex）", () => {
     });
   });
 
+  test("multi_agent_v2 真实形状（脱敏）：名称来自 agentPath，task 为 adapter 兜底，无 prompt", () => {
+    // 2026-11-19 codex-acp 2.2.2 + Codex CLI 0.156.0 抓帧，ID 已替换。
+    expect(
+      readSubagentFrame(
+        MAIN,
+        MAIN,
+        {
+          sessionUpdate: "subagent_spawned",
+          subagentSessionId: "thread-backend",
+          name: "Backend",
+          task: "Delegated task for Backend",
+          capabilities: {},
+        },
+        none,
+      ),
+    ).toEqual({
+      events: [
+        {
+          type: "spawned",
+          nativeSessionId: "thread-backend",
+          name: "Backend",
+          task: "Delegated task for Backend",
+          cancellable: false,
+        },
+      ],
+    });
+    expect(
+      readSubagentFrame(
+        MAIN,
+        MAIN,
+        { sessionUpdate: "subagent_state_update", subagentSessionId: "thread-backend", state: "completed" },
+        known("thread-backend"),
+      ),
+    ).toEqual({ events: [{ type: "state", nativeSessionId: "thread-backend", state: "completed" }] });
+  });
+
+  test("name 缺失或为 adapter 兜底名时取 prompt 首行 Title:，AIR name 优先", () => {
+    const spawn = (name: string | undefined, prompt: string | undefined) => {
+      const result = readSubagentFrame(
+        MAIN,
+        MAIN,
+        {
+          sessionUpdate: "subagent_spawned",
+          subagentSessionId: "thread-abcdefgh12345678",
+          ...(name === undefined ? {} : { name }),
+          ...(prompt === undefined ? {} : { prompt }),
+          capabilities: {},
+        },
+        none,
+      );
+      return "events" in result ? (result.events[0] as { name?: string }).name : undefined;
+    };
+    const fallback = fallbackSubagentName("thread-abcdefgh12345678");
+    expect(spawn(undefined, "\n  Title: 后端检查  \n继续执行")).toBe("后端检查");
+    expect(spawn(fallback, "title: Reviewer\n...")).toBe("Reviewer");
+    expect(spawn("Backend", "Title: Reviewer")).toBe("Backend");
+    expect(spawn(undefined, "先做 X\nTitle: 不是首行")).toBe(fallback);
+    expect(spawn(undefined, "Title:   ")).toBe(fallback);
+  });
+
   test("重复宣告幂等；state 映射 disconnected→lost；未知子会话与非法值判为无效", () => {
     const spawned = {
       sessionUpdate: "subagent_spawned",

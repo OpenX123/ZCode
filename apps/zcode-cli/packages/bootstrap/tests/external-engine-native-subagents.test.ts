@@ -627,6 +627,68 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
     ).toBe(initializesBefore);
   });
 
+  it("Codex multi_agent_v2 真实形状：声明 nativeSubagentSessions，子会话以 AIR name 为标题并在结束后转为 ended", async () => {
+    const context = await setup("codex", "codex-air-v2.json");
+    const sessionId = createSessionId();
+    const { runtime, events } = createRuntime(context, "codex", sessionId);
+    await runtime.executeTurn("派两个子智能体");
+
+    const initialize = (await context.clientMessages()).find(
+      (message) => message.method === "initialize",
+    );
+    expect(
+      (initialize?.params as { clientCapabilities?: { _meta?: unknown } }).clientCapabilities
+        ?._meta,
+    ).toMatchObject({
+      jetbrains: { air: { capabilities: ["sessionFailure", "nativeSubagentSessions"] } },
+    });
+
+    const backendId = childIdOf(events, "019b0000-0000-7000-8000-00000backend");
+    const reviewerId = childIdOf(events, "019b0000-0000-7000-8000-0000reviewer");
+    expect(await context.sessionStore.getSession(backendId as SessionId)).toMatchObject({
+      taskType: "subagent_child",
+      parentID: sessionId,
+      title: "Backend",
+    });
+    expect(await context.sessionStore.getSession(reviewerId as SessionId)).toMatchObject({
+      title: "Reviewer",
+    });
+    // v2 帧不带 prompt：首条 user 为 adapter 兜底 task；子会话工具与正文写入子会话。
+    const backendMessages = await context.sessionStore.messages({
+      sessionID: backendId as SessionId,
+    });
+    expect(backendMessages[0]?.info.role).toBe("user");
+    expect(backendMessages.flatMap((message) => message.parts)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "text", text: "Delegated task for Backend" }),
+        expect.objectContaining({
+          type: "tool",
+          state: expect.objectContaining({ status: "completed" }),
+        }),
+        expect.objectContaining({ type: "text", text: "完成" }),
+      ]),
+    );
+    const parentText = (await context.sessionStore.messages({ sessionID: sessionId }))
+      .flatMap((message) => message.parts)
+      .flatMap((part) => (part.type === "text" ? [part.text] : []))
+      .join("");
+    expect(parentText).toContain("已启动 Backend 和 Reviewer 两个子代理。");
+    expect(parentText).not.toContain("Delegated task");
+
+    const live = projectionOf(sessionId, events);
+    expect(live.getSnapshot().subagents).toMatchObject({
+      childSessionIds: [backendId, reviewerId],
+      running: [],
+      endedTotal: 2,
+    });
+    expect(
+      live
+        .getSnapshot()
+        .rows.window.filter((row) => row.kind === "subagent")
+        .map((row) => (row as { status?: string }).status),
+    ).toEqual(["success", "success"]);
+  });
+
   it("Claude RFD 形态：委派提示作为子会话首条消息，可取消子会话经原生 session/cancel 停止，父轮正常结束时未结束的跨轮继续运行", async () => {
     const context = await setup("claude-code", "claude-rfd.json");
     const sessionId = createSessionId();

@@ -65,6 +65,14 @@ export function fallbackSubagentName(nativeSessionId: string): string {
   return `Agent ${nativeSessionId.slice(-FALLBACK_NAME_SUFFIX_LENGTH)}`;
 }
 
+const PROMPT_TITLE_PATTERN = /^title:\s*(.+)$/i;
+
+/** 主会话被要求在子智能体提示词首个非空行写 `Title: <title>`；没有则返回 undefined。 */
+function promptTitle(prompt: string | undefined): string | undefined {
+  const first = prompt?.split(/\r?\n/).find((line) => line.trim());
+  return text(PROMPT_TITLE_PATTERN.exec(first?.trim() ?? "")?.[1]?.trim());
+}
+
 function contentText(value: unknown): string | undefined {
   if (!Array.isArray(value)) return undefined;
   const parts = value.flatMap((item) => {
@@ -140,13 +148,16 @@ export function readSubagentFrame(
       const capabilities = record(update.capabilities);
       const task = text(update.task);
       const prompt = text(update.prompt);
+      // adapter 在 agentPath 为空时自填 `Agent <末 8 位>`，视同缺失，再看提示词首行的 `Title:` 约定。
+      const nativeName = text(update.name);
+      const named = nativeName !== fallbackSubagentName(id) ? nativeName : undefined;
       return {
         events: [
           {
             type: "spawned",
             nativeSessionId: id,
             ...(parentNativeSessionId ? { parentNativeSessionId } : {}),
-            name: text(update.name) ?? fallbackSubagentName(id),
+            name: named ?? promptTitle(prompt) ?? fallbackSubagentName(id),
             ...(task ? { task } : {}),
             ...(prompt ? { prompt } : {}),
             cancellable: capabilities?.cancel === true,
