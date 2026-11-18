@@ -234,6 +234,10 @@ export interface ZCodeSessionStoreState {
     workspaceIdentity?: string,
   ) => void;
   invalidateDraftRuntime: (workspacePath: string, workspaceIdentity?: string) => void;
+  /** 释放命中谓词的草稿项目归属并重建预热；判定已删项目归项目目录 owner。 */
+  releaseDraftProjects: (
+    shouldRelease: (projectId: string, workspaceKey: string) => boolean,
+  ) => void;
   requestComposerTextInsert: (
     workspacePath: string,
     text: string,

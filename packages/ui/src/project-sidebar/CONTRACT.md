@@ -40,6 +40,8 @@ UI 纠偏：分区复用 WorkspacePurposeSection 和原折叠/顺序偏好；项
 
 编辑器的 roots/primary 只属于表单草稿，保存才通过 saveProject 提交；有 roots 显示紧凑列表和末行添加，空 roots 才展示整块空态。已有项目的删除入口复用 deleteProject，并携带原 hostId；成功刷新后关闭，失败保留弹窗，保存/删除互斥。主要目录只决定后续新任务 cwd，不重绑旧任务。
 
+已删除项目的草稿归属由常驻目录 owner（`ProjectDirectoryProvider`）统一释放：权威树（`includeDeleted`）出现 `deleted: true` 的 Host + project 时，将工作区草稿 `draftProjectId/draftTaskGroupId` 与工作台草稿 Tab 的 `projectId/taskGroupId` 释放为 null（工作台复用 `newDraft` 的 `replaceDraftTabId` 原地改选，不新增布局命令；Host 与项目菜单对 null 与缺省同视为未选项目），草稿回到“选择项目”并重建预热，不再携带已删项目 ID 调用 createSession（否则 Host 抛 `project.deleted`）。只以确定的 deleted 事实为准，树未加载或项目缺失时不清除；本窗口删除、其他窗口删除与本地残留旧草稿共用这一条路径，删除入口不各自清理。已绑定会话不受影响。
+
 旧体验保留：按项目选择器复用运行层稳定排序和更新时间，从同 Host/project 的未归档成员（含置顶）派生收起未读点。偏好 hook 只拥有视图/折叠的 browser persistence；项目点击无导航。任务交互 owner 只保存尚在途的 pin 意图，Host 树始终是唯一已提交行集合；归档成功复用 UI 清理。任务行按 Shell 当前 workspaceKey 定位选中态，手机标记按完整目标地址；只有置顶区任务提供文件树按钮，按任务固化 cwd 与精确 identity/session 打开，不读取项目新主目录。远端同步/日志沿用既有接口与桌面 SSH/WSL、手机 replayable 边界，不新增业务状态所有者。
 
 项目折叠复用共享 Collapsible 的 300ms 高度与淡入淡出，单一 open 值仍来自偏好 owner；不能条件卸载跳过收起动效。普通任务行不传递文件树回调；置顶区任务复用同一文件树 owner 和请求序号，手机沿用可信切换，晚到结果不得覆盖关闭或新选择。项目文件入口与原右键/归档/置顶保留。

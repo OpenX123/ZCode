@@ -478,6 +478,33 @@ describe("useZCodeSessionStore provider preference", () => {
     expect(useZCodeSessionStore.getState().getWorkspaceState(path).draftProjectId).toBeNull();
   });
 
+  it("已删项目的草稿归属被释放为未选项目并重建预热，不影响其他工作区", () => {
+    const store = useZCodeSessionStore.getState();
+    store.startDraft("/deleted-draft", undefined, undefined, {
+      projectId: "gone",
+      taskGroupId: "g",
+    });
+    store.startDraft("/alive-draft", undefined, undefined, { projectId: "alive" });
+    store.startDraft("/outside-draft", undefined, undefined, { projectId: null });
+    const before = useZCodeSessionStore.getState();
+    const deletedBefore = before.getWorkspaceState("/deleted-draft");
+    const alive = before.getWorkspaceState("/alive-draft");
+    store.releaseDraftProjects((projectId) => projectId === "gone");
+    const after = useZCodeSessionStore.getState();
+    expect(after.getWorkspaceState("/deleted-draft")).toMatchObject({
+      draftProjectId: null,
+      draftTaskGroupId: null,
+      draftRuntimeInvalidationVersion: deletedBefore.draftRuntimeInvalidationVersion + 1,
+      draftRuntime: { status: "idle", error: null },
+    });
+    expect(after.getWorkspaceState("/alive-draft")).toBe(alive);
+    // 显式“项目外”（null）不是项目引用，不参与释放；已释放的草稿再次判定也不重复递增版本。
+    expect(after.getWorkspaceState("/outside-draft").draftProjectId).toBeNull();
+    store.releaseDraftProjects((projectId) => projectId === "gone");
+    store.releaseDraftProjects(() => false);
+    expect(useZCodeSessionStore.getState().workspaces).toBe(after.workspaces);
+  });
+
   it("workspaceIdentity overlay 应优先读取 identity 桶的瞬时状态", () => {
     const workspacePath = "/tmp/workspace-remote-transient-state";
     const workspaceIdentity =

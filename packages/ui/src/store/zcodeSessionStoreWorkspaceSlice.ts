@@ -305,6 +305,30 @@ export function createWorkspaceSlice(set: SetFn) {
       );
     },
 
+    releaseDraftProjects: (
+      shouldRelease: (projectId: string, workspaceKey: string) => boolean,
+    ) => {
+      set((state) => {
+        let workspaces: typeof state.workspaces | null = null;
+        for (const [workspaceKey, current] of Object.entries(state.workspaces)) {
+          if (typeof current.draftProjectId !== "string") continue;
+          if (!shouldRelease(current.draftProjectId, workspaceKey)) continue;
+          workspaces ??= { ...state.workspaces };
+          // 修复：已删项目 ID 残留在草稿上，预热 createSession 被 Host 拒为 project.deleted；
+          // 释放为 null（与工作台草稿复用 newDraft 改选为 null 一致；Host 与项目菜单对 null/缺省
+          // 均视为未选项目），并与换项目一致递增版本，让预热按新归属重建。
+          workspaces[workspaceKey] = {
+            ...current,
+            draftProjectId: null,
+            draftTaskGroupId: null,
+            draftRuntimeInvalidationVersion: current.draftRuntimeInvalidationVersion + 1,
+            draftRuntime: { status: "idle", error: null },
+          };
+        }
+        return workspaces ? { workspaces } : state;
+      });
+    },
+
     requestComposerTextInsert: (
       workspacePath: string,
       text: string,
