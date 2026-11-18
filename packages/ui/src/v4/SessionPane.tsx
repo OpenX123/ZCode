@@ -881,6 +881,14 @@ export function SessionPane({
   const draftRuntimeInvalidationVersion = draftTabId
     ? tabDraftRuntimeInvalidationVersion
     : workspaceDraftRuntimeInvalidationVersion;
+  // 与工作区草稿 newDraft 换项目递增版本一致：Tab 草稿归属变化（改选或已删项目被释放）后，
+  // 预热会话按旧项目创建且可能已失败于 project.deleted，必须按新归属重建，不能沿用旧预热。
+  const observedDraftProjectIdRef = useRef(draftProjectId);
+  useEffect(() => {
+    if (!draftTabId || observedDraftProjectIdRef.current === draftProjectId) return;
+    observedDraftProjectIdRef.current = draftProjectId;
+    setTabDraftRuntimeInvalidationVersion((version) => version + 1);
+  }, [draftTabId, draftProjectId]);
   const invalidateOwnedDraftRuntime = useCallback(() => {
     // 切换某一 Tab 的引擎只重建它自己的预热，避免中断同项目另一栏的草稿。
     if (draftTabId) setTabDraftRuntimeInvalidationVersion((version) => version + 1);

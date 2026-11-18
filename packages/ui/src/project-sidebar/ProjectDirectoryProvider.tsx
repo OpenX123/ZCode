@@ -7,6 +7,12 @@ import { useProjectSidebarPreferences } from "@/project-sidebar/useProjectSideba
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { useTaskGroups } from "@/project-sidebar/useTaskGroups.js";
 import { selectSortedProjects } from "@/project-sidebar/view.js";
+import {
+  remoteHostIdFromWorkspaceIdentity,
+  type VirtualProject,
+} from "@/project-sidebar/contract.js";
+import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { useWorkbenchTabsStore, workbenchWorkspaceKey } from "@/v4/workbench-tabs/index.js";
 
 function useDirectoryState(isDesktop: boolean) {
   const result = useProjectTree(isDesktop);
@@ -60,8 +66,55 @@ function DirectoryOwner({ children, isDesktop }: { children: ReactNode; isDeskto
   useEffect(() => {
     platform?.syncWindowUnreadCount(notificationEnabled ? unreadTaskCount : 0);
   }, [platform, notificationEnabled, unreadTaskCount]);
+  useReleaseDeletedProjectDrafts(directory.factTree.projects);
   return <Context.Provider value={directory}>{children}</Context.Provider>;
 }
+/**
+ * 修复「连接引擎失败: project.deleted」：项目被删除后草稿仍保留其 ID，界面按过滤后的列表显示
+ * “选择项目”，预热却带着已删 ID 调用 createSession。目录 owner 是唯一知道删除事实的常驻方，
+ * 在此统一释放两类草稿归属，覆盖本窗口、其他窗口删除与本地残留草稿；只认 deleted 事实。
+ */
+function useReleaseDeletedProjectDrafts(projects: readonly VirtualProject[]) {
+  const shouldRelease = useMemo(() => deletedProjectDraftMatcher(projects), [projects]);
+  useEffect(() => {
+    if (shouldRelease) releaseDeletedProjectDrafts(shouldRelease);
+  }, [shouldRelease]);
+}
+
+/** 两类草稿归属的唯一释放路径；工作台复用 newDraft 原地改选，不新增布局命令。 */
+export function releaseDeletedProjectDrafts(
+  shouldRelease: (projectId: string, workspaceKey: string) => boolean,
+) {
+  const workbench = useWorkbenchTabsStore.getState();
+  for (const tab of Object.values(workbench.tabs)) {
+    if (tab.sessionId !== null || typeof tab.projectId !== "string") continue;
+    if (!shouldRelease(tab.projectId, workbenchWorkspaceKey(tab.workspaceScope))) continue;
+    // 分组隶属于项目，一并释放，否则首发仍落到已删项目的分组。
+    workbench.newDraft(tab.workspaceScope, {
+      replaceDraftTabId: tab.id,
+      projectId: null,
+      taskGroupId: null,
+    });
+  }
+  useZCodeSessionStore.getState().releaseDraftProjects(shouldRelease);
+}
+
+/** 按 Host + project 精确匹配已删项目；本地工作区 key 不是远端 identity 时属于 local Host。 */
+export function deletedProjectDraftMatcher(
+  projects: readonly Pick<VirtualProject, "id" | "hostId" | "deleted">[],
+): ((projectId: string, workspaceKey: string) => boolean) | null {
+  const deleted = new Set(
+    projects
+      .filter((project) => project.deleted)
+      .map((project) => JSON.stringify([project.hostId, project.id])),
+  );
+  if (!deleted.size) return null;
+  return (projectId, workspaceKey) =>
+    deleted.has(
+      JSON.stringify([remoteHostIdFromWorkspaceIdentity(workspaceKey) ?? "local", projectId]),
+    );
+}
+
 export function useProjectDirectory() {
   const directory = useContext(Context);
   if (!directory) throw new Error("project.directory-provider-required");
