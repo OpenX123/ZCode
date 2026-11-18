@@ -9,6 +9,7 @@
 工作区没有引擎服务（远程工作区、Web）时草稿使用 YCode，不写回默认偏好；引擎切换行不渲染（W2 起不再灰显说明，`externalEngineUnavailableReason` 已删除）。
 `hooks/external-engine` 的 `useEngineConfigMemory` 按引擎与连接记忆 snapshot 确认的显式模型、思考深度与权限模式（`isRememberableEngineConfig` 判定，计划类模式不记；2026-11-09 起），写本机 AppSettings.externalEngineConnectionConfigPreferences 增量，旧 externalEngineConfigPreferences 仅兼容读取；只对本生命周期新固定外部引擎的草稿，在预热会话原生配置 ready 后经既有 setEngineConfigOption 链路按目录恢复一次（模型 → 深度 → 模式；该引擎 + 连接的有效记忆没有思考深度项时按项默认深度 high（与模型/模式记忆无关，按恢复到该项时的目录判断），只下发不写记忆）；逐项推进以 ACK 带回的确认配置为准，引擎改用其它值或保留旧值即停止。
 2026-11-08 起草稿不显示“正在连接引擎…”：creating（owner `pending`）与 connecting 阶段经 `configPending` 只把原生配置选择器显示为禁用，引擎仍可改选（连接在设置页管理），发送入口可用；首发由 SessionPane 发送链等待就绪与 `useEngineConfigMemory.waitForRestore` 收口后才 `sendText`。预热只在 pane 首次可见后启动。`loading`（连接中文案）只用于已有会话。
+2026-11-19 切换行只在入口弹层内，弹层只由点击入口打开：`EngineControls.activePicker` 与 `ConversationComposer.configPickerState` 以入口控件族（YCode / 外部引擎）为 scope，YCode ↔ 外部引擎切换后新入口一律关闭态，外部引擎之间切换保持打开。切换行为三等分网格、名称不截断；挂载它的弹层/菜单使用公开的 `ENGINE_SWITCH_HOST_CLASS`（`max(18rem, 切换行内容宽度)`，其余直接子节点 `contain: inline-size`，切换行宿主带 `data-engine-switch-host`）。
 创建后的会话在模型入口弹层顶部只读显示当前引擎（TaskClientLogo + 名称），不提供切换动作；入口按钮本身显示 14px 引擎图标。
 历史会话行经公开 TaskClientLogo 消费 CLI 镜像的 task.engine，缺省使用应用自有 Logo；图标为本地资源，无网络请求或状态写入。
 引擎配置来自 snapshot.config.engineConfigOptions，选择原样回传 setEngineConfigOption。模型与普通枚举菜单复用共享下拉层的可用高度、视口宽度和纵向滚动，保持目录顺序且菜单不越出视口，所有选项均可滚动到达并点击。

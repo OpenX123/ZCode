@@ -887,6 +887,141 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     }
   });
 
+  // external-agent-engines-spec「Composer 引擎切换…」唯一入口与锚点（2026-11-19）：YCode ↔ 外部引擎往返后
+  // 新入口不得沿用旧打开态自动弹出（修复前只剩切换行的小浮层盖在输入框 placeholder 上，像第二个入口）；
+  // 弹层锚定右下角入口向上弹出，三段等宽且「Claude Code」完整显示，覆盖深浅主题与中英文。
+  it("R3 引擎切换浮层：往返切换不自动弹出、锚定入口向上弹出、三段等宽名称完整", async () => {
+    await installExternalEngineFixtures();
+    await prepareV4ConversationE2E({ skipProvider: true });
+    const artifact = process.env.ZCODE_E2E_ARTIFACT_DIR!;
+    const openLayers = () =>
+      browser.execute(() =>
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            '[data-testid="engine-model-popover"], [data-testid="composer-engine-switch-item"]',
+          ),
+        ]
+          .filter((element) => element.getClientRects().length > 0)
+          .map((element) => element.dataset.testid),
+      );
+    const expectNoLayerAfterSwitch = async (engine: "zcode" | "claude-code", label: string) => {
+      const trigger = await composerModelTrigger();
+      await trigger.waitForClickable({ timeout: 30000 });
+      await trigger.click();
+      await (await displayed(`[data-testid="engine-switch-option-${engine}"]`)).click();
+      await browser.waitUntil(async () => (await composerEngine()) === engine, {
+        timeout: 30000,
+        timeoutMsg: `切换到 ${engine} 后入口图标必须刷新`,
+      });
+      // 给 Radix 一帧挂载时间：修复前新入口在这里带着旧打开态自动弹出。
+      await browser.pause(500);
+      expect({ step: label, layers: await openLayers() }).toEqual({ step: label, layers: [] });
+    };
+    await selectDraftEngine("zcode");
+    await expectNoLayerAfterSwitch("claude-code", "YCode → Claude Code");
+    await expectNoLayerAfterSwitch("zcode", "Claude Code → YCode");
+    await expectNoLayerAfterSwitch("claude-code", "YCode → Claude Code（往返）");
+
+    const measure = () =>
+      browser.execute(() => {
+        const visible = (selector: string) =>
+          [...document.querySelectorAll<HTMLElement>(selector)].find(
+            (element) => element.getClientRects().length > 0,
+          );
+        const row = visible('[data-testid="engine-switch-row"]')!;
+        const layer = row.closest<HTMLElement>(
+          '[data-slot="popover-content"], [data-slot="dropdown-menu-content"]',
+        )!;
+        const trigger = visible(
+          '[data-testid="engine-config-model-effort"], [data-testid="chat-model-select-trigger"]',
+        )!;
+        const radios = [...row.querySelectorAll<HTMLElement>('[role="radio"]')];
+        return {
+          kind: layer.dataset.slot,
+          widths: radios.map((radio) => radio.getBoundingClientRect().width),
+          labels: radios.map((radio) => {
+            const span = radio.querySelector<HTMLElement>("span:last-child")!;
+            return {
+              text: span.textContent,
+              clipped: span.scrollWidth > span.clientWidth,
+            };
+          }),
+          layer: layer.getBoundingClientRect().toJSON(),
+          trigger: trigger.getBoundingClientRect().toJSON(),
+          viewport: innerWidth,
+        };
+      });
+    const setAppearance = async (locale: string, theme: string) => {
+      await browser.execute(
+        (value) => {
+          const actions = (
+            window as typeof window & {
+              __testActions?: {
+                setLocale?: (locale: string) => void;
+                setTheme?: (theme: string) => void;
+              };
+            }
+          ).__testActions;
+          if (!actions?.setLocale || !actions.setTheme) throw new Error("缺少语言/主题入口");
+          actions.setLocale(value.locale);
+          actions.setTheme(value.theme);
+        },
+        { locale, theme },
+      );
+      await browser.waitUntil(async () =>
+        browser.execute(
+          (dark) => document.documentElement.classList.contains("dark") === dark,
+          theme === "dark",
+        ),
+      );
+    };
+    const samples: unknown[] = [];
+    for (const engine of ["claude-code", "codex", "zcode"] as const) {
+      if ((await composerEngine()) !== engine) await selectDraftEngine(engine);
+      for (const locale of ["zh-CN", "en-US"]) {
+        for (const theme of ["light", "dark"]) {
+          await setAppearance(locale, theme);
+          await (await composerModelTrigger()).click();
+          await displayed('[data-testid="engine-switch-row"]');
+          const sample = await measure();
+          samples.push({ engine, locale, theme, ...sample });
+          expect(sample.labels.map((label) => label.text)).toEqual([
+            "YCode",
+            "Claude Code",
+            "Codex",
+          ]);
+          expect(sample.labels.filter((label) => label.clipped)).toEqual([]);
+          expect(Math.max(...sample.widths) - Math.min(...sample.widths)).toBeLessThan(1.5);
+          // 锚定入口向上弹出：弹层整体位于入口上方，外部引擎弹层右缘与入口右缘对齐。
+          expect(sample.layer.bottom).toBeLessThanOrEqual(sample.trigger.top + 1);
+          if (sample.kind === "popover-content")
+            expect(Math.abs(sample.layer.right - sample.trigger.right)).toBeLessThan(2);
+          expect(sample.layer.right).toBeLessThanOrEqual(sample.viewport);
+          await browser.saveScreenshot(
+            join(artifact, `r3-engine-switch-${engine}-${locale}-${theme}.png`),
+          );
+          await browser.keys("Escape");
+          await $('[data-testid="engine-switch-row"]').waitForDisplayed({ reverse: true });
+        }
+      }
+    }
+    await writeFile(
+      join(artifact, "r3-engine-switch-layout.json"),
+      JSON.stringify(samples, null, 2),
+    );
+    // 外部引擎之间切换复用同一弹层，保持打开，切换行仍在入口弹层内。
+    await selectDraftEngine("claude-code");
+    await (await composerModelTrigger()).click();
+    await (await displayed('[data-testid="engine-switch-option-codex"]')).click();
+    await browser.waitUntil(async () => (await composerEngine()) === "codex", {
+      timeout: 30000,
+      timeoutMsg: "切换到 Codex 后入口图标必须刷新",
+    });
+    expect(await openLayers()).toEqual(["engine-model-popover"]);
+    await browser.keys("Escape");
+    await setAppearance("zh-CN", "light");
+  });
+
   // P11（external-agent-engines-spec「草稿预热 owner」2026-11-08 草稿无感）：草稿 creating/connecting
   // 即可发送，不显示“正在连接引擎…”；首发排在握手与按引擎记忆恢复（模型→深度）之后，只提交一次。
   it("P11 连接中立即发送：不显示连接中，消息只发一次且使用记忆的模型与深度", async () => {

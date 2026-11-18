@@ -409,6 +409,60 @@ it("引擎切换行禁用时不写入；外部引擎弹层顶部挂载切换行�
   expect(onSelectEngine).toHaveBeenCalledExactlyOnceWith("codex");
 });
 
+function draftControlsTree(engine: "zcode" | "claude-code" | "codex", onSelectEngine = vi.fn()) {
+  return createElement(ZCodeIntlProvider, {
+    initialLocale: "zh-CN",
+    children: createElement(EngineControls, {
+      engine,
+      configPending: true,
+      // SessionPane 只在外部引擎时把切换行交给 EngineControls；YCode 时弹层整体卸载。
+      engineSwitchRow:
+        engine === "zcode" ? undefined : createElement(EngineSwitchRow, { engine, onSelectEngine }),
+    }),
+  });
+}
+
+it("弹层随引擎切到 YCode 卸载后，再切回外部引擎不自动弹出（陈旧打开态不残留）", () => {
+  const view = render(draftControlsTree("claude-code"));
+  fireEvent.click(screen.getByTestId("engine-config-model-effort"));
+  expect(screen.getByTestId("engine-model-popover")).toBeDefined();
+  // 在弹层里选 YCode：外部引擎入口与弹层一起卸载，Radix 不会回调 onOpenChange(false)。
+  view.rerender(draftControlsTree("zcode"));
+  expect(screen.queryByTestId("engine-model-popover")).toBeNull();
+  // 从 YCode 模型菜单切回 Claude Code：入口重新挂载时必须是关闭态，只能由点击入口打开。
+  view.rerender(draftControlsTree("claude-code"));
+  expect(screen.getByTestId("engine-config-model-effort")).toBeDefined();
+  expect(screen.queryByTestId("engine-model-popover")).toBeNull();
+  expect(screen.queryByTestId("engine-switch-row")).toBeNull();
+});
+
+it("外部引擎之间切换时弹层保持打开，切换行三段等宽且名称不截断", () => {
+  const view = render(draftControlsTree("claude-code"));
+  fireEvent.click(screen.getByTestId("engine-config-model-effort"));
+  view.rerender(draftControlsTree("codex"));
+  const popover = screen.getByTestId("engine-model-popover");
+  const row = screen.getByTestId("engine-switch-row");
+  expect(popover.contains(row)).toBe(true);
+  // 三段使用等分网格列；弹层宽度按切换行内容撑开，「Claude Code」不进入省略号截断（真实像素宽度由桌面 E2E 断言）。
+  expect(row.className).toContain("grid-cols-3");
+  expect(row.hasAttribute("data-engine-switch-host")).toBe(true);
+  for (const radio of screen.getAllByRole("radio")) {
+    expect(radio.querySelector(".truncate, .text-ellipsis")).toBeNull();
+    expect(radio.className).toContain("whitespace-nowrap");
+    expect(radio.className).not.toContain("flex-1");
+  }
+  expect(popover.className).toContain("w-max");
+  expect(popover.className).toContain("min-w-72");
+});
+
+it("无切换行（远程/Web）时弹层维持 18rem 固定宽度", () => {
+  render(tree([effort]));
+  fireEvent.click(screen.getByRole("button", { name: "Reasoning effort" }));
+  const popover = screen.getByTestId("engine-model-popover");
+  expect(popover.className).toContain("w-72");
+  expect(popover.className).not.toContain("w-max");
+});
+
 const claudeModel: EngineConfigOption = {
   id: "model",
   name: "Model",

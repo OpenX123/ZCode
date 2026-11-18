@@ -33,6 +33,7 @@ import {
   engineVisibleEffortEntries,
   isEngineDefaultModelEntry,
 } from "./engineOptionDisplay.js";
+import { ENGINE_SWITCH_HOST_CLASS } from "./EngineSwitchRow.js";
 import "@/chat-input-toolbar/composer-thought-slider.css";
 
 // 普通表单边框会割裂工具栏；键盘焦点用边框和底色，避免全局 shadow reset 吞掉 ring。
@@ -361,7 +362,11 @@ export function EngineModelPopover({
         sideOffset={8}
         collisionPadding={12}
         aria-label={triggerAriaLabel}
-        className="w-72 max-w-[calc(100vw-1.5rem)] gap-2 bg-menu p-2 text-foreground"
+        // 有切换行时按其内容撑宽（三段等宽、名称完整），其余内容不参与撑宽；无切换行（远程/Web）维持 18rem。
+        className={cn(
+          "max-w-[calc(100vw-1.5rem)] gap-2 bg-menu p-2 text-foreground",
+          engineSwitchRow ? ENGINE_SWITCH_HOST_CLASS : "w-72",
+        )}
         data-testid="engine-model-popover"
         onOpenAutoFocus={(event) => {
           // 顶部切换行与头部行之后，深度弹层仍让原生滑条优先接收键盘操作。

@@ -719,6 +719,8 @@ sequenceDiagram
 **弹层结构（自上而下）：**
 
 1. `EngineSwitchRow`：YCode / Claude Code / Codex 三段 `radiogroup`，每段 `role="radio"`、roving tabindex，左右方向键与 Home/End 移动并选中（上下键留给外层菜单/弹层）。新草稿 + 本地工作区可交互；已有会话只读显示当前引擎（不是按钮，悬停说明会话创建后不可切换）；远程/Web 工作区（`useExternalEngineService` 为空）整行不渲染，引擎由 `useDraftConfigControl` 强制 YCode。选择走既有 `handleSelectEngine` → `useDraftConfigControl.handleDraftSelectEngine` 写 draft 并回收预热，不新增状态。行在外部引擎弹层与 YCode 模型弹层（`V4ComposerToolbar` → `ModelConfigSelect.contentHeader`）中复用同一节点。草稿 connecting / 原生配置失败时该行仍可操作（入口按钮只有在没有切换行时才随配置禁用）。
+   - **唯一入口与锚点（2026-11-19）：** 切换行只存在于右下角模型入口的弹层内，不在输入框内另设悬浮入口。弹层只由点击入口（或键盘激活入口）打开，锚定入口按钮向上弹出：外部引擎弹层 `side="top"`、`align="end"`，右缘与按钮对齐；YCode 模型菜单沿用既有 `side="top"`、`align="center"`。打开态按「入口所在控件族」限定：YCode ↔ 外部引擎切换会整体替换入口与弹层（YCode 为 `V4ComposerToolbar` 模型菜单，外部引擎为 `EngineControls` 弹层），旧弹层随卸载关闭，新入口挂载时一律为关闭态，不得沿用旧控件族遗留的打开态自动弹出；外部引擎之间（Claude Code ↔ Codex）切换复用同一弹层，保持打开。打开态的唯一所有者仍是 `EngineControls.activePicker` 与 `ConversationComposer.configPickerState`，以控件族作为 scope，不新增状态。
+   - **等宽与完整名称：** 三段用三等分网格列（`grid-cols-3`），宽度一致；名称不截断（`whitespace-nowrap`，不加省略号）。挂载切换行的弹层/菜单宽度为 `max(18rem, 切换行内容宽度)`，其余内容（头部行、滑杆、更多选项、YCode 模型列表）不参与撑宽（`contain: inline-size`），因此「Claude Code」在中英文界面都完整显示；只有视口窄到弹层上限（`100vw - 1.5rem` / 菜单可用宽度）以下时才三段同比收缩。远程/Web（含手机 Web）不渲染切换行，弹层维持原 18rem 宽度。
 2. 头部行 `[⚡] <模型名> <档位> ›`：闪电见上；`›` 按钮打开模型完整目录。
 3. 思考滑杆：存在其他档位时隐藏 `default` 档；当前值为 `default` 时滑块不填充、档位文案显示「默认」。已知取值本地化 `minimal/low/medium/high/xhigh/max` → 最低/低/中/高/超高/最高，未知取值沿用 adapter 文案；提交仍回传原始 value。
 4. 「更多选项」：placement 为 `more` 的选项（及形态不符的 Fast 类）。
@@ -727,7 +729,7 @@ sequenceDiagram
 
 **引擎名：** 原生引擎统一显示「YCode」（`ENGINE_LABELS` 与 `TaskClientLogo` 同源）。
 
-**验收：** UI UT（`packages/ui/test/externalEnginePickers.test.ts`、`externalEngineSettings.test.ts`）覆盖：Claude `agent` 不出芯片、在更多选项可选；Codex `fast-mode` 只渲染为闪电、点亮与回传 on/off；`default` 模型入口只显示档位、弹层显示解析名与「默认」；滑杆无 Default 档、档位中文化；切换行新草稿可切换、已有会话只读、未传入时不渲染、方向键选择。shared `contract.test.ts` 覆盖 placement 与 Fast 映射。桌面候选 `conversation-session-external-engine-prewarm.test.ts` 改为经弹层切换引擎。
+**验收：** UI UT（`packages/ui/test/externalEnginePickers.test.ts`、`externalEngineSettings.test.ts`）覆盖：Claude `agent` 不出芯片、在更多选项可选；Codex `fast-mode` 只渲染为闪电、点亮与回传 on/off；`default` 模型入口只显示档位、弹层显示解析名与「默认」；滑杆无 Default 档、档位中文化；切换行新草稿可切换、已有会话只读、未传入时不渲染、方向键选择；YCode ↔ 外部引擎往返后新入口不自动弹出、外部引擎之间切换弹层保持打开、切换行等分网格且弹层按内容撑宽。shared `contract.test.ts` 覆盖 placement 与 Fast 映射。桌面候选 `conversation-session-external-engine-prewarm.test.ts` 改为经弹层切换引擎，并断言往返切换后入口外无残留弹层、三段等宽且名称 `scrollWidth <= clientWidth`、弹层底边不低于入口顶边且右缘与入口对齐（深浅主题、中英文）。
 
 ### 原生配置菜单与滑杆（通用）
 

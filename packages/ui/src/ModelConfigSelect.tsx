@@ -196,6 +196,8 @@ interface ModelConfigSelectProps {
   triggerBadge?: ReactNode;
   /** Composer 合并弹层最上方的附加内容（如引擎切换行）；只展示，不参与模型选择状态。 */
   contentHeader?: ReactNode;
+  /** 覆盖 Composer 合并弹层的宽度类（缺省 `w-72`）；引擎切换行需要按内容撑宽时传入。 */
+  composerContentWidthClassName?: string;
 }
 
 export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
@@ -242,6 +244,7 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
   leadingItems,
   triggerBadge,
   contentHeader,
+  composerContentWidthClassName = "w-72",
 }: ModelConfigSelectProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
@@ -652,7 +655,10 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
           className={cn(
             composerOptions
               ? // 外层滚动会带走供应商和 Effort；只让 Models 列表收缩，且排除窗口拖拽命中。
-                "w-72 overflow-y-hidden [app-region:no-drag] [&>*:not([data-composer-model-list]):not([data-composer-provider-list])]:shrink-0"
+                cn(
+                  composerContentWidthClassName,
+                  "overflow-y-hidden [app-region:no-drag] [&>*:not([data-composer-model-list]):not([data-composer-provider-list])]:shrink-0",
+                )
               : shouldShowProviderLevel
                 ? "w-max min-w-48 max-w-[calc(100vw-2rem)]"
                 : "w-48 max-h-72 overflow-y-auto",

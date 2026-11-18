@@ -8,6 +8,14 @@ import { TaskClientLogo } from "./TaskClientLogo.js";
 const ENGINES = Object.keys(ENGINE_LABELS) as SessionEngine[];
 
 /**
+ * 挂载切换行的弹层/菜单宽度：`max(18rem, 切换行内容宽度)`，保证三段等宽且「Claude Code」完整显示。
+ * 除切换行宿主（`data-engine-switch-host`）外的直接子节点用 `contain: inline-size` 退出撑宽，
+ * 长模型名等仍按弹层宽度截断，不会把弹层撑宽；上限由各浮层自身的视口 max-width 约束。
+ */
+export const ENGINE_SWITCH_HOST_CLASS =
+  "w-max min-w-72 [&>*:not([data-engine-switch-host])]:[contain:inline-size]";
+
+/**
  * 模型入口弹层顶部的引擎切换行（W2）。只展示，选择经调用方的 `handleSelectEngine` 写入既有 draft owner。
  * 左右方向键与 Home/End 按 radio group 语义移动并选中；上下键留给外层菜单/弹层导航。
  */
@@ -20,6 +28,7 @@ export function EngineSwitchRow({ engine, onSelectEngine, disabled }: EngineSwit
     return (
       <div
         data-testid="engine-switch-row"
+        data-engine-switch-host=""
         data-readonly="true"
         aria-label={groupLabel}
         title={lockedHint}
@@ -60,7 +69,10 @@ export function EngineSwitchRow({ engine, onSelectEngine, disabled }: EngineSwit
       aria-label={groupLabel}
       aria-disabled={disabled || undefined}
       data-testid="engine-switch-row"
-      className="flex min-w-0 items-center gap-0.5 rounded-lg bg-foreground/5 p-0.5"
+      data-engine-switch-host=""
+      // 修复原因：flex-1 + truncate 在 18rem 弹层里把「Claude Code」截成「Claude…」，三段视觉宽度也随
+      // 内容不一致。改为三等分网格列：列宽取最宽一项的内容宽度，弹层按此撑宽（见 ENGINE_SWITCH_HOST_CLASS）。
+      className="grid min-w-0 grid-cols-3 gap-0.5 rounded-lg bg-foreground/5 p-0.5"
     >
       {ENGINES.map((value) => {
         const checked = value === engine;
@@ -80,7 +92,7 @@ export function EngineSwitchRow({ engine, onSelectEngine, disabled }: EngineSwit
             disabled={disabled}
             data-testid={`engine-switch-option-${value}`}
             className={cn(
-              "flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md px-2 text-ui-sm outline-none transition-colors focus-visible:ring-1 focus-visible:ring-foreground-subtle disabled:cursor-default disabled:opacity-60",
+              "flex h-7 min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 text-ui-sm outline-none transition-colors focus-visible:ring-1 focus-visible:ring-foreground-subtle disabled:cursor-default disabled:opacity-60",
               checked
                 ? "bg-menu text-foreground shadow-sm"
                 : "text-foreground-subtle hover:bg-hover hover:text-foreground",
@@ -89,7 +101,7 @@ export function EngineSwitchRow({ engine, onSelectEngine, disabled }: EngineSwit
             onKeyDown={(event) => handleKeyDown(event, value)}
           >
             <TaskClientLogo engine={value} size="compact" />
-            <span className="min-w-0 truncate">{label}</span>
+            <span className="min-w-0 overflow-hidden">{label}</span>
           </button>
         );
       })}
