@@ -94,6 +94,16 @@ export class ExternalTranscriptWriter {
   readonly parts: Array<TextPart | ReasoningPart | ToolPart | FilePart> = [];
   response = "";
   toolCallCount = 0;
+  private readonly detachedTools = new Set<string>();
+
+  /** 最后一个正文 part 的文本（含仍在流式写入的段）；子智能体摘要以此为准。 */
+  get lastText(): string | undefined {
+    for (let index = this.parts.length - 1; index >= 0; index -= 1) {
+      const part = this.parts[index];
+      if (part?.type === "text") return part.text;
+    }
+    return undefined;
+  }
   private readonly created = Date.now();
   private readonly tools = new Map<string, ToolPart>();
   private activeText: TextPart | ReasoningPart | undefined;
@@ -545,6 +555,14 @@ export class ExternalTranscriptWriter {
     await this.runtime.persistPart(tool, this.traceContext);
   }
 
+  /**
+   * 跨轮仍在运行的原生子智能体：其 Agent 行不参与本轮 finish 的“未完成”清扫，保持 running，
+   * 之后由同一 writer 的 settleSyntheticTool 收尾（part 按 id 更新，不依赖 message 未结束）。
+   */
+  detachSyntheticTool(callID: string): void {
+    if (this.tools.get(callID)?.state.status === "running") this.detachedTools.add(callID);
+  }
+
   async settleSyntheticTool(callID: string, result: SyntheticToolSettlement): Promise<void> {
     const tool = this.tools.get(callID);
     if (!tool || tool.state.status !== "running") return;
@@ -574,6 +592,7 @@ export class ExternalTranscriptWriter {
     for (const part of this.parts) {
       if (
         part.type === "tool" &&
+        !this.detachedTools.has(part.callID) &&
         (part.state.status === "running" || part.state.status === "pending")
       ) {
         const start = part.state.status === "running" ? part.state.time.start : this.created;

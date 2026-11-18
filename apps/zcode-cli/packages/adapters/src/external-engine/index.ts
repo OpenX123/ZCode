@@ -19,7 +19,12 @@ import { spawnAcpProcess } from "../exec/acp-process.js";
 import { AcpConnection } from "./connection.js";
 import { resolveExternalEngineLaunch } from "@zcode/shared/node";
 import { resolveEngineConnectionIdentity } from "./connection-profile.js";
-import { adapterLaunchArgs, ensureNodeRuntimeOnPath, withNetworkEgressEnv } from "./adapter-env.js";
+import {
+  adapterLaunchArgs,
+  ensureClaudeGitBashPath,
+  ensureNodeRuntimeOnPath,
+  withNetworkEgressEnv,
+} from "./adapter-env.js";
 import type { ExternalEngineAdapterOptions } from "./contract.js";
 import type { ExternalEngineSpareKey } from "./process-pool.js";
 import type { ExternalEngineConfigCatalogKey } from "./config-catalog.js";
@@ -106,7 +111,11 @@ export function createExternalEnginePort(
       readConnection: () => {
         if (sessions.get(sessionId)?.healthy !== true) return undefined;
         return {
-          busy: created.inFlight > 0 || preparations.has(sessionId),
+          // 后台子会话仍在跑或空闲期推送未消费时回收进程会杀掉它们（spec「跨轮观察」回收规则）。
+          busy:
+            created.inFlight > 0 ||
+            preparations.has(sessionId) ||
+            sessions.get(sessionId)?.hasBackgroundActivity === true,
           resumable: created.resumable,
           lastUsedAt: created.lastUsedAt,
         };
@@ -114,7 +123,13 @@ export function createExternalEnginePort(
       async releaseIdle() {
         const connection = sessions.get(sessionId);
         // 与 execute 取连接处于同一同步片：复查在途后摘除，之后到达的操作走恢复路径。
-        if (!connection || created.inFlight > 0 || preparations.has(sessionId)) return false;
+        if (
+          !connection ||
+          created.inFlight > 0 ||
+          preparations.has(sessionId) ||
+          connection.hasBackgroundActivity
+        )
+          return false;
         sessions.delete(sessionId);
         created.idleClosedAt = Date.now();
         await connection.close();
@@ -172,6 +187,7 @@ export function createExternalEnginePort(
     else delete childEnv[runtime.officialExecutableEnvVar];
     // 1.0.7 只在 macOS/Linux 补 node 入口：Windows 无系统 Node 时 adapter 自带的 codex.js 无法启动。
     await ensureNodeRuntimeOnPath(root, executable, childEnv);
+    if (input.engine === "claude-code") await ensureClaudeGitBashPath(childEnv);
     // 计费与网关变量按会话绑定的连接方式处理（含 APP_SERVER_LOGS），规则见共享 buildEngineConnectionEnv。
     const resolved = await identity.materialize(childEnv);
     // 修复前沿用 CLI 时 adapter 丢失用户的代理/证书变量；按工具子进程的既有规则恢复，YCode 显式配置优先。
@@ -474,6 +490,8 @@ export function createExternalEnginePort(
     },
     prepareSession,
     isSessionConnected: (sessionId) => sessions.get(sessionId)?.healthy === true,
+    hasBackgroundActivity: (sessionId) => sessions.get(sessionId)?.hasBackgroundActivity === true,
+    hasPendingContinuation: (sessionId) => sessions.get(sessionId)?.hasPendingContinuation === true,
     async forkSession(input) {
       if (sessions.has(input.sessionId) || preparations.has(input.sessionId))
         throw new ExternalEngineConnectionError({ code: "configuration", method: "session/fork" });
@@ -503,6 +521,12 @@ export function createExternalEnginePort(
       }
     },
     async runTurn(input) {
+      if (input.continuation) {
+        // 续跑只观察已连接会话的空闲期推送；连接已断则无可观察内容，不重连、不提交 prompt。
+        const connection = sessions.get(input.sessionId);
+        if (!connection?.healthy) return { stopReason: "end_turn" };
+        return execute(input, (current) => current.run(input));
+      }
       await prepareSession(input);
       // 连接就绪后只提交一次 prompt；响应丢失也不能自行重发用户操作。
       return execute(input, (connection) => {

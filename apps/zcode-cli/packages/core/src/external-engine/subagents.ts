@@ -52,7 +52,12 @@ interface ChildRun {
   turnId?: TurnId;
   traceContext?: TraceContext;
   reply?: string;
+  /** 宿主父轮已结束而子会话仍在运行：Agent 行已从宿主 writer 收尾清扫中摘出，生命周期事件写入当前轮。 */
+  detached?: boolean;
 }
+
+/** 父轮收尾方式：停止 → cancelled；连接已失效 → lost；正常结束 → 仍运行的子会话跨轮继续观察。 */
+export type ExternalSubagentTurnClose = "cancelled" | "lost" | "detach";
 
 interface ChildEntry {
   nativeSessionId: string;
@@ -60,6 +65,8 @@ interface ChildEntry {
   parentNativeSessionId?: string;
   parentSessionId: SessionId;
   name: string;
+  /** 原生 subagent_type；缺省 DEFAULT_SUBAGENT_TYPE。 */
+  agentType: string;
   task?: string;
   prompt?: string;
   cancellable: boolean;
@@ -110,7 +117,7 @@ function agentMetadata(entry: ChildEntry): Record<string, unknown> {
   return {
     childSessionId: entry.childSessionId,
     agentId: entry.nativeSessionId,
-    agentType: DEFAULT_SUBAGENT_TYPE,
+    agentType: entry.agentType,
     description: entry.name,
     nativeSessionId: entry.nativeSessionId,
   };
@@ -122,8 +129,8 @@ export interface ExternalSubagentTurn {
   /** 子会话权限请求的来源；未知子会话返回 undefined。 */
   origin(nativeSessionId: string): InteractionRequestOrigin | undefined;
   onDiagnostic(event: string, fields: Record<string, string>): void;
-  /** 父轮收尾：仍在运行的子会话按 cancelled（停止）或 lost 收尾，正文保留。 */
-  close(aborted: boolean): Promise<void>;
+  /** 父轮收尾：见 ExternalSubagentTurnClose；正文始终保留。 */
+  close(mode: ExternalSubagentTurnClose): Promise<void>;
 }
 
 /** 把本轮父 writer 绑定为子智能体宿主；子会话注册表跨轮保留（RFD idle 子会话可再次委派）。 */
@@ -199,7 +206,7 @@ export function bindExternalSubagentTurn(
       input: {},
       schedule: { parallelGroups: [], executionOrder: [] },
       agentId: entry.nativeSessionId,
-      agentType: DEFAULT_SUBAGENT_TYPE,
+      agentType: entry.agentType,
       childSessionId: entry.childSessionId,
       childToolCallId,
       description: entry.name,
@@ -234,13 +241,13 @@ export function bindExternalSubagentTurn(
       input: {
         description: entry.name,
         ...((entry.prompt ?? entry.task) ? { prompt: entry.prompt ?? entry.task } : {}),
-        subagent_type: DEFAULT_SUBAGENT_TYPE,
+        subagent_type: entry.agentType,
       },
       metadata,
     });
     await emitOn(host, SessionEventType.SubagentSpawned, {
       agentId: entry.nativeSessionId,
-      agentType: DEFAULT_SUBAGENT_TYPE,
+      agentType: entry.agentType,
       childSessionId: entry.childSessionId,
       description: entry.name,
       ...((entry.prompt ?? entry.task) ? { prompt: entry.prompt ?? entry.task } : {}),
@@ -280,7 +287,11 @@ export function bindExternalSubagentTurn(
     const writer = started.writer!;
     const traceContext = started.traceContext!;
     const errorText = end === "completed" ? undefined : (error ?? ENDED_ERROR_TEXT[end]);
-    if (run.reply?.trim()) await writer.settleFinalReply(run.reply);
+    // 修复：后台 Agent 的启动回执（"Async agent launched successfully…"）以 reply 送达，
+    // 曾被写成子会话最终正文与父卡片“原因”。子会话自己的正文才是结果；reply 只在子会话
+    // 没有任何正文时补为最终正文（前台 reply-only 场景）。
+    const childText = writer.lastText?.trim();
+    if (!childText && run.reply?.trim()) await writer.settleFinalReply(run.reply);
     await writer.finish({
       aborted: end === "cancelled",
       ...(end === "failed" || end === "lost"
@@ -313,7 +324,7 @@ export function bindExternalSubagentTurn(
       traceContext,
     );
     child.turnNumber += 1;
-    const summary = run.reply?.trim() ? run.reply : writer.response.trim() || undefined;
+    const summary = childText || run.reply?.trim() || undefined;
     const metadata = agentMetadata(entry);
     await run.host.settleSyntheticTool(run.hostCallId, {
       success: end === "completed",
@@ -331,9 +342,11 @@ export function bindExternalSubagentTurn(
         ...(summary || errorText ? { summaryText: summary ?? errorText } : {}),
       },
     });
-    await emitOn(run.host, SessionEventType.SubagentStopped, {
+    // 跨轮子会话：Agent 行在原宿主 writer 上收尾，生命周期事件写入当前轮（宿主轮已 TurnComplete）。
+    const lifecycleHost = run.detached ? binding.writer : run.host;
+    await emitOn(lifecycleHost, SessionEventType.SubagentStopped, {
       agentId: entry.nativeSessionId,
-      agentType: DEFAULT_SUBAGENT_TYPE,
+      agentType: entry.agentType,
       childSessionId: entry.childSessionId,
       parentToolCallId: run.hostCallId,
       status: end,
@@ -342,7 +355,7 @@ export function bindExternalSubagentTurn(
       totalToolUseCount: writer.toolCallCount,
     });
     if (entry.cancellable)
-      await emitOn(run.host, SessionEventType.BackgroundTaskCompleted, {
+      await emitOn(lifecycleHost, SessionEventType.BackgroundTaskCompleted, {
         taskId: entry.childSessionId,
         toolCallId: run.hostCallId,
         toolName: AGENT_TOOL_NAME,
@@ -382,6 +395,7 @@ export function bindExternalSubagentTurn(
         : {}),
       parentSessionId,
       name: event.name,
+      agentType: event.agentType?.trim() || DEFAULT_SUBAGENT_TYPE,
       ...(event.task ? { task: event.task } : {}),
       ...(event.prompt ? { prompt: event.prompt } : {}),
       cancellable: event.cancellable,
@@ -454,7 +468,7 @@ export function bindExternalSubagentTurn(
       return {
         kind: "subagent",
         agentId: entry.nativeSessionId,
-        agentType: DEFAULT_SUBAGENT_TYPE,
+        agentType: entry.agentType,
         childSessionId: entry.childSessionId,
         description: entry.name,
         parentSessionId: entry.parentSessionId,
@@ -471,13 +485,22 @@ export function bindExternalSubagentTurn(
         ...fields,
       });
     },
-    async close(aborted) {
-      // 子会话生命周期绑定父轮：父轮结束后 YCode 不再观察原生子会话。
-      for (const entry of [...state.children.values()].reverse())
-        if (entry.run && !entry.parentNativeSessionId)
-          await endRun(entry, aborted ? "cancelled" : "lost");
-      for (const entry of [...state.children.values()].reverse())
-        if (entry.run) await endRun(entry, aborted ? "cancelled" : "lost");
+    async close(mode) {
+      if (mode === "detach") {
+        // 修复：父轮正常结束时仍在跑的子会话曾被判为 lost（界面“已停止/失败”，之后真实结果被丢弃）。
+        // 实测 Claude 后台子会话会在轮间继续并由引擎自发续跑汇报（spec「跨轮观察与引擎自发续跑」）：
+        // 只摘出以本轮 writer 为宿主的 Agent 行，保持 running；嵌套子会话的宿主是仍在运行的子 writer。
+        for (const entry of state.children.values())
+          if (entry.run && entry.run.host === binding.writer) {
+            binding.writer.detachSyntheticTool(entry.run.hostCallId);
+            entry.run.detached = true;
+          }
+      } else {
+        for (const entry of [...state.children.values()].reverse())
+          if (entry.run && !entry.parentNativeSessionId) await endRun(entry, mode);
+        for (const entry of [...state.children.values()].reverse())
+          if (entry.run) await endRun(entry, mode);
+      }
       if (state.turn === binding) state.turn = undefined;
     },
   };

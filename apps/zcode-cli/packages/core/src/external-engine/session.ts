@@ -13,6 +13,7 @@ import {
 } from "@zcode/contracts";
 import type { AgentRuntimeInternal } from "../runtime/internal.js";
 import type { EngineConfigOption, EngineConnectionFailure } from "@zcode/shared";
+import { enqueueExternalEngineContinuation } from "./continuation.js";
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -404,6 +405,8 @@ export function externalEngineSessionInput(
     onNotice: async (notice) => logExternalEngineNotice(runtime, notice),
     // 初始化尚无 turn，不能授予任何工具执行权限。
     requestPermission: async () => ({ outcome: "cancelled" }),
+    // 轮间引擎主动推送 → 串行准入一轮 continuation（spec「跨轮观察与引擎自发续跑」）。
+    onIdleActivity: () => enqueueExternalEngineContinuation(runtime),
   };
 }
 export async function prepareExternalEngineSession(

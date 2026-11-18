@@ -469,6 +469,8 @@ export interface ModelExecutionContext {
 export interface ExecuteTurnOptionsBase {
   executionSelection?: ModelSelection;
   abortSignal?: AbortSignal;
+  /** 外部引擎轮间自发续跑：不提交 prompt，只观察引擎推送（external-engine/continuation.ts）。 */
+  externalEngineContinuation?: boolean;
   browserAmbientContext?: {
     tabCount: number;
     currentUrl?: string;

@@ -13,7 +13,8 @@ import { ExternalTranscriptWriter } from "../src/external-engine/transcript-writ
 import { createTestSessionEventStore } from "./test-event-store.js";
 import { createRecordingSubagentSessionStore } from "./subagent-test-store.js";
 
-// UX03：reply 是最终正文，response 仍累积全部 text；只对最后一段完整正文逐字去重。
+// UX03（1.4.2 修订）：子会话自己有正文时以最后一段为结果，reply 不追加——后台 Agent 的启动回执
+// 同样以 reply 送达（2026-11-19 真实帧）；只在无正文时 reply 成为最终正文。response 仍累积全部 text。
 test.each<{
   name: string;
   chunks: string[];
@@ -29,37 +30,37 @@ test.each<{
     expected: ["最终结果"],
   },
   {
-    name: "不同 reply",
+    name: "不同 reply（如启动回执）不追加",
     chunks: ["过程说明"],
-    reply: "最终结果",
-    expected: ["过程说明", "最终结果"],
+    reply: "Async agent launched successfully.",
+    expected: ["过程说明"],
   },
   {
     name: "reply 仅为正文子串",
     chunks: ["完整最终结果"],
     reply: "最终结果",
-    expected: ["完整最终结果", "最终结果"],
+    expected: ["完整最终结果"],
   },
   {
     name: "正文仅为 reply 子串",
     chunks: ["结果"],
     reply: "最终结果",
-    expected: ["结果", "最终结果"],
+    expected: ["结果"],
   },
   { name: "空白 reply", chunks: ["已有正文"], reply: " \n ", expected: ["已有正文"] },
   { name: "空 reply 无正文", chunks: [], reply: "", expected: [] },
   {
-    name: "首尾空白仍是不同正文",
+    name: "首尾空白 reply 不追加",
     chunks: ["最终结果"],
     reply: " 最终结果 ",
-    expected: ["最终结果", " 最终结果 "],
+    expected: ["最终结果"],
   },
   {
-    name: "工具前过程不能替代最终正文",
+    name: "工具后的正文仍以子会话最后一段为结果",
     chunks: ["最终结果"],
     toolAfter: true,
     reply: "最终结果",
-    expected: ["最终结果", "最终结果"],
+    expected: ["最终结果"],
   },
 ])(
   "原生子会话最终结果：$name，持久化、response 与父摘要一致",
@@ -167,7 +168,9 @@ test.each<{
         response: expected.join(""),
         resultType: "success",
       });
-      const summary = reply.trim() ? reply : expected.join("");
+      // 摘要 = 子会话最后一段正文（无正文时即补写的 reply），首尾空白不计。
+      const summary = expected.at(-1)?.trim() ?? "";
+      void reply;
       const stopped = events.filter((event) => event.type === SessionEventType.SubagentStopped);
       expect(stopped).toHaveLength(1);
       if (summary) expect(stopped[0]?.payload).toMatchObject({ summaryText: summary });
@@ -186,7 +189,8 @@ test.each<{
       expect(JSON.parse(agent.state.output)).toEqual(
         expect.objectContaining({ ...(summary ? { result: summary } : {}), status: "completed" }),
       );
-      const finalPart = parts.at(-1);
+      // 结果正文（最后一个 text part）必须先于 assistant 终态落库；工具可能排在它之后。
+      const finalPart = parts.filter((part) => part.type === "text").at(-1);
       if (finalPart) {
         const partWrite = partSnapshots.findIndex(
           (part) =>

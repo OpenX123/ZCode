@@ -1,26 +1,38 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import {
   ExternalEngineConnectionError,
+  type ExternalEnginePromptBlock,
   type ExternalEngineSessionInput,
   type ExternalEngineTurnInput,
   type ExternalEngineTurnResult,
   type ExternalEnginePermissionRequest,
 } from "@zcode/contracts";
 import {
-  engineConfigOptionSchema,
-  readExternalEngineFailure,
   type EngineConfigOption,
   type EngineConnectionFailure,
   type ExternalSessionEngine,
 } from "@zcode/shared";
 import { closeAcpProcess, closeAcpProcessAndWait } from "../exec/acp-process.js";
 import {
-  AIR_SESSION_FAILURE_CAPABILITY_META,
   readPromptResultFailure,
   readSessionInfoFailure,
   readSessionNotice,
 } from "./failure.js";
-import { SUBAGENT_FRAME_KINDS, readSubagentFrame, type KnownSubagent } from "./subagent-frames.js";
+import {
+  SUBAGENT_FRAME_KINDS,
+  readSubagentFrame,
+  trackSubagentEvent,
+  type KnownSubagent,
+} from "./subagent-frames.js";
+import {
+  IdleActivity,
+  SUBAGENT_NAMING_INSTRUCTIONS,
+  acpRequestError,
+  clientCapabilities,
+  configOptions,
+  isContinuationEnd,
+} from "./acp-session-support.js";
+export { SUBAGENT_NAMING_INSTRUCTIONS } from "./acp-session-support.js";
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const CANCEL_GRACE_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 30000;
@@ -29,51 +41,6 @@ function object(value: unknown): JsonObject {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new ExternalEngineConnectionError({ code: "protocol" }, "Invalid ACP object");
   return value as JsonObject;
-}
-/**
- * typed failure 扩展挂在 JetBrains AIR 客户端标记下，声明即被 adapter 视为 AIR 客户端
- * （核查见 docs/desktop/native-plan-errors-spec.md「能力声明」）：
- * - Codex 只改变工具行呈现；同时声明非 AIR 专属的 terminal_output_delta，让终端输出仍按
- *   既有 `_meta.terminal_output_delta` 追加，避免 AIR 下命令输出整段丢失。
- * - Claude 的 AIR 会去掉审批预览/读取结果正文并切换子智能体协议，因此仍不声明。
- * 1.1.0 两家都声明 `subagents`：Codex 作为 AIR 客户端得到 AIR 草案形态，Claude 得到 RFD 形态
- * （docs/desktop/external-agent-engines-spec.md「外部引擎原生子智能体」）。
- */
-function clientCapabilities(engine: ExternalEngineSessionInput["engine"]): JsonObject {
-  return engine === "codex"
-    ? {
-        plan: {},
-        subagents: {},
-        _meta: { ...AIR_SESSION_FAILURE_CAPABILITY_META, terminal_output_delta: true },
-      }
-    : { plan: {}, subagents: {} };
-}
-/**
- * 本机 Windows 实测：Codex 模型目录里第三方网关模型的选项值返回 `description: null`，严格 schema 只接受
- * 字符串或缺省，整份 configOptions 校验失败后握手以 protocol 报"不兼容的响应"，Codex 无法连接。
- * ACP 帧在 adapter 边界归一：值级 description 为 null 视同缺省，其余字段仍按 schema 严格校验。
- */
-function withoutNullValueDescriptions(value: unknown[]): unknown[] {
-  return value.map((option) => {
-    if (option === null || typeof option !== "object" || Array.isArray(option)) return option;
-    const record = option as Record<string, unknown>;
-    if (!Array.isArray(record.options)) return option;
-    return {
-      ...record,
-      options: record.options.map((entry: unknown) => {
-        if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return entry;
-        const { description, ...rest } = entry as Record<string, unknown>;
-        return description === null ? rest : entry;
-      }),
-    };
-  });
-}
-function configOptions(value: unknown): EngineConfigOption[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) throw new Error("Invalid ACP config options");
-  const parsed = engineConfigOptionSchema.array().safeParse(withoutNullValueDescriptions(value));
-  if (!parsed.success) throw new ExternalEngineConnectionError({ code: "protocol" });
-  return parsed.data;
 }
 type SessionMethod = NonNullable<EngineConnectionFailure["method"]>;
 /** 已建立（或已预建）的原生会话；回调与配置恢复由 execute 继续完成。 */
@@ -120,6 +87,10 @@ export class AcpConnection {
   };
   /** 已宣告的原生子会话（连接级，跨轮保留；RFD 的 idle 子会话可被再次委派）。 */
   private subagents = new Map<string, KnownSubagent>();
+  /** 轮间推送缓存与边沿唤醒（acp-session-support.ts）。 */
+  private idle = new IdleActivity();
+  /** 进行中的 continuation：收到引擎续跑收尾标记时 resolve。 */
+  private continuation?: { resolve(): void; reject(error: Error): void };
   get healthy(): boolean {
     return !this.failure;
   }
@@ -131,9 +102,15 @@ export class AcpConnection {
     this.active?.onDiagnostic?.(event, { nativeSessionId: String(sessionId) });
   }
   private async update(params: JsonObject): Promise<void> {
-    if (!this.active) return;
     const sessionId = params.sessionId;
     const child = typeof sessionId === "string" && this.subagents.has(sessionId);
+    if (!this.active) {
+      // 修复：轮间引擎主动推送（Claude 后台任务完成后的自发续跑、子会话唤醒）曾在此被直接丢弃，
+      // “等通知”的会话结束后再无下文。改为按序缓存并边沿唤醒 Runtime 准入一轮 continuation。
+      if (!this.loadingHistory && !this.forking)
+        this.idle.buffer(params, sessionId === this.externalSessionId || child);
+      return;
+    }
     if (sessionId !== this.externalSessionId && !child) {
       // 修复前所有非主会话更新都被静默丢弃；现在只丢未宣告的 ID，并留无正文诊断。
       this.diagnose("external_engine.subagent.unrouted_update", sessionId);
@@ -178,6 +155,29 @@ export class AcpConnection {
       }
       await this.active.onUpdate(update);
     }
+    if (sessionId === this.externalSessionId && isContinuationEnd(update)) this.continuation?.resolve();
+  }
+  /** 有仍在工作的原生子会话或未消费的空闲期推送（闲置回收据此保留进程）。 */
+  get hasBackgroundActivity(): boolean {
+    return this.idle.pending || [...this.subagents.values()].some((item) => item.running);
+  }
+  get hasPendingContinuation(): boolean {
+    return this.idle.pending;
+  }
+  /** 进入会话操作：交付空闲期诊断与缓存（按到达顺序排在新通知之前），唤醒等待的权限请求。 */
+  private claimIdleActivity(input: ExternalEngineSessionInput): void {
+    this.idle.listen(input.onIdleActivity);
+    const { updates, diagnostics } = this.idle.claim();
+    for (const event of diagnostics)
+      input.onDiagnostic?.(event, { nativeSessionId: String(this.externalSessionId) });
+    if (updates.length)
+      this.notifications = this.notifications
+        .then(async () => {
+          for (const params of updates) await this.update(params);
+        })
+        .catch((error: unknown) =>
+          this.fail(error instanceof Error ? error : new Error("ACP update failed")),
+        );
   }
   private async subagentUpdate(sessionId: string, update: JsonObject): Promise<void> {
     const active = this.active!;
@@ -193,8 +193,7 @@ export class AcpConnection {
     }
     for (const event of result.events) {
       // 先登记再交付：Runtime 处理 spawned 期间到达的子会话更新必须可路由。
-      if (event.type === "spawned")
-        this.subagents.set(event.nativeSessionId, { cancellable: event.cancellable });
+      trackSubagentEvent(this.subagents, event);
       await active.onSubagent(event);
     }
   }
@@ -237,6 +236,8 @@ export class AcpConnection {
     this.failure = error;
     for (const request of this.pending.values()) request.reject(error);
     this.pending.clear();
+    this.idle.fail(error);
+    this.continuation?.reject(error);
   }
   private send(value: JsonObject): void {
     if (this.failure) throw this.failure;
@@ -296,7 +297,7 @@ export class AcpConnection {
           if (hasError === Object.hasOwn(frame, "result")) throw new Error("Invalid ACP response");
           // 先校验再删除在途项；否则畸形响应抛错后 fail 无法拒绝无超时的 prompt。
           const response = hasError
-            ? this.requestError(request.method, object(frame.error))
+            ? acpRequestError(request.method, object(frame.error))
             : object(frame.result);
           this.pending.delete(frame.id);
           if (response instanceof ExternalEngineConnectionError) request.reject(response);
@@ -307,31 +308,6 @@ export class AcpConnection {
         void this.close();
       }
     }
-  }
-  private requestError(
-    method: EngineConnectionFailure["method"],
-    value: unknown,
-  ): ExternalEngineConnectionError {
-    const source = object(value);
-    if (
-      typeof source.code !== "number" ||
-      !Number.isInteger(source.code) ||
-      typeof source.message !== "string"
-    )
-      throw new ExternalEngineConnectionError({ code: "protocol", method });
-    const rpcCode = source.code;
-    const code =
-      rpcCode === -32000
-        ? "authentication"
-        : rpcCode === -32002
-          ? "session_not_found"
-          : rpcCode === -32601
-            ? "unsupported"
-            : rpcCode === -32602
-              ? "configuration"
-              : "request";
-    const failure = readExternalEngineFailure(source, { code, method, rpcCode });
-    return new ExternalEngineConnectionError(failure, failure.message);
   }
   private async permission(frame: JsonObject): Promise<void> {
     const params = object(frame.params);
@@ -346,11 +322,12 @@ export class AcpConnection {
       typeof params.sessionId === "string" && this.subagents.has(params.sessionId)
         ? params.sessionId
         : undefined;
-    if (
-      this.forking ||
-      !this.active ||
-      (params.sessionId !== this.externalSessionId && !childSessionId)
-    ) {
+    const routed = params.sessionId === this.externalSessionId || Boolean(childSessionId);
+    // 修复：轮间权限请求（续跑或子会话唤醒时的工具审批）曾一律回 cancelled，续跑随即失败；
+    // 已路由的请求改为唤醒 Runtime，等 continuation 接管后走正常审批。
+    if (!this.active && routed && this.sessionReady && !this.forking && !this.loadingHistory)
+      await this.idle.waitForActive();
+    if (this.forking || !this.active || !routed) {
       if (this.active && params.sessionId !== this.externalSessionId)
         this.diagnose("external_engine.subagent.unrouted_permission", params.sessionId);
       this.send({ jsonrpc: "2.0", id: frame.id, result: { outcome: { outcome: "cancelled" } } });
@@ -465,11 +442,60 @@ export class AcpConnection {
     return this.externalSessionId;
   }
   async run(input: ExternalEngineTurnInput): Promise<ExternalEngineTurnResult> {
+    if (input.continuation) return this.observe(input);
     return (await this.execute(input, input.prompt))!;
+  }
+  /** 停止当前原生工作；发送失败由统一失败路径（pending / continuation reject）收尾。 */
+  private sendCancel(): void {
+    if (!this.externalSessionId || this.failure) return;
+    try {
+      this.send({
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId: this.externalSessionId },
+      });
+    } catch {
+      /* 见上。 */
+    }
+  }
+  /**
+   * 引擎自发续跑：不发 session/prompt，回放空闲期缓存并继续接收，直到续跑收尾标记、用户停止
+   * （session/cancel → cancelled）或连接失败。不以超时结束（spec「跨轮观察与引擎自发续跑」）。
+   */
+  private async observe(input: ExternalEngineSessionInput): Promise<ExternalEngineTurnResult> {
+    if (this.active) throw new Error("Concurrent ACP turn");
+    if (this.failure) throw this.failure;
+    // 无未消费推送（已被先执行的用户轮并入）时没有可等待的收尾标记，不能空等。
+    if (!this.externalSessionId || !this.sessionReady || !this.hasPendingContinuation)
+      return { stopReason: "end_turn" };
+    this.strictProcessExit = false;
+    this.active = input;
+    const ended = new Promise<void>((resolve, reject) => {
+      this.continuation = { resolve, reject };
+    });
+    let cancelled = false;
+    const cancel = () => {
+      cancelled = true;
+      this.sendCancel();
+      this.continuation?.resolve();
+    };
+    input.signal.addEventListener("abort", cancel, { once: true });
+    try {
+      if (input.signal.aborted) cancel();
+      this.claimIdleActivity(input);
+      await ended;
+      await this.notifications;
+      if (this.failure) throw this.failure;
+      return { stopReason: cancelled ? "cancelled" : "end_turn" };
+    } finally {
+      input.signal.removeEventListener("abort", cancel);
+      this.continuation = undefined;
+      this.active = undefined;
+    }
   }
   private async execute(
     input: ExternalEngineSessionInput,
-    prompt?: ExternalEngineTurnInput["prompt"],
+    prompt?: ExternalEnginePromptBlock[],
     parentExternalSessionId?: string,
   ): Promise<ExternalEngineTurnResult | undefined> {
     if (this.active) throw new Error("Concurrent ACP turn");
@@ -477,6 +503,7 @@ export class AcpConnection {
     this.strictProcessExit = false;
     this.active = input;
     this.forking = Boolean(parentExternalSessionId);
+    this.idle.listen(input.onIdleActivity);
     let cancellationTimer: ReturnType<typeof setTimeout> | undefined;
     const cancel = () => {
       if (!prompt) {
@@ -488,17 +515,7 @@ export class AcpConnection {
         void this.close();
         return;
       }
-      if (this.externalSessionId && !this.failure) {
-        try {
-          this.send({
-            jsonrpc: "2.0",
-            method: "session/cancel",
-            params: { sessionId: this.externalSessionId },
-          });
-        } catch {
-          /* 退出会统一拒绝 pending。 */
-        }
-      }
+      this.sendCancel();
       cancellationTimer = setTimeout(() => {
         this.fail(new ExternalEngineConnectionError({ code: "timeout", method: "session/prompt" }));
         void this.close();
@@ -515,6 +532,8 @@ export class AcpConnection {
         throw input.signal.reason;
       }
       if (!prompt) return;
+      // 用户轮先于已排队的 continuation 执行时，空闲期推送按原顺序并入本轮，continuation 随后跳过。
+      this.claimIdleActivity(input);
       const result = await this.request("session/prompt", {
         sessionId: this.externalSessionId,
         prompt,
@@ -577,7 +596,10 @@ export class AcpConnection {
     const initialized = await this.initialize(input.engine);
     const initializeMs = Date.now() - initializeStartedAt;
     const capabilities = initialized.agentCapabilities as
-      | { loadSession?: boolean; sessionCapabilities?: { resume?: unknown; fork?: unknown } }
+      | {
+          loadSession?: boolean;
+          sessionCapabilities?: { resume?: unknown; fork?: unknown; systemPrompt?: unknown };
+        }
       | undefined;
     if (parentExternalSessionId && !capabilities?.sessionCapabilities?.fork)
       throw new ExternalEngineConnectionError({ code: "unsupported", method: "session/fork" });
@@ -588,11 +610,21 @@ export class AcpConnection {
         : capabilities?.loadSession && !capabilities.sessionCapabilities?.resume
           ? "session/load"
           : "session/resume";
+    const instructions = SUBAGENT_NAMING_INSTRUCTIONS[input.engine];
     const params = {
       cwd: input.cwd,
       mcpServers: [],
       ...(parentExternalSessionId || input.externalSessionId
         ? { sessionId: parentExternalSessionId ?? input.externalSessionId }
+        : {}),
+      // Claude 0.95.0 声明 sessionCapabilities.systemPrompt：new/resume/load/fork 都会重新应用，
+      // 每次握手都传；未声明的旧 adapter 不发，避免 invalid_params。
+      ...(input.engine === "claude-code" && capabilities?.sessionCapabilities?.systemPrompt
+        ? { systemPrompt: { mode: "append", content: [{ type: "text", text: instructions }] } }
+        : {}),
+      // Codex 2.2.2 只在 session/new 读取 AIR customInstructions（作为 developerInstructions）。
+      ...(input.engine === "codex" && method === "session/new"
+        ? { _meta: { jetbrains: { air: { customInstructions: instructions } } } }
         : {}),
     };
     this.loadingHistory = method === "session/load" || method === "session/fork";
