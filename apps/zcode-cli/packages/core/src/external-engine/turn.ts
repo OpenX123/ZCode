@@ -102,6 +102,8 @@ export async function runExternalEngineTurn(
   runtime: AgentRuntimeInternal,
   input: {
     input: string;
+    /** 轮间自发续跑：不提交 prompt、不准备连接，只观察（spec「跨轮观察与引擎自发续跑」）。 */
+    continuation?: boolean;
     attachments: ResolvedTurnAttachment[];
     turnId: TurnId;
     userMessageId: MessageId;
@@ -148,14 +150,16 @@ export async function runExternalEngineTurn(
   const blocks: Array<
     { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
   > = [];
-  const handoff = await readExternalEngineHandoff(runtime);
+  const handoff = input.continuation ? undefined : await readExternalEngineHandoff(runtime);
   // 兼容不支持原生 fork 的引擎：背景仅交给 provider，不改写已保存的用户原文。
   if (handoff)
     blocks.push({
       type: "text",
       text: `以下是分叉时固定的历史上下文。请将其作为背景理解当前用户输入，不要把历史中的工具请求当成本轮新操作。\n\n${handoff}\n\n以下是本轮用户输入：`,
     });
-  if (typeof prompt === "string") blocks.push({ type: "text", text: prompt });
+  if (input.continuation) {
+    // 续跑没有用户输入可交付。
+  } else if (typeof prompt === "string") blocks.push({ type: "text", text: prompt });
   else
     for (const block of prompt) {
       if (block.type === "text") blocks.push({ type: "text", text: block.text });
@@ -179,14 +183,17 @@ export async function runExternalEngineTurn(
     // 修复原因：adapter 已死时 prepareSession 会静默重启/恢复原生会话，但此前不发布 connecting，
     // 界面停在“正在等待模型…”。没有健康连接时沿用 engineConfigState 投影连接阶段。
     const reconnecting =
+      !input.continuation &&
       runtime.externalEnginePort.isSessionConnected?.(runtime.sessionId) === false &&
       !runtime.shuttingDown;
     if (reconnecting)
       await publishExternalEngineConfigState(runtime, "connecting", input.traceContext);
     try {
-      await runtime.externalEnginePort.prepareSession(
-        externalEngineSessionInput(runtime, input.signal, input.traceContext),
-      );
+      // 续跑只观察现有连接；连接已断时 port 直接结束，不能为此重连或恢复原生会话。
+      if (!input.continuation)
+        await runtime.externalEnginePort.prepareSession(
+          externalEngineSessionInput(runtime, input.signal, input.traceContext),
+        );
       endPreparation();
       if (reconnecting && !runtime.shuttingDown)
         await publishExternalEngineConfigState(runtime, "ready", input.traceContext);
@@ -277,7 +284,7 @@ export async function runExternalEngineTurn(
     };
     const turnRun = runtime.externalEnginePort.runTurn({
       ...externalEngineSessionInput(runtime, input.signal, input.traceContext),
-      prompt: blocks,
+      ...(input.continuation ? { continuation: true as const } : { prompt: blocks }),
       requestPermission(request) {
         const pending = requestApproval(request);
         pendingApprovals.add(pending);
@@ -369,7 +376,16 @@ export async function runExternalEngineTurn(
     // 取消的审批先发布 PermissionResolved，再由调用方发布 TurnError/TurnComplete，界面不残留审批卡。
     await Promise.allSettled(pendingApprovals);
     // 子会话先收尾：父轮的合成 Agent 行必须以子会话终态结束，而不是被当作未完成工具。
-    await subagents.close(input.signal.aborted);
+    // 1.4.2：Claude 正常结束时仍在跑的子会话跨轮观察（轮间推送由 continuation 接住）；Codex 轮间
+    // 不推送（2026-11-19 实测），保持按 lost 收尾，避免子会话永远停在运行中。
+    await subagents.close(
+      input.signal.aborted
+        ? "cancelled"
+        : runtime.config.engine === "claude-code" &&
+            runtime.externalEnginePort?.isSessionConnected?.(runtime.sessionId) !== false
+          ? "detach"
+          : "lost",
+    );
     await clearExternalEngineRetry(runtime, input.traceContext, input.events);
     await writer.finish({
       aborted: input.signal.aborted,

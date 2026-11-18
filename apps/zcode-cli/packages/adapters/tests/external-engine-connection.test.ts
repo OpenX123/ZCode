@@ -66,13 +66,28 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   }
   else if (message.method === "session/new" && mode === "null-description") send({ id: message.id, result: { sessionId: sid, configOptions: [{ id: "model", name: "Model", type: "select", currentValue: "gw-model", options: [{ value: "gw-model", name: "6.1 Sol", description: null, _meta: { jetbrains: { air: { version: 1, kind: "standard" } } } }, { value: "gpt-5.5", name: "5.5", description: "Frontier model" }] }] } });
   else if (message.method === "session/new") send({ id: message.id, result: { sessionId: sid } });
+  else if (message.method === "session/cancel" && mode === "idle-push") {}
   else if (message.method === "session/cancel") send({ id: prompt.id, result: { stopReason: "cancelled" } });
+  else if (message.id === 9001 && mode === "idle-push") {
+    // 轮间权限得到续跑轮的正常应答后，再发收尾标记。
+    text("permission:" + JSON.stringify(message.result.outcome));
+    send({ method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "usage_update", used: 2, size: 10, cost: { amount: 0.2, currency: "USD" }, _meta: { "_claude/origin": { kind: "task-notification" } } } } });
+  }
   else if (message.method === "session/prompt") {
     prompt = message;
     const env = {};
     for (const key of ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ELECTRON_RUN_AS_NODE", "ZCODE_TOOL_ENV_PASSTHROUGH_JSON"]) env[key] = process.env[key];
     if (mode === "report") { text(JSON.stringify({ argv: process.argv.slice(1), execArgv: process.execArgv, env })); send({ id: message.id, result: { stopReason: "end_turn" } }); }
     else if (mode === "session-params") { text(JSON.stringify(sessionParams)); send({ id: message.id, result: { stopReason: "end_turn" } }); }
+    else if (mode === "idle-push") {
+      // 2026-11-19 Claude 真实形状：prompt 返回后自发续跑，以带 task-notification origin 的 usage_update 收尾。
+      text("first"); send({ method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "usage_update", used: 1, size: 10, cost: { amount: 0.1, currency: "USD" }, _meta: { "_claude/origin": { kind: "human" } } } } });
+      send({ id: message.id, result: { stopReason: "end_turn" } });
+      setTimeout(() => {
+        text("continued");
+        send({ method: "session/request_permission", id: 9001, params: { sessionId: sid, toolCall: { toolCallId: "t1", title: "Bash" }, options: [{ optionId: "ok", name: "Allow", kind: "allow_once" }] } });
+      }, 50);
+    }
     else if (mode === "codex-error") {
       // 重试中的 warning 不结束测试；Codex 重试用尽后发终态 error（willRetry=false）。
       info({ codex: { error: { message: "unexpected status 401 Unauthorized: bad key sk-abcdefghijklmnop request id: req_123", httpStatus: 401, willRetry: true } } });
@@ -147,6 +162,71 @@ async function reported(port: ExternalEnginePort, input: ExternalEngineTurnInput
     env: Record<string, string | undefined>;
   };
 }
+
+describe("轮间推送与引擎自发续跑", () => {
+  test("prompt 返回后的推送被缓存并唤醒一次；continuation 回放、正常审批并在收尾标记结束", async () => {
+    const { port } = await setup("claude-code", { FIXTURE_MODE: "idle-push" });
+    let wakes = 0;
+    let woke!: () => void;
+    const wake = new Promise<void>((resolve) => (woke = resolve));
+    const base = {
+      ...turn("claude-code"),
+      onIdleActivity: () => {
+        wakes += 1;
+        woke();
+      },
+    };
+    const first: Record<string, unknown>[] = [];
+    try {
+      await port.runTurn({ ...base, onUpdate: async (update) => void first.push(update) });
+      await wake;
+      // 尚未消费前：空闲期推送与等待中的权限请求都算后台活动，闲置回收不能关闭进程。
+      expect(port.hasPendingContinuation?.(base.sessionId)).toBe(true);
+      expect(port.hasBackgroundActivity?.(base.sessionId)).toBe(true);
+      const continued: Record<string, unknown>[] = [];
+      const permissions: string[] = [];
+      const { prompt: _prompt, ...session } = base;
+      const result = await port.runTurn({
+        ...session,
+        continuation: true,
+        onUpdate: async (update) => void continued.push(update),
+        requestPermission: async (request) => {
+          permissions.push(request.toolCall.toolCallId);
+          return { outcome: "selected", optionId: "ok" };
+        },
+      });
+      expect(result.stopReason).toBe("end_turn");
+      expect(wakes).toBe(1);
+      expect(permissions).toEqual(["t1"]);
+      const texts = (updates: Record<string, unknown>[]) =>
+        updates
+          .filter((update) => update.sessionUpdate === "agent_message_chunk")
+          .map((update) => (update.content as { text: string }).text);
+      expect(texts(first)).toEqual(["first"]);
+      expect(texts(continued)).toEqual([
+        "continued",
+        `permission:${JSON.stringify({ outcome: "selected", optionId: "ok" })}`,
+      ]);
+      expect(port.hasPendingContinuation?.(base.sessionId)).toBe(false);
+    } finally {
+      await port.closeSession(base.sessionId);
+    }
+  });
+
+  test("没有未消费推送时 continuation 立即结束，不发 session/prompt", async () => {
+    const { port } = await setup("claude-code", { FIXTURE_MODE: "session-params" });
+    const input = turn("claude-code");
+    try {
+      await port.runTurn(input);
+      const { prompt: _prompt, ...session } = input;
+      await expect(port.runTurn({ ...session, continuation: true })).resolves.toMatchObject({
+        stopReason: "end_turn",
+      });
+    } finally {
+      await port.closeSession(input.sessionId);
+    }
+  });
+});
 
 describe("Claude Git Bash 路径", () => {
   async function gitInstall() {

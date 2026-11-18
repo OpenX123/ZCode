@@ -8,6 +8,7 @@ import {
 } from "./background-notifications.js";
 import { persistSubagentMessageCommand } from "./subagent-messages.js";
 import { runControlOnlyTurnCommand } from "./control-only-turn.js";
+import { runExternalEngineContinuationCommand } from "../../external-engine/continuation.js";
 import { createTurnCancelledError } from "../helpers/index.js";
 import { executeTargetContinuationCommand } from "./target.js";
 import { runActiveTargetContinuationLoop } from "./target-continuation-loop.js";
@@ -306,6 +307,14 @@ async function runRuntimeCommand(
     }
     if (command.mode === "control-only-turn") {
       await runControlOnlyTurnCommand.call(this, command);
+      return;
+    }
+    if (command.mode === "external-engine-continuation") {
+      await runExternalEngineContinuationCommand(
+        this,
+        command,
+        foregroundExecution.controller.signal,
+      );
       return;
     }
   } catch (error) {

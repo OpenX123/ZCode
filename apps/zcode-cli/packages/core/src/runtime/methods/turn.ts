@@ -644,6 +644,7 @@ export async function executeTurnCommand(
         if (externalEngine) {
           loopState = await runExternalEngineTurn(this, {
             input,
+            continuation: options?.externalEngineContinuation === true,
             attachments: resolvedAttachments,
             turnId,
             userMessageId,

@@ -111,7 +111,11 @@ export function createExternalEnginePort(
       readConnection: () => {
         if (sessions.get(sessionId)?.healthy !== true) return undefined;
         return {
-          busy: created.inFlight > 0 || preparations.has(sessionId),
+          // 后台子会话仍在跑或空闲期推送未消费时回收进程会杀掉它们（spec「跨轮观察」回收规则）。
+          busy:
+            created.inFlight > 0 ||
+            preparations.has(sessionId) ||
+            sessions.get(sessionId)?.hasBackgroundActivity === true,
           resumable: created.resumable,
           lastUsedAt: created.lastUsedAt,
         };
@@ -119,7 +123,13 @@ export function createExternalEnginePort(
       async releaseIdle() {
         const connection = sessions.get(sessionId);
         // 与 execute 取连接处于同一同步片：复查在途后摘除，之后到达的操作走恢复路径。
-        if (!connection || created.inFlight > 0 || preparations.has(sessionId)) return false;
+        if (
+          !connection ||
+          created.inFlight > 0 ||
+          preparations.has(sessionId) ||
+          connection.hasBackgroundActivity
+        )
+          return false;
         sessions.delete(sessionId);
         created.idleClosedAt = Date.now();
         await connection.close();
@@ -480,6 +490,8 @@ export function createExternalEnginePort(
     },
     prepareSession,
     isSessionConnected: (sessionId) => sessions.get(sessionId)?.healthy === true,
+    hasBackgroundActivity: (sessionId) => sessions.get(sessionId)?.hasBackgroundActivity === true,
+    hasPendingContinuation: (sessionId) => sessions.get(sessionId)?.hasPendingContinuation === true,
     async forkSession(input) {
       if (sessions.has(input.sessionId) || preparations.has(input.sessionId))
         throw new ExternalEngineConnectionError({ code: "configuration", method: "session/fork" });
@@ -509,6 +521,12 @@ export function createExternalEnginePort(
       }
     },
     async runTurn(input) {
+      if (input.continuation) {
+        // 续跑只观察已连接会话的空闲期推送；连接已断则无可观察内容，不重连、不提交 prompt。
+        const connection = sessions.get(input.sessionId);
+        if (!connection?.healthy) return { stopReason: "end_turn" };
+        return execute(input, (current) => current.run(input));
+      }
       await prepareSession(input);
       // 连接就绪后只提交一次 prompt；响应丢失也不能自行重发用户操作。
       return execute(input, (connection) => {

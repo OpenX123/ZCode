@@ -108,10 +108,29 @@ export interface ExternalEngineSessionInput {
   onChildUpdate?: (nativeSessionId: string, update: Record<string, unknown>) => Promise<void>;
   /** 无正文诊断（如丢弃未知子会话 ID）；调用方只记 debug。 */
   onDiagnostic?: (event: string, fields: Record<string, string>) => void;
+  /**
+   * 无 active 轮时引擎主动推送（Claude 后台任务完成后自发续跑、子会话轮间唤醒）：adapter 按序缓存，
+   * 每段空闲期只边沿调用一次；Runtime 据此串行准入一轮 continuation（见 runTurn 的 continuation）。
+   * 以最近一次会话操作传入的回调为准。
+   */
+  onIdleActivity?: () => void;
 }
-export interface ExternalEngineTurnInput extends ExternalEngineSessionInput {
-  prompt: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
-}
+export type ExternalEnginePromptBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+export type ExternalEngineTurnInput = ExternalEngineSessionInput &
+  (
+    | { prompt: ExternalEnginePromptBlock[]; continuation?: undefined }
+    | {
+        /**
+         * 引擎自发续跑：不发送 session/prompt，回放空闲期缓存并继续接收，直到引擎的续跑收尾标记
+         * （Claude：带 `_meta["_claude/origin"].kind = "task-notification"` 的 usage_update），
+         * 或用户停止（发送 session/cancel，stopReason=cancelled）。
+         */
+        continuation: true;
+        prompt?: undefined;
+      }
+  );
 export interface ExternalEngineTurnResult {
   stopReason: string;
   usage?: {
@@ -141,6 +160,10 @@ export interface ExternalEnginePort {
     value: string,
   ): Promise<EngineConfigOption[]>;
   closeSession(sessionId: string): Promise<void>;
+  /** 有仍在运行的原生子会话或未消费的空闲期推送；闲置回收据此跳过该会话。 */
+  hasBackgroundActivity?(sessionId: string): boolean;
+  /** 空闲期有未消费的引擎推送；Runtime 执行 continuation 前据此跳过已被其他轮消费的唤醒。 */
+  hasPendingContinuation?(sessionId: string): boolean;
   /** 停止原生声明可取消的子会话当前工作（session/cancel）；未知或不可取消时抛 unsupported。 */
   cancelSubagent?(sessionId: string, nativeSessionId: string): Promise<void>;
 }

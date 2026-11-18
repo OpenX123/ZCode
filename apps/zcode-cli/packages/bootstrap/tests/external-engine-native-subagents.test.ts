@@ -627,7 +627,7 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
     ).toBe(initializesBefore);
   });
 
-  it("Claude RFD 形态：委派提示作为子会话首条消息，可取消子会话经原生 session/cancel 停止，父轮结束时未结束的记 lost", async () => {
+  it("Claude RFD 形态：委派提示作为子会话首条消息，可取消子会话经原生 session/cancel 停止，父轮正常结束时未结束的跨轮继续运行", async () => {
     const context = await setup("claude-code", "claude-rfd.json");
     const sessionId = createSessionId();
     const { runtime, events } = createRuntime(context, "claude-code", sessionId);
@@ -677,9 +677,18 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
       expect.arrayContaining([
         expect.objectContaining({ childSessionId: explorerId, status: "completed" }),
         expect.objectContaining({ childSessionId: runnerId, status: "cancelled" }),
-        expect.objectContaining({ childSessionId: watcherId, status: "lost" }),
       ]),
     );
+    // 1.4.2：父轮正常结束时 Watcher 仍在运行——不再判 lost，Agent 行保持 running，等轮间推送收尾。
+    expect(stopped.some((item) => item.childSessionId === watcherId)).toBe(false);
+    const parentParts = (await context.sessionStore.messages({ sessionID: sessionId })).flatMap(
+      (message) => message.parts,
+    );
+    expect(
+      parentParts.find(
+        (part) => part.type === "tool" && part.metadata?.childSessionId === watcherId,
+      ),
+    ).toMatchObject({ state: { status: "running" } });
     // Watcher 未声明 cancel，不提供 Stop。
     expect(
       events.some(
@@ -689,7 +698,10 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
       ),
     ).toBe(false);
     const snapshot = projectionOf(sessionId, events).getSnapshot();
-    expect(snapshot.subagents).toMatchObject({ running: [], endedTotal: 3 });
+    expect(snapshot.subagents).toMatchObject({
+      running: [expect.objectContaining({ childSessionId: watcherId })],
+      endedTotal: 2,
+    });
     expect(
       events.find(
         (event) =>
@@ -706,5 +718,127 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
     // 结束后停止：不可再取消。
     expect(await runtime.cancelBackgroundTask(runnerId)).toMatchObject({ cancelled: false });
     await runtime.closeBrowserSession();
+  });
+
+  it("Claude 轮间推送：后台子会话在父轮后完成，引擎自发续跑成为新一轮并收尾原 Agent 行", async () => {
+    const mainSessionId = "continuation-root";
+    const child = "bg-backend-1";
+    const context = await setup("claude-code", {
+      mainSessionId,
+      prompt: [
+        {
+          update: {
+            sessionUpdate: "subagent_update",
+            sessionId: child,
+            title: "general-purpose",
+            description: "Backend build watch",
+            capabilities: { cancel: {} },
+            state: { state: "running" },
+          },
+        },
+        {
+          update: {
+            sessionUpdate: "session_message",
+            messageId: "toolu_bg",
+            senderSessionId: mainSessionId,
+            recipientSessionId: child,
+            content: [{ type: "text", text: "等构建完成后汇报" }],
+          },
+        },
+        {
+          sessionId: child,
+          update: {
+            sessionUpdate: "session_message",
+            messageId: "toolu_bg",
+            senderSessionId: mainSessionId,
+            recipientSessionId: child,
+            content: [{ type: "text", text: "等构建完成后汇报" }],
+          },
+        },
+        // 后台 Agent 的启动回执以 reply 送达，不能成为结果。
+        {
+          update: {
+            sessionUpdate: "session_message",
+            messageId: "toolu_bg:reply",
+            senderSessionId: child,
+            recipientSessionId: mainSessionId,
+            content: [{ type: "text", text: "Async agent launched successfully." }],
+          },
+        },
+        {
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "已派出" } },
+        },
+      ],
+      afterPrompt: [
+        { delayMs: 50 },
+        {
+          sessionId: child,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "构建成功" } },
+        },
+        {
+          update: {
+            sessionUpdate: "subagent_update",
+            sessionId: child,
+            state: { state: "idle", stopReason: "end_turn" },
+          },
+        },
+        {
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "构建已完成" } },
+        },
+        {
+          update: {
+            sessionUpdate: "usage_update",
+            used: 10,
+            size: 100,
+            cost: { amount: 0.1, currency: "USD" },
+            _meta: { "_claude/origin": { kind: "task-notification" } },
+          },
+        },
+      ],
+    });
+    const sessionId = createSessionId();
+    const { runtime, events } = createRuntime(context, "claude-code", sessionId);
+    await runtime.executeTurn("派一个后台子智能体");
+    const mainTurns = () =>
+      events.filter(
+        (event) =>
+          String(event.sessionId) === String(sessionId) &&
+          event.type === SessionEventType.TurnComplete,
+      );
+    await vi.waitFor(() => expect(mainTurns()).toHaveLength(2), { timeout: 15_000 });
+    const childId = childIdOf(events, child);
+    const stopped = events.filter(
+      (event) =>
+        event.type === SessionEventType.SubagentStopped &&
+        (event.payload as { childSessionId?: string }).childSessionId === childId,
+    );
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0]?.payload).toMatchObject({ status: "completed", summaryText: "构建成功" });
+    // 续跑轮的正文属于第二轮 assistant；第一轮的 Agent 行在原位置收尾为成功。
+    const messages = await context.sessionStore.messages({ sessionID: sessionId });
+    const agent = messages
+      .flatMap((message) => message.parts)
+      .find((part) => part.type === "tool" && part.metadata?.childSessionId === childId);
+    expect(agent).toMatchObject({ state: { status: "completed" } });
+    const texts = messages
+      .filter((message) => message.info.role === "assistant")
+      .map((message) =>
+        message.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
+      );
+    expect(texts).toEqual(["已派出", "构建已完成"]);
+    // 续跑轮以 model-only 合成输入开始，不显示为用户消息。
+    expect(
+      messages.some(
+        (message) =>
+          message.info.role === "user" &&
+          (message.info as { visibility?: string }).visibility === "model-only",
+      ),
+    ).toBe(true);
+    const snapshot = projectionOf(sessionId, events).getSnapshot();
+    expect(snapshot.subagents).toMatchObject({ running: [], endedTotal: 1 });
+    // 续跑不得重新提交 prompt：整个过程只有一次 session/prompt。
+    expect(
+      (await context.clientMessages()).filter((message) => message.method === "session/prompt"),
+    ).toHaveLength(1);
   });
 });

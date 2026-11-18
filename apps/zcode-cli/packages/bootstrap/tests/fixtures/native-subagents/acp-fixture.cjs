@@ -23,6 +23,7 @@ async function play(steps) {
       send({ id, method: "session/request_permission", params: step.permission });
       await answered;
     } else if (step.waitCancel) await wait(`cancel:${step.waitCancel}`);
+    else if (step.delayMs) await new Promise((resolve) => setTimeout(resolve, step.delayMs));
   }
 }
 
@@ -46,5 +47,9 @@ readline.createInterface({ input: process.stdin }).on("line", async (line) => {
   else if (message.method === "session/prompt") {
     await play(frames.prompt ?? []);
     send({ id: message.id, result: { stopReason: "end_turn" } });
+    // 轮间推送（Claude 后台任务完成后的自发续跑）：prompt 返回之后才发出，只播放一次。
+    const after = frames.afterPrompt;
+    frames.afterPrompt = undefined;
+    if (after) await play(after);
   }
 });

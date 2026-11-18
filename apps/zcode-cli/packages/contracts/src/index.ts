@@ -108,6 +108,7 @@ export * from "./interfaces/permission-full-access.js";
 export type {
   ExternalEnginePort,
   ExternalEngineTurnInput,
+  ExternalEnginePromptBlock,
   ExternalEngineSessionInput,
   ExternalEngineTurnResult,
   ExternalEnginePermissionRequest,

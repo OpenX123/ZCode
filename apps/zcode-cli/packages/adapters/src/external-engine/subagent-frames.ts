@@ -19,6 +19,8 @@ export const SUBAGENT_FRAME_KINDS = new Set([
 
 export interface KnownSubagent {
   cancellable: boolean;
+  /** 最近一次归一状态是否仍在工作（running / waiting）；闲置回收据此保留进程。 */
+  running: boolean;
 }
 
 /** 无效帧不判定连接故障（协议仍是 unstable）；调用方记 debug 后丢弃。 */

@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import {
   ExternalEngineConnectionError,
+  type ExternalEnginePromptBlock,
   type ExternalEngineSessionInput,
   type ExternalEngineTurnInput,
   type ExternalEngineTurnResult,
@@ -76,6 +77,25 @@ function configOptions(value: unknown): EngineConfigOption[] {
   return parsed.data;
 }
 type SessionMethod = NonNullable<EngineConnectionFailure["method"]>;
+/** 轮间缓存上限：超出只记诊断（不判连接故障），防止无人消费时无限增长。 */
+const MAX_IDLE_UPDATES = 4096;
+const CLAUDE_ORIGIN_META_KEY = "_claude/origin";
+const CONTINUATION_ORIGIN_KIND = "task-notification";
+/**
+ * 引擎自发续跑的收尾标记（2026-11-19 Claude 0.95.0 真实帧）：每轮模型输出以带 cost 的 usage_update 结束，
+ * `_meta["_claude/origin"].kind` 为 human（用户轮）或 task-notification（后台任务唤醒的自发轮）。
+ */
+function isContinuationEnd(update: JsonObject): boolean {
+  if (update.sessionUpdate !== "usage_update") return false;
+  const meta = update._meta;
+  if (meta === null || typeof meta !== "object") return false;
+  const origin = (meta as JsonObject)[CLAUDE_ORIGIN_META_KEY];
+  return (
+    origin !== null &&
+    typeof origin === "object" &&
+    (origin as JsonObject).kind === CONTINUATION_ORIGIN_KIND
+  );
+}
 /**
  * 子智能体命名约束（docs/desktop/external-agent-engines-spec.md「跨轮观察与引擎自发续跑」）：
  * 原生帧只带模型自填的名称，未约束时多为类型名或空；追加为系统/开发者指令，界面直接展示。
@@ -130,6 +150,14 @@ export class AcpConnection {
   };
   /** 已宣告的原生子会话（连接级，跨轮保留；RFD 的 idle 子会话可被再次委派）。 */
   private subagents = new Map<string, KnownSubagent>();
+  /** 轮间（无 active）到达的已路由推送，按到达顺序交给下一次 prompt / continuation。 */
+  private idleUpdates: JsonObject[] = [];
+  private idleDiagnostics: string[] = [];
+  private idleSignaled = false;
+  private idleWaiters: Array<{ resolve(): void; reject(error: Error): void }> = [];
+  private onIdleActivity?: () => void;
+  /** 进行中的 continuation：收到引擎续跑收尾标记时 resolve。 */
+  private continuation?: { resolve(): void; reject(error: Error): void };
   get healthy(): boolean {
     return !this.failure;
   }
@@ -141,9 +169,14 @@ export class AcpConnection {
     this.active?.onDiagnostic?.(event, { nativeSessionId: String(sessionId) });
   }
   private async update(params: JsonObject): Promise<void> {
-    if (!this.active) return;
     const sessionId = params.sessionId;
     const child = typeof sessionId === "string" && this.subagents.has(sessionId);
+    if (!this.active) {
+      // 修复：轮间引擎主动推送（Claude 后台任务完成后的自发续跑、子会话唤醒）曾在此被直接丢弃，
+      // “等通知”的会话结束后再无下文。改为按序缓存并边沿唤醒 Runtime 准入一轮 continuation。
+      this.bufferIdleUpdate(params, sessionId === this.externalSessionId || child);
+      return;
+    }
     if (sessionId !== this.externalSessionId && !child) {
       // 修复前所有非主会话更新都被静默丢弃；现在只丢未宣告的 ID，并留无正文诊断。
       this.diagnose("external_engine.subagent.unrouted_update", sessionId);
@@ -188,6 +221,61 @@ export class AcpConnection {
       }
       await this.active.onUpdate(update);
     }
+    if (sessionId === this.externalSessionId && isContinuationEnd(update)) this.continuation?.resolve();
+  }
+  private bufferIdleUpdate(params: JsonObject, routed: boolean): void {
+    if (this.loadingHistory || this.forking) return;
+    if (!routed) {
+      this.idleDiagnostics.push("external_engine.subagent.unrouted_update");
+      return;
+    }
+    if (this.idleUpdates.length >= MAX_IDLE_UPDATES) {
+      this.idleDiagnostics.push("external_engine.idle_update.overflow");
+      return;
+    }
+    this.idleUpdates.push(params);
+    this.signalIdleActivity();
+  }
+  /** 每段空闲期只唤醒一次；进入下一次会话操作时复位。 */
+  private signalIdleActivity(): void {
+    if (this.idleSignaled) return;
+    this.idleSignaled = true;
+    this.onIdleActivity?.();
+  }
+  /** 有仍在工作的原生子会话或未消费的空闲期推送。 */
+  get hasBackgroundActivity(): boolean {
+    return (
+      this.idleUpdates.length > 0 ||
+      this.idleWaiters.length > 0 ||
+      [...this.subagents.values()].some((item) => item.running)
+    );
+  }
+  get hasPendingContinuation(): boolean {
+    return this.idleUpdates.length > 0 || this.idleWaiters.length > 0;
+  }
+  /** 进入任一会话操作：交付空闲期诊断与缓存（按到达顺序排在新通知之前），唤醒等待的权限请求。 */
+  private claimIdleActivity(input: ExternalEngineSessionInput): void {
+    if (input.onIdleActivity) this.onIdleActivity = input.onIdleActivity;
+    this.idleSignaled = false;
+    for (const event of this.idleDiagnostics.splice(0))
+      input.onDiagnostic?.(event, { nativeSessionId: String(this.externalSessionId) });
+    const buffered = this.idleUpdates.splice(0);
+    if (buffered.length)
+      this.notifications = this.notifications
+        .then(async () => {
+          for (const params of buffered) await this.update(params);
+        })
+        .catch((error: unknown) =>
+          this.fail(error instanceof Error ? error : new Error("ACP update failed")),
+        );
+    for (const waiter of this.idleWaiters.splice(0)) waiter.resolve();
+  }
+  /** 轮间权限请求：唤醒 Runtime 并等到某次会话操作接管后再交给它，不再直接回 cancelled。 */
+  private waitForActive(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.idleWaiters.push({ resolve, reject });
+      this.signalIdleActivity();
+    });
   }
   private async subagentUpdate(sessionId: string, update: JsonObject): Promise<void> {
     const active = this.active!;
@@ -204,7 +292,11 @@ export class AcpConnection {
     for (const event of result.events) {
       // 先登记再交付：Runtime 处理 spawned 期间到达的子会话更新必须可路由。
       if (event.type === "spawned")
-        this.subagents.set(event.nativeSessionId, { cancellable: event.cancellable });
+        this.subagents.set(event.nativeSessionId, { cancellable: event.cancellable, running: true });
+      else if (event.type === "state") {
+        const known = this.subagents.get(event.nativeSessionId);
+        if (known) known.running = event.state === "running" || event.state === "waiting";
+      }
       await active.onSubagent(event);
     }
   }
@@ -247,6 +339,8 @@ export class AcpConnection {
     this.failure = error;
     for (const request of this.pending.values()) request.reject(error);
     this.pending.clear();
+    for (const waiter of this.idleWaiters.splice(0)) waiter.reject(error);
+    this.continuation?.reject(error);
   }
   private send(value: JsonObject): void {
     if (this.failure) throw this.failure;
@@ -356,11 +450,12 @@ export class AcpConnection {
       typeof params.sessionId === "string" && this.subagents.has(params.sessionId)
         ? params.sessionId
         : undefined;
-    if (
-      this.forking ||
-      !this.active ||
-      (params.sessionId !== this.externalSessionId && !childSessionId)
-    ) {
+    const routed = params.sessionId === this.externalSessionId || Boolean(childSessionId);
+    // 修复：轮间权限请求（续跑或子会话唤醒时的工具审批）曾一律回 cancelled，续跑随即失败；
+    // 已路由的请求改为唤醒 Runtime，等 continuation 接管后走正常审批。
+    if (!this.active && routed && this.sessionReady && !this.forking && !this.loadingHistory)
+      await this.waitForActive();
+    if (this.forking || !this.active || !routed) {
       if (this.active && params.sessionId !== this.externalSessionId)
         this.diagnose("external_engine.subagent.unrouted_permission", params.sessionId);
       this.send({ jsonrpc: "2.0", id: frame.id, result: { outcome: { outcome: "cancelled" } } });
@@ -475,11 +570,55 @@ export class AcpConnection {
     return this.externalSessionId;
   }
   async run(input: ExternalEngineTurnInput): Promise<ExternalEngineTurnResult> {
+    if (input.continuation) return this.observe(input);
     return (await this.execute(input, input.prompt))!;
+  }
+  /**
+   * 引擎自发续跑：不发 session/prompt，回放空闲期缓存并继续接收，直到续跑收尾标记、用户停止
+   * （session/cancel → cancelled）或连接失败。不以超时结束（spec「跨轮观察与引擎自发续跑」）。
+   */
+  private async observe(input: ExternalEngineSessionInput): Promise<ExternalEngineTurnResult> {
+    if (this.active) throw new Error("Concurrent ACP turn");
+    if (this.failure) throw this.failure;
+    // 无未消费推送（已被先执行的用户轮并入）时没有可等待的收尾标记，不能空等。
+    if (!this.externalSessionId || !this.sessionReady || !this.hasPendingContinuation)
+      return { stopReason: "end_turn" };
+    this.strictProcessExit = false;
+    this.active = input;
+    const ended = new Promise<void>((resolve, reject) => {
+      this.continuation = { resolve, reject };
+    });
+    let cancelled = false;
+    const cancel = () => {
+      cancelled = true;
+      try {
+        this.send({
+          jsonrpc: "2.0",
+          method: "session/cancel",
+          params: { sessionId: this.externalSessionId },
+        });
+      } catch {
+        /* 连接失败会经 continuation.reject 收尾。 */
+      }
+      this.continuation?.resolve();
+    };
+    input.signal.addEventListener("abort", cancel, { once: true });
+    try {
+      if (input.signal.aborted) cancel();
+      this.claimIdleActivity(input);
+      await ended;
+      await this.notifications;
+      if (this.failure) throw this.failure;
+      return { stopReason: cancelled ? "cancelled" : "end_turn" };
+    } finally {
+      input.signal.removeEventListener("abort", cancel);
+      this.continuation = undefined;
+      this.active = undefined;
+    }
   }
   private async execute(
     input: ExternalEngineSessionInput,
-    prompt?: ExternalEngineTurnInput["prompt"],
+    prompt?: ExternalEnginePromptBlock[],
     parentExternalSessionId?: string,
   ): Promise<ExternalEngineTurnResult | undefined> {
     if (this.active) throw new Error("Concurrent ACP turn");
@@ -487,6 +626,7 @@ export class AcpConnection {
     this.strictProcessExit = false;
     this.active = input;
     this.forking = Boolean(parentExternalSessionId);
+    if (input.onIdleActivity) this.onIdleActivity = input.onIdleActivity;
     let cancellationTimer: ReturnType<typeof setTimeout> | undefined;
     const cancel = () => {
       if (!prompt) {
@@ -525,6 +665,8 @@ export class AcpConnection {
         throw input.signal.reason;
       }
       if (!prompt) return;
+      // 用户轮先于已排队的 continuation 执行时，空闲期推送按原顺序并入本轮，continuation 随后跳过。
+      this.claimIdleActivity(input);
       const result = await this.request("session/prompt", {
         sessionId: this.externalSessionId,
         prompt,

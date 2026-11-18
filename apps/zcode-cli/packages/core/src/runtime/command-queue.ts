@@ -14,7 +14,8 @@ export type RuntimeCommandMode =
   | "target-continuation-loop"
   | "task-notification"
   | "subagent-message"
-  | "control-only-turn";
+  | "control-only-turn"
+  | "external-engine-continuation";
 export type RuntimeCommandId = string & {
   readonly __runtimeCommandId: unique symbol;
 };
@@ -106,7 +107,14 @@ export interface ControlOnlyTurnRuntimeCommand extends RuntimeCommandBase {
   readonly workflowLaunch: WorkflowLaunchMeta;
 }
 
+/** 外部引擎轮间自发续跑（adapter 边沿唤醒）；不提交 prompt，见 external-engine/continuation.ts。 */
+export interface ExternalEngineContinuationRuntimeCommand extends RuntimeCommandBase {
+  readonly branchGeneration: number;
+  readonly mode: "external-engine-continuation";
+}
+
 export type RuntimeCommand =
+  | ExternalEngineContinuationRuntimeCommand
   | PromptRuntimeCommand
   | TargetContinuationRuntimeCommand
   | TargetContinuationLoopRuntimeCommand
