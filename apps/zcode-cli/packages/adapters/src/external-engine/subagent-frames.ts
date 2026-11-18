@@ -23,6 +23,19 @@ export interface KnownSubagent {
   running: boolean;
 }
 
+/** 交付前登记子会话并跟踪是否仍在工作（connection 的路由表与闲置回收判定）。 */
+export function trackSubagentEvent(
+  known: Map<string, KnownSubagent>,
+  event: ExternalEngineSubagentEvent,
+): void {
+  if (event.type === "spawned")
+    known.set(event.nativeSessionId, { cancellable: event.cancellable, running: true });
+  else if (event.type === "state") {
+    const entry = known.get(event.nativeSessionId);
+    if (entry) entry.running = event.state === "running" || event.state === "waiting";
+  }
+}
+
 /** 无效帧不判定连接故障（协议仍是 unstable）；调用方记 debug 后丢弃。 */
 export type SubagentFrameResult =
   | { events: ExternalEngineSubagentEvent[] }
