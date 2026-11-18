@@ -1,4 +1,4 @@
-import { Download, LoaderCircle, RefreshCw, X } from "lucide-react";
+import { Download, ExternalLink, LoaderCircle, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useDesktopUpdates } from "@/hooks/desktop-updates/index.js";
@@ -17,9 +17,13 @@ export function DesktopUpdateButton({
   // 无候选版本的检查错误只通过手动检查提示，避免启动时长期占用侧栏。
   if (state.kind === "error" && !state.version) return null;
   const progress = getDesktopUpdateProgress(state);
+  // 发布矩阵外的平台只能前往 Release 页面手动下载，沿用“发现新版”状态呈现。
+  const manualDownload = state.kind === "update-available" && state.manualDownload === true;
   const message =
     state.kind === "update-available"
-      ? "available"
+      ? manualDownload
+        ? "manualDownload"
+        : "available"
       : state.kind === "update-downloaded"
         ? "ready"
         : state.kind === "error"
@@ -40,6 +44,8 @@ export function DesktopUpdateButton({
             <LoaderCircle className="size-4 animate-spin" />
           ) : state.kind === "error" ? (
             <RefreshCw className="size-4" />
+          ) : manualDownload ? (
+            <ExternalLink className="size-4" />
           ) : (
             <Download className="size-4" />
           )}
@@ -77,9 +83,11 @@ export function DesktopUpdateButton({
               id:
                 state.kind === "update-downloaded"
                   ? "desktopUpdate.readyHint"
-                  : isWindowsDesktop
-                    ? "desktopUpdate.downloadHint.windows"
-                    : "desktopUpdate.downloadHint.mac",
+                  : manualDownload
+                    ? "desktopUpdate.manualDownloadHint"
+                    : isWindowsDesktop
+                      ? "desktopUpdate.downloadHint.windows"
+                      : "desktopUpdate.downloadHint.mac",
             })}
       </div>
       {state.kind === "download-progress" ? (

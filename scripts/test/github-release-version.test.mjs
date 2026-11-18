@@ -6,8 +6,15 @@ import { afterEach, test } from "node:test";
 import {
   allocateReleaseIdentity,
   applyReleaseVersion,
+  ensureReleaseTag,
+  LOCAL_SOURCE_WORKFLOW_PATH,
+  localReleaseIdentity,
   nextReleaseVersion,
+  verifySourceRun,
 } from "../github-release-version.mjs";
+
+const sha = "a".repeat(40);
+const otherSha = "b".repeat(40);
 
 const roots = [];
 afterEach(async () => {
@@ -70,6 +77,187 @@ test("正式构建唯一读取标签并分配版本，PR不查询或占用正式
     tag: "build-9-2",
   });
   assert.equal(reads, 1);
+});
+
+test("维护者预建并指向当前提交、尚无公开Release的最高标签被复用，否则继续递增", async () => {
+  const base = {
+    official: true,
+    currentVersion: "1.4.2",
+    repository: "OpenX123/ZCode",
+    runNumber: "9",
+    runAttempt: "1",
+    commitSha: sha,
+    readTags: async () => ["v1.4.0", "v1.4.1", "refs/tags/v1.4.2"],
+  };
+  const resolved = [];
+  const reuse = await allocateReleaseIdentity({
+    ...base,
+    resolveTagCommit: async (tag) => {
+      resolved.push(tag);
+      return sha;
+    },
+    releaseExists: async () => false,
+  });
+  assert.deepEqual(reuse, { version: "1.4.2", tag: "v1.4.2" });
+  // 只检查本线最高标签，不逐个查询历史标签。
+  assert.deepEqual(resolved, ["v1.4.2"]);
+  for (const [label, resolveTagCommit, releaseExists] of [
+    ["指向其他提交", async () => otherSha, async () => false],
+    ["已公开Release", async () => sha, async () => true],
+  ]) {
+    assert.deepEqual(
+      await allocateReleaseIdentity({
+        ...base,
+        resolveTagCommit,
+        releaseExists,
+      }),
+      { version: "1.4.3", tag: "v1.4.3" },
+      label,
+    );
+  }
+  // 本线尚无标签时不查询，也不会误用其他发版线的标签。
+  assert.deepEqual(
+    await allocateReleaseIdentity({
+      ...base,
+      currentVersion: "1.5.0",
+      resolveTagCommit: async () => {
+        throw new Error("must not resolve");
+      },
+      releaseExists: async () => false,
+    }),
+    { version: "1.5.0", tag: "v1.5.0" },
+  );
+});
+
+test("发布标签：已指向当前提交直接复用，指向其他提交明确失败，不存在才创建", async () => {
+  const options = {
+    repository: "OpenX123/ZCode",
+    tag: "v1.4.2",
+    commitSha: sha,
+  };
+  let created = 0;
+  const createTag = async () => {
+    created += 1;
+  };
+  assert.equal(
+    await ensureReleaseTag({
+      ...options,
+      resolveTagCommit: async () => sha,
+      createTag,
+    }),
+    "existing",
+  );
+  assert.equal(created, 0);
+  await assert.rejects(
+    ensureReleaseTag({
+      ...options,
+      resolveTagCommit: async () => otherSha,
+      createTag,
+    }),
+    /already points to b{40}, not this build a{40}/u,
+  );
+  assert.equal(created, 0);
+  assert.equal(
+    await ensureReleaseTag({
+      ...options,
+      resolveTagCommit: async () => null,
+      createTag,
+    }),
+    "created",
+  );
+  assert.equal(created, 1);
+});
+
+test("令牌无法创建标签时给出本机预建命令；并发创建到同一提交视为成功", async () => {
+  const options = {
+    repository: "OpenX123/ZCode",
+    tag: "v1.4.2",
+    commitSha: sha,
+  };
+  await assert.rejects(
+    ensureReleaseTag({
+      ...options,
+      resolveTagCommit: async () => null,
+      createTag: async () => {
+        throw new Error("HTTP 403: Resource not accessible by integration");
+      },
+    }),
+    (error) =>
+      /HTTP 403/u.test(error.message) &&
+      error.message.includes(
+        `gh api --method POST repos/OpenX123/ZCode/git/refs -f ref=refs/tags/v1.4.2 -f sha=${sha}`,
+      ),
+  );
+  let reads = 0;
+  assert.equal(
+    await ensureReleaseTag({
+      ...options,
+      resolveTagCommit: async () => (reads++ === 0 ? null : sha),
+      createTag: async () => {
+        throw new Error("HTTP 422: Reference already exists");
+      },
+    }),
+    "existing",
+  );
+  for (const bad of [{ tag: "build-1-1" }, { tag: "v1.4.2;rm" }, { commitSha: "abc" }]) {
+    await assert.rejects(
+      ensureReleaseTag({
+        ...options,
+        ...bad,
+        resolveTagCommit: async () => null,
+        createTag: async () => {},
+      }),
+      /Expected/u,
+    );
+  }
+});
+
+test("本机构建版本来自package.json且必须在对应正式标签ref上运行", () => {
+  assert.deepEqual(localReleaseIdentity({ ref: "refs/tags/v1.4.2", version: "1.4.2" }), {
+    version: "1.4.2",
+    tag: "v1.4.2",
+  });
+  for (const ref of ["refs/heads/main", "refs/tags/v1.4.1", "refs/tags/v1.4.2-rc", undefined]) {
+    assert.throws(() => localReleaseIdentity({ ref, version: "1.4.2" }), /refs\/tags\/v1\.4\.2/u);
+  }
+  for (const version of ["1.4.2\n", "../1", "2.0.0", undefined]) {
+    assert.throws(
+      () => localReleaseIdentity({ ref: "refs/tags/v1.4.2", version }),
+      /Expected package.json version/u,
+    );
+  }
+});
+
+test("Windows本机构建只接受同一提交上Mac本机workflow的源run", async () => {
+  const good = { id: 7, path: LOCAL_SOURCE_WORKFLOW_PATH, head_sha: sha };
+  assert.equal(
+    await verifySourceRun({
+      runId: "7",
+      commitSha: sha,
+      fetchRun: async () => good,
+    }),
+    good,
+  );
+  for (const [label, run, pattern] of [
+    ["其他workflow", { ...good, path: ".github/workflows/build.yml" }, /is not/u],
+    ["其他提交", { ...good, head_sha: otherSha }, /not this commit/u],
+  ]) {
+    await assert.rejects(
+      verifySourceRun({
+        runId: "7",
+        commitSha: sha,
+        fetchRun: async () => run,
+      }),
+      pattern,
+      label,
+    );
+  }
+  for (const runId of ["", "0", "7;echo", " 7", undefined]) {
+    await assert.rejects(
+      verifySourceRun({ runId, commitSha: sha, fetchRun: async () => good }),
+      /source run id/u,
+    );
+  }
 });
 
 test("远端版本查询失败必须失败，不能回退1.0.0覆盖旧版本", async () => {

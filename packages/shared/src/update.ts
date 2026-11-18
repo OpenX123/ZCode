@@ -24,6 +24,8 @@ export type UpdateCheckResultPayload =
   | { kind: "already-downloading"; version: string; progress: string }
   | { kind: "ready"; version: string }
   | { kind: "dev-skipped" }
+  /** 新版已发布，但当前平台不在发布矩阵内，只能从 Release 页面手动下载。 */
+  | { kind: "manual-download"; version: string; releaseUrl: string }
   | { kind: "error"; message: string };
 
 /**
@@ -40,6 +42,8 @@ export type UpdateStatePayload = {
       kind: "update-available";
       enabled: boolean;
       version: string;
+      /** 当前平台没有自动安装器；UI 只打开 releaseUrl，不发起下载。 */
+      manualDownload?: boolean;
       channel?: ElectronReleaseChannel;
       releaseNotes?: PostUpdateReleaseNotesPayload;
     }

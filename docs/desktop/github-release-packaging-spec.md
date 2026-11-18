@@ -6,14 +6,37 @@ GitHub Actions 仅为 macOS ARM64、Windows x64 构建桌面安装包；远程 S
 
 ## 发布身份与唯一所有者
 
-### Task44 独立 Mac ARM64 本机构建
+### 本机双 runner 发布（1.4.2 起，取代 Task42/Task44 的固定 run 与版本）
+
+- 两个本机 workflow 均只接受在正式标签 ref（`refs/tags/v1.*`）上的 `workflow_dispatch`；不再写死 `RELEASE_VERSION`、`RELEASE_TAG` 或 `SOURCE_RUN_ID`。`node scripts/github-release-version.mjs local-identity` 读取已检出的根 `package.json` 版本，要求 ref 恰为 `refs/tags/v<version>`，再写入 `RELEASE_VERSION`/`RELEASE_TAG`。权限仍为 contents:read、actions:read，无 allocate、reserve-tag、Release 或写权限。
+- `build-macos-local.yml`（`[self-hosted, macOS, ARM64, zcode-macos]`）是本机发布中 Source Server 资源与 descriptor 的唯一生成者：同一 job 内执行 `pnpm prepare:remote-assets`、`github-release-assets.mjs pin --output release-resources`，上传 `source-server-resources-v<version>`（四归档 + descriptor）与 `source-server-descriptor-v<version>`，随后清空版本目录只保留已固定 URL 的 descriptor，仅打包步骤设置 `ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY=1` 构建 DMG/ZIP。资源与安装包在一个 job 内完成，单 job ephemeral runner 也能跑完，不依赖其他 run 会过期的 artifact。
+- `build-windows-local.yml`（`[self-hosted, Windows, X64, ycode-windows]`）必须输入 `source_run_id`。`verify-source-run` 经 Actions API 确认该 run 来自 `build-macos-local.yml` 且 head SHA 等于当前提交，再从该 run 下载 descriptor，descriptor-only 构建 EXE。两个安装包因此引用同一份远程资源。
+- 产物 artifact 命名 `ycode-mac-arm64-v<version>`、`ycode-win-x64-v<version>`；维护者下载后用 `github-release-assets.mjs verify-release` 生成 `ycode-update.json` 与 `SHA256SUMS`，再用本机 `gh release create` 发布。确切命令见 [GitHub 桌面构建与发布](github-release-spec.md#本机-runner-发布步骤)。
+
+```mermaid
+sequenceDiagram
+    participant D as 维护者本机 gh
+    participant M as Mac 本机 runner
+    participant W as Windows 本机 runner
+    participant G as GitHub Release
+    D->>D: 合并 PR，预建标签 v<version> 指向 main
+    D->>M: 在标签 ref 触发 build-macos-local
+    M->>M: 生成四归档、固定 URL、上传资源与 descriptor
+    M->>M: 仅保留 descriptor，构建 DMG/ZIP
+    D->>W: descriptor 上传后触发 build-windows-local(source_run_id)
+    W->>W: 校验源 run 同提交，下载 descriptor，构建 EXE
+    D->>D: 下载三类 artifact，verify-release 生成清单与 SHA256SUMS
+    D->>G: verify-tag 创建 draft，上传十附件后公开并标为 Latest
+```
+
+### Task44 独立 Mac ARM64 本机构建（历史，已由上节取代）
 
 - 新 `build-macos-local.yml` 仅 workflow_dispatch/main，使用 `[self-hosted, macOS, ARM64, zcode-macos]`；与独立Windows workflow并行，互不重复dispatch。
 - 完全复用Task42的只读权限、固定source run44137427217/版本1.4.1/tagv1.4.1、Node环境校验、固定Node24.14.0/pnpm10.33.2、隔离checkout/frozeninstall、原apply/descriptor-only流程；不allocate/tag/release，不改变正式版本或更新源。
 - 构建命令固定 `pnpm bundle:desktop -- --os mac --arch arm64`；上传DMG与ZIP及独立size-report artifacts，缺件失败。ARM64宿主按既有native policy保留本机可选绑定，原完整Mach-O/app/DMG/ZIP门仍必须实际通过，不增加CPU豁免。
 - 唯一新增四文件：Mac workflow、本spec、现计划、原workflow测试。测试锁定与Windows同源资源与工具、main-only/ref gate、Mac runner labels/目标/上传、只读权限和无发布路径；实际job与产物结果由controller跟踪，不把配置测试当作Mac构建已完成。
 
-### Task42 独立本机 Windows 实产物构建
+### Task42 独立本机 Windows 实产物构建（历史，已由“本机双 runner 发布”取代）
 
 - 新 `build-windows-local.yml` 仅接受 workflow_dispatch，job 同时校验事件与 main ref，固定 `[self-hosted, Windows, X64, ycode-windows]`。不经过正式发布 workflow，不增加版本；旧正式 run 可继续。
 - 本轮任务固定复用 source run `44137427217` 的 `source-server-descriptor-v1.4.1` artifact、版本 `1.4.1`，不提供额外通用输入。两值通过 job env 交给 Node，regex 校验 run-id/版本格式；shell 不拼接用户或远端文本。download-artifact v8 明确 run-id 与 github-token，artifact 来自同仓库既有资源 job。
@@ -46,7 +69,8 @@ Task41 精确四文件：build.yml、本 spec、现 release-gate-repair 计划�
 - 资源 job 是本轮 Source Server 归档与 descriptor 的唯一生成者，使用现有 `prepare:remote-assets` 一次生成四个目标；桌面 job 不重新生成资源。
 - 正式应用版本从 `1.0.0` 起。仅 main 的 `workflow_dispatch` 是正式发版入口，push / PR 不发版；路径过滤与操作入口见 [GitHub 桌面构建与发布](github-release-spec.md)。每轮新的正式构建由资源 job 唯一分配版本：查询本仓库全部 `v1.0.<patch>` Git 标签，无则使用 `1.0.0`，否则使用最大 patch 加一；标签为 `v<version>`。正式发版使用独立于 push / PR 的并发组，同组串行且不取消正在执行的正式构建，避免同一版本被并发分配。
 - 版本分配后只在 CI 工作区更新根 `package.json`；两种桌面目标与最终发布 job 从同一资源 job 输出恢复版本，不重新计算。Desktop metadata、Vite、Host、Server 编译常量及资源目录从根版本派生，独立 Agent CLI 包版本不在此流程修改。
-- `rerun failed jobs` 继续使用先前成功资源 job 的版本与清单；重跑全部 job 时重新查询标签。完整性校验后通过 GitHub Git refs API 原子创建 `v1.0.N` 指向当前提交，再用 `--verify-tag` 创建 draft；即使后续上传失败，标签也已占用，下一轮自动跳到新 patch。已公开版本和已占用标签不得覆盖，失败不公开 Release。
+- `rerun failed jobs` 继续使用先前成功资源 job 的版本与清单；重跑全部 job 时重新查询标签。完整性校验后由 `github-release-version.mjs reserve-tag` 确认标签：已存在且指向当前 `$GITHUB_SHA` 则直接使用；指向其他提交时明确失败；不存在才用 workflow 令牌经 Git refs API 创建，失败时输出本机 `gh api` 预建命令。随后用 `--verify-tag` 创建 draft。已公开版本和已占用标签不得覆盖，失败不公开 Release。
+- 原因：提交区间含 workflow 文件改动时，GitHub 拒绝 `GITHUB_TOKEN` 创建该 ref（HTTP 403，按 GitHub App 无 workflows 权限推断）。因此正式标签可由维护者用本机 `gh` 预先创建；资源 job 分配版本时，若本线最高标签已指向当前提交且尚无公开 Release，则复用该版本，不再跳到下一 patch。指向其他提交或已公开的标签仍按原规则递增。由 CI 自己占用标签后失败、且已留下 draft 的情况，重跑会因 draft 已存在明确失败，需维护者删除 draft 或删除标签后再跑。
 - 若失败发生在标签占用后，仅重跑 publish 会明确失败并提示重跑全部 job 分配新 patch；不自动删除或覆盖旧标签、草稿或附件，不能把半成品当作最新正式版本。
 - push、PR 和非 main 的手动运行使用当前根版本和临时 `build-<run_number>-<run_attempt>` 身份，不分配或发布正式版本。历史 `build-*` Release 的资源 URL 保持有效；正式 descriptor 将 archive URL 固定到本仓库 `v1.0.N` 标签下，不能运行时用 `latest` 选择远程资源。
 - descriptor 沿用共享 schema，包含当前版本、四个唯一目标、文件名、字节数和 SHA-256；固定 URL 前必须验证本轮真实归档。桌面 job 下载同一份 descriptor，并再次验证版本、完整目标与固定 URL。
@@ -83,7 +107,7 @@ flowchart TD
     I -- 否 --> J[保留 CI artifacts]
     I -- 是 --> K[汇总并校验三安装包与四归档]
     K --> K1[生成四目标更新清单与校验摘要]
-    K1 --> K2[Git refs API 原子占用正式版本标签]
+    K1 --> K2[复用预建标签或用 Git refs API 创建]
     K2 --> L[verify-tag 创建不可覆盖的 draft Release]
     L --> M[上传全部附件与 SHA256SUMS 后公开]
 ```

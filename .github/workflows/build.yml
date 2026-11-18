@@ -222,14 +222,11 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists; rerun all jobs to allocate the next patch." >&2
+            echo "Release $RELEASE_TAG already exists (including drafts); delete the draft or rerun all jobs to allocate the next patch." >&2
             exit 1
           fi
-          if ! gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-            -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA" >/dev/null; then
-            echo "Cannot reserve $RELEASE_TAG; rerun all jobs to allocate the next patch. Existing tags are never overwritten." >&2
-            exit 1
-          fi
+          # 标签已由维护者预建并指向本提交时直接复用；不存在才尝试创建，指向其他提交时失败。
+          node scripts/github-release-version.mjs reserve-tag
           gh release create "$RELEASE_TAG" release-assets/* \
             --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
             --title "YCode $RELEASE_TAG" \

@@ -13,30 +13,45 @@ function evaluate(expression, github) {
   return runInNewContext(expression.slice(3, -2), { github });
 }
 
-async function verifyLocalWorkflow(platform, labels, command, artifactPaths) {
-  const local = parse(
+async function readLocalWorkflow(platform) {
+  return parse(
     await readFile(
       new URL(`../../.github/workflows/build-${platform}-local.yml`, import.meta.url),
       "utf8",
     ),
   );
-  assert.deepEqual(Object.keys(local.on), ["workflow_dispatch"]);
+}
+
+function evaluateLocalGate(expression, github) {
+  return runInNewContext(expression.slice(3, -2), {
+    github,
+    startsWith: (value, prefix) =>
+      String(value).toLowerCase().startsWith(String(prefix).toLowerCase()),
+  });
+}
+
+/** 两个本机 workflow 的共同合同：仅正式标签手动运行、只读权限、版本来自 package.json、无发布路径。 */
+function verifyLocalJob(local, labels, command, artifactPaths) {
   assert.deepEqual(local.permissions, { contents: "read", actions: "read" });
   assert.deepEqual(Object.keys(local.jobs), ["build"]);
   const job = local.jobs.build;
   assert.equal(job.permissions, undefined);
   assert.deepEqual(job["runs-on"], labels);
   for (const [event, ref, expected] of [
-    ["workflow_dispatch", "refs/heads/main", true],
+    ["workflow_dispatch", "refs/tags/v1.4.2", true],
+    ["workflow_dispatch", "refs/heads/main", false],
     ["workflow_dispatch", "refs/heads/feature", false],
-    ["push", "refs/heads/main", false],
+    ["workflow_dispatch", "refs/tags/build-1-1", false],
+    ["push", "refs/tags/v1.4.2", false],
     ["pull_request", "refs/pull/1/merge", false],
   ])
-    assert.equal(evaluate(job.if, { event_name: event, ref }), expected);
-  assert.equal(job.env.SOURCE_RUN_ID, "44137427217");
-  assert.equal(job.env.RELEASE_VERSION, "1.4.1");
-  assert.equal(job.env.RELEASE_TAG, `v${job.env.RELEASE_VERSION}`);
-  assert.equal(job.env.ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY, "1");
+    assert.equal(
+      evaluateLocalGate(job.if, { event_name: event, ref }),
+      expected,
+      `${event} ${ref}`,
+    );
+  // 不再写死版本、标签或会过期的 source run。
+  for (const key of ["RELEASE_VERSION", "RELEASE_TAG"]) assert.equal(job.env[key], undefined);
   const steps = job.steps;
   assert.equal(steps[0].uses, "actions/checkout@v7");
   assert.equal(steps[0].with["persist-credentials"], false);
@@ -45,30 +60,11 @@ async function verifyLocalWorkflow(platform, labels, command, artifactPaths) {
     steps.find((step) => step.uses === "actions/setup-node@v7").with["node-version"],
     "24.14.0",
   );
-  const validation = steps.find((step) => step.name === "Validate source identity");
-  assert.equal(validation.shell, "node {0}");
-  runInNewContext(validation.run, { process: { env: job.env } });
-  for (const bad of [
-    { SOURCE_RUN_ID: "x;echo bad" },
-    { SOURCE_RUN_ID: "" },
-    { RELEASE_VERSION: "../../bad" },
-    { RELEASE_VERSION: "1.4.1\n" },
-    { RELEASE_TAG: "v1.4.2" },
-  ]) {
-    assert.throws(
-      () => runInNewContext(validation.run, { process: { env: { ...job.env, ...bad } } }),
-      /Invalid source/,
-    );
-  }
-  assert.ok(steps.some((step) => step.run === "pnpm install --frozen-lockfile"));
-  assert.ok(steps.some((step) => step.run === "node scripts/github-release-version.mjs apply"));
-  const descriptor = steps.find((step) => step.uses === "actions/download-artifact@v8");
-  assert.deepEqual(descriptor.with, {
-    name: "source-server-descriptor-v${{ env.RELEASE_VERSION }}",
-    path: "packages/desktop/mock-cdn/releases/${{ env.RELEASE_VERSION }}",
-    "run-id": "${{ env.SOURCE_RUN_ID }}",
-    "github-token": "${{ github.token }}",
-  });
+  const identityIndex = steps.findIndex(
+    (step) => step.run === "node scripts/github-release-version.mjs local-identity",
+  );
+  const installIndex = steps.findIndex((step) => step.run === "pnpm install --frozen-lockfile");
+  assert.ok(identityIndex > 0 && identityIndex < installIndex);
   assert.ok(steps.some((step) => step.run === command));
   const uploads = steps.filter((step) => step.uses === "actions/upload-artifact@v7");
   assert.deepEqual(
@@ -78,31 +74,102 @@ async function verifyLocalWorkflow(platform, labels, command, artifactPaths) {
   assert.ok(uploads.every((step) => step.with["if-no-files-found"] === "error"));
   assert.ok(
     steps.every(
-      (step) => !/\b(?:allocate|publish|release create|tag create)\b/.test(step.run ?? ""),
+      (step) =>
+        !/\b(?:allocate|reserve-tag|publish|release create|tag create|git push)\b/.test(
+          step.run ?? "",
+        ),
     ),
   );
   assert.ok(steps.every((step) => !step.run?.includes("${{")));
+  return { job, steps };
 }
 
-test("独立Windows本机构建复用指定descriptor且不具备正式发布路径", async () => {
-  await verifyLocalWorkflow(
-    "windows",
-    ["self-hosted", "Windows", "X64", "ycode-windows"],
-    "pnpm bundle:desktop -- --os win --arch x64",
-    ["packages/desktop/dist/*.exe", "packages/desktop/dist/*.size-report.json"],
-  );
-});
-
-test("独立Mac ARM64本机构建复用同轮资源并上传DMG ZIP，仍无发布路径", async () => {
-  await verifyLocalWorkflow(
-    "macos",
+test("Mac ARM64本机构建自行生成远程资源与descriptor，再按轻量模式打包且无发布路径", async () => {
+  const local = await readLocalWorkflow("macos");
+  assert.deepEqual(Object.keys(local.on), ["workflow_dispatch"]);
+  const { job, steps } = verifyLocalJob(
+    local,
     ["self-hosted", "macOS", "ARM64", "zcode-macos"],
     "pnpm bundle:desktop -- --os mac --arch arm64",
     [
+      "release-resources/*",
+      "release-resources/source-server-release.json",
       "packages/desktop/dist/*.dmg\npackages/desktop/dist/*.zip\n",
       "packages/desktop/dist/*.size-report.json",
     ],
   );
+  // 资源生成不能处于轻量模式；只有打包步骤启用 descriptor-only。
+  assert.equal(job.env.ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY, undefined);
+  assert.ok(steps.every((step) => step.uses !== "actions/download-artifact@v8"));
+  const order = [
+    "pnpm prepare:remote-assets",
+    "node scripts/github-release-assets.mjs pin --output release-resources",
+  ].map((run) => steps.findIndex((step) => step.run === run));
+  const isolate = steps.findIndex(
+    (step) => step.name === "Keep only the pinned descriptor for the lightweight build",
+  );
+  const bundle = steps.findIndex(
+    (step) => step.run === "pnpm bundle:desktop -- --os mac --arch arm64",
+  );
+  assert.ok(order[0] > 0 && order[0] < order[1] && order[1] < isolate && isolate < bundle);
+  assert.equal(steps[bundle].env.ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY, "1");
+  assert.match(
+    steps[isolate].run,
+    /rm -rf "packages\/desktop\/mock-cdn\/releases\/\$RELEASE_VERSION"/u,
+  );
+  const names = steps
+    .filter((step) => step.uses === "actions/upload-artifact@v7")
+    .map((step) => step.with.name);
+  assert.deepEqual(names, [
+    "source-server-resources-${{ env.RELEASE_TAG }}",
+    "source-server-descriptor-${{ env.RELEASE_TAG }}",
+    "ycode-mac-arm64-${{ env.RELEASE_TAG }}",
+    "package-size-report-mac-arm64-${{ env.RELEASE_TAG }}",
+  ]);
+});
+
+test("Windows本机构建只复用同提交Mac本机run的descriptor且无发布路径", async () => {
+  const local = await readLocalWorkflow("windows");
+  assert.deepEqual(Object.keys(local.on), ["workflow_dispatch"]);
+  assert.deepEqual(local.on.workflow_dispatch.inputs.source_run_id, {
+    description: "Run id of build-macos-local.yml on the same tag (provides the descriptor)",
+    type: "string",
+    required: true,
+  });
+  const { job, steps } = verifyLocalJob(
+    local,
+    ["self-hosted", "Windows", "X64", "ycode-windows"],
+    "pnpm bundle:desktop -- --os win --arch x64",
+    ["packages/desktop/dist/*.exe", "packages/desktop/dist/*.size-report.json"],
+  );
+  assert.equal(job.env.ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY, "1");
+  assert.equal(job.env.SOURCE_RUN_ID, "${{ inputs.source_run_id }}");
+  const verify = steps.findIndex(
+    (step) => step.run === "node scripts/github-release-version.mjs verify-source-run",
+  );
+  const download = steps.findIndex((step) => step.uses === "actions/download-artifact@v8");
+  assert.ok(verify > 0 && verify < download);
+  assert.deepEqual(steps[verify].env, { GITHUB_TOKEN: "${{ github.token }}" });
+  assert.deepEqual(steps[download].with, {
+    name: "source-server-descriptor-${{ env.RELEASE_TAG }}",
+    path: "packages/desktop/mock-cdn/releases/${{ env.RELEASE_VERSION }}",
+    "run-id": "${{ env.SOURCE_RUN_ID }}",
+    "github-token": "${{ github.token }}",
+  });
+  assert.ok(steps.every((step) => step.run !== "pnpm prepare:remote-assets"));
+});
+
+test("正式发布复用维护者预建的标签，不再直接用令牌 POST 创建 ref", () => {
+  const publish = workflow.jobs.publish.steps.find(
+    (step) => step.name === "Publish complete immutable GitHub Release",
+  );
+  assert.match(publish.run, /node scripts\/github-release-version\.mjs reserve-tag/u);
+  assert.doesNotMatch(publish.run, /git\/refs/u);
+  const reserve = publish.run.indexOf("reserve-tag");
+  assert.ok(publish.run.indexOf("gh release view") < reserve);
+  assert.ok(reserve < publish.run.indexOf("gh release create"));
+  assert.match(publish.run, /--verify-tag --draft/u);
+  assert.match(publish.run, /--draft=false --latest/u);
 });
 
 test("本机Windows路由只允许main手动显式开启，默认和其他上下文仍托管", () => {
@@ -123,7 +190,11 @@ test("本机Windows路由只允许main手动显式开启，默认和其他上下
     ]) {
       const actual = runInNewContext(workflow.jobs.package["runs-on"].slice(3, -2), {
         // event.inputs 是字符串；即使它被设为 true，也必须只按 typed inputs 路由。
-        github: { event_name: event, ref, event: { inputs: { local_windows: "true" } } },
+        github: {
+          event_name: event,
+          ref,
+          event: { inputs: { local_windows: "true" } },
+        },
         matrix: target,
         inputs: { local_windows: enabled },
         fromJSON: JSON.parse,
@@ -205,7 +276,11 @@ test("普通构建可取消旧运行，main 手动发版独立串行且不被普
   const group = (event) =>
     workflow.concurrency.group.replace(/\$\{\{\s*(.*?)\s*\}\}/gu, (_, expression) =>
       runInNewContext(expression, {
-        github: { workflow: workflow.name, event_name: event, ref: "refs/heads/main" },
+        github: {
+          workflow: workflow.name,
+          event_name: event,
+          ref: "refs/heads/main",
+        },
       }),
     );
   assert.notEqual(group("push"), group("workflow_dispatch"));
@@ -216,7 +291,10 @@ test("普通构建可取消旧运行，main 手动发版独立串行且不被普
     ["workflow_dispatch", "refs/heads/main", false],
   ]) {
     assert.equal(
-      evaluate(workflow.concurrency["cancel-in-progress"], { event_name: event, ref }),
+      evaluate(workflow.concurrency["cancel-in-progress"], {
+        event_name: event,
+        ref,
+      }),
       expected,
       `${event} ${ref}`,
     );

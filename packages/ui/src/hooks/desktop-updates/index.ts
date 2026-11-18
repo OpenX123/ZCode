@@ -47,7 +47,11 @@ export function useDesktopUpdates(isDesktop = true) {
       } catch (error) {
         result = { kind: "error", message: error instanceof Error ? error.message : String(error) };
       }
-      if (["available", "ready", "downloading", "already-downloading"].includes(result.kind)) {
+      if (
+        ["available", "ready", "downloading", "already-downloading", "manual-download"].includes(
+          result.kind,
+        )
+      ) {
         // 手动操作必须给出可执行反馈，不能因上次关闭侧栏而静默吞掉发现结果。
         if (settings?.dismissedDesktopUpdateVersion) {
           try {
@@ -63,6 +67,22 @@ export function useDesktopUpdates(isDesktop = true) {
             variant: "info",
             dedupeKey: "desktop-update",
           });
+        }
+        if (result.kind === "manual-download") {
+          // 当前平台不在发布矩阵内：不是失败，提示并提供打开 Release 页面的动作。
+          const { releaseUrl } = result;
+          toast(
+            intl.formatMessage(
+              { id: "desktopUpdate.manualDownloadFound" },
+              { version: result.version },
+            ),
+            {
+              variant: "info",
+              dedupeKey: "desktop-update",
+              actionLabel: intl.formatMessage({ id: "desktopUpdate.openRelease" }),
+              onAction: () => platform.openExternal(releaseUrl),
+            },
+          );
         }
       }
       if (
@@ -110,6 +130,11 @@ export function useDesktopUpdates(isDesktop = true) {
     check: () => run("check"),
     activate: () => {
       const action = getDesktopUpdateAction(state);
+      if (action === "open-release") {
+        // 发布矩阵外的平台只打开 Main 提供的 releaseUrl，不调用下载命令。
+        if (state?.releaseUrl) platform.openExternal(state.releaseUrl);
+        return Promise.resolve();
+      }
       return action ? run(action) : Promise.resolve();
     },
   };

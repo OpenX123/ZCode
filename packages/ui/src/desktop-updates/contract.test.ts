@@ -29,6 +29,18 @@ describe("桌面更新 UI 动作契约", () => {
       getDesktopUpdateAction({ kind: "update-available", enabled: false, version: "1.0.1" }),
     ).toBeNull();
   });
+  it("发布矩阵外的平台只打开 Release 页面，缺少地址时不提供动作", () => {
+    const releaseUrl = "https://github.com/OpenX123/ZCode/releases/tag/v1.0.1";
+    const manual = {
+      kind: "update-available",
+      enabled: true,
+      version: "1.0.1",
+      manualDownload: true,
+    } as const;
+    expect(getDesktopUpdateAction({ ...manual, releaseUrl })).toBe("open-release");
+    expect(getDesktopUpdateAction(manual)).toBeNull();
+    expect(isDesktopUpdateDismissible({ ...manual, releaseUrl })).toBe(true);
+  });
   it("只有发现新版与已知版本的下载失败可以跳过，下载中与已就绪始终展示", () => {
     expect(
       isDesktopUpdateDismissible({ kind: "update-available", enabled: true, version: "1.0.8" }),

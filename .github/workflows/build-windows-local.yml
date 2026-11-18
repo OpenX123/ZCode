@@ -1,7 +1,15 @@
 name: Build Windows locally without publishing
 
+# 在正式标签 ref 上手动运行：
+#   gh workflow run build-windows-local.yml --ref v<version> -f source_run_id=<Mac 本机 run id>
+# descriptor 来自同一提交的 build-macos-local run，保证两个安装包引用同一份远程资源。
 on:
   workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Run id of build-macos-local.yml on the same tag (provides the descriptor)
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -10,16 +18,14 @@ permissions:
 jobs:
   build:
     name: Build local Windows x64 installer
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/v1.') }}
     runs-on: [self-hosted, Windows, X64, ycode-windows]
     timeout-minutes: 120
     env:
       ZCODE_ENV: production
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
       ZCODE_REMOTE_ASSET_DESCRIPTOR_ONLY: "1"
-      SOURCE_RUN_ID: "44137427217"
-      RELEASE_VERSION: "1.4.1"
-      RELEASE_TAG: "v1.4.1"
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
       ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
     steps:
       - name: Checkout
@@ -38,28 +44,21 @@ jobs:
           node-version: 24.14.0
           cache: pnpm
 
-      - name: Validate source identity
-        shell: node {0}
-        run: |
-          const { SOURCE_RUN_ID, RELEASE_VERSION, RELEASE_TAG } = process.env;
-          if (!/^[1-9][0-9]*$/.test(SOURCE_RUN_ID)
-              || SOURCE_RUN_ID.trim() !== SOURCE_RUN_ID
-              || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(RELEASE_VERSION)
-              || RELEASE_VERSION.trim() !== RELEASE_VERSION
-              || RELEASE_TAG !== `v${RELEASE_VERSION}`) {
-            throw new Error("Invalid source run/version");
-          }
+      - name: Resolve release identity from package.json and tag
+        run: node scripts/github-release-version.mjs local-identity
+
+      - name: Verify the source run built this commit
+        run: node scripts/github-release-version.mjs verify-source-run
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Restore the shared application version
-        run: node scripts/github-release-version.mjs apply
-
       - name: Download exact shared release descriptor
         uses: actions/download-artifact@v8
         with:
-          name: source-server-descriptor-v${{ env.RELEASE_VERSION }}
+          name: source-server-descriptor-${{ env.RELEASE_TAG }}
           path: packages/desktop/mock-cdn/releases/${{ env.RELEASE_VERSION }}
           run-id: ${{ env.SOURCE_RUN_ID }}
           github-token: ${{ github.token }}
@@ -70,7 +69,7 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
         with:
-          name: local-windows-${{ env.RELEASE_VERSION }}-${{ github.run_id }}
+          name: ycode-win-x64-${{ env.RELEASE_TAG }}
           path: packages/desktop/dist/*.exe
           if-no-files-found: error
           retention-days: 14
@@ -78,7 +77,7 @@ jobs:
       - name: Upload package size audit
         uses: actions/upload-artifact@v7
         with:
-          name: local-windows-size-${{ env.RELEASE_VERSION }}-${{ github.run_id }}
+          name: package-size-report-win-x64-${{ env.RELEASE_TAG }}
           path: packages/desktop/dist/*.size-report.json
           if-no-files-found: error
           retention-days: 14
