@@ -25,6 +25,7 @@ const captured = vi.hoisted(() => ({
       }>;
     };
     groups: { parents: Map<string, string> };
+    projects: Array<{ id: string; name: string }>;
   } | null,
   toast: vi.fn(),
 }));
@@ -131,6 +132,7 @@ describe("双栏工作台会话与草稿生命周期", () => {
       groups: {
         parents: new Map([[JSON.stringify(["/workspace", "main-session"]), "group-b"]]),
       },
+      projects: [],
     };
     const view = renderWorkbench();
     const original = useWorkbenchTabsStore.getState().groups[0]!;
@@ -148,6 +150,7 @@ describe("双栏工作台会话与草稿生命周期", () => {
     captured.directory = {
       factTree: { tasks: [] },
       groups: { parents: new Map() },
+      projects: [],
     };
     const view = renderWorkbench();
     const original = useWorkbenchTabsStore.getState().groups[0]!;

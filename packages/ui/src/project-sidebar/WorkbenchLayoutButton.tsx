@@ -1,4 +1,5 @@
 import { ArrowLeftRight, Columns2 } from "lucide-react";
+import { TaskTitleOverflowText } from "@/components/TaskTitleOverflowText.js";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -11,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu.js";
 import { toast } from "@/components/ui/toast.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { remoteHostIdFromWorkspaceIdentity } from "@/project-sidebar/contract.js";
 import { useOptionalProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
 import { useWorkbenchSessionTitle } from "@/project-sidebar/useWorkbenchSessionTitle.js";
 import {
@@ -21,11 +23,15 @@ import {
 } from "@/v4/workbench-tabs/index.js";
 import { WINDOWS_CAPTION_CONTROL_CLASS } from "@/windowCaptionControls.js";
 
-function WorkbenchViewItem({ tab, label }: { tab: WorkbenchTab; label: string }) {
+function WorkbenchViewItem({ tab, focused }: { tab: WorkbenchTab; focused: boolean }) {
   const title = useWorkbenchSessionTitle(tab);
+  const projectName = useWorkbenchTabProjectName(tab);
   return (
     <DropdownMenuItem
       data-testid={`workbench-activate-tab-${tab.id}`}
+      data-marquee-hover-root=""
+      data-focused={focused ? "true" : undefined}
+      className={cn(focused && "bg-accent text-accent-foreground")}
       onSelect={() => {
         const state = useWorkbenchTabsStore.getState();
         const current = state.tabs[tab.id];
@@ -36,11 +42,38 @@ function WorkbenchViewItem({ tab, label }: { tab: WorkbenchTab; label: string })
         if (current.sessionId && groupIndex !== 1) state.openSession(current, "right");
         else state.activateTab(current.id);
       }}
-      title={title}
     >
-      <span className="shrink-0 text-foreground-subtle">{label}</span>
-      <span className="min-w-0 whitespace-normal break-words">{title}</span>
+      {/* 修复：标题原为 whitespace-normal，长标题折行使列表错乱；改为单行并在悬停时走马灯展示全文。
+          “左栏/右栏”前缀对选择会话无信息量，已移除；当前聚焦会话用高亮区分。 */}
+      <TaskTitleOverflowText as="span">{title}</TaskTitleOverflowText>
+      {projectName ? (
+        <span className="max-w-[40%] shrink-0 truncate text-ui-sm text-foreground-subtle">
+          {projectName}
+        </span>
+      ) : null}
     </DropdownMenuItem>
+  );
+}
+
+/** 与 WorkbenchPaneHeaders 一致：会话按完整身份查归属项目，草稿用 Tab 自身的 projectId。 */
+function useWorkbenchTabProjectName(tab: WorkbenchTab): string | null {
+  const directory = useOptionalProjectDirectory();
+  if (!directory) return null;
+  const workspaceKey = workbenchWorkspaceKey(tab.workspaceScope);
+  const task = tab.sessionId
+    ? directory.factTree.tasks.find(
+        (item) =>
+          item.taskId === tab.sessionId &&
+          (item.workspaceIdentity?.trim() || item.workspacePath) === workspaceKey,
+      )
+    : undefined;
+  const projectId = tab.sessionId ? task?.projectId : tab.projectId;
+  if (!projectId) return null;
+  const hostId =
+    task?.hostId ?? remoteHostIdFromWorkspaceIdentity(tab.workspaceScope.workspaceIdentity ?? "");
+  return (
+    directory.projects.find((item) => item.id === projectId && (!hostId || item.hostId === hostId))
+      ?.name ?? null
   );
 }
 
@@ -54,6 +87,7 @@ export function WorkspaceWorkbenchLayoutButton({
   const projectDirectory = useOptionalProjectDirectory();
   const groups = useWorkbenchTabsStore((state) => state.groups);
   const tabs = useWorkbenchTabsStore((state) => state.tabs);
+  const focusedGroupId = useWorkbenchTabsStore((state) => state.focusedGroupId);
   if (!groups.length) return null;
   const single = groups.length === 1;
   const split = () => {
@@ -147,15 +181,13 @@ export function WorkspaceWorkbenchLayoutButton({
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuLabel>{intl.formatMessage({ id: "workbench.openViews" })}</DropdownMenuLabel>
-          {groups.flatMap((group, index) =>
+          {groups.flatMap((group) =>
             group.tabIds.map((id) =>
               tabs[id] ? (
                 <WorkbenchViewItem
                   key={id}
                   tab={tabs[id]}
-                  label={intl.formatMessage({
-                    id: index === 0 ? "workbench.leftGroup" : "workbench.rightGroup",
-                  })}
+                  focused={group.id === focusedGroupId && group.activeTabId === id}
                 />
               ) : null,
             ),

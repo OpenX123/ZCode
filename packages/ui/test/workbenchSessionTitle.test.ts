@@ -13,7 +13,7 @@ vi.mock("@/store/zcodeSessionStore.js", () => ({
   useZCodeSessionStore: (selector: (state: unknown) => unknown) => selector(fixture),
 }));
 vi.mock("@/project-sidebar/ProjectDirectoryProvider.js", () => ({
-  useOptionalProjectDirectory: () => ({ factTree: { tasks: fixture.tasks } }),
+  useOptionalProjectDirectory: () => ({ factTree: { tasks: fixture.tasks }, projects: [] }),
 }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({ intl: { formatMessage: () => "新会话" } }),

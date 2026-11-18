@@ -320,24 +320,62 @@ async function assertWorkbenchMenuTitle(title: string, screenshotName?: string) 
     timeoutMsg: "UX09 Escape 未将焦点还给布局入口",
   });
   await browser.keys(Key.Enter);
-  const item = await $('[data-testid^="workbench-activate-tab-"][title="' + title + '"]');
+  // 菜单条目不再挂原生 title（会遮挡走马灯），按原始标题副本的文本定位。
+  let itemId = "";
+  await browser.waitUntil(
+    async () => {
+      itemId = await browser.execute((expected) => {
+        const match = Array.from(
+          document.querySelectorAll<HTMLElement>('[data-testid^="workbench-activate-tab-"]'),
+        ).find(
+          (node) =>
+            node.querySelector('[data-task-title-copy="original"]')?.textContent === expected,
+        );
+        return match?.dataset.testid ?? "";
+      }, title);
+      return Boolean(itemId);
+    },
+    { timeout: 10_000, timeoutMsg: `布局菜单缺少标题 ${title}` },
+  );
+  const item = await $(`[data-testid="${itemId}"]`);
   await item.waitForDisplayed();
-  expect(await item.getText()).toContain(title);
   const layout = await browser.execute((node) => {
     const rect = node.getBoundingClientRect();
-    const text = node.lastElementChild as HTMLElement;
+    const original = node.querySelector<HTMLElement>('[data-task-title-copy="original"]')!;
+    const text = original.parentElement!.parentElement as HTMLElement;
+    const lineHeight = parseFloat(getComputedStyle(text).lineHeight) || 20;
     return {
       left: rect.left,
       right: rect.right,
       width: innerWidth,
       textWidth: text.clientWidth,
-      textScrollWidth: text.scrollWidth,
+      textHeight: text.getBoundingClientRect().height,
+      lineHeight,
+      whiteSpace: getComputedStyle(text).whiteSpace,
+      overflowing: text.classList.contains("task-title-marquee"),
+      nativeTitle: node.getAttribute("title"),
+      text: node.textContent ?? "",
     };
   }, item);
+  // 回归：长标题曾折成多行导致列表错乱；“左栏/右栏”前缀已移除。
   expect(layout.textWidth).toBeGreaterThan(0);
-  expect(layout.textScrollWidth).toBeLessThanOrEqual(layout.textWidth + 1);
+  expect(layout.whiteSpace).toBe("nowrap");
+  expect(layout.textHeight).toBeLessThanOrEqual(layout.lineHeight * 1.5);
+  expect(layout.nativeTitle).toBe(null);
+  expect(layout.text).not.toMatch(/左栏|右栏|Left column|Right column/u);
   expect(layout.left).toBeGreaterThanOrEqual(0);
   expect(layout.right).toBeLessThanOrEqual(layout.width + 1);
+  if (layout.overflowing) {
+    await item.moveTo();
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          (node) => node.getAnimations({ subtree: true }).length >= 2,
+          item as unknown as HTMLElement,
+        ),
+      { timeout: 5_000, timeoutMsg: "布局菜单长标题悬停后未启动走马灯" },
+    );
+  }
   if (screenshotName && process.env.ZCODE_E2E_ARTIFACT_DIR)
     await browser.saveScreenshot(join(process.env.ZCODE_E2E_ARTIFACT_DIR, screenshotName));
   await browser.keys(Key.Escape);
