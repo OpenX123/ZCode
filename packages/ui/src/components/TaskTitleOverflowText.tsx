@@ -106,9 +106,11 @@ export function TaskTitleOverflowText({
         : null;
     // 走马灯事件原本绑在文字节点上，鼠标位于 task item 的时间、
     // 状态或操作区域时不会滚动。统一绑到最近的普通或 grouped task 行边界。
+    // data-marquee-hover-root 供菜单项等非 task 行复用同一走马灯，悬停整行即可滚动。
     const hoverTarget =
-      textElement.closest<HTMLElement>("[data-task-item-key], [data-grouped-task-key]") ??
-      textElement;
+      textElement.closest<HTMLElement>(
+        "[data-task-item-key], [data-grouped-task-key], [data-marquee-hover-root]",
+      ) ?? textElement;
     let animations: Animation[] = [];
     let startTimer: number | null = null;
 

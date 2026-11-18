@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceWorkbenchLayoutButton } from "@/project-sidebar/WorkbenchLayoutButton.js";
 import { useWorkbenchTabsStore } from "@/v4/workbench-tabs/index.js";
 
-const fixture = vi.hoisted(() => ({ tasks: [] as Record<string, unknown>[] }));
+const fixture = vi.hoisted(() => ({
+  tasks: [] as Record<string, unknown>[],
+  projects: [] as Record<string, unknown>[],
+}));
 
 vi.mock("@/store/zcodeSessionStore.js", () => ({
   useZCodeSessionStore: (selector: (state: unknown) => unknown) => selector({ workspaces: {} }),
@@ -15,7 +18,9 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 vi.mock("@/project-sidebar/ProjectDirectoryProvider.js", () => ({
   useOptionalProjectDirectory: () =>
-    fixture.tasks.length ? { factTree: { tasks: fixture.tasks } } : null,
+    fixture.tasks.length
+      ? { factTree: { tasks: fixture.tasks }, projects: fixture.projects }
+      : null,
 }));
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children: import("react").ReactNode }) => children,
@@ -24,6 +29,7 @@ vi.mock("@/ControlHintTooltip.js", () => ({
 const scope = { workspacePath: "/project" };
 beforeEach(() => {
   fixture.tasks = [];
+  fixture.projects = [];
   window.PointerEvent = MouseEvent as typeof PointerEvent;
   useWorkbenchTabsStore.setState({ groups: [], tabs: {}, focusedGroupId: "", ratio: 0.5 });
   useWorkbenchTabsStore.getState().initialize(scope, "session-a");
@@ -173,7 +179,31 @@ describe("右上工作台布局入口", () => {
     const tab = Object.values(useWorkbenchTabsStore.getState().tabs)[0]!;
     const item = view.getByTestId(`workbench-activate-tab-${tab.id}`);
     expect(item.textContent).toContain(title);
-    expect(item.getAttribute("title")).toBe(title);
+    // 原生 title 会遮挡悬停走马灯，全文改由单行滚动展示。
+    expect(item.getAttribute("title")).toBeNull();
+    expect(item.hasAttribute("data-marquee-hover-root")).toBe(true);
+    expect(item.querySelector(".whitespace-nowrap")).toBeTruthy();
+  });
+
+  it("条目不显示栏位前缀，展示归属项目名并高亮当前聚焦会话", () => {
+    fixture.tasks = [
+      {
+        taskId: "session-a",
+        workspacePath: "/project",
+        title: "会话 A",
+        projectId: "project-a",
+        updatedAt: 2,
+      },
+    ];
+    fixture.projects = [{ id: "project-a", name: "Alpha 项目" }];
+    const view = setup();
+    view.menu();
+    const tab = Object.values(useWorkbenchTabsStore.getState().tabs)[0]!;
+    const item = view.getByTestId(`workbench-activate-tab-${tab.id}`);
+    expect(item.textContent).not.toContain("workbench.leftGroup");
+    expect(item.textContent).not.toContain("workbench.rightGroup");
+    expect(item.textContent).toContain("Alpha 项目");
+    expect(item.getAttribute("data-focused")).toBe("true");
   });
 
   it("单一图标菜单分栏创建独立草稿，交换不改变视图身份", () => {
