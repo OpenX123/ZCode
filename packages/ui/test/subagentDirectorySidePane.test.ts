@@ -8,6 +8,19 @@ vi.mock("@/components/ui/button.js", () => ({
     createElement("button", props, children),
 }));
 
+const detailState = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
+
+// 详情视图由 subagentSidePane.test.ts 覆盖；这里只验证目录 / 详情切换与返回请求（也避免加载整条 SessionPane 链）。
+vi.mock("@/app-shell/SubagentSessionSidePane.js", async () => {
+  const React = await import("react");
+  return {
+    SubagentSessionSidePane: (props: Record<string, unknown>) => {
+      detailState.props = props;
+      return React.createElement("div", { "data-testid": "mock-subagent-detail" });
+    },
+  };
+});
+
 vi.mock("@/hooks/useSessionSubagents.js", () => ({
   useSessionSubagents: () => ({
     error: null,
@@ -97,6 +110,45 @@ describe("SubagentDirectorySidePane", () => {
     expect(html).toContain("Provider request failed");
     expect(html).toContain("subagentDirectory.status.failed");
     expect(html).toContain("subagentDirectory.showMore");
+    expect(html).toContain('data-testid="v4-subagent-directory"');
+    expect(html).toContain('data-testid="v4-subagent-directory-item-child-running"');
+    expect(html).not.toContain("mock-subagent-detail");
+  });
+
+  it("shows the selected child detail in the same tab and goes back to the directory", async () => {
+    const { SubagentDirectorySidePane } = await import("@/app-shell/SubagentDirectorySidePane.js");
+    const onOpenSubagentDirectory = vi.fn();
+    const html = renderToStaticMarkup(
+      createElement(SubagentDirectorySidePane, {
+        tab: { ...tab, childSessionId: "child-running", subagentType: "Explore", title: "Inspect" },
+        focused: true,
+        visible: true,
+        onOpenSubagentSession: vi.fn(),
+        onOpenSubagentDirectory,
+      }),
+    );
+    expect(html).toContain("mock-subagent-detail");
+    expect(html).not.toContain("v4-subagent-directory");
+    expect(detailState.props?.tab).toMatchObject({
+      id: `${tab.id}:child-running`,
+      workspaceIdentity: "ssh://host/workspace",
+      remoteSessionId: "remote-session",
+      rootSessionId: "root-session",
+      parentSessionId: "parent-session",
+      childSessionId: "child-running",
+      subagentType: "Explore",
+      title: "Inspect",
+    });
+    expect(detailState.props).toMatchObject({ focused: true, visible: true });
+    const onBack = detailState.props!.onBack as () => void;
+    onBack();
+    expect(onOpenSubagentDirectory).toHaveBeenCalledWith({
+      workspacePath: "/workspace",
+      workspaceIdentity: "ssh://host/workspace",
+      remoteSessionId: "remote-session",
+      rootSessionId: "root-session",
+      parentSessionId: "parent-session",
+    });
   });
 
   it("builds a scoped detail request that preserves remote workspace identity", async () => {

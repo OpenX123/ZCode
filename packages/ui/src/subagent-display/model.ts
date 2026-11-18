@@ -361,8 +361,21 @@ export function formatSubagentDuration(durationMs: number, formatMessage: Format
   return parts.join(" ");
 }
 
-/** 工作卡与目录、标签页共用同一名称规则。 */
+/** 子智能体行与目录、标签页共用同一名称规则。 */
 export const subagentWorkCardName = subagentDisplayName;
+
+/** 通用引擎占位类型（等于它时不显示类型标签）。 */
+const DEFAULT_SUBAGENT_TYPE = "subagent";
+
+/**
+ * 类型灰色小标签：只在类型有信息量时显示——非空、不是默认 `subagent`、且不与名称重复
+ * （没有标题时名称本身就是类型）。docs/desktop/multi-agent-display-spec.md「行布局」。
+ */
+export function subagentTypeLabel(subagentType: string, name: string): string | undefined {
+  const type = subagentType.trim();
+  if (!type || type.toLowerCase() === DEFAULT_SUBAGENT_TYPE) return undefined;
+  return type === name.trim() ? undefined : type;
+}
 
 export interface SubagentWorkCardMemberInput {
   key: string;
@@ -373,11 +386,7 @@ export interface SubagentWorkCardMemberInput {
   status: SubagentDisplayStatus;
   avatarIndex: number;
   fallbackName: string;
-  model?: string;
-  effort?: string;
-  toolCallCount?: number;
   startedAt?: number;
-  endedAt?: number;
   summaryText?: string;
 }
 
@@ -385,37 +394,28 @@ export interface SubagentWorkCardMember {
   key: string;
   toolCallId: string;
   childSessionId?: string;
-  /** 打开 tab 时传的可见标题（可能为空）。 */
+  /** 打开详情时传的可见标题（可能为空）。 */
   title: string;
   subagentType: string;
   name: string;
-  /** 名称已是标题时为空，避免重复。 */
-  taskSummary?: string;
-  /** 已完成 / 失败 / 已停止的终态摘要。 */
-  resultSummary?: string;
+  /** 类型灰色小标签；缺席即不显示。 */
+  typeLabel?: string;
+  /** 失败 / 已停止的原因（父行 `summaryText`，空白或与标题相同则省略）。 */
+  reason?: string;
   status: SubagentDisplayStatus;
   avatarIndex: number;
-  model?: string;
-  effort?: string;
-  toolCallCount?: number;
   startedAt?: number;
-  endedAt?: number;
   stopWorkId?: string;
 }
 
 export interface SubagentWorkCardModel {
   members: SubagentWorkCardMember[];
-  counts: SubagentStatusCounts;
-  endedCount: number;
+  /** 仍有活跃成员（运行中 / 等待 / 阻塞 / 等待启动）：驱动每秒计时。 */
   active: boolean;
-  startedAt?: number;
-  endedAt?: number;
-  /** "停止全部"的目标：每个可停的运行中成员一次（D7）。 */
-  stopAllWorkIds: string[];
 }
 
 /**
- * 工作卡的纯派生：成员状态以 subagent 行为准，父会话 running[] 的 waiting / blocked 覆盖运行态；
+ * 子智能体行的纯派生：成员状态以 subagent 行为准，父会话 running[] 的 waiting / blocked 覆盖运行态；
  * 尚未登记子会话的运行中成员显示"等待启动"。停止只来自 live 索引里的可停 work。
  */
 export function buildSubagentWorkCardModel(
@@ -436,6 +436,7 @@ export function buildSubagentWorkCardModel(
       subagentType: input.subagentType,
       fallbackName: input.fallbackName,
     });
+    const typeLabel = subagentTypeLabel(input.subagentType, name);
     const title = input.title.trim();
     const summary = input.summaryText?.trim();
     const stopWorkId = resolveSubagentStopWorkId(live?.cancellableWorkId, status);
@@ -446,35 +447,18 @@ export function buildSubagentWorkCardModel(
       title: input.title,
       subagentType: input.subagentType,
       name,
-      ...(title && title !== name ? { taskSummary: title } : {}),
-      ...(!isSubagentStatusActive(status) && summary && summary !== title
-        ? { resultSummary: summary }
+      ...(typeLabel ? { typeLabel } : {}),
+      ...((status === "failed" || status === "cancelled") && summary && summary !== title
+        ? { reason: summary }
         : {}),
       status,
       avatarIndex: input.avatarIndex,
-      ...(input.model ? { model: input.model } : {}),
-      ...(input.model && input.effort ? { effort: input.effort } : {}),
-      ...(input.toolCallCount !== undefined ? { toolCallCount: input.toolCallCount } : {}),
       ...(input.startedAt !== undefined ? { startedAt: input.startedAt } : {}),
-      ...(input.endedAt !== undefined && !isSubagentStatusActive(status)
-        ? { endedAt: input.endedAt }
-        : {}),
       ...(stopWorkId ? { stopWorkId } : {}),
     };
   });
-  const counts = summarizeSubagentStatuses(members.map((member) => member.status));
-  const starts = members.flatMap((member) =>
-    member.startedAt !== undefined ? [member.startedAt] : [],
-  );
-  const ends = members.flatMap((member) => (member.endedAt !== undefined ? [member.endedAt] : []));
-  const active = counts.running > 0;
   return {
     members,
-    counts,
-    endedCount: members.length - counts.running,
-    active,
-    ...(starts.length > 0 ? { startedAt: Math.min(...starts) } : {}),
-    ...(!active && ends.length > 0 ? { endedAt: Math.max(...ends) } : {}),
-    stopAllWorkIds: members.flatMap((member) => (member.stopWorkId ? [member.stopWorkId] : [])),
+    active: members.some((member) => isSubagentStatusActive(member.status)),
   };
 }

@@ -480,7 +480,7 @@ async function openSubagentSidePane(parentAgentToolCallId: string): Promise<void
             (expectedChildSessionId) =>
               Boolean(
                 document.querySelector(
-                  '[data-side-pane-tab-id^="subagent-session:"][data-state="active"]',
+                  '[data-side-pane-tab-id^="subagent-directory:"][data-state="active"]',
                 ),
               ) &&
               Array.from(

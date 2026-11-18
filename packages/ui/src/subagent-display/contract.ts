@@ -78,7 +78,7 @@ export type AgentSpawnMemberItem =
 
 /**
  * 同一轮相邻派发合并后的一项；身份锚定首个成员。
- * `workCard`：任一成员已有子会话，1 个或多个成员渲染为 Subagent 工作卡；
+ * `workCard`：任一成员已有子会话，1 个或多个成员渲染为连续的子智能体行（1.4 起无外框，名称沿用）；
  * `sentence`：都没有子会话且 ≥2 个，渲染为旧的"A、B 和 C 开始工作"行。
  */
 export interface AgentSpawnGroupRenderItem {

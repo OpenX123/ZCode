@@ -96,19 +96,21 @@ Subagent directory（桌面 / 普通 Web）
   stop/cancel 控件。
 - live completion 由 V4 投影把同一项移出 running 并更新 `endedTotal`；目录随后按 ended-only
   查询把该项合并到顶部，但保留已加载页面和滚动位置。
-- 目录 tab 稳定身份为
-  `subagent-directory:{workspaceKey}:{rootSessionId}:{parentSessionId}`；child tab 为
-  `subagent-session:{workspaceKey}:{rootSessionId}:{childSessionId}`。
-- 点击目录项复用统一 child 详情打开请求。同一 root 内重复点击复用；原 Session 与 fork
-  root 不同，因此可以各自持有指向同一历史 child 的 tab。
-- edit/retry 使 child 失效时自动关闭对应详情 tab，不进入“最近关闭”；若当前激活的是该 tab，
-  优先回到已打开的目录，否则回到前一个可见 tab。compact 不关闭 tab。
+- 1.4 起目录 tab 即唯一"子智能体"Tab，稳定身份为 `subagent-directory:{workspaceKey}:{rootSessionId}`
+  （按 workspace + root 查找，兼容旧的带 `parentSessionId` 后缀的 id）；Tab 上的可选
+  `childSessionId` / `subagentType` / `title` 表示当前详情视图，缺席即目录视图。不再新建
+  `subagent-session:{workspaceKey}:{rootSessionId}:{childSessionId}` tab。
+- 点击目录项复用统一 child 详情打开请求，在同一 Tab 内切到详情；详情左上角返回箭头回到目录。
+  原 Session 与 fork root 不同，因此各自持有一个"子智能体"Tab。
+- edit/retry 使 child 失效时："子智能体"Tab 若正显示该 child，清除选择回到目录（不关闭 Tab）；
+  旧 `subagent-session` tab 仍自动关闭，不进入“最近关闭”，激活项优先回到目录。compact 不关闭 tab。
 - 目录 tab 和 child tabs 都只保存在 renderer 内存，不跨刷新恢复。
 
 ## 多端边界
 
 - 桌面端与普通 Web 提供目录及分页。
-- 手机 `/remote` 不提供目录；Agent/Task 和 Running 行仍可在现有右侧抽屉打开 child 详情。
+- 手机 `/remote` 在现有右侧抽屉中打开同一"子智能体"Tab 的详情；1.4 起可经返回箭头进入目录
+  （运行中分区来自投影；已结束分页不可用时显示既有"无法加载"提示）。输入区与状态面板的目录入口仍不在手机显示。
 - 桌面继续使用 `desktop-continuous`，手机继续使用 `web-remote-replayable`；两端消费同一 V4
   `snapshot.subagents`，手机重连仍由既有 snapshot/gap 恢复。ended-only 查询通过当前 trusted host
   attachment 到同一 CLI/runtime，不在 relay、desktop main 或 Host 增加状态。

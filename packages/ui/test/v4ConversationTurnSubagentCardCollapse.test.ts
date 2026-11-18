@@ -187,19 +187,13 @@ describe("完成轮次折叠与运行中的 Subagent 工作卡（SAT31）", () =
     expect(html).toContain("权限不足");
     expect(html).not.toContain('data-testid="row-3"');
   });
-  it("手动打开穿透终态外层，手动关闭恢复默认，完整 remote scope 隔离", () => {
+  it("1.4：子智能体行组不可折叠，残留的手动 override 不再让成功行组穿透终态外层", () => {
     const keys = resolveConversationDisclosureKeys(context, "turn-1", "subagentWorkCard", [
       "call-4",
       "call-5",
     ]);
     setConversationDisclosureOverride(keys, true);
-    expect(render(turnRows("success"))).toContain(
-      'data-testid="v4-subagent-open-side-pane-child-b"',
-    );
-    expect(
-      render(turnRows("success"), { ...context, workspaceRemoteSessionId: "remote-other" }),
-    ).not.toContain('data-testid="v4-subagent-work-card-4"');
-    expect(render(turnRows("success"))).not.toContain('data-testid="row-3"');
+    expect(render(turnRows("success"))).not.toContain('data-testid="v4-subagent-work-card-4"');
     setConversationDisclosureOverride(keys, false);
     expect(render(turnRows("success"))).not.toContain('data-testid="v4-subagent-work-card-4"');
   });

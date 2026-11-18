@@ -310,7 +310,8 @@ export function SidePaneTabIcon({ tab }: { tab: WorkspaceSidePaneTab }) {
   }
 
   if (tab.type === "subagent-directory") {
-    return <ListTreeIcon className="size-3.5" />;
+    // 1.4 起这是唯一的"子智能体"Tab（目录 + 详情），与旧版子智能体 tab 同一 Bot 图标。
+    return <BotIcon className="size-3.5" />;
   }
 
   if (tab.type === "browser") {

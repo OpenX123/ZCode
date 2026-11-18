@@ -51,7 +51,7 @@ describe("子智能体右侧 tabs manual review", () => {
     );
     await open.waitForDisplayed({ timeout: 60000 });
     await open.click();
-    const detail = await $('[data-side-pane-tab-id^="subagent-session:"]');
+    const detail = await $('[data-side-pane-tab-id^="subagent-directory:"]');
     await detail.waitForDisplayed();
     const detailId = await detail.getAttribute("data-side-pane-tab-id");
     const childId = await browser.execute(
@@ -157,7 +157,7 @@ describe("子智能体右侧 tabs manual review", () => {
     await waitForAssistantMessageContaining(`${BACKGROUND_PARENT_DONE}_${runId}`);
   });
 
-  it("SAT01-SAT03: 6 个 running child 使用右侧 tabs 且打开后持续更新", async function () {
+  it("SAT01-SAT03: 6 个 running child 共用右侧唯一子智能体 Tab 且选中详情持续更新", async function () {
     this.timeout(240000);
 
     await prepareConversationE2E();
@@ -176,25 +176,24 @@ describe("子智能体右侧 tabs manual review", () => {
     await waitForSubagentSummaryActions(CHILD_COUNT, 90000);
     await expectSubagentSummariesToOpenSidePaneDirectly();
 
-    const initialRowCounts = await openAllSubagentTabs();
-    expect(initialRowCounts).toHaveLength(CHILD_COUNT);
-    await waitForVisibleSubagentTabCount(CHILD_COUNT, 30000);
+    // 1.4：逐个打开 6 个 child 仍只有一个"子智能体"Tab，Tab 内只显示最后选中的详情。
+    await openAllSubagentTabs();
+    await waitForVisibleSubagentTabCount(1, 30000);
     expect(await countWorkbenchPanes()).toBe(1);
 
     await clickFirstSubagentSummaryAction();
-    expect(await countVisibleSubagentTabs()).toBe(CHILD_COUNT);
+    expect(await countVisibleSubagentTabs()).toBe(1);
+    await browser.waitUntil(async () => (await readChildTimelineRowCounts()).length === 1, {
+      timeout: 30000,
+      timeoutMsg: "子智能体 Tab 没有只显示一个选中的 child 详情",
+    });
+    const [initialRowCount = 0] = await readChildTimelineRowCounts();
 
     await browser.waitUntil(
-      async () => {
-        const current = await readChildTimelineRowCounts();
-        return (
-          current.length === CHILD_COUNT &&
-          current.every((count, index) => count > (initialRowCounts[index] ?? 0))
-        );
-      },
+      async () => ((await readChildTimelineRowCounts())[0] ?? 0) > initialRowCount,
       {
         timeout: 120000,
-        timeoutMsg: "已打开的 child tabs 没有在运行中继续增加 timeline rows",
+        timeoutMsg: "选中的 child 详情没有在运行中继续增加 timeline rows",
       },
     );
 
@@ -324,7 +323,7 @@ async function expectSubagentSummariesToOpenSidePaneDirectly(): Promise<void> {
   expect(summaries.every((summary) => !summary.hasInlineDetails)).toBe(true);
 }
 
-async function openAllSubagentTabs(): Promise<number[]> {
+async function openAllSubagentTabs(): Promise<void> {
   await browser.execute(
     (prefix, expected) => {
       const summaries = Array.from(
@@ -335,8 +334,7 @@ async function openAllSubagentTabs(): Promise<number[]> {
     TID_V4_SUBAGENT_OPEN_SIDE_PANE,
     CHILD_COUNT,
   );
-  await waitForVisibleSubagentTabCount(CHILD_COUNT, 30000);
-  return readChildTimelineRowCounts();
+  await waitForVisibleSubagentTabCount(1, 30000);
 }
 
 async function clickFirstSubagentSummaryAction(): Promise<void> {
@@ -354,7 +352,7 @@ async function waitForVisibleSubagentTabCount(expected: number, timeout: number)
 
 async function countVisibleSubagentTabs(): Promise<number> {
   return browser.execute(
-    () => document.querySelectorAll('[data-side-pane-tab-id^="subagent-session:"]').length,
+    () => document.querySelectorAll('[data-side-pane-tab-id^="subagent-directory:"]').length,
   );
 }
 

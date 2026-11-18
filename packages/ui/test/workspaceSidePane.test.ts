@@ -474,7 +474,7 @@ describe("workspaceSidePane", () => {
     expect(normalizeWorkspaceSidePaneState({ ...state, activeTabId: "" })?.activeTabId).toBe("");
   });
 
-  it("groups child detail tabs by root session and reuses a child across nesting levels", () => {
+  it("opens one subagent tab per workspace + root and selects the child across nesting levels", () => {
     const first = openSubagentSessionSidePane(null, {
       workspaceKey: "ssh://host/workspace",
       workspacePath: "/workspace",
@@ -491,85 +491,170 @@ describe("workspaceSidePane", () => {
       workspaceIdentity: "ssh://host/workspace",
       rootSessionId: "root-a",
       parentSessionId: "nested-parent",
-      childSessionId: "child-a",
+      childSessionId: "child-b",
       subagentType: "Explore",
-      title: "Inspect files again",
+      title: "Inspect nested files",
     });
 
     expect(second.tabs).toHaveLength(1);
+    expect(second.activeTabId).toBe("subagent-directory:ssh%3A%2F%2Fhost%2Fworkspace:root-a");
     expect(second.tabs[0]).toMatchObject({
-      id: "subagent-session:ssh%3A%2F%2Fhost%2Fworkspace:root-a:child-a",
+      type: "subagent-directory",
       rootSessionId: "root-a",
       parentSessionId: "nested-parent",
+      childSessionId: "child-b",
+      title: "Inspect nested files",
+    });
+  });
+
+  it("keeps a known title when the same child is reopened without one", () => {
+    const options = {
+      workspaceKey: "/workspace",
+      workspacePath: "/workspace",
+      rootSessionId: "root-a",
+      parentSessionId: "root-a",
       childSessionId: "child-a",
-      title: "Inspect files again",
-    });
-  });
-
-  it("opens one reusable subagent directory per workspace and root parent", () => {
-    const first = openSubagentDirectorySidePane(null, {
-      workspaceKey: "/workspace",
-      workspacePath: "/workspace",
-      rootSessionId: "root-a",
-      parentSessionId: "parent-a",
-    });
-    const second = openSubagentDirectorySidePane(first, {
-      workspaceKey: "/workspace",
-      workspacePath: "/workspace",
-      rootSessionId: "root-a",
-      parentSessionId: "parent-a",
-    });
-
-    expect(second.tabs).toHaveLength(1);
-    expect(second).toMatchObject({
-      activeTabId: "subagent-directory:%2Fworkspace:root-a:parent-a",
-      tabs: [
-        {
-          type: "subagent-directory",
-          rootSessionId: "root-a",
-          parentSessionId: "parent-a",
-        },
-      ],
-    });
-  });
-
-  it("drops invalid child tabs without closing the directory and falls back to it", () => {
-    const directory = openSubagentDirectorySidePane(null, {
-      workspaceKey: "/workspace",
-      workspacePath: "/workspace",
-      rootSessionId: "root-a",
-      parentSessionId: "parent-a",
-    });
-    const withValid = openSubagentSessionSidePane(directory, {
-      workspaceKey: "/workspace",
-      workspacePath: "/workspace",
-      rootSessionId: "root-a",
-      parentSessionId: "parent-a",
-      childSessionId: "child-valid",
       subagentType: "Explore",
-      title: "Valid",
+    };
+    const first = openSubagentSessionSidePane(null, { ...options, title: "Inspect files" });
+    const reopened = openSubagentSessionSidePane(first, { ...options, title: " " });
+    expect(reopened.tabs[0]).toMatchObject({ childSessionId: "child-a", title: "Inspect files" });
+    const other = openSubagentSessionSidePane(reopened, {
+      ...options,
+      childSessionId: "child-b",
+      title: "",
     });
-    const withInvalid = openSubagentSessionSidePane(withValid, {
+    expect(other.tabs[0]).toMatchObject({ childSessionId: "child-b", title: "" });
+  });
+
+  it("returns to the directory view on the same tab and clears the selection", () => {
+    const detail = openSubagentSessionSidePane(null, {
       workspaceKey: "/workspace",
       workspacePath: "/workspace",
       rootSessionId: "root-a",
-      parentSessionId: "parent-a",
+      parentSessionId: "root-a",
+      childSessionId: "child-a",
+      subagentType: "Explore",
+      title: "Inspect files",
+    });
+    const directory = openSubagentDirectorySidePane(detail, {
+      workspaceKey: "/workspace",
+      workspacePath: "/workspace",
+      rootSessionId: "root-a",
+      parentSessionId: "root-a",
+    });
+
+    expect(directory.tabs).toHaveLength(1);
+    expect(directory.activeTabId).toBe(detail.activeTabId);
+    expect(directory.tabs[0]).toEqual(
+      expect.not.objectContaining({ childSessionId: expect.anything() }),
+    );
+    expect(directory.tabs[0]).toMatchObject({
+      type: "subagent-directory",
+      parentSessionId: "root-a",
+    });
+  });
+
+  it("merges legacy per-child tabs and legacy directory ids into the single subagent tab", () => {
+    const legacyChild = {
+      id: "subagent-session:%2Fworkspace:root-a:child-old",
+      type: "subagent-session" as const,
+      workspaceKey: "/workspace",
+      workspacePath: "/workspace",
+      rootSessionId: "root-a",
+      parentSessionId: "root-a",
+      childSessionId: "child-old",
+      subagentType: "Explore",
+      title: "Old",
+    };
+    const legacyDirectory = {
+      id: "subagent-directory:%2Fworkspace:root-a:root-a",
+      type: "subagent-directory" as const,
+      workspaceKey: "/workspace",
+      workspacePath: "/workspace",
+      rootSessionId: "root-a",
+      parentSessionId: "root-a",
+    };
+    const otherRoot = {
+      ...legacyChild,
+      id: "subagent-session:%2Fworkspace:root-b:x",
+      rootSessionId: "root-b",
+    };
+    const next = openSubagentSessionSidePane(
+      { tabs: [legacyChild, otherRoot, legacyDirectory], activeTabId: legacyChild.id },
+      {
+        workspaceKey: "/workspace",
+        workspacePath: "/workspace",
+        rootSessionId: "root-a",
+        parentSessionId: "root-a",
+        childSessionId: "child-new",
+        subagentType: "Explore",
+        title: "New",
+      },
+    );
+    expect(next.tabs.map((tab) => tab.id)).toEqual([otherRoot.id, legacyDirectory.id]);
+    expect(next.activeTabId).toBe(legacyDirectory.id);
+    expect(next.tabs[1]).toMatchObject({ childSessionId: "child-new" });
+
+    const withoutDirectory = openSubagentSessionSidePane(
+      { tabs: [otherRoot, legacyChild], activeTabId: otherRoot.id },
+      {
+        workspaceKey: "/workspace",
+        workspacePath: "/workspace",
+        rootSessionId: "root-a",
+        parentSessionId: "root-a",
+        childSessionId: "child-old",
+        subagentType: "Explore",
+        title: "",
+      },
+    );
+    // 没有目录 Tab 时占据第一个被并入的旧 Tab 的位置。
+    expect(withoutDirectory.tabs.map((tab) => tab.id)).toEqual([
+      otherRoot.id,
+      "subagent-directory:%2Fworkspace:root-a",
+    ]);
+  });
+
+  it("returns to the directory when the selected child leaves the branch and drops legacy child tabs", () => {
+    const legacyChild = {
+      id: "subagent-session:%2Fworkspace:root-a:child-old-branch",
+      type: "subagent-session" as const,
+      workspaceKey: "/workspace",
+      workspacePath: "/workspace",
+      rootSessionId: "root-a",
+      parentSessionId: "root-a",
+      childSessionId: "child-old-branch",
+      subagentType: "Explore",
+      title: "Old",
+    };
+    const selected = openSubagentSessionSidePane(null, {
+      workspaceKey: "/workspace",
+      workspacePath: "/workspace",
+      rootSessionId: "root-a",
+      parentSessionId: "root-a",
       childSessionId: "child-old-branch",
       subagentType: "Explore",
       title: "Old branch",
     });
-
-    const next = syncSubagentSessionSidePaneTabs(withInvalid, {
+    const state = { tabs: [...selected.tabs, legacyChild], activeTabId: legacyChild.id };
+    const next = syncSubagentSessionSidePaneTabs(state, {
       rootSessionId: "root-a",
-      parentSessionId: "parent-a",
+      parentSessionId: "root-a",
       validChildSessionIds: ["child-valid"],
     });
 
-    expect(next?.tabs.map((tab) => tab.id)).toEqual([
-      "subagent-directory:%2Fworkspace:root-a:parent-a",
-      "subagent-session:%2Fworkspace:root-a:child-valid",
-    ]);
-    expect(next?.activeTabId).toBe("subagent-directory:%2Fworkspace:root-a:parent-a");
+    expect(next?.tabs.map((tab) => tab.id)).toEqual(["subagent-directory:%2Fworkspace:root-a"]);
+    expect(next?.activeTabId).toBe("subagent-directory:%2Fworkspace:root-a");
+    expect(next?.tabs[0]).toEqual(
+      expect.not.objectContaining({ childSessionId: expect.anything() }),
+    );
+
+    const stillValid = syncSubagentSessionSidePaneTabs(selected, {
+      rootSessionId: "root-a",
+      parentSessionId: "root-a",
+      validChildSessionIds: ["child-old-branch"],
+    });
+    expect(stillValid).toBe(selected);
   });
 
   it("按 childSessionId 多开 selection side chat tab，并为同父实例分配序号", () => {

@@ -95,6 +95,7 @@ import {
   type BrowserSidePaneTab,
   type BrowserUseSidePaneTab,
   type BrowserSidePaneMetadata,
+  type OpenScopedSubagentDirectorySideTabRequest,
   type OpenScopedSubagentSideTabRequest,
   type OpenScopedWorkflowActorSessionSideTabRequest,
   type OpenScopedWorkflowWorkspaceSideTabRequest,
@@ -348,6 +349,7 @@ export function AnimatedSidePanePanel({
   onOpenCodeViewer,
   onOpenFileLink,
   onOpenSubagentSession,
+  onOpenSubagentDirectory,
   onOpenWorkflowActorSession,
   onOpenWorkflowWorkspace,
   onOpenWorkflowArtifact,
@@ -439,6 +441,8 @@ export function AnimatedSidePanePanel({
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenBackgroundBash?: (request: OpenBackgroundBashSideTabRequest) => void;
   onOpenSubagentSession: (request: OpenScopedSubagentSideTabRequest) => void;
+  /** "子智能体"Tab 详情的返回箭头：回到目录视图。 */
+  onOpenSubagentDirectory?: (request: OpenScopedSubagentDirectorySideTabRequest) => void;
   /** run 详情页里点 ask 节点 → 打开那个 actor 实例的 transcript tab。 */
   onOpenWorkflowActorSession?: (request: OpenScopedWorkflowActorSessionSideTabRequest) => void;
   /** run 详情页里点脚本行 → 打开该 run 的脚本 transcript tab，落到那一站。 */
@@ -1229,7 +1233,15 @@ export function AnimatedSidePanePanel({
                         ) : tab.type === "subagent-directory" ? (
                           <SubagentDirectorySidePane
                             tab={tab}
+                            visible={isVisible && tab.id === contentActiveTabId}
+                            focused={isVisible && tab.id === contentActiveTabId}
+                            compactForRemoteControl={mobileOverlay}
+                            onOpenBrowserUrl={onOpenBrowserUrl}
+                            onOpenCodeViewer={onOpenCodeViewer}
+                            onOpenFileLink={onOpenFileLink}
                             onOpenSubagentSession={onOpenSubagentSession}
+                            onOpenSubagentDirectory={onOpenSubagentDirectory}
+                            onOpenBackgroundBash={onOpenBackgroundBash}
                           />
                         ) : tab.type === "selection-side-chat" ? (
                           <SelectionSideChatPane

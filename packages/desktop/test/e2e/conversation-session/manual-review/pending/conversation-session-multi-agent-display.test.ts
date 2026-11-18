@@ -1,6 +1,9 @@
 import {
   TID_CHAT_SUMMARY_RUNNING_AGENTS,
+  TID_V4_SUBAGENT_DIRECTORY,
+  TID_V4_SUBAGENT_DIRECTORY_ITEM,
   TID_V4_SUBAGENT_OPEN_SIDE_PANE,
+  TID_V4_SUBAGENT_SESSION_BACK,
   TID_V4_SUBAGENT_SESSION_HEADER,
   TID_V4_SUBAGENT_WORK_CARD,
 } from "@zcode/shared/test-ids";
@@ -11,8 +14,9 @@ import {
   waitForV4Pane,
 } from "../../../helpers/v4-conversation.js";
 
-// MA01-MA04（docs/desktop/multi-agent-display-spec.md「验收场景」）：同一轮并行 7 个 child，
-// 时间线合并为一张 Subagent 工作卡（1.3 W8），胶囊显示 3 个头像与运行数，点击成员行打开带头部的右侧只读详情。
+// MA01-MA04、MA16（docs/desktop/multi-agent-display-spec.md「验收场景」）：同一轮并行 7 个 child，
+// 时间线为连续 7 行子智能体行（1.4，无工作卡外框），胶囊显示 3 个头像与运行数；点击行打开右侧唯一
+// "子智能体"Tab 并进入详情，切换另一行仍是同一个 Tab，返回箭头回到目录，目录项再次进入详情。
 const TIMEOUT_MS = 180000;
 const CHILD_COUNT = 7;
 const PARENT_MARKER = "E2E_MULTI_AGENT_DISPLAY_PARENT";
@@ -26,6 +30,47 @@ interface SpawnRowState {
   variants: string[];
   capsuleFaces: number;
   capsuleText: string;
+}
+
+interface SubagentTabState {
+  directoryTabs: number;
+  legacyChildTabs: number;
+  activeDirectoryTab: boolean;
+}
+
+async function readSubagentTabState(): Promise<SubagentTabState> {
+  return browser.execute(() => ({
+    directoryTabs: document.querySelectorAll('[data-side-pane-tab-id^="subagent-directory:"]')
+      .length,
+    legacyChildTabs: document.querySelectorAll('[data-side-pane-tab-id^="subagent-session:"]')
+      .length,
+    activeDirectoryTab: Boolean(
+      document.querySelector('[data-side-pane-tab-id^="subagent-directory:"][data-state="active"]'),
+    ),
+  }));
+}
+
+async function readRowLayout() {
+  return browser.execute((groupPrefix) => {
+    const group = document.querySelector<HTMLElement>(
+      `[data-testid^="${groupPrefix}-"][data-member-count]`,
+    );
+    const style = group ? getComputedStyle(group) : null;
+    return {
+      tag: group?.tagName ?? "",
+      rows: group?.querySelectorAll(":scope > li").length ?? 0,
+      borderTopWidth: style?.borderTopWidth ?? "",
+      text: group?.textContent ?? "",
+    };
+  }, TID_V4_SUBAGENT_WORK_CARD);
+}
+
+async function waitForHeader(childSessionId: string, message: string) {
+  const header = await $(
+    `[data-testid="${TID_V4_SUBAGENT_SESSION_HEADER}"][data-child-session-id="${childSessionId}"]`,
+  );
+  await header.waitForDisplayed({ timeout: 15000, timeoutMsg: message });
+  return header;
 }
 
 async function readSpawnRowState(): Promise<SpawnRowState> {
@@ -104,8 +149,19 @@ describe("多智能体展示 manual review", () => {
     expect(live.capsuleFaces).toBe(3);
     expect(live.capsuleText).toContain(String(CHILD_COUNT));
 
-    // 每个 child 只有一个直开入口（工作卡成员行）。
+    // 每个 child 只有一个直开入口（子智能体行）。
     expect((await readSpawnRowState()).openActions).toBe(CHILD_COUNT);
+    // 1.4：连续 7 行，没有工作卡外框、标题或主 Agent 节点；运行中行带"运行中"。
+    const rowLayout = await readRowLayout();
+    expect(rowLayout).toMatchObject({ tag: "UL", rows: CHILD_COUNT, borderTopWidth: "0px" });
+    expect(rowLayout.text).not.toContain("Subagent 正在工作");
+    expect(rowLayout.text).not.toContain("主 Agent");
+    expect(rowLayout.text).toContain("运行中");
+    expect(await readSubagentTabState()).toEqual({
+      directoryTabs: 0,
+      legacyChildTabs: 0,
+      activeDirectoryTab: false,
+    });
 
     const firstName = await $(`[data-testid^="${TID_V4_SUBAGENT_OPEN_SIDE_PANE}-"]`);
     const childTestId = (await firstName.getAttribute("data-testid")) ?? "";
@@ -118,6 +174,51 @@ describe("多智能体展示 manual review", () => {
     expect(await header.getAttribute("data-status")).toBe("running");
     expect(await header.getAttribute("data-face-variant")).toBe("antenna");
     expect(await header.getText()).toContain("E2E display child 01");
+    expect(await readSubagentTabState()).toEqual({
+      directoryTabs: 1,
+      legacyChildTabs: 0,
+      activeDirectoryTab: true,
+    });
+
+    // MA16：点另一行仍复用同一个"子智能体"Tab，只切换详情。
+    const members = await $$(`[data-testid^="${TID_V4_SUBAGENT_OPEN_SIDE_PANE}-"]`);
+    const secondChildId = ((await members[1]!.getAttribute("data-testid")) ?? "").slice(
+      `${TID_V4_SUBAGENT_OPEN_SIDE_PANE}-`.length,
+    );
+    await members[1]!.click();
+    await waitForHeader(secondChildId, "MA16 点第二行后详情没有切换");
+    expect(await header.isExisting()).toBe(false);
+    expect((await readSubagentTabState()).directoryTabs).toBe(1);
+
+    // 返回箭头回到目录：运行中 · 7，目录项可再次进入详情。
+    await $(`[data-testid="${TID_V4_SUBAGENT_SESSION_BACK}"]`).click();
+    const directory = await $(`[data-testid="${TID_V4_SUBAGENT_DIRECTORY}"]`);
+    await directory.waitForDisplayed({ timeout: 15000, timeoutMsg: "MA16 返回后没有显示目录" });
+    await browser.waitUntil(
+      async () =>
+        (await directory.$$(`[data-testid^="${TID_V4_SUBAGENT_DIRECTORY_ITEM}-"]`).length) >=
+        CHILD_COUNT,
+      { timeout: 15000, timeoutMsg: "MA16 目录没有列出全部子智能体" },
+    );
+    expect(await directory.getText()).toContain(`· ${CHILD_COUNT}`);
+    const thirdItem = (
+      await directory.$$(`[data-testid^="${TID_V4_SUBAGENT_DIRECTORY_ITEM}-"]`)
+    )[2]!;
+    const thirdChildId = ((await thirdItem.getAttribute("data-testid")) ?? "").slice(
+      `${TID_V4_SUBAGENT_DIRECTORY_ITEM}-`.length,
+    );
+    await thirdItem.click();
+    await waitForHeader(thirdChildId, "MA16 目录项没有进入详情");
+    expect((await readSubagentTabState()).directoryTabs).toBe(1);
+    if (process.env.ZCODE_E2E_ARTIFACT_DIR) {
+      await browser.saveScreenshot(
+        `${process.env.ZCODE_E2E_ARTIFACT_DIR}/ma16-single-subagent-tab.png`,
+      );
+    }
+
+    // 回到第一个 child 继续观察收口。
+    await firstName.click();
+    const firstHeader = await waitForHeader(childSessionId, "MA16 回到第一行详情失败");
 
     await waitForV4Pane(
       (snapshot) => !snapshot.canStop,
@@ -128,6 +229,18 @@ describe("多智能体展示 manual review", () => {
       timeout: 30000,
       timeoutMsg: "MA07 工作卡没有收口为全部完成",
     });
-    expect(await header.getAttribute("data-status")).toBe("done");
+    await browser.waitUntil(
+      async () => (await firstHeader.getAttribute("data-status")) === "done",
+      { timeout: 30000, timeoutMsg: "MA07 详情头部没有变为已完成" },
+    );
+    // 全部成功结束的行组回到「已工作」折叠内（spec「对话行内子智能体行 · 折叠」），展开历史回看。
+    await $('[data-testid^="chat-assistant-history-trigger-"]').click();
+    await browser.waitUntil(async () => (await readRowLayout()).rows === CHILD_COUNT, {
+      timeout: 15000,
+      timeoutMsg: "MA07 展开历史后没有看到 7 行子智能体行",
+    });
+    const endedText = (await readRowLayout()).text;
+    expect(endedText).toContain("已完成");
+    expect(endedText).not.toContain("运行中");
   });
 });

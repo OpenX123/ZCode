@@ -426,13 +426,12 @@ describe("后台 Bash 实时输出详情", () => {
 
     // 旧任务由祖先 adapter 持有；必须实际释放 child publisher，再经普通订阅创建新 record。
     // 保留输出 tab，但关闭 child conversation 的订阅，让现有 120s grace / 60s tick 自然淘汰。
-    await browser.execute((sessionId) => {
+    // 1.4 起 child 详情在该 root 唯一的"子智能体"Tab 内，关闭这个 Tab 即释放 child 订阅。
+    await browser.execute(() => {
       document
-        .querySelector<HTMLButtonElement>(
-          `[data-side-pane-tab-id^="subagent-session:"][data-side-pane-tab-id$=":${sessionId}"] button`,
-        )!
+        .querySelector<HTMLButtonElement>('[data-side-pane-tab-id^="subagent-directory:"] button')!
         .click();
-    }, childSessionId);
+    });
     const releasedMessage = `release detached live child publisher session=${childSessionId}`;
     await browser.waitUntil(async () => (await readAgentLogs()).includes(releasedMessage), {
       timeout: 260000,

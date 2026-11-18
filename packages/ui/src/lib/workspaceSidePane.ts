@@ -195,6 +195,14 @@ export interface SubagentSessionSidePaneTab {
   title: string;
 }
 
+/**
+ * 每个 root 会话唯一的"子智能体"Tab（docs/desktop/multi-agent-display-spec.md「右侧"子智能体"Tab」）。
+ *
+ * 视图由可选的选择字段决定：`childSessionId` 缺席 = 目录视图；存在 = 该子智能体的只读详情。
+ * `parentSessionId` 是当前目录所属父会话（嵌套子智能体时为其直属父会话）。选择字段只由本文件的
+ * `openSubagentSessionSidePane` / `openSubagentDirectorySidePane` / `syncSubagentSessionSidePaneTabs`
+ * 写入，是侧栏内存状态，不进入 session、store 或协议。
+ */
 export interface SubagentDirectorySidePaneTab {
   id: string;
   type: "subagent-directory";
@@ -206,6 +214,10 @@ export interface SubagentDirectorySidePaneTab {
   remoteSessionId?: string;
   rootSessionId: string;
   parentSessionId: string;
+  /** 详情视图选中的子会话；缺席即目录视图。 */
+  childSessionId?: string;
+  subagentType?: string;
+  title?: string;
 }
 
 export interface SelectionSideChatPaneTab {
@@ -759,39 +771,11 @@ export function encodeSidePaneTabIdPart(value: string): string {
   return encodeURIComponent(value);
 }
 
-export function createSubagentSessionSidePaneTab(options: {
-  workspaceKey: string;
-  workspacePath: string;
-  workspaceIdentity?: string;
-  remoteSessionId?: string;
-  rootSessionId?: string;
-  parentSessionId: string;
-  childSessionId: string;
-  subagentType: string;
-  title: string;
-}): SubagentSessionSidePaneTab {
-  const rootSessionId = options.rootSessionId ?? options.parentSessionId;
-  return {
-    id: [
-      "subagent-session",
-      encodeSidePaneTabIdPart(options.workspaceKey),
-      encodeSidePaneTabIdPart(rootSessionId),
-      encodeSidePaneTabIdPart(options.childSessionId),
-    ].join(":"),
-    type: "subagent-session",
-    openedAt: Date.now(),
-    workspaceKey: options.workspaceKey,
-    workspacePath: options.workspacePath,
-    ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
-    ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
-    rootSessionId,
-    parentSessionId: options.parentSessionId,
-    childSessionId: options.childSessionId,
-    subagentType: options.subagentType,
-    title: options.title.trim(),
-  };
-}
-
+/**
+ * 唯一"子智能体"Tab 的身份只取 workspace + root：同一 root 下不同父会话（嵌套子智能体）共用这一个 Tab，
+ * 由 `parentSessionId` 表示当前目录所属父会话。旧版本 id 带 parentSessionId 后缀，查找时按
+ * `findSubagentDirectoryTab` 的 workspace + root 语义兼容。
+ */
 export function createSubagentDirectorySidePaneTab(options: {
   workspaceKey: string;
   workspacePath: string;
@@ -806,7 +790,6 @@ export function createSubagentDirectorySidePaneTab(options: {
       "subagent-directory",
       encodeSidePaneTabIdPart(options.workspaceKey),
       encodeSidePaneTabIdPart(rootSessionId),
-      encodeSidePaneTabIdPart(options.parentSessionId),
     ].join(":"),
     type: "subagent-directory",
     openedAt: Date.now(),
@@ -1851,62 +1834,117 @@ export function openTerminalSidePane(
   return activateSidePaneTab(current, createTerminalSidePaneTab(options));
 }
 
+function findSubagentDirectoryTab(
+  tabs: readonly WorkspaceSidePaneTab[],
+  workspaceKey: string,
+  rootSessionId: string,
+): SubagentDirectorySidePaneTab | undefined {
+  return tabs.find(
+    (tab): tab is SubagentDirectorySidePaneTab =>
+      tab.type === "subagent-directory" &&
+      tab.workspaceKey === workspaceKey &&
+      tab.rootSessionId === rootSessionId,
+  );
+}
+
+interface SubagentTabScopeOptions {
+  workspaceKey: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+  rootSessionId?: string;
+  parentSessionId: string;
+}
+
+/**
+ * "子智能体"Tab 的唯一写入路径：找到同 workspace + root 的 Tab（没有则创建），写入目录归属与
+ * 可选的详情选择，并把同 root 的旧版 `subagent-session` Tab 并入（关闭）。
+ * 修复依据：1.4 起改为单一 Tab（multi-agent-display-spec「右侧"子智能体"Tab」），
+ * 升级前恢复出来的逐子智能体 Tab 若继续保留，会与新 Tab 同时显示同一子会话，形成两份视图状态。
+ */
+function upsertSubagentSidePaneTab(
+  current: WorkspaceSidePaneState | null,
+  options: SubagentTabScopeOptions,
+  selection: { childSessionId: string; subagentType: string; title: string } | null,
+): WorkspaceSidePaneState {
+  const rootSessionId = options.rootSessionId ?? options.parentSessionId;
+  const tabs = current?.tabs ?? [];
+  const existing = findSubagentDirectoryTab(tabs, options.workspaceKey, rootSessionId);
+  const base = existing ?? createSubagentDirectorySidePaneTab(options);
+  const {
+    childSessionId: previousChildSessionId,
+    subagentType: _previousSubagentType,
+    title: previousTitle,
+    ...withoutSelection
+  } = base;
+  const nextTab: SubagentDirectorySidePaneTab = {
+    ...withoutSelection,
+    workspacePath: options.workspacePath,
+    ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
+    ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
+    rootSessionId,
+    parentSessionId: options.parentSessionId,
+    ...(selection
+      ? {
+          childSessionId: selection.childSessionId,
+          subagentType: selection.subagentType,
+          // 重复打开同一子智能体但入口没有标题时保留已知标题；仍不回退到类型或编号。
+          title:
+            selection.title.trim() ||
+            (previousChildSessionId === selection.childSessionId ? (previousTitle ?? "") : ""),
+        }
+      : {}),
+  };
+  const legacyIds = new Set(
+    tabs
+      .filter(
+        (tab) =>
+          tab.type === "subagent-session" &&
+          tab.workspaceKey === options.workspaceKey &&
+          tab.rootSessionId === rootSessionId,
+      )
+      .map((tab) => tab.id),
+  );
+  if (!current || legacyIds.size === 0) return activateSidePaneTab(current, nextTab);
+  // 新 Tab 占据已有目录 Tab 的位置；没有目录 Tab 时占据第一个被并入的旧 Tab 的位置。
+  const nextTabs: WorkspaceSidePaneTab[] = [];
+  let placed = false;
+  for (const tab of tabs) {
+    const isAnchor = existing ? tab.id === nextTab.id : legacyIds.has(tab.id);
+    if (isAnchor && !placed) {
+      nextTabs.push(nextTab);
+      placed = true;
+      continue;
+    }
+    if (tab.id === nextTab.id || legacyIds.has(tab.id)) continue;
+    nextTabs.push(tab);
+  }
+  if (!placed) nextTabs.push(nextTab);
+  return { ...current, tabs: nextTabs, activeTabId: nextTab.id };
+}
+
+/** 打开（或激活）该 root 的"子智能体"Tab，并直接进入该子智能体详情。 */
 export function openSubagentSessionSidePane(
   current: WorkspaceSidePaneState | null,
-  options: {
-    workspaceKey: string;
-    workspacePath: string;
-    workspaceIdentity?: string;
-    remoteSessionId?: string;
-    rootSessionId?: string;
-    parentSessionId: string;
+  options: SubagentTabScopeOptions & {
     childSessionId: string;
     subagentType: string;
     title: string;
   },
 ): WorkspaceSidePaneState {
-  const nextTab = createSubagentSessionSidePaneTab(options);
-  const existing = current?.tabs.find(
-    (tab): tab is SubagentSessionSidePaneTab =>
-      tab.type === "subagent-session" && tab.id === nextTab.id,
-  );
-  const nextTitle = options.title.trim();
-  return activateSidePaneTab(
-    current,
-    existing
-      ? {
-          ...existing,
-          workspacePath: options.workspacePath,
-          ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
-          ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
-          rootSessionId: options.rootSessionId ?? options.parentSessionId,
-          parentSessionId: options.parentSessionId,
-          subagentType: options.subagentType,
-          // HMR 期间可能复用旧结构的内存 tab；新入口没有 title 时保留已知标题，
-          // 但绝不再回退到旧的 type + ordinal 展示规则。
-          title: nextTitle || existing.title || "",
-        }
-      : nextTab,
-  );
+  return upsertSubagentSidePaneTab(current, options, {
+    childSessionId: options.childSessionId,
+    subagentType: options.subagentType,
+    title: options.title,
+  });
 }
 
+/** 打开（或激活）该 root 的"子智能体"Tab 并显示 `parentSessionId` 的目录；详情的返回箭头也走这里。 */
 export function openSubagentDirectorySidePane(
   current: WorkspaceSidePaneState | null,
-  options: {
-    workspaceKey: string;
-    workspacePath: string;
-    workspaceIdentity?: string;
-    remoteSessionId?: string;
-    rootSessionId?: string;
-    parentSessionId: string;
-  },
+  options: SubagentTabScopeOptions,
 ): WorkspaceSidePaneState {
-  const nextTab = createSubagentDirectorySidePaneTab(options);
-  const existing = current?.tabs.find(
-    (tab): tab is SubagentDirectorySidePaneTab =>
-      tab.type === "subagent-directory" && tab.id === nextTab.id,
-  );
-  return activateSidePaneTab(current, existing ? { ...existing, ...nextTab } : nextTab);
+  return upsertSubagentSidePaneTab(current, options, null);
 }
 
 export function syncSubagentSessionSidePaneTabs(
@@ -1915,16 +1953,34 @@ export function syncSubagentSessionSidePaneTabs(
 ): WorkspaceSidePaneState | null {
   if (!current) return null;
   const validChildSessionIds = new Set(options.validChildSessionIds);
-  const removedTabs = current.tabs.filter(
+  const inScope = (tab: { rootSessionId: string; parentSessionId: string }) =>
+    tab.rootSessionId === options.rootSessionId && tab.parentSessionId === options.parentSessionId;
+  // "子智能体"Tab 正显示失效的子会话时只回到目录，不关闭 Tab（同样不进入"最近关闭"）。
+  let selectionCleared = false;
+  const clearedTabs = current.tabs.map((tab) => {
+    if (
+      tab.type !== "subagent-directory" ||
+      !tab.childSessionId ||
+      !inScope(tab) ||
+      validChildSessionIds.has(tab.childSessionId)
+    ) {
+      return tab;
+    }
+    selectionCleared = true;
+    const { childSessionId: _child, subagentType: _type, title: _title, ...directory } = tab;
+    return directory;
+  });
+  const removedTabs = clearedTabs.filter(
     (tab) =>
       tab.type === "subagent-session" &&
-      tab.rootSessionId === options.rootSessionId &&
-      tab.parentSessionId === options.parentSessionId &&
+      inScope(tab) &&
       !validChildSessionIds.has(tab.childSessionId),
   );
-  if (removedTabs.length === 0) return current;
+  if (removedTabs.length === 0) {
+    return selectionCleared ? { ...current, tabs: clearedTabs } : current;
+  }
   const removedIds = new Set(removedTabs.map((tab) => tab.id));
-  const tabs = current.tabs.filter((tab) => !removedIds.has(tab.id));
+  const tabs = clearedTabs.filter((tab) => !removedIds.has(tab.id));
   if (tabs.length === 0) return null;
   if (!removedIds.has(current.activeTabId)) return { ...current, tabs };
   const directory = tabs.find(

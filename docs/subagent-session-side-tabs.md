@@ -1,5 +1,7 @@
 # Subagent Session Side Tabs
 
+> **1.4 更新（单一"子智能体"Tab）**：右侧不再为每个 `childSessionId` 新开 tab。每个 root 会话只有一个"子智能体"Tab（`subagent-directory`），默认显示目录，打开某个子智能体即在同一 Tab 内切到其详情，左上角返回箭头回到目录。下文"每个 child 一个 tab"的稳定身份、关闭/最近关闭等规则只适用于升级前已存在的旧 `subagent-session` tab；新入口（摘要行、成员行、Running 行、目录项、嵌套 Agent 卡）全部走 `openSubagentSessionSidePane` 写入该 Tab 的选择字段，同 root 的旧 child tab 在下一次打开时并入并关闭。权威规则见 [多智能体展示规范](./desktop/multi-agent-display-spec.md)「右侧"子智能体"Tab」。
+
 UX08：输入区活动汇总全部结束后自动退场，仅影响该入口渲染；已打开的只读 child tab 继续由既有 Side Pane owner 管理，不关闭、不取消。成功卡通过原有 onOpenSubagentSession 查看结果，复用完整 workspaceIdentity/remoteSessionId/root/parent/child 身份，刷新后仍读取持久化子会话。
 
 ## 目标
@@ -203,12 +205,12 @@ Host 使用同一 Agent 的只读 `session/list(sessionIds)` 查询持久化类�
 每个会话必须与当前 attachment 的 workspace identity 和 cwd 相符；父关系缺失、成环或跨工作区时拒绝。
 普通远端主任务仍必须有项目，不按 ID 前缀或旧索引行识别子会话，不补建子会话 task 行，也不扩大目录范围。
 
-| 持久化类型 | 项目解析 | 主列表 | 用户输入 |
-| --- | --- | --- | --- |
-| `interactive`、`fork`、`workflow_parent` | 自身任务的项目 | 可见 | 保持原有准入 |
-| `subagent_child`、`workflow_child` | 校验父链后使用所属主任务项目 | 隐藏 | 只读 |
-| `selection_side_chat` | 校验父链后使用所属主任务项目 | 隐藏 | 可聊天，保留辅助对话自己的命令限制 |
-| `nested_workflow_child` | 按持久化工作流子会话处理；不新增创建入口 | 隐藏 | 只读 |
+| 持久化类型                               | 项目解析                                 | 主列表 | 用户输入                           |
+| ---------------------------------------- | ---------------------------------------- | ------ | ---------------------------------- |
+| `interactive`、`fork`、`workflow_parent` | 自身任务的项目                           | 可见   | 保持原有准入                       |
+| `subagent_child`、`workflow_child`       | 校验父链后使用所属主任务项目             | 隐藏   | 只读                               |
+| `selection_side_chat`                    | 校验父链后使用所属主任务项目             | 隐藏   | 可聊天，保留辅助对话自己的命令限制 |
+| `nested_workflow_child`                  | 按持久化工作流子会话处理；不新增创建入口 | 隐藏   | 只读                               |
 
 2026-10-19 回归：原修复仅识别 `subagent_child`，工作流与辅助对话仍以 child ID 查项目。
 项目继承与只读准入分别判断类型，不能用 `parentID` 或同一个只读开关代替；混合父链逐层校验，

@@ -1,6 +1,6 @@
-# 多智能体展示（YCode 1.1.0，1.3 工作卡更新）
+# 多智能体展示（YCode 1.1.0，1.3 工作卡更新，1.4 Codex 式行与单一子智能体 Tab）
 
-决策来源：[YCode 1.1 更新方案](./ycode-1.1-plan.md)「多智能体（问题 7）」。本文定义 Renderer 如何把已有的子智能体投影画成头像、胶囊、对话行内 Subagent 工作卡、右侧详情头部和目录。1.3（W8）在协议上只增加可选的 `model`、`effort`、`toolCallCount`（见"引擎无关合同"第 6 条），不改变 Host、owner/lease 或命令。子会话详情与目录的既有规则见 [Subagent Session Side Tabs](../subagent-session-side-tabs.md) 与 [Subagent Session Directory](../subagent-session-directory.md)，状态胶囊见 [Chat Status Panel](../ui/chat-summary-panel.md)。
+决策来源：[YCode 1.1 更新方案](./ycode-1.1-plan.md)「多智能体（问题 7）」。本文定义 Renderer 如何把已有的子智能体投影画成头像、胶囊、对话行内子智能体行（1.4 起取代 Subagent 工作卡）、右侧唯一"子智能体"Tab（目录 + 详情）。1.3（W8）在协议上只增加可选的 `model`、`effort`、`toolCallCount`（见"引擎无关合同"第 6 条），不改变 Host、owner/lease 或命令。子会话详情与目录的既有规则见 [Subagent Session Side Tabs](../subagent-session-side-tabs.md) 与 [Subagent Session Directory](../subagent-session-directory.md)，状态胶囊见 [Chat Status Panel](../ui/chat-summary-panel.md)。
 
 ## 适用范围与边界
 
@@ -11,16 +11,16 @@
 
 ## 状态所有者
 
-| 事实                                           | 唯一所有者                                                                                                    | Renderer 用法                                                           |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| 子智能体成员与派发顺序                         | CLI 父会话 ProductProjection 的 `snapshot.subagents.childSessionIds`                                          | 派生头像序号                                                            |
-| 运行中成员、`waiting` / `blocked`、`startedAt` | 同上 `snapshot.subagents.running`                                                                             | 胶囊头像串、智能体分区、详情头部运行态                                  |
-| 可停止性                                       | 父会话 `backgroundWorks`（`kind=subagent`、`status=running`、精确 `childSessionId`、`cancellable !== false`） | 智能体分区与详情头部的停止按钮，命令沿用 `cancelBackgroundWork(workId)` |
-| 时间线派发与单个智能体状态                     | 父时间线 Agent/Task 工具行与配对的 `subagent` 行                                                              | 工作卡成员行、旧派发行                                                  |
-| 子智能体模型、档位、步骤数                     | CLI 父会话 ProductProjection 写在 `subagent` 行上，`running[]` 项是同值副本                                   | 工作卡成员行（读行）、详情头部模型标签（读 `running[]`，结束后读行）    |
-| 子会话结束态与耗时                             | 子会话 snapshot（`control.phase`、`control.lastError`、`turnHeader` 行）                                      | 详情头部在父会话不再列为运行中时的结束态                                |
-| 已结束列表                                     | `session/subagents` 已结束分页                                                                                | 目录                                                                    |
-| 工作卡折叠/展开、派发行展开、计时刷新          | Renderer 内存                                                                                                 | 不写入 session、store 或协议，不跨刷新恢复                              |
+| 事实                                               | 唯一所有者                                                                                                    | Renderer 用法                                                           |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| 子智能体成员与派发顺序                             | CLI 父会话 ProductProjection 的 `snapshot.subagents.childSessionIds`                                          | 派生头像序号                                                            |
+| 运行中成员、`waiting` / `blocked`、`startedAt`     | 同上 `snapshot.subagents.running`                                                                             | 胶囊头像串、智能体分区、详情头部运行态                                  |
+| 可停止性                                           | 父会话 `backgroundWorks`（`kind=subagent`、`status=running`、精确 `childSessionId`、`cancellable !== false`） | 智能体分区与详情头部的停止按钮，命令沿用 `cancelBackgroundWork(workId)` |
+| 时间线派发与单个智能体状态                         | 父时间线 Agent/Task 工具行与配对的 `subagent` 行                                                              | 子智能体行、旧派发行                                                    |
+| 子智能体模型、档位、步骤数                         | CLI 父会话 ProductProjection 写在 `subagent` 行上，`running[]` 项是同值副本                                   | 工作卡成员行（读行）、详情头部模型标签（读 `running[]`，结束后读行）    |
+| 子会话结束态与耗时                                 | 子会话 snapshot（`control.phase`、`control.lastError`、`turnHeader` 行）                                      | 详情头部在父会话不再列为运行中时的结束态                                |
+| 已结束列表                                         | `session/subagents` 已结束分页                                                                                | 目录                                                                    |
+| 派发行展开、计时刷新、子智能体 Tab 的目录/详情选择 | Renderer 内存（选择字段在侧栏 Tab 上，唯一写入路径 `workspaceSidePane.ts`）                                   | 不写入 session、store 或协议                                            |
 
 ```mermaid
 sequenceDiagram
@@ -56,9 +56,9 @@ sequenceDiagram
 | `ears`    | 顶部圆耳         | research / researcher / investigate / analyze / analyst / study          |
 
 - 例：`Explore` → antenna；`code-reviewer` → glasses；`test-runner` → crest；`statusline-setup` → base。
-- 尺寸：16px（工作卡成员行、对话派发行、Agent 卡图标、智能体分区行）、20px（胶囊头像串、目录行）、24px（右侧详情头部）。三种尺寸使用同一几何，不做降级简化。
+- 尺寸：16px（子智能体行、对话派发行、Agent 卡图标、智能体分区行）、20px（胶囊头像串、目录行）、24px（右侧详情头部）。三种尺寸使用同一几何，不做降级简化。
 - 主题：机身色与眼白在浅色/深色主题相同；头像串的分隔环使用所在表面的背景色（胶囊为 `--color-popover`），随主题变化。
-- 动效：只有右侧详情头部、且子智能体运行中时播放空闲表情动作；其他位置静止显示当前表情。`prefers-reduced-motion`、页面隐藏或离开视口时不播放（沿用 `startFaceMotion`）。
+- 动效：右侧详情头部与对话行内子智能体行（1.4）在子智能体运行中时播放空闲表情动作；其他位置静止显示当前表情。`prefers-reduced-motion`、页面隐藏或离开视口时不播放（沿用 `startFaceMotion`）。
 - `lib/subagentColors.ts` 的按类型颜色只给 Agent 卡上的类型名文字着色，不得用于头像。
 
 ### 序号（avatarIndex）
@@ -84,64 +84,57 @@ Task13 的真实交互验收沿原 Subagent 工作卡 pending 候选，不晋升
 
 模式只由现有 React UI owner 接受真实点击；CLI/session 投影是终态与计数的唯一事实。测试先核没有 Git/Goal/Todo/计划、运行 Bash/工作流或已结束工作流等其它摘要资格，再断言卸载。父 scope 在打开 child 前保存；任务导航或刷新后按父 session 重新取得唯一可见 pane，不能使用缓存首项或跟随 child 焦点。测试变量 `ZCODE_E2E_TASK13_STATUS_PANEL_VARIANT` 仅允许 `auto|panel`（缺省 auto），只选择独立 runner 的验收分支，不写 store、Fiber 或 props；非法值立即失败。
 
-## 对话行内 Subagent 工作卡（YCode 1.3，取代"对话行内派发行"）
+## 对话行内子智能体行（YCode 1.4，取代 1.3"Subagent 工作卡"）
 
-决策来源：[引擎、输入框与子智能体体验打磨](../plans/2026-11-09-engine-composer-subagent-polish.md) W8（Q7、D7、R2-4）。
+决策来源：用户确认的"1:1 学习 Codex 桌面版"子智能体交互。1.3 的工作卡外框（"Subagent 正在工作 / 主 Agent 正在协调 N 个委派任务"树形卡、"停止全部"、整卡折叠）退役；数据来源、分组与停止规则不变。
 
 ### 分组
 
 - 候选：Agent / Task / subagent 工具调用（已配对 `subagent` 行的 Agent 卡、带外部子工具的 Agent 卡，或尚未配对的 Agent 工具行）。
 - 同一轮、在可见工作项列表中**相邻**的候选为一组；中间出现任何其它可见项（正文、思考、其它工具）即断开。
-- 组内**任一成员**已配对带 `childSessionId` 的 `subagent` 行时，整组（1 个或多个成员）渲染为一张 `SubagentWorkCard`，组身份锚定首个成员的行（`subagentWorkCard:<rowId>`）。尚未登记子会话的成员在卡内显示为"等待启动"，不可打开、不可停止。
+- 组内**任一成员**已配对带 `childSessionId` 的 `subagent` 行时，整组（1 个或多个成员）渲染为**连续的子智能体行**（`presentation=workCard` 名称沿用，组身份仍锚定首个成员的行 `subagentWorkCard:<rowId>`）。组只是一层无样式的容器，不画外框、标题、汇总或折叠箭头。
 - 组内没有任何成员带 `childSessionId`（旧会话、外部引擎行内兜底、子会话尚未登记）时保持旧展示：单个派发为 Agent 卡（图标换成头像）；相邻 ≥2 个为一行"A、B 和 C 开始工作"（规则见下文"旧派发行"）。
-- 首个子会话登记时，该组从旧展示切换为工作卡一次；之后流式追加成员不重建组件。
 - 分组只用于实时对话时间线，不改变分享只读时间线。
 
-### 卡片布局
+### 行布局
 
 ```
-┌ Subagent 正在工作 •                                   [■ 停止全部] ┐
-│ 3 个 Subagent · 已完成 1/3 · 58s                                    │
-│ ┌ ◎ 主 Agent  正在协调 3 个委派任务 ┐                                │
-│ ├─ (头像) explorer      gpt-6.1-sol high                   [■ 停止] │
-│ │         运行中 · 58s                                               │
-│ │         核对排班报错请求契约 · 16 个步骤                           │
-│ ├─ (头像) reviewer  已完成 · 32s · 9 个步骤                          │
-│ └─ (头像) tester    失败 · 12s · 原因：…                             │
-└─────────────────────────────────────────────────────────────────────┘
+(头像) Backend auth fix  general-purpose   运行中 · 58秒   [■]
+(头像) Frontend review                     已完成
+(头像) Regression run    tester            失败
+       原因：provider 超时
 ```
 
-- 头部：标题"Subagent 正在工作"（有成员运行时带脉冲圆点，`prefers-reduced-motion` 时静止）；副标题"N 个 Subagent · 已完成 M/N · 耗时"。M = 已结束（完成、失败、已停止）成员数；耗时 = 最早 `startedAt` 到现在（运行中每秒刷新）或到最晚 `endedAt`。
-- 主 Agent 节点：一个 `rounded-lg` 小框，"主 Agent · 正在协调 N 个委派任务"（全部结束后为"已协调 N 个委派任务"）。成员行用树形连接线挂在其下（最后一个成员为 └）。
-- 成员行（整行是原生 button，Enter/Space 激活）：16px 头像（DESIGN 头像规则：颜色 = 清单序号，轮廓 = 类型）、名称、模型 + 档位（右上，只有投影带 `model` 时显示；`effort` 只在有值时附在模型后）、状态文字 + 耗时（运行中每秒刷新）、任务摘要、"N 个步骤"（只有投影带 `toolCallCount` 时显示）、单独的"停止"按钮（可停时）。已完成、失败或已停止时附终态摘要（`summaryText`）。
-- 名称 = 工具调用可见任务标题/描述 → 非通用 `subagentType` → 本地化"智能体 N"。名称已经是标题时不再重复显示任务摘要。打开 tab 时仍只传可见标题，标题为空时由 tab 回退"子智能体"，不拼接类型或编号。
-- 卡片外框 `rounded-xl`，主 Agent 节点与成员悬停底色 `rounded-lg`；颜色只用语义 token，浅色/深色同一结构。窄宽度（≤ 390px 容器）下模型标签换到名称下一行，按钮不收缩、文字截断不溢出。
+- 每个成员一行，整行是原生 button（Enter/Space 激活），`rounded-lg`，悬停 `bg-hover`；连续成员就是连续行，行间 2px。
+- 头像：16px `SubagentFace`（DESIGN 头像规则：颜色 = 清单序号，轮廓 = 类型）。成员运行中（running / waiting / blocked）时头像播放空闲表情动作（`animated`），`prefers-reduced-motion`、页面隐藏或离开视口时静止（沿用 `startFaceMotion`）。
+- 名称 = 工具调用可见任务标题/描述（CLI 已传有意义的标题，如 "Backend auth fix"）→ 非通用 `subagentType` → 本地化"智能体 N"。`font-medium`，单行截断。
+- 类型标签：`subagentType` 去空白后非空、不等于默认值 `subagent`（不区分大小写）且不等于名称时，在名称后显示 `text-ui-xs text-foreground-subtlest` 灰色小标签；按类型的文字色（`lib/subagentColors.ts`）不用于此标签。
+- 状态文字（`text-ui-sm text-foreground-subtle`）：运行中为"运行中 · 用时"（每秒刷新，用时取 `subagent` 行 `startedAt`，缺失时只显示"运行中"）；等待确认 / 已阻塞 / 等待启动显示对应状态；已完成显示"已完成"。
+- 失败 / 已停止：状态文字为"失败" / "已停止"，原因（`summaryText` 派生的 `resultSummary`）在名称下方用一行灰字（`text-ui-sm text-foreground-subtle`、单行截断、`title` 给全文）"原因：…"；没有摘要时只显示状态文字。
+- 停止：成员可停时（规则同"停止"）行尾显示一个 `icon-xs` ghost 停止按钮（方块图标，无障碍名称"停止 {name}"），点击不冒泡到行；不可停或只读会话不显示。不再提供"停止全部"。
+- 不在行内显示模型、档位、步骤数或任务摘要；这些信息在右侧详情头部（模型）与子会话正文中查看。
+- 窄宽度（≤ 390px 容器）下名称先截断，类型标签与状态文字不换行、不溢出；停止按钮不收缩。
 
 ### 折叠
 
-- 未手动设置时，全部成员结束后卡片默认折叠成一行"N 个 Subagent 已完成 · 用时 Xm Ys"（有失败/已停止时追加"· K 个失败 / K 个已停止"），行尾箭头展开回看完整树。
-- 运行卡默认展开、全部结束默认收起；用户手动展开或收起始终优先，跨 active/ended 与虚拟列表重挂保留。手动 override 复用 conversation-presentation 独立 disclosure UI 入口，按完整 workspace/remote/session/epoch/turn/真实工具调用身份隔离，不写入 session、store 或协议，刷新后恢复默认。
-- 与完成轮次的「已工作 N 秒」折叠的关系（UX08，SAT31）：活动成员、失败摘要或用户手动打开的相关工作卡提升到历史摘要之下，其余工作项仍折叠；历史展开时回到原位置。全部结束且没有手动打开或失败时回到历史折叠内。失败原因即使卡片收起仍可见；手动收起不被终态重置。判定只读既有行和手动意图，不新增状态 owner。
+- 行组本身不可折叠，不再有"N 个 Subagent 已完成"摘要行，也不再写 conversation-presentation disclosure override。
+- 与完成轮次的「已工作 N 秒」折叠的关系（UX08，SAT31）：含活动成员或失败成员的行组提升到历史摘要之下，其余工作项仍折叠；历史展开时回到原位置。全部成功结束的行组回到历史折叠内。
   - 修复依据：父 Agent 派出后台子智能体后本轮结束，工作卡被折进「已工作 N 秒」，而状态胶囊仍显示"1 个运行中"，用户看不到正在工作的子智能体，违背"subagent 可视化清晰易懂"。
 
 ### 停止
 
-- 单个"停止"：只在父会话 `backgroundWorks` 精确匹配可停 work（`kind=subagent`、`status=running`、唯一 `childSessionId`、`cancellable !== false`）且成员仍在运行时出现；规则与详情头部共用 `resolveSubagentStopWorkId`。
-- "停止全部"（D7）：对每个可停的运行中成员调用既有 `cancelBackgroundWork(workId)`（runtime 是唯一所有者，命令幂等），不新增协议命令；没有可停成员时不显示（Codex 子智能体、前台不可停的子智能体）。
-- 停止只经过宿主注入的 `onCancelBackgroundWork`；只读会话不注入，卡上即没有停止。
+- 单个停止：只在父会话 `backgroundWorks` 精确匹配可停 work（`kind=subagent`、`status=running`、唯一 `childSessionId`、`cancellable !== false`）且成员仍在运行时出现；规则与详情头部共用 `resolveSubagentStopWorkId`，命令为既有 `cancelBackgroundWork(workId)`。
+- 停止只经过宿主注入的 `onCancelBackgroundWork`；只读会话不注入，行上即没有停止。
 
 ### 交互
 
-| 点击对象                | 条件                                   | 结果                                                                    |
-| ----------------------- | -------------------------------------- | ----------------------------------------------------------------------- |
-| 成员行                  | 有 `childSessionId` 且宿主提供打开能力 | 通过既有 `onOpenSubagentSession` 打开或激活右侧只读实时对话；不自动打开 |
-| 成员行                  | 尚未登记子会话                         | 无动作（按钮禁用，状态"等待启动"）                                      |
-| 单个"停止" / "停止全部" | 可停                                   | `cancelBackgroundWork(workId)`；事件不冒泡到成员行                      |
-| 折叠摘要行 / 箭头       | 运行或结束                             | 展开或收起完整树                                                        |
+| 点击对象 | 条件                                   | 结果                                                                                      |
+| -------- | -------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 成员行   | 有 `childSessionId` 且宿主提供打开能力 | 通过既有 `onOpenSubagentSession` 打开（或激活）右侧唯一"子智能体"Tab 并直接进入该成员详情 |
+| 成员行   | 尚未登记子会话                         | 无动作（按钮禁用，状态"等待启动"）                                                        |
+| 停止     | 可停                                   | `cancelBackgroundWork(workId)`；事件不冒泡到成员行                                        |
 
-- 成员行无障碍名称包含名称、状态和动作；有子会话的成员行携带 `v4-subagent-open-side-pane-<childSessionId>`，每个子会话只有一个直开入口。
-
-已完成、失败和已停止成员都可从既有 `summaryText` 派生 `resultSummary`；空白或与任务标题相同的摘要不重复展示。摘要只读父投影，详情仍读取子会话持久化正文，不另存 child 结果缓存。正常结果摘要不应只留下工具数和耗时。
+- 成员行无障碍名称包含名称、状态和动作；有子会话的成员行携带 `v4-subagent-open-side-pane-<childSessionId>`，每个子会话只有一个直开入口；未登记成员携带 `v4-subagent-work-card-member-<toolCallId>`；行组容器保留 `v4-subagent-work-card-<rowId>` 与 `data-state=running|ended`。
 
 ### 旧派发行（无子会话的兜底）
 
@@ -150,19 +143,43 @@ Task13 的真实交互验收沿原 Subagent 工作卡 pending 候选，不晋升
 - 每个名称后用图标表示终态：完成为对勾、失败为叉（危险色，伴随无障碍文字）、已停止为禁止符号；运行中不加旋转图标。行尾显示状态计数，有成员运行时计数文字使用运行扫光。
 - 点击名称展开本行，并展开该智能体卡的行内详情；行尾箭头切换显示原有的逐个 Agent 卡；展开状态只存于 Renderer 内存。
 
-## 右侧详情
+## 右侧"子智能体"Tab（YCode 1.4）
 
-- 头部：24px 头像 + 名称 + 状态（图标与文字）+ 耗时 + 模型标签（有 `model` 时，`effort` 附在其后）+ 停止按钮（可停时）。模型取父会话 `running[]` 中该子会话的项；不在运行中时取父时间线中该子会话最后一个 `subagent` 行；都没有则不显示。
+- 每个 root 会话在右侧只有**一个**"子智能体"Tab（类型 `subagent-directory`，身份 `subagent-directory:{workspaceKey}:{rootSessionId}`）。Tab 内有两个视图：目录（默认）与某个子智能体的详情；不再为每个子智能体新开 Tab，也不再创建新的 `subagent-session` Tab。
+- 视图状态只存在 Tab 上的可选选择字段（`childSessionId`、`subagentType`、`title`），是 Renderer 侧栏内存状态，不写入 session、store 或协议；`parentSessionId` 为当前目录所属父会话（嵌套子智能体时为其直属父会话）。
+- 打开规则（唯一写入路径为 `workspaceSidePane.ts`）：
+  - 时间线成员行、状态面板运行项、目录项、嵌套子会话内的 Agent 卡 → `openSubagentSessionSidePane`：打开或激活该 root 的"子智能体"Tab 并选中该子智能体（详情视图）；同 root 已有的旧 `subagent-session` Tab 被并入并关闭。
+  - 状态面板"已结束 · N"、输入区子任务汇总 → `openSubagentDirectorySidePane`：打开或激活同一 Tab 并清除选择（目录视图）。
+  - 详情左上角返回箭头 → 同 `openSubagentDirectorySidePane`，回到该父会话目录。
+- edit/retry 使选中的子会话失效时（`syncSubagentSessionSidePaneTabs`），只清除选择回到目录，不关闭 Tab。
+- Tab 条：Bot 图标 + "子智能体" / "Subagents"。
+
+```mermaid
+sequenceDiagram
+  participant T as 时间线行 / 目录项 / 状态面板
+  participant P as workspaceSidePane（Tab 唯一 owner）
+  participant V as "子智能体"Tab 视图
+  T->>P: openSubagentSessionSidePane(child)
+  P->>P: 找到同 workspace+root 的目录 Tab（无则创建），写入选择，合并旧 child Tab
+  P->>V: 详情视图（childSessionId）
+  V->>P: 返回 → openSubagentDirectorySidePane(parent)
+  P->>V: 清除选择 → 目录视图
+```
+
+### 详情视图
+
+- 头部：左侧返回箭头（`icon-sm` ghost，无障碍名称"返回子智能体目录"）+ 24px 头像 + 名称 + 状态（图标与文字）+ 耗时；右上角模型标签（有 `model` 时，`effort` 附在其后）+ 停止按钮（可停时）。模型取父会话 `running[]` 中该子会话的项；不在运行中时取父时间线中该子会话最后一个 `subagent` 行；都没有则不显示。
 - 状态：父会话 `running` 中有该子会话时取其 `running` / `waiting` / `blocked`；否则取子会话 `control`：`completedSuccess` → 已完成，`completedInterrupted` → 已停止，`error` 或存在 `lastError` → 失败，`running` / `prewarming` → 运行中。
 - 耗时：运行中按父会话 `startedAt` 每秒刷新；结束后在子会话行窗口已到顶时取首个 `turnHeader.startedAt` 到最后一个 `endedAt`，否则不显示。
 - 停止按钮只在父会话 `backgroundWorks` 精确匹配可停 work 时出现，发送父会话 `cancelBackgroundWork(workId)`，被拒绝时记 warn 日志。它是父会话的后台控制，不是子会话的停止，子会话仍保持只读。
 - 底部：子会话只读，原输入区位置显示一行提示"子智能体由主智能体驱动，无法输入。"（i18n `subagentDisplay.sidePane.readOnlyHint`）。
-- 记录区复用只读 `SessionPane`，通过同一 session lease 实时更新；多个子会话用既有标签页，标签页持久化与订阅生命周期不变。
-- 适用于任意 `childSessionId`，不读取引擎类型；Tab 条图标保持 14px Bot 图标（头像最小 16px）。
+- 记录区复用只读 `SessionPane`，通过同一 session lease 实时更新；切换选中的子智能体时按 `childSessionId` 重挂详情。
+- 适用于任意 `childSessionId`，不读取引擎类型。
 
-## 目录
+### 目录视图
 
-- 每行左侧显示 20px 头像（序号取父会话清单，变体取 `subagentType`），状态图标移到状态文字前。其余规则不变。
+- 复用 `SubagentDirectorySidePane`：运行中 · N（不分页）/ 已结束 · N（每页 20，"再显示 20 个"），每行 20px 头像（序号取父会话清单，变体取 `subagentType`）、名称、状态图标 + 文字、摘要与相对时间；点击行进入该子智能体详情（同一 Tab）。
+- 桌面、普通 Web 与手机 Web 一致：手机 `/remote` 抽屉中的同一 Tab 也可经返回箭头进入目录；已结束分页查询不可用时显示既有"无法加载"提示，运行中分区仍来自投影。
 
 ## 引擎无关合同（M2-B 映射要求）
 
@@ -197,31 +214,34 @@ sequenceDiagram
 
 未满足 1–3 的旧会话（当前 Claude Code 行内兜底）仍按"无子会话"规则显示：临时序号、点击展开行内详情。
 
-引擎覆盖：内置引擎完整支持；Claude Code 实时显示，有 `capabilities.cancel` 时可停（后台子智能体在父轮结束后不再观测，沿用已知限制）；Codex 实时显示、不可停（R2-4），卡上没有"停止"与"停止全部"。
+引擎覆盖：内置引擎完整支持；Claude Code 实时显示，有 `capabilities.cancel` 时可停（后台子智能体在父轮结束后不再观测，沿用已知限制）；Codex 实时显示、不可停（R2-4），行上与详情头部都没有"停止"。
 
 ## 验收场景
 
-| ID   | 前置                                                          | 操作                         | 期望                                                                                                              |
-| ---- | ------------------------------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| MA01 | 同一轮并行派发 3 个 Explore / Plan / general-purpose 子智能体 | 观察时间线                   | 一张 Subagent 工作卡，三个成员头像依次为九色板前三色，轮廓分别为天线、护目镜、基础                                |
-| MA02 | MA01 运行中，另有进行中的 todo 和 Git 变更                    | 观察收起胶囊                 | 显示 3 个头像与"3 个运行中"；有运行中的工作流时工作流优先                                                         |
-| MA03 | 7 个并行子智能体运行中                                        | 观察胶囊；点击胶囊           | 只显示 3 个头像与"7 个运行中"；面板展开且"智能体"分区打开                                                         |
-| MA04 | MA01                                                          | 点击 B 的成员行              | 右侧打开 B 的只读实时对话；头部显示同色同轮廓头像、名称、运行中、耗时与模型标签                                   |
-| MA05 | 外部引擎行内兜底，两个相邻派发无子会话                        | 点击第二个名称               | 本行展开，第二个 Agent 卡行内详情展开；不打开右侧面板                                                             |
-| MA06 | 两个派发之间夹一段正文或另一工具                              | 观察时间线                   | 不合并，各自显示一张工作卡（无子会话时各自为 Agent 卡）                                                           |
-| MA07 | MA01 全部完成后刷新 Renderer 并冷启动 CLI                     | 重新打开会话                 | 工作卡折叠为"3 个 Subagent 已完成 · 用时…"；展开后头像颜色与轮廓不变                                              |
-| MA08 | 后台子智能体可停、前台不可停                                  | 打开两者详情                 | 只有后台的头部显示停止；点击后父会话收到 `cancelBackgroundWork`                                                   |
-| MA09 | 系统开启减少动态效果                                          | 打开运行中详情               | 头像不播放空闲动作，表情仍按状态显示                                                                              |
-| MA10 | 浅色/深色主题、390px 与 1200px 容器、中文/英文                | 观察胶囊、工作卡、详情头部   | 文字不溢出胶囊与卡片，按钮不收缩，头像对比清晰                                                                    |
-| MA11 | 内置引擎派发 1 个带模型 profile 的 explorer，运行中           | 观察工作卡                   | 成员行显示名称、模型 + 档位、运行中与每秒刷新的耗时、任务摘要、"N 个步骤"；步骤数随子工具调用增长                 |
-| MA12 | 2 个可停后台子智能体 + 1 个不可停前台子智能体运行中           | 点击"停止全部"               | 只对 2 个可停成员各发一次 `cancelBackgroundWork`；不可停成员行没有"停止"                                          |
-| MA13 | Codex 引擎派发子智能体                                        | 观察工作卡                   | 实时显示状态与步骤数；没有"停止"与"停止全部"；没有模型标签                                                        |
-| MA14 | MA11 运行中                                                   | 点击成员行；子智能体继续工作 | 右侧打开只读子会话，正文实时增长，头部有模型标签，底部显示只读提示；不自动打开                                    |
-| MA15 | 父 Agent 派出后台子智能体后本轮结束，子智能体仍在运行         | 观察时间线；子智能体全部结束 | 轮次显示「已工作 N 秒」并收起其它工作项，工作卡仍可见于摘要之下（运行中、可点开右栏）；结束后保留手动展开及失败卡 |
+| ID   | 前置                                                          | 操作                           | 期望                                                                                                            |
+| ---- | ------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| MA01 | 同一轮并行派发 3 个 Explore / Plan / general-purpose 子智能体 | 观察时间线                     | 三行子智能体行（无外框），头像依次为九色板前三色，轮廓分别为天线、护目镜、基础，运行中头像动态                  |
+| MA02 | MA01 运行中，另有进行中的 todo 和 Git 变更                    | 观察收起胶囊                   | 显示 3 个头像与"3 个运行中"；有运行中的工作流时工作流优先                                                       |
+| MA03 | 7 个并行子智能体运行中                                        | 观察胶囊；点击胶囊             | 只显示 3 个头像与"7 个运行中"；面板展开且"智能体"分区打开                                                       |
+| MA04 | MA01                                                          | 点击 B 的行                    | 右侧打开唯一"子智能体"Tab 并进入 B 的只读实时对话；头部有返回箭头、同色同轮廓头像、名称、运行中、耗时与模型标签 |
+| MA05 | 外部引擎行内兜底，两个相邻派发无子会话                        | 点击第二个名称                 | 本行展开，第二个 Agent 卡行内详情展开；不打开右侧面板                                                           |
+| MA06 | 两个派发之间夹一段正文或另一工具                              | 观察时间线                     | 不合并，各自显示子智能体行（无子会话时各自为 Agent 卡）                                                         |
+| MA07 | MA01 全部完成后刷新 Renderer 并冷启动 CLI                     | 重新打开会话                   | 三行均显示"已完成"，头像颜色与轮廓不变                                                                          |
+| MA08 | 后台子智能体可停、前台不可停                                  | 打开两者详情                   | 只有后台的头部显示停止；点击后父会话收到 `cancelBackgroundWork`                                                 |
+| MA09 | 系统开启减少动态效果                                          | 打开运行中详情                 | 头像不播放空闲动作，表情仍按状态显示                                                                            |
+| MA10 | 浅色/深色主题、390px 与 1200px 容器、中文/英文                | 观察胶囊、子智能体行、详情头部 | 文字不溢出胶囊与卡片，按钮不收缩，头像对比清晰                                                                  |
+| MA11 | 内置引擎派发 1 个带模型 profile 的 explorer，运行中           | 观察行；点击行                 | 行显示名称、类型标签与"运行中 · 用时"（每秒刷新）；详情头部右上角显示模型 + 档位                                |
+| MA12 | 1 个可停后台子智能体 + 1 个不可停前台子智能体运行中           | 点击可停行的停止               | 只对可停成员发一次 `cancelBackgroundWork`，不打开详情；不可停成员行没有停止                                     |
+| MA13 | Codex 引擎派发子智能体                                        | 观察行                         | 实时显示状态；没有停止；详情头部没有模型标签                                                                    |
+| MA14 | MA11 运行中                                                   | 点击成员行；子智能体继续工作   | 右侧打开只读子会话，正文实时增长，头部有模型标签，底部显示只读提示；不自动打开                                  |
+| MA16 | 依次点击时间线中的 A 与 B，再点详情返回箭头                   | 观察右侧 Tab 条与内容          | 只有一个"子智能体"Tab；先后显示 A、B 详情；返回后显示目录（运行中 · N / 已结束 · N），点目录项再次进入详情      |
+| MA15 | 父 Agent 派出后台子智能体后本轮结束，子智能体仍在运行         | 观察时间线；子智能体全部结束   | 轮次显示「已工作 N 秒」并收起其它工作项，子智能体行仍可见于摘要之下（运行中、可点开右栏）；结束后只保留失败行组 |
 
-单测覆盖序号派生、变体映射、列表格式、分组、胶囊优先级、详情头部模型、派发行点击与工作卡（分组、计数、计时、折叠、停止全部、运行中豁免轮次折叠）；交互场景以待人工 review 的 E2E 覆盖（`manual-review/pending/conversation-session-multi-agent-display.test.ts`、`manual-review/pending/conversation-session-subagent-work-card.test.ts`）。Case catalog 对应 SAT31–SAT34。
+单测覆盖序号派生、变体映射、列表格式、分组、胶囊优先级、详情头部模型、派发行点击、子智能体行（分组、名称/类型标签、计时、失败原因、单行停止、运行中豁免轮次折叠）与单一子智能体 Tab（打开即选中、返回目录、合并旧 child Tab、失效回目录）；交互场景以待人工 review 的 E2E 覆盖（`manual-review/pending/conversation-session-multi-agent-display.test.ts`、`manual-review/pending/conversation-session-subagent-work-card.test.ts`、`manual-review/pending/conversation-session-subagent-side-tabs.test.ts`）。Case catalog 对应 SAT31–SAT34。
 
 ## 2026-11-11 桌面体验修订
+
+> 1.4 起工作卡外框、折叠与"停止全部"退役（见"对话行内子智能体行"），本节关于卡片折叠、"结果：/查看结果"的描述只适用于 1.3 历史版本；名称规则、输入区汇总与生命周期收敛规则仍有效。
 
 运行与结束阶段共用手动展开偏好；生命周期仅派生默认态，不能覆盖正在查看的内容。
 

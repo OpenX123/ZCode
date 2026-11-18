@@ -70,7 +70,6 @@ import {
   groupConsecutiveAgentSpawns,
   isActiveSubagentWorkCard,
   isFailedSubagentWorkCard,
-  resolveSubagentWorkCardDisclosureKeys,
   type ConversationAssistantWorkDisplayItem,
 } from "@/subagent-display/index.js";
 import { ConversationFileSummaryPanel } from "@/v4/ConversationFileSummaryPanel.js";
@@ -473,14 +472,10 @@ function ConversationAssistantWorkItems({
     historyContainer && !historyContainer.open
       ? items.filter((item) => {
           if (isActiveSubagentWorkCard(item)) return true;
-          // 终态不可吞掉失败原因或手动正在查看的相关子任务；无关工作项仍按原规则折叠。
+          // 终态不可吞掉失败原因；1.4 起子智能体行组不可折叠，不再有手动展开 override
+          // （multi-agent-display-spec「对话行内子智能体行 · 折叠」）。无关工作项仍按原规则折叠。
           if (item.kind === "agentSpawnGroup" && item.presentation === "workCard") {
-            return (
-              isFailedSubagentWorkCard(item) ||
-              getConversationDisclosureOverride(
-                resolveSubagentWorkCardDisclosureKeys(context, item),
-              ) === true
-            );
+            return isFailedSubagentWorkCard(item);
           }
           if (item.kind !== "mcpGroup") return false;
           const ids = item.rows.map((row) => row.toolCallId);

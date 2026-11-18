@@ -9,10 +9,20 @@ import {
   LoaderCircleIcon,
   PauseCircleIcon,
 } from "lucide-react";
+import {
+  TID_V4_SUBAGENT_DIRECTORY,
+  TID_V4_SUBAGENT_DIRECTORY_ITEM,
+  testId,
+} from "@zcode/shared/test-ids";
+import { SubagentSessionSidePane } from "@/app-shell/SubagentSessionSidePane.js";
+import type { MessageFileLinkTarget } from "@/components/ai-elements/message.js";
 import { Button } from "@/components/ui/button.js";
 import { useSessionSubagents } from "@/hooks/useSessionSubagents.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type {
+  OpenBackgroundBashSideTabRequest,
+  OpenScopedSubagentDirectorySideTabRequest,
   OpenScopedSubagentSideTabRequest,
   SubagentDirectorySidePaneTab,
 } from "@/lib/workspaceSidePane.js";
@@ -91,6 +101,8 @@ const DirectoryRow = memo(function DirectoryRow({
   return (
     <button
       type="button"
+      data-testid={testId(TID_V4_SUBAGENT_DIRECTORY_ITEM, item.childSessionId)}
+      data-subagent-status={item.status}
       className="flex w-full min-w-0 items-start gap-3 rounded-lg px-3 py-2.5 text-left text-ui-base transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
       onClick={() => onOpen(item)}
     >
@@ -124,7 +136,103 @@ const DirectoryRow = memo(function DirectoryRow({
   );
 });
 
+/** 详情左上角返回：回到当前父会话目录（同一 Tab，清除选择）。 */
+export function buildSubagentDirectoryBackRequest(
+  tab: SubagentDirectorySidePaneTab,
+): OpenScopedSubagentDirectorySideTabRequest {
+  return {
+    workspacePath: tab.workspacePath,
+    ...(tab.workspaceIdentity ? { workspaceIdentity: tab.workspaceIdentity } : {}),
+    ...(tab.remoteSessionId ? { remoteSessionId: tab.remoteSessionId } : {}),
+    rootSessionId: tab.rootSessionId,
+    parentSessionId: tab.parentSessionId,
+  };
+}
+
+/**
+ * 每个 root 唯一的"子智能体"Tab（docs/desktop/multi-agent-display-spec.md「右侧"子智能体"Tab」）：
+ * Tab 上没有选择时显示目录，选中某个子会话时显示其只读详情（左上角返回目录）。
+ * 视图只由 Tab 字段决定，切换都经 `workspaceSidePane.ts` 的唯一写入路径。
+ */
 export const SubagentDirectorySidePane = memo(function SubagentDirectorySidePane({
+  tab,
+  focused = false,
+  visible = true,
+  compactForRemoteControl = false,
+  onOpenBrowserUrl,
+  onOpenCodeViewer,
+  onOpenFileLink,
+  onOpenSubagentSession,
+  onOpenSubagentDirectory,
+  onOpenBackgroundBash,
+}: {
+  tab: SubagentDirectorySidePaneTab;
+  focused?: boolean;
+  visible?: boolean;
+  compactForRemoteControl?: boolean;
+  onOpenBrowserUrl?: (url: string) => void;
+  onOpenCodeViewer?: (source: CodeViewerSource) => void;
+  onOpenFileLink?: (target: MessageFileLinkTarget) => void;
+  onOpenBackgroundBash?: (request: OpenBackgroundBashSideTabRequest) => void;
+  onOpenSubagentSession: (request: OpenScopedSubagentSideTabRequest) => void;
+  onOpenSubagentDirectory?: (request: OpenScopedSubagentDirectorySideTabRequest) => void;
+}) {
+  const detail = useMemo(
+    () =>
+      tab.childSessionId
+        ? {
+            // 详情 SessionPane 的 paneId 按子会话区分，切换选中项时不复用上一个子会话的 pane 状态。
+            id: `${tab.id}:${tab.childSessionId}`,
+            workspacePath: tab.workspacePath,
+            ...(tab.workspaceIdentity ? { workspaceIdentity: tab.workspaceIdentity } : {}),
+            ...(tab.remoteSessionId ? { remoteSessionId: tab.remoteSessionId } : {}),
+            rootSessionId: tab.rootSessionId,
+            parentSessionId: tab.parentSessionId,
+            childSessionId: tab.childSessionId,
+            subagentType: tab.subagentType ?? "",
+            title: tab.title ?? "",
+          }
+        : null,
+    [
+      tab.childSessionId,
+      tab.id,
+      tab.parentSessionId,
+      tab.remoteSessionId,
+      tab.rootSessionId,
+      tab.subagentType,
+      tab.title,
+      tab.workspaceIdentity,
+      tab.workspacePath,
+    ],
+  );
+  const handleBack = useMemo(
+    () =>
+      onOpenSubagentDirectory
+        ? () => onOpenSubagentDirectory(buildSubagentDirectoryBackRequest(tab))
+        : undefined,
+    [onOpenSubagentDirectory, tab],
+  );
+  if (detail) {
+    return (
+      <SubagentSessionSidePane
+        key={detail.childSessionId}
+        tab={detail}
+        focused={focused}
+        visible={visible}
+        compactForRemoteControl={compactForRemoteControl}
+        onBack={handleBack}
+        onOpenBrowserUrl={onOpenBrowserUrl}
+        onOpenCodeViewer={onOpenCodeViewer}
+        onOpenFileLink={onOpenFileLink}
+        onOpenSubagentSession={onOpenSubagentSession}
+        onOpenBackgroundBash={onOpenBackgroundBash}
+      />
+    );
+  }
+  return <SubagentDirectoryView tab={tab} onOpenSubagentSession={onOpenSubagentSession} />;
+});
+
+const SubagentDirectoryView = memo(function SubagentDirectoryView({
   tab,
   onOpenSubagentSession,
 }: {
@@ -190,7 +298,11 @@ const SubagentDirectoryContents = memo(function SubagentDirectoryContents({
   };
 
   return (
-    <div className="flex size-full min-h-0 flex-col bg-background">
+    <div
+      data-testid={TID_V4_SUBAGENT_DIRECTORY}
+      data-parent-session-id={tab.parentSessionId}
+      className="flex size-full min-h-0 flex-col bg-background"
+    >
       <div className="border-b border-border px-4 py-3">
         <h2 className="text-ui-base font-semibold text-foreground">
           {intl.formatMessage({ id: "subagentDirectory.title" })}
