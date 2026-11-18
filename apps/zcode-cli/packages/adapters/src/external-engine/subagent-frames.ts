@@ -59,6 +59,25 @@ function contentText(value: unknown): string | undefined {
   return parts.length ? parts.join("\n\n") : undefined;
 }
 
+const RFD_TITLE_WITH_ROLE = /^(.+) \(([^()]+)\)$/u;
+
+/**
+ * claude-agent-acp 的 rfdLabels：Agent 输入有 name 时 title = `${name} (${subagent_type})`，
+ * 否则 title 只是 subagent_type。修复：实测 0.95.0 常见后者（如 `general-purpose`），模型把名称写在
+ * description；此前名称取 title，界面只剩无意义的类型名。
+ */
+function rfdLabels(
+  title: string | undefined,
+  description: string | undefined,
+): { name?: string; agentType?: string } {
+  const match = title ? RFD_TITLE_WITH_ROLE.exec(title) : null;
+  if (match) return { name: match[1]!.trim(), agentType: match[2]!.trim() };
+  return {
+    ...((description ?? title) ? { name: description ?? title } : {}),
+    ...(title ? { agentType: title } : {}),
+  };
+}
+
 /** RFD 的 state 快照 → YCode 状态；`null`/缺省表示不变。 */
 function rfdState(
   value: unknown,
@@ -134,13 +153,14 @@ export function readSubagentFrame(
       const state = rfdState(update.state);
       const events: ExternalEngineSubagentEvent[] = [];
       if (!known.has(id)) {
-        const title = text(update.title);
+        const labels = rfdLabels(text(update.title), text(update.description));
         const description = text(update.description);
         events.push({
           type: "spawned",
           nativeSessionId: id,
           ...(parentNativeSessionId ? { parentNativeSessionId } : {}),
-          name: title ?? description ?? fallbackSubagentName(id),
+          name: labels.name ?? fallbackSubagentName(id),
+          ...(labels.agentType ? { agentType: labels.agentType } : {}),
           ...(description ? { task: description } : {}),
           // RFD 以对象授予 cancel（`capabilities: {cancel: {}}`）；null/缺省表示无可变操作。
           cancellable: record(record(update.capabilities)?.cancel) !== undefined,

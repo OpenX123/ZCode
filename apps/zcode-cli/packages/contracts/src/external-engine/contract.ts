@@ -27,6 +27,8 @@ export type ExternalEngineSubagentEvent =
       /** 直接父原生会话；缺省 = 主会话。 */
       parentNativeSessionId?: string;
       name: string;
+      /** 原生子智能体类型（RFD 的 title 即 subagent_type）；缺省由 owner 记为 `subagent`。 */
+      agentType?: string;
       task?: string;
       prompt?: string;
       /** 原生声明可经 session/cancel 停止。 */

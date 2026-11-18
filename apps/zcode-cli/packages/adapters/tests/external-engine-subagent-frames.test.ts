@@ -121,8 +121,37 @@ describe("RFD 形态（Claude）", () => {
         {
           type: "spawned",
           nativeSessionId: "agent-1",
-          name: "Explorer (Explore)",
+          name: "Explorer",
+          agentType: "Explore",
           task: "Find auth code",
+          cancellable: true,
+          promptPending: true,
+        },
+      ],
+    });
+    // 实测 0.95.0 真实形态：无 name 时 title 只是 subagent_type，名称在 description。
+    expect(
+      readSubagentFrame(
+        MAIN,
+        MAIN,
+        {
+          sessionUpdate: "subagent_update",
+          sessionId: "agent-real",
+          title: "general-purpose",
+          description: "Backend",
+          capabilities: { cancel: {} },
+          state: { state: "running" },
+        },
+        none,
+      ),
+    ).toEqual({
+      events: [
+        {
+          type: "spawned",
+          nativeSessionId: "agent-real",
+          name: "Backend",
+          agentType: "general-purpose",
+          task: "Backend",
           cancellable: true,
           promptPending: true,
         },

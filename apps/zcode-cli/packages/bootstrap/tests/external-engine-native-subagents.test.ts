@@ -130,13 +130,22 @@ function childIdOf(events: readonly SessionEvent[], agentId: string): string {
 
 describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
   it("UX03：原生最终 reply 经真实 writer 与 SQLite 后，子正文、response、父摘要及冷投影一致", async () => {
+    // 1.4.2 修订：子会话自己有正文时以其最后一段为结果，reply 不再追加为最终正文——
+    // 后台 Agent 的启动回执同样以 reply 送达（真实帧 2026-11-19）；只在无正文时补 reply。
     const cases = [
       {
         id: "cancelled",
         chunks: ["停止前过程"],
         reply: "停止前最终结果",
-        texts: ["停止前过程", "停止前最终结果"],
+        texts: ["停止前过程"],
         end: "cancelled",
+      },
+      {
+        id: "launch-receipt",
+        chunks: ["真实子会话结果"],
+        reply: "Async agent launched successfully. (internal metadata)",
+        texts: ["真实子会话结果"],
+        end: "end_turn",
       },
       {
         id: "reply-only",
@@ -156,14 +165,14 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
         id: "different",
         chunks: ["过程说明"],
         reply: "最终结论",
-        texts: ["过程说明", "最终结论"],
+        texts: ["过程说明"],
         end: "end_turn",
       },
       {
         id: "substring",
         chunks: ["包含最终结论的过程"],
         reply: "最终结论",
-        texts: ["包含最终结论的过程", "最终结论"],
+        texts: ["包含最终结论的过程"],
         end: "end_turn",
       },
       { id: "empty", chunks: ["保留正文"], reply: " \n ", texts: ["保留正文"], end: "end_turn" },
@@ -257,7 +266,7 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
         .flatMap((message) => message.parts)
         .flatMap((part) => (part.type === "text" ? [part.text] : []));
       expect(texts, item.id).toEqual(item.texts);
-      const summary = item.reply.trim() ? item.reply : item.texts.join("");
+      const summary = item.chunks.length ? item.texts.at(-1)! : item.reply.trim() || undefined;
       const stopped = events.filter(
         (event) =>
           event.type === SessionEventType.SubagentStopped &&
@@ -628,7 +637,8 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
         const started = events.find(
           (event) =>
             event.type === SessionEventType.BackgroundTaskStarted &&
-            (event.payload as { description?: string }).description === "Runner (general-purpose)",
+            // title `Runner (general-purpose)` 拆为名称 Runner 与 agentType general-purpose。
+            (event.payload as { description?: string }).description === "Runner",
         );
         expect(started).toBeDefined();
         return String((started!.payload as { childSessionId: string }).childSessionId);
@@ -680,6 +690,13 @@ describe("外部引擎原生子智能体映射为 YCode 子会话", () => {
     ).toBe(false);
     const snapshot = projectionOf(sessionId, events).getSnapshot();
     expect(snapshot.subagents).toMatchObject({ running: [], endedTotal: 3 });
+    expect(
+      events.find(
+        (event) =>
+          event.type === SessionEventType.SubagentSpawned &&
+          (event.payload as { childSessionId?: string }).childSessionId === runnerId,
+      )?.payload,
+    ).toMatchObject({ description: "Runner", agentType: "general-purpose" });
     expect(snapshot.backgroundWorks.filter((work) => work.status === "running")).toEqual([]);
     expect(
       snapshot.rows.window.find(

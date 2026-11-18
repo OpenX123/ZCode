@@ -94,6 +94,15 @@ export class ExternalTranscriptWriter {
   readonly parts: Array<TextPart | ReasoningPart | ToolPart | FilePart> = [];
   response = "";
   toolCallCount = 0;
+
+  /** 最后一个正文 part 的文本（含仍在流式写入的段）；子智能体摘要以此为准。 */
+  get lastText(): string | undefined {
+    for (let index = this.parts.length - 1; index >= 0; index -= 1) {
+      const part = this.parts[index];
+      if (part?.type === "text") return part.text;
+    }
+    return undefined;
+  }
   private readonly created = Date.now();
   private readonly tools = new Map<string, ToolPart>();
   private activeText: TextPart | ReasoningPart | undefined;

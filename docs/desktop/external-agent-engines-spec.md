@@ -1197,12 +1197,51 @@ sequenceDiagram
 - 子会话记录保存父会话的 engine，不保存 externalSessionId（原生上下文属于父原生会话）。
 - 父会话 Agent 行由 Runtime 合成：工具名 `Agent`，toolCallId 为 `native-subagent:<原生ID>:<序号>`，input `{description, prompt, subagent_type}`，metadata `{childSessionId, agentId, agentType, description, nativeSessionId}`；结束时 output 为 JSON `{agentId, childSessionId, agentType, description, status, result}`，失败/取消/失联写 error。冷恢复、`session/subagents` 查询与 live 共用这条既有 Agent 工具链，不新增 V4 字段。`snapshot.subagents.running[].toolCallId` 即该行，界面据此下钻。
 - running 子会话等待权限时投影为 waiting（既有 origin 规则）；RFD 的 requires_action 不另发事件。
-- RFD 的回答（`<launch>:reply`）在子会话结束前到达时，由子会话唯一 `ExternalTranscriptWriter.settleFinalReply(reply)` 在 `finish` 之前写入既有 message/part 与 ModelStreaming 事件，再由 `TurnComplete.response` 读取同一 `writer.response`。response 沿用本轮所有 text 正文按写入顺序拼接的累积语义，不丢弃先前正文；父 Agent 行与 SubagentStopped 的摘要优先取非空 reply，否则取已写正文。失败/失联仍保留原 error payload，取消仍保留 cancelled 语义。
+- RFD 的回答（`<launch>:reply`）只在子会话**没有任何正文**时，由子会话唯一 `ExternalTranscriptWriter.settleFinalReply(reply)` 在 `finish` 之前写入既有 message/part 与 ModelStreaming 事件（前台 reply-only 场景），再由 `TurnComplete.response` 读取同一 `writer.response`。response 沿用本轮所有 text 正文按写入顺序拼接的累积语义，不丢弃先前正文；父 Agent 行与 SubagentStopped 的摘要（1.4.2 修订）优先取子会话最后一段正文，其次才取非空 reply——后台 Agent 的启动回执同样以 reply 送达，不能成为结果。失败/失联仍保留原 error payload，取消仍保留 cancelled 语义。
 - 最终正文去重优先使用可用的原生 message/part 身份；当前归一 reply 只有文本，没有可匹配身份，因此只在 reply 与最后一段完整 text 正文（不是最后一个流式 chunk）逐字完全相同时去重。不同 reply（包括仅部分包含、与前面过程正文相同）作为独立最终 text part 写入；空白 reply 不建空正文、不覆盖已有摘要。重复终态、终态后 reply 与子更新不再追加或改写已结束的 child/Agent 行。
 - 失败/取消/失联的 Agent part 保留原 error 状态与 errorText；其既有 settlement `state.metadata.summaryText` 保存同一派生摘要（包括有 reply 时的最终正文摘要）。冷投影成功路径优先既有 output.result，其他路径只接纳 metadata 中有效非空字符串；旧记录缺此字段沿原 description/prompt 回退。不新增正文副本或持久化通道。
 - 终态同时在同一 settlement metadata 保存受限 `subagentStatus: completed|failed|cancelled`（lost 归 failed），使 error Agent 能在冷恢复区分取消与失败；只在 error part 且值为 cancelled 时还原取消，非法值或旧记录缺字段沿原状态规则回退，不能把 error 改成成功。子 writer 的 `finish({aborted:true})` 在无显式错误时保存既有 `AbortError` / `resultType:cancelled` 标记，使 child 冷详情同样恢复已停止；显式失败 error payload 优先并完整保留。
-- 子会话生命周期绑定父轮：Codex 的 prompt 等待子会话结束后才返回；父轮结束（成功、失败、停止或断联）时仍 running 的子会话按 lost 收尾并保留正文。RFD 形态的后台子会话在父轮结束后继续运行的部分 YCode 不再观察，记为已知缺口。
+- 子会话生命周期（1.4.2 修订，见“跨轮观察与引擎自发续跑”）：父轮被停止时仍 running 的子会话按 cancelled 收尾，连接失败按 lost 收尾；父轮正常结束时 RFD 子会话保持 running 并跨轮观察。
 - 嵌套：spawned 的父 ID 是已知子会话时，子会话记录的 parentID 为该直接父子会话，Agent 行与 SubagentSpawned 写入直接父子会话的正文与事件流；根会话 `snapshot.subagents` 只列直属子会话。
+
+### 跨轮观察与引擎自发续跑（1.4.2，取代上文“父轮结束不再观察”）
+
+实测依据（2026-11-19，Claude adapter 0.95.0 / Codex adapter 2.2.2，真实帧）：
+
+- Claude 未声明 AIR `backgroundSubagents` 时，`session/prompt` 挂起到子会话 idle 才返回；返回后后台任务（后台 Bash、子会话唤醒）完成时，adapter **不经新 prompt** 在主会话自发产出新一轮（`agent_message_chunk` 等），每轮以 `usage_update`（带 `cost` 与 `_meta._claude/origin.kind = "task-notification"`）收尾；子会话可在轮间再次 `running → idle`。
+- RFD `subagent_update` 的 `title` 是 subagent_type，`description` 才是模型给的名称（Agent 工具无 name 参数）。
+- 后台 Agent 的启动回执（"Async agent launched successfully…"）会以 `<launch>:reply` 送达，不是子会话结果。
+- Codex 2.2.2 默认不发 AIR 子会话帧，只有 `spawnAgent` 工具行；prompt 返回后无任何推送（见下文 Codex 段落）。
+
+规则：
+
+- **名称**：RFD 取 `description` 为名称、`title` 为 agentType（`subagent_type`，缺省 `subagent`）；Agent 行、SubagentSpawned/Stopped、权限 origin 使用同一 agentType。新会话向引擎追加系统指令（Claude `systemPrompt.append`，Codex `_meta.jetbrains.air.customInstructions`），要求子智能体 description 为 2–5 个英文词、角色词在前的任务标题（如 `Backend auth fix`、`Reviewer scoped check`）。
+- **结果**：子会话最终摘要优先取子会话最后一段完整正文，其次才取 reply；运行中到达的 reply 只暂存，不能在子会话仍可能继续时成为结果。
+- **父轮结束不终结子会话**：父轮正常结束时仍 running 的 RFD 子会话保持 running——其 Agent 行从父 writer 的收尾清扫中摘出（不记 “did not complete”），不发 SubagentStopped；只有用户停止父轮（cancelled）、连接断开/进程退出（lost）或引擎报告终态才结束。
+- **引擎自发续跑**：无 active 轮时到达的主会话更新与已宣告子会话的帧由 connection 按序缓存，并对每段空闲期只边沿触发一次 `onIdleActivity`。父 Runtime 收到后经既有 runtime 命令队列（与内置引擎 task-notification 同一串行准入，`CommandInbox` 不变）接纳一轮 **external-engine-continuation**：写一条 model-only 的合成输入（`inputPresentation: task_notification`，界面显示“后台任务完成，继续处理”），执行时**不发送 session/prompt**，只回放缓存并继续观察；遇到带 task-notification origin 的 `usage_update` 收尾为 TurnComplete。轮内子会话事件绑定本轮 writer；先前轮摘出的 Agent 行仍在其原行上收尾，SubagentStopped 写入本轮。
+- **与用户输入的关系**：续跑轮占用同一串行准入，用户新消息排在其后（引擎本身也串行）；用户 Stop 续跑轮时发送 `session/cancel` 并按 cancelled 收尾。不以超时结束续跑轮：结束只来自引擎收尾标记、用户停止或连接失败。
+- **回收**：存在 running 子会话或已缓存未消费的续跑时，会话不参与闲置回收（process-pool 的 busy 判定）。
+
+```mermaid
+sequenceDiagram
+  participant A as ACP adapter（Claude）
+  participant C as AcpConnection
+  participant R as 父 Runtime（命令队列 + 子智能体 owner）
+  participant P as 父 V4 投影
+  Note over A,R: 父轮 N：prompt 已返回
+  R->>R: subagents.close(正常结束)：running 子会话的 Agent 行摘出，不发 SubagentStopped
+  R->>P: TurnComplete(N)；snapshot.subagents.running 保留
+  A->>C: session/update（无 active 轮：子会话 running / 主会话 chunk）
+  C->>C: 按序缓存；本段空闲期首次到达 → onIdleActivity()
+  C->>R: onIdleActivity
+  R->>R: enqueue external-engine-continuation（串行准入，排在已排队命令之后）
+  R->>P: TurnStarted(N+1，model-only 合成输入)
+  R->>C: observe(本轮回调)：回放缓存，继续接收
+  C->>R: 子会话 idle(end_turn) → endRun：原 Agent 行收尾，SubagentStopped 写入 N+1
+  C->>R: 主会话 chunk（汇报）
+  C->>R: usage_update(origin=task-notification, cost)
+  R->>P: TurnComplete(N+1)
+```
 
 ### 幂等与回放
 

@@ -60,6 +60,8 @@ interface ChildEntry {
   parentNativeSessionId?: string;
   parentSessionId: SessionId;
   name: string;
+  /** 原生 subagent_type；缺省 DEFAULT_SUBAGENT_TYPE。 */
+  agentType: string;
   task?: string;
   prompt?: string;
   cancellable: boolean;
@@ -110,7 +112,7 @@ function agentMetadata(entry: ChildEntry): Record<string, unknown> {
   return {
     childSessionId: entry.childSessionId,
     agentId: entry.nativeSessionId,
-    agentType: DEFAULT_SUBAGENT_TYPE,
+    agentType: entry.agentType,
     description: entry.name,
     nativeSessionId: entry.nativeSessionId,
   };
@@ -199,7 +201,7 @@ export function bindExternalSubagentTurn(
       input: {},
       schedule: { parallelGroups: [], executionOrder: [] },
       agentId: entry.nativeSessionId,
-      agentType: DEFAULT_SUBAGENT_TYPE,
+      agentType: entry.agentType,
       childSessionId: entry.childSessionId,
       childToolCallId,
       description: entry.name,
@@ -234,13 +236,13 @@ export function bindExternalSubagentTurn(
       input: {
         description: entry.name,
         ...((entry.prompt ?? entry.task) ? { prompt: entry.prompt ?? entry.task } : {}),
-        subagent_type: DEFAULT_SUBAGENT_TYPE,
+        subagent_type: entry.agentType,
       },
       metadata,
     });
     await emitOn(host, SessionEventType.SubagentSpawned, {
       agentId: entry.nativeSessionId,
-      agentType: DEFAULT_SUBAGENT_TYPE,
+      agentType: entry.agentType,
       childSessionId: entry.childSessionId,
       description: entry.name,
       ...((entry.prompt ?? entry.task) ? { prompt: entry.prompt ?? entry.task } : {}),
@@ -280,7 +282,11 @@ export function bindExternalSubagentTurn(
     const writer = started.writer!;
     const traceContext = started.traceContext!;
     const errorText = end === "completed" ? undefined : (error ?? ENDED_ERROR_TEXT[end]);
-    if (run.reply?.trim()) await writer.settleFinalReply(run.reply);
+    // 修复：后台 Agent 的启动回执（"Async agent launched successfully…"）以 reply 送达，
+    // 曾被写成子会话最终正文与父卡片“原因”。子会话自己的正文才是结果；reply 只在子会话
+    // 没有任何正文时补为最终正文（前台 reply-only 场景）。
+    const childText = writer.lastText?.trim();
+    if (!childText && run.reply?.trim()) await writer.settleFinalReply(run.reply);
     await writer.finish({
       aborted: end === "cancelled",
       ...(end === "failed" || end === "lost"
@@ -313,7 +319,7 @@ export function bindExternalSubagentTurn(
       traceContext,
     );
     child.turnNumber += 1;
-    const summary = run.reply?.trim() ? run.reply : writer.response.trim() || undefined;
+    const summary = childText || run.reply?.trim() || undefined;
     const metadata = agentMetadata(entry);
     await run.host.settleSyntheticTool(run.hostCallId, {
       success: end === "completed",
@@ -333,7 +339,7 @@ export function bindExternalSubagentTurn(
     });
     await emitOn(run.host, SessionEventType.SubagentStopped, {
       agentId: entry.nativeSessionId,
-      agentType: DEFAULT_SUBAGENT_TYPE,
+      agentType: entry.agentType,
       childSessionId: entry.childSessionId,
       parentToolCallId: run.hostCallId,
       status: end,
@@ -382,6 +388,7 @@ export function bindExternalSubagentTurn(
         : {}),
       parentSessionId,
       name: event.name,
+      agentType: event.agentType?.trim() || DEFAULT_SUBAGENT_TYPE,
       ...(event.task ? { task: event.task } : {}),
       ...(event.prompt ? { prompt: event.prompt } : {}),
       cancellable: event.cancellable,
@@ -454,7 +461,7 @@ export function bindExternalSubagentTurn(
       return {
         kind: "subagent",
         agentId: entry.nativeSessionId,
-        agentType: DEFAULT_SUBAGENT_TYPE,
+        agentType: entry.agentType,
         childSessionId: entry.childSessionId,
         description: entry.name,
         parentSessionId: entry.parentSessionId,
