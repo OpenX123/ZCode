@@ -473,7 +473,7 @@ describe("WorkflowPermissionBlock", () => {
       "zh-CN",
     );
 
-    expect(querySubagentModel()?.textContent).toBe("子代理运行在 opus-5 · 思考 高");
+    expect(querySubagentModel()?.textContent).toBe("子代理运行在 opus-5 · 思考 High");
   });
 
   it.each([

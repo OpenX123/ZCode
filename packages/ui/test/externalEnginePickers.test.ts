@@ -528,22 +528,22 @@ it("左侧只保留权限芯片；Claude agent 进入更多选项并可选择", 
   expect(onChange).toHaveBeenCalledExactlyOnceWith("agent", "reviewer");
 });
 
-it("default 模型入口只显示档位；弹层显示解析出的真实模型名与默认标记，滑杆无 Default 档且档位中文化", () => {
+it("default 模型入口只显示档位；弹层显示解析出的真实模型名与默认标记，滑杆无 Default 档且档位使用英文", () => {
   const onChange = vi.fn();
   render(claudeTree([claudeMode, claudeModel, claudeEffort], onChange));
   const trigger = screen.getByTestId("engine-config-model-effort");
-  expect(trigger.textContent).toBe("高");
+  expect(trigger.textContent).toBe("High");
   expect(trigger.querySelector('[data-task-client-logo="claude-code"]')).not.toBeNull();
   fireEvent.click(trigger);
   const header = screen.getByTestId("engine-config-model");
   expect(header.textContent).toContain("Opus 5.5");
   expect(header.textContent).toContain("默认");
-  expect(screen.getByTestId("engine-effort-value").textContent).toBe("高");
+  expect(screen.getByTestId("engine-effort-value").textContent).toBe("High");
   const slider = screen.getByRole("slider", { name: "Effort" });
   expect(slider.getAttribute("max")).toBe("4");
-  expect(slider.getAttribute("aria-valuetext")).toBe("高");
+  expect(slider.getAttribute("aria-valuetext")).toBe("High");
   fireEvent.change(slider, { target: { value: "4" } });
-  expect(slider.getAttribute("aria-valuetext")).toBe("最高");
+  expect(slider.getAttribute("aria-valuetext")).toBe("Max");
   fireEvent.pointerUp(slider);
   expect(onChange).toHaveBeenCalledExactlyOnceWith("effort", "max");
   fireEvent.keyDown(header, { key: "ArrowDown" });
@@ -555,7 +555,7 @@ it("default 模型入口只显示档位；弹层显示解析出的真实模型�
 
 it("具体模型入口显示「模型 · 档位」；无法解析 default 描述时显示默认模型", () => {
   const view = render(claudeTree([{ ...claudeModel, currentValue: "sonnet" }, claudeEffort]));
-  expect(screen.getByTestId("engine-config-model-effort").textContent).toBe("Sonnet · 高");
+  expect(screen.getByTestId("engine-config-model-effort").textContent).toBe("Sonnet · High");
   view.rerender(
     claudeTree([
       {
