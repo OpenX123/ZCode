@@ -812,9 +812,11 @@ function ConversationTimelineImpl({
   );
 
   const getScrollElement = useCallback(() => scrollRef.current, []);
+  // virtualizer 用 getItemKey 的引用判断是否重算布局。同样行数的两个会话也必须换坐标系。
+  const measurementScope = JSON.stringify([scrollMemoryKey, sessionKey, rowContext.logEpoch]);
   const getItemKey = useCallback(
-    (index: number) => virtualizedUnitsRef.current[index]?.key ?? index,
-    [],
+    (index: number) => `${measurementScope}:${virtualizedUnitsRef.current[index]?.key ?? index}`,
+    [measurementScope],
   );
   // 测高缓存兜底：行卸载重挂（甚至 virtualizer 重建）时用上次真实测量代替固定估计。
   const estimateSize = useCallback(
@@ -1687,6 +1689,15 @@ function ConversationTimelineImpl({
     // 测高若继续按旧 offset 校正，会把刚恢复的历史位置重新推回 draft 的落点。
     suppressVirtualizerAdjustmentDuringRestoreRef.current = true;
     virtualizer.measure();
+    // ref 可能已提交测高，measure 又把结果清空。已挂载的行若尺寸没变，不会再次通知
+    // ResizeObserver，绝对定位会一直使用估算高度，导致长消息覆盖相邻行。
+    virtualizer.getVirtualItems();
+    for (const node of virtualHistoryRef.current?.querySelectorAll(":scope > [data-index]") ?? []) {
+      virtualizer.resizeItem(
+        Number(node.getAttribute("data-index")),
+        measureElement(node, undefined),
+      );
+    }
     userAdjustedScrollSinceRestoreRef.current = false;
 
     const restoredState = readChatSessionScrollMemoryState(scrollMemoryKey);
@@ -1734,6 +1745,7 @@ function ConversationTimelineImpl({
     };
   }, [
     clearUserScrollIntent,
+    measureElement,
     paused,
     restoreScrollMemory,
     scrollMemoryKey,

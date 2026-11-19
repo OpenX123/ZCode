@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { ThoughtLevelCycleControl } from "@/chat-input-toolbar/ThoughtLevelCycleControl.js";
 import { getNextThoughtLevelValue } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
+import enUS from "@/i18n/locales/en-US.js";
+import zhCN from "@/i18n/locales/zh-CN.js";
 import type { ZCodeConfigOption } from "@zcode/shared";
 
 const zhIntl = {
@@ -23,6 +25,17 @@ function renderWithTooltipProvider(element: ReactElement) {
 }
 
 describe("ThoughtLevelCycleControl", () => {
+  it("中文界面的内置和外部引擎思考档位使用英文名", () => {
+    const entries = Object.entries(enUS).filter(
+      ([id]) =>
+        id.startsWith("engine.effort.") || id.startsWith("chat.toolbar.thoughtLevel.value."),
+    );
+    expect(entries.length).toBeGreaterThan(0);
+    for (const [id, label] of entries) {
+      expect(zhCN[id as keyof typeof zhCN], id).toBe(label);
+    }
+  });
+
   it.each([
     ["high", "100%"],
     ["off", "0%"],

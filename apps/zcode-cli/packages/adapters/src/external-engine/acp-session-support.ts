@@ -1,6 +1,7 @@
 import {
   ExternalEngineConnectionError,
   type ExternalEngineSessionInput,
+  type ExternalEnginePermissionRequest,
 } from "@zcode/contracts";
 import {
   engineConfigOptionSchema,
@@ -13,6 +14,12 @@ import { AIR_SESSION_FAILURE_CAPABILITY_META } from "./failure.js";
 
 /** AcpConnection 的无状态协议细则与轮间推送缓存；拆出只为保持连接主体在文件行数上限内。 */
 type JsonObject = Record<string, unknown>;
+
+export function object(value: unknown): JsonObject {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new ExternalEngineConnectionError({ code: "protocol" }, "Invalid ACP object");
+  return value as JsonObject;
+}
 
 /**
  * typed failure 扩展挂在 JetBrains AIR 客户端标记下，声明即被 adapter 视为 AIR 客户端
@@ -117,6 +124,20 @@ export function isContinuationEnd(update: JsonObject): boolean {
   );
 }
 
+// ACP 在 prompt 结束后仍可能发元数据，这些帧没有后续的续跑收尾信号。
+const PASSIVE_IDLE_UPDATES = new Set([
+  "available_commands_update",
+  "config_option_update",
+  "current_mode_update",
+  "session_info_update",
+  "notice",
+  "usage_update",
+]);
+
+export function isIdleContinuationUpdate(update: JsonObject): boolean {
+  return !PASSIVE_IDLE_UPDATES.has(String(update.sessionUpdate)) || isContinuationEnd(update);
+}
+
 /**
  * 子智能体命名约束（docs/desktop/external-agent-engines-spec.md「跨轮观察与引擎自发续跑」）：
  * 原生帧只带模型自填的名称，未约束时多为类型名或空；追加为系统/开发者指令，界面直接展示。
@@ -183,4 +204,32 @@ export class IdleActivity {
     this.signaled = true;
     this.listener?.();
   }
+}
+
+
+/** 严格校验 ACP 请求，保留原生选项 ID 与子会话来源。 */
+export function readPermissionRequest(
+  params: JsonObject,
+  childSessionId: string | undefined,
+): ExternalEnginePermissionRequest {
+  const toolCall = object(params.toolCall);
+  if (typeof toolCall.toolCallId !== "string" || !Array.isArray(params.options))
+    throw new Error("Invalid ACP permission request");
+  const options = params.options.map((value) => {
+    const option = object(value);
+    if (
+      typeof option.optionId !== "string" ||
+      typeof option.name !== "string" ||
+      !["allow_once", "allow_always", "reject_once", "reject_always"].includes(
+        String(option.kind),
+      )
+    )
+      throw new Error("Invalid ACP permission option");
+    return option as unknown as ExternalEnginePermissionRequest["options"][number];
+  });
+  return {
+    toolCall: toolCall as ExternalEnginePermissionRequest["toolCall"],
+    options,
+    ...(childSessionId ? { childNativeSessionId: childSessionId } : {}),
+  };
 }

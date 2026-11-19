@@ -5,7 +5,6 @@ import {
   type ExternalEngineSessionInput,
   type ExternalEngineTurnInput,
   type ExternalEngineTurnResult,
-  type ExternalEnginePermissionRequest,
 } from "@zcode/contracts";
 import {
   type EngineConfigOption,
@@ -31,17 +30,15 @@ import {
   clientCapabilities,
   configOptions,
   isContinuationEnd,
+  isIdleContinuationUpdate,
+  object,
+  readPermissionRequest,
 } from "./acp-session-support.js";
 export { SUBAGENT_NAMING_INSTRUCTIONS } from "./acp-session-support.js";
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const CANCEL_GRACE_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 30000;
 type JsonObject = Record<string, unknown>;
-function object(value: unknown): JsonObject {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
-    throw new ExternalEngineConnectionError({ code: "protocol" }, "Invalid ACP object");
-  return value as JsonObject;
-}
 type SessionMethod = NonNullable<EngineConnectionFailure["method"]>;
 /** 已建立（或已预建）的原生会话；回调与配置恢复由 execute 继续完成。 */
 interface OpenedSession {
@@ -89,6 +86,7 @@ export class AcpConnection {
   private subagents = new Map<string, KnownSubagent>();
   /** 轮间推送缓存与边沿唤醒（acp-session-support.ts）。 */
   private idle = new IdleActivity();
+  private supportsIdleContinuation = false;
   /** 进行中的 continuation：收到引擎续跑收尾标记时 resolve。 */
   private continuation?: { resolve(): void; reject(error: Error): void };
   get healthy(): boolean {
@@ -107,8 +105,15 @@ export class AcpConnection {
     if (!this.active) {
       // 修复：轮间引擎主动推送（Claude 后台任务完成后的自发续跑、子会话唤醒）曾在此被直接丢弃，
       // “等通知”的会话结束后再无下文。改为按序缓存并边沿唤醒 Runtime 准入一轮 continuation。
-      if (!this.loadingHistory && !this.forking)
+      // Codex 没有对应的续跑收尾协议。普通空闲帧曾触发无法正常终止的空轮。
+      if (
+        this.supportsIdleContinuation &&
+        !this.loadingHistory &&
+        !this.forking &&
+        isIdleContinuationUpdate(object(params.update))
+      ) {
         this.idle.buffer(params, sessionId === this.externalSessionId || child);
+      }
       return;
     }
     if (sessionId !== this.externalSessionId && !child) {
@@ -325,7 +330,14 @@ export class AcpConnection {
     const routed = params.sessionId === this.externalSessionId || Boolean(childSessionId);
     // 修复：轮间权限请求（续跑或子会话唤醒时的工具审批）曾一律回 cancelled，续跑随即失败；
     // 已路由的请求改为唤醒 Runtime，等 continuation 接管后走正常审批。
-    if (!this.active && routed && this.sessionReady && !this.forking && !this.loadingHistory)
+    if (
+      !this.active &&
+      routed &&
+      this.supportsIdleContinuation &&
+      this.sessionReady &&
+      !this.forking &&
+      !this.loadingHistory
+    )
       await this.idle.waitForActive();
     if (this.forking || !this.active || !routed) {
       if (this.active && params.sessionId !== this.externalSessionId)
@@ -333,29 +345,11 @@ export class AcpConnection {
       this.send({ jsonrpc: "2.0", id: frame.id, result: { outcome: { outcome: "cancelled" } } });
       return;
     }
-    const toolCall = object(params.toolCall);
-    if (typeof toolCall.toolCallId !== "string" || !Array.isArray(params.options))
-      throw new Error("Invalid ACP permission request");
-    const options = params.options.map((value) => {
-      const option = object(value);
-      if (
-        typeof option.optionId !== "string" ||
-        typeof option.name !== "string" ||
-        !["allow_once", "allow_always", "reject_once", "reject_always"].includes(
-          String(option.kind),
-        )
-      )
-        throw new Error("Invalid ACP permission option");
-      return option as unknown as ExternalEnginePermissionRequest["options"][number];
-    });
-    const outcome = await this.active.requestPermission({
-      toolCall: toolCall as ExternalEnginePermissionRequest["toolCall"],
-      options,
-      ...(childSessionId ? { childNativeSessionId: childSessionId } : {}),
-    });
+    const request = readPermissionRequest(params, childSessionId);
+    const outcome = await this.active.requestPermission(request);
     if (
       outcome.outcome === "selected" &&
-      !options.some((option) => option.optionId === outcome.optionId)
+      !request.options.some((option) => option.optionId === outcome.optionId)
     )
       throw new Error("Invalid ACP permission response");
     this.send({ jsonrpc: "2.0", id: frame.id, result: { outcome } });
@@ -400,6 +394,7 @@ export class AcpConnection {
    */
   initialize(engine: ExternalEngineSessionInput["engine"]): Promise<JsonObject> {
     this.initialized ??= (async () => {
+      this.supportsIdleContinuation = engine === "claude-code";
       const initialized = await this.request("initialize", {
         protocolVersion: 1,
         clientCapabilities: clientCapabilities(engine),

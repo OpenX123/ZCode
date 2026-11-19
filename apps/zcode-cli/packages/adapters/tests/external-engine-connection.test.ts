@@ -74,6 +74,13 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     text("permission:" + JSON.stringify(message.result.outcome));
     send({ method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "usage_update", used: 2, size: 10, cost: { amount: 0.2, currency: "USD" }, _meta: { "_claude/origin": { kind: "task-notification" } } } } });
   }
+  else if (message.method === "session/set_config_option" && mode === "idle-metadata") {
+    for (const update of [
+      { sessionUpdate: "usage_update", used: 1, size: 10 },
+      { sessionUpdate: "current_mode_update", currentModeId: "auto" },
+    ]) send({ method: "session/update", params: { sessionId: sid, update } });
+    send({ id: message.id, result: { configOptions: [] } });
+  }
   else if (message.method === "session/prompt") {
     prompt = message;
     const env = {};
@@ -213,6 +220,23 @@ describe("轮间推送与引擎自发续跑", () => {
       await port.closeSession(base.sessionId);
     }
   });
+
+  test.each(["codex", "claude-code"] as const)(
+    "%s 空闲期间的元数据通知不启动续跑",
+    async (engine) => {
+      const { port } = await setup(engine, { FIXTURE_MODE: "idle-metadata" });
+      const input = turn(engine);
+      const onIdleActivity = vi.fn();
+      try {
+        await port.runTurn({ ...input, onIdleActivity });
+        await port.setConfigOption(input.sessionId, "mode", "auto");
+        expect(onIdleActivity).not.toHaveBeenCalled();
+        expect(port.hasPendingContinuation?.(input.sessionId)).toBe(false);
+      } finally {
+        await port.closeSession(input.sessionId);
+      }
+    },
+  );
 
   test("没有未消费推送时 continuation 立即结束，不发 session/prompt", async () => {
     const { port } = await setup("claude-code", { FIXTURE_MODE: "session-params" });
