@@ -96,6 +96,19 @@ describe("v4 M5④ 门禁：长会话虚拟滚动", () => {
       },
     );
 
+    const historyRects = await browser.execute(() =>
+      Array.from(
+        document.querySelectorAll('[data-v4-timeline-virtual-history="true"] > [data-index]'),
+      ).map((row) => {
+        const { top, bottom } = row.getBoundingClientRect();
+        return { top, bottom };
+      }),
+    );
+    expect(historyRects.length).toBeGreaterThan(1);
+    for (let index = 1; index < historyRects.length; index += 1) {
+      expect(historyRects[index]!.top).toBeGreaterThanOrEqual(historyRects[index - 1]!.bottom - 1);
+    }
+
     // ── turn2：慢流期间停在顶部，流式增量不得拉回 ──
     await clickV4TimelineBackToBottom();
     await sendV4Prompt("E2E_V4_SCROLL_TURN2 保持输出");

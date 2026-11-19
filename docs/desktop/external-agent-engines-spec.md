@@ -1228,6 +1228,8 @@ sequenceDiagram
 - **结果**：子会话最终摘要优先取子会话最后一段完整正文，其次才取 reply；运行中到达的 reply 只暂存，不能在子会话仍可能继续时成为结果。
 - **父轮结束不终结子会话**：父轮正常结束时仍 running 的 RFD 子会话保持 running——其 Agent 行从父 writer 的收尾清扫中摘出（不记 “did not complete”），不发 SubagentStopped；只有用户停止父轮（cancelled）、连接断开/进程退出（lost）或引擎报告终态才结束。
 - **引擎自发续跑**：无 active 轮时到达的主会话更新与已宣告子会话的帧由 connection 按序缓存，并对每段空闲期只边沿触发一次 `onIdleActivity`。父 Runtime 收到后经既有 runtime 命令队列（与内置引擎 task-notification 同一串行准入，`CommandInbox` 不变）接纳一轮 **external-engine-continuation**：写一条 model-only 的合成输入（`inputPresentation: task_notification`，界面显示“后台任务完成，继续处理”），执行时**不发送 session/prompt**，只回放缓存并继续观察；遇到带 task-notification origin 的 `usage_update` 收尾为 TurnComplete。轮内子会话事件绑定本轮 writer；先前轮摘出的 Agent 行仍在其原行上收尾，SubagentStopped 写入本轮。
+- **续跑准入**：目前只有 Claude 提供续跑结束协议。Codex 空闲期帧不启动续跑。Claude 主会话的普通用量、会话信息、配置、模式、命令目录和 notice 更新不单独启动续跑。带 task-notification 来源的结束帧、有效的子会话活动、正文/工具推送及权限请求仍由连接按既有顺序交给父 Runtime。配置确认继续使用既有配置请求响应。
+
 - **与用户输入的关系**：续跑轮占用同一串行准入，用户新消息排在其后（引擎本身也串行）；用户 Stop 续跑轮时发送 `session/cancel` 并按 cancelled 收尾。不以超时结束续跑轮：结束只来自引擎收尾标记、用户停止或连接失败。
 - **回收**：存在 running 子会话或已缓存未消费的续跑时，会话不参与闲置回收（process-pool 的 busy 判定）。
 

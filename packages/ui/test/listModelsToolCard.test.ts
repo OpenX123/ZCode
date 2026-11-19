@@ -270,7 +270,7 @@ describe("ListModelsToolCallBlock", () => {
     expect(screen.getByText("4 个模型")).toBeTruthy();
     expect(document.querySelector('[data-model-current="true"]')?.textContent).toBe("当前");
     expect(rowByModelId(CURRENT_MODEL_ID)?.getAttribute("title")).toContain(
-      "思考强度：低 · 中 · 高（默认 高）",
+      "思考强度：Low · Medium · High（默认 High）",
     );
     cleanup();
 

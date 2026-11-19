@@ -49,8 +49,14 @@ const virtualizer = vi.hoisted(() => ({
     | ((item: { end: number; start: number }) => boolean),
 }));
 
+const virtualizerOptions = vi.hoisted(() => ({
+  getItemKey: (index: number) => index as string | number,
+}));
 vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: () => virtualizer,
+  useVirtualizer: (options: typeof virtualizerOptions) => {
+    virtualizerOptions.getItemKey = options.getItemKey;
+    return virtualizer;
+  },
 }));
 
 vi.mock("@/v4/ConversationTurnGroup.js", async () => {
@@ -321,6 +327,15 @@ afterEach(() => {
 });
 
 describe("会话切换滚动恢复（ZCT 复现）", () => {
+  it("不同会话的相同行 ID 不得共享测高或 DOM 身份", () => {
+    const container = installMinimalDom();
+    mountedRoot = createRoot(container);
+    act(() => renderTimeline(mountedRoot!, "session-a", KEY_A, ROWS_A));
+    const first = virtualizerOptions.getItemKey(0);
+    act(() => renderTimeline(mountedRoot!, "session-b", KEY_B, ROWS_A));
+    expect(virtualizerOptions.getItemKey(0)).not.toBe(first);
+  });
+
   it("lease 迟一拍时，恢复必须以新会话内容为坐标系，而不是把旧会话钳制值当成最终落点", () => {
     const container = installMinimalDom();
     mountedRoot = createRoot(container);

@@ -15,26 +15,26 @@ const option: ZCodeConfigOption = {
   currentValue: "",
 };
 const expectedLabels = [
-  [["disabled", "false", "no", "none", "nothink", "no-think", "no_think", "off"], "关闭", "Off"],
-  [["enable", "enabled", "on", "true"], "开启", "On"],
-  [["minimal"], "极低", "Minimal"],
-  [["low"], "低", "Low"],
-  [["medium"], "中", "Medium"],
-  [["high"], "高", "High"],
-  [["xhigh", "extra-high", "extra_high"], "极高", "Extra high"],
-  [["max"], "最高", "Max"],
-  [["ultra"], "极致", "Ultra"],
+  [["disabled", "false", "no", "none", "nothink", "no-think", "no_think", "off"], "Off"],
+  [["enable", "enabled", "on", "true"], "On"],
+  [["minimal"], "Minimal"],
+  [["low"], "Low"],
+  [["medium"], "Medium"],
+  [["high"], "High"],
+  [["xhigh", "extra-high", "extra_high"], "Extra high"],
+  [["max"], "Max"],
+  [["ultra"], "Ultra"],
 ] as const;
 
 describe.each([
-  ["zh-CN", zhCN, 1],
-  ["en-US", enUS, 2],
-] as const)("思考档位 %s", (_locale, messages, column) => {
+  ["zh-CN", zhCN],
+  ["en-US", enUS],
+] as const)("思考档位 %s", (_locale, messages) => {
   const intl = { formatMessage: ({ id }: { id: string }) => messages[id] ?? id };
-  for (const row of expectedLabels) {
-    it.each(row[0])("%s 使用约定文案且不改原始值", (value) => {
+  for (const [values, label] of expectedLabels) {
+    it.each(values)("%s 使用约定文案且不改原始值", (value) => {
       const entry = Object.freeze({ value: ` ${value.toUpperCase()} `, name: "原始名称" });
-      expect(getThoughtLevelLabel(intl, "glm", option, entry)).toBe(row[column]);
+      expect(getThoughtLevelLabel(intl, "glm", option, entry)).toBe(label);
       expect(entry.value).toBe(` ${value.toUpperCase()} `);
     });
   }
