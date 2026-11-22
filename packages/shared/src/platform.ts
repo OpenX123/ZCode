@@ -38,6 +38,61 @@ export interface TaskNotificationPayload {
   body: string;
 }
 
+/** 提示音音色；pop 为沿用的默认 mp3，其余由 scripts/generate-notification-sounds.mjs 合成。 */
+export const TASK_NOTIFICATION_SOUND_IDS = [
+  "pop",
+  "crisp",
+  "soft",
+  "woodblock",
+  "droplet",
+  "chime",
+  "mute",
+] as const;
+export type TaskNotificationSoundId = (typeof TASK_NOTIFICATION_SOUND_IDS)[number];
+
+/** 两类提示音：任务完成 / 需要你操作（审批、提问、出错）。spec：docs/desktop/task-notification-sounds.md */
+export type TaskNotificationSoundCategory = "completed" | "attention";
+
+/** 本机 AppSettings 持久化的任务通知偏好；所有窗口共享同一份。 */
+export interface TaskNotificationPreferences {
+  /** 总开关：系统通知、提示音与任务栏/托盘角标。 */
+  enabled: boolean;
+  completedSound: TaskNotificationSoundId;
+  attentionSound: TaskNotificationSoundId;
+  /** 应用窗口在前台时也播放提示音；默认仅后台播放。 */
+  playWhenFocused: boolean;
+}
+
+export const DEFAULT_TASK_NOTIFICATION_PREFERENCES: TaskNotificationPreferences = {
+  enabled: true,
+  completedSound: "pop",
+  attentionSound: "pop",
+  playWhenFocused: false,
+};
+
+/** 平台层交给播放器的一次提示音意图；是否真正发声由播放器按偏好判定。 */
+export interface TaskNotificationSoundCue {
+  category: TaskNotificationSoundCategory;
+  /** 发出通知时应用是否有窗口在前台。 */
+  appFocused: boolean;
+}
+
+/** preload → renderer 的 postMessage 不受类型约束，播放前做运行时校验。 */
+export function parseTaskNotificationSoundCue(value: unknown): TaskNotificationSoundCue | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { category, appFocused } = value as Record<string, unknown>;
+  if ((category !== "completed" && category !== "attention") || typeof appFocused !== "boolean") {
+    return null;
+  }
+  return { category, appFocused };
+}
+
+export function taskNotificationSoundCategory(
+  status: TaskNotificationPayload["status"],
+): TaskNotificationSoundCategory {
+  return status === "completed" || status === "feedback_update" ? "completed" : "attention";
+}
+
 /** Main 将一次能够定位真实 tab 的 browser-use 操作投递给其 origin renderer。 */
 export interface BrowserViewOperationPayload {
   workspaceKey: string;

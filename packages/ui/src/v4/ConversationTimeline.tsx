@@ -269,6 +269,8 @@ export interface ConversationTimelineProps {
   pendingGuides?: readonly QueueItem[];
   /** runtime memory 状态，只交给当前 live turn，不进入历史虚拟列表。 */
   apiRetry?: ApiRetryState | null;
+  /** 渲染在运行中轮次（live tail）末尾的附加内容，如无响应提示；无 live turn 时不渲染。 */
+  liveTailFooter?: ReactNode;
   /** 投影全序行数（rows.totalCount；窗口截断后大于 rows.length，仅用于滚动条估计/诊断）。 */
   totalCount: number;
   /**
@@ -380,6 +382,7 @@ function ConversationTimelineImpl({
   compactForRemoteControl = false,
   pendingGuides = EMPTY_PENDING_GUIDES,
   apiRetry = null,
+  liveTailFooter = null,
   totalCount,
   sessionKey,
   scrollMemoryKey = null,
@@ -2144,6 +2147,11 @@ function ConversationTimelineImpl({
                     onRetry={onRetry}
                     onEdit={onEdit}
                   />
+                  {liveTailFooter ? (
+                    <div data-v4-live-tail-footer="true" className="pb-2">
+                      {liveTailFooter}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {pendingGuides.length > 0 ? (

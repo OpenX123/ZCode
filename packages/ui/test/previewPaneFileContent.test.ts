@@ -187,7 +187,7 @@ describe("PreviewPaneContent text files", () => {
       }
     },
   );
-  it("HTML 默认静态预览，包含登录跳转脚本也不授予脚本权限，并支持源码", () => {
+  it("HTML 默认显示源码，切换预览后为静态 sandbox，包含登录跳转脚本也不授予脚本权限", () => {
     const content = '<h1>客户速览</h1><script>location.href="/login"</script>';
     const source = {
       type: "file",
@@ -203,7 +203,10 @@ describe("PreviewPaneContent text files", () => {
       truncated: false,
       isBinary: false,
     };
-    const html = renderFileContent({ source, filePreview });
+    expect(renderFileContent({ source, filePreview })).not.toContain(
+      'data-testid="html-file-preview"',
+    );
+    const html = renderFileContent({ source, filePreview, htmlViewMode: "preview" });
     expect(html).toContain('data-testid="html-file-preview"');
     expect(html).toContain('sandbox=""');
     expect(html).not.toContain("allow-scripts");
@@ -228,8 +231,32 @@ describe("PreviewPaneContent text files", () => {
     });
 
     expect(html).toContain(
-      "This file exceeds the 256 KB preview limit. Open it in another editor to view the full contents.",
+      "This file exceeds the 50 MB preview limit. Open it in an external editor to view the full contents.",
     );
+    expect(html).not.toContain("<diffs-container");
+  });
+
+  it("renders large files as simplified plain text with a render-anyway action", () => {
+    const largeTextFile = {
+      path: "/workspace/app.log",
+      content: "first line\n第二行\npartial",
+      offset: 0,
+      bytesRead: 1024 * 1024,
+      totalBytes: 5 * 1024 * 1024,
+      truncated: true,
+      isBinary: false,
+    };
+    const html = renderFileContent({
+      source: { type: "file", title: "app.log", path: "/workspace/app.log" },
+      filePreview: null,
+      largeTextFile,
+      readLargeTextChunk: vi.fn(),
+      onRenderLargeTextFileAnyway: vi.fn(),
+    });
+
+    expect(html).toContain('data-testid="large-text-file-viewer"');
+    expect(html).toContain("Large file (5.0 MB), shown in simplified mode");
+    expect(html).toContain("Render anyway");
     expect(html).not.toContain("<diffs-container");
   });
 

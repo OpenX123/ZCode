@@ -95,6 +95,7 @@ import {
 } from "@/v4/conversationStatusPanelModel.js";
 import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversationStatusPanelModel.js";
 import {
+  isGitOnlyStatusPanelContent,
   workflowRunOpenTarget,
   workflowRunWords,
   type ConversationStatusPanelWorkflowRunWords,
@@ -1805,7 +1806,6 @@ function RunningAgentsSummaryMetric({
 function StatusSummaryRow({
   avatarIndex,
   endedWorkflowRunCount,
-  gitWorktreeChangeSummary,
   model,
   onOpenAgentSection,
   onOpenWorkflowSection,
@@ -1814,7 +1814,6 @@ function StatusSummaryRow({
   avatarIndex: SubagentAvatarIndex;
   /** 已结束 run 的目录计数；宿主给 0 表示目录入口不可渲染（缺会话或缺回调）。 */
   endedWorkflowRunCount: number;
-  gitWorktreeChangeSummary?: { added: number; removed: number } | null;
   model: ConversationStatusPanelModel;
   /** 胶囊显示着运行中智能体时，点击展开要同时打开的「智能体」分区。 */
   onOpenAgentSection?: () => void;
@@ -1838,9 +1837,9 @@ function StatusSummaryRow({
     goalStatus === "paused" ||
     goalStatus === "verifying";
   const isDoneGoal = goalStatus === "verified";
-  const added = gitWorktreeChangeSummary?.added ?? 0;
-  const removed = gitWorktreeChangeSummary?.removed ?? 0;
-  const hasGitMiniSummary = Boolean(model.git && added + removed > 0);
+  // 1.5.0：收起态胶囊不再显示工作区 Git 变更（与当前对话无关），改由每轮末尾的更改卡片
+  // 表达本轮改动；展开面板的 Git Tools 与 Git 面板仍可查看工作区全部更改
+  // （docs/chat/turn-changes-card.md）。
 
   // 胶囊摘要过去把所有后台任务都写死成 Activity，纯 Subagent 因而没有复用
   // Running 明细的 Bot 语义。**恰好一类**沿用该类图标，混合才是 Activity。在跑的工作流不进这条
@@ -1869,14 +1868,6 @@ function StatusSummaryRow({
   ) : goalTitle && isActiveGoal ? (
     <StatusSummaryMetric icon={<GoalIcon className="size-4 text-[var(--color-foreground)]" />}>
       <span className="min-w-0 truncate">{goalTitle}</span>
-    </StatusSummaryMetric>
-  ) : hasGitMiniSummary ? (
-    <StatusSummaryMetric icon={<FileDiffIcon className="size-4 text-[var(--color-foreground)]" />}>
-      <span className="min-w-0 truncate">
-        {intl.formatMessage({ id: "chat.statusPanel.changes" })}
-      </span>
-      <span className="shrink-0 text-[var(--color-diff-added)]">+{added}</span>
-      <span className="shrink-0 text-[var(--color-diff-removed)]">-{removed}</span>
     </StatusSummaryMetric>
   ) : goalTitle && isDoneGoal ? (
     <StatusSummaryMetric icon={<GoalIcon className="size-4 text-[var(--color-foreground)]" />}>
@@ -2118,6 +2109,12 @@ function ConversationStatusPanelImpl({
   ) {
     return null;
   }
+  // 收起态胶囊已不承载 Git 指标：只有 Git 内容时 mini 没有可显示的摘要，不保留空壳；
+  // auto 形态由 container query 裁决，窄屏（mini 区间）同样隐藏整个面板。
+  const gitOnlyContent = isGitOnlyStatusPanelContent(model) && !canRenderEndedWorkflows;
+  if (variant === "mini" && gitOnlyContent) {
+    return null;
+  }
 
   return (
     <div
@@ -2130,6 +2127,7 @@ function ConversationStatusPanelImpl({
           : layoutMode === "auto"
             ? "inset-x-0 flex justify-end px-4 @min-[1280px]/conversation:left-auto @min-[1280px]/conversation:right-4 @min-[1280px]/conversation:px-0"
             : "inset-x-0 flex justify-end px-4",
+        variant === "auto" && gitOnlyContent && "@max-[1280px]/conversation:hidden",
         className,
       )}
     >
@@ -2338,7 +2336,6 @@ function ConversationStatusPanelImpl({
             // 与页脚同一道门（canRenderEndedWorkflows）：缺会话或缺回调时目录打不开，
             // 胶囊也就不该报一个点了没反应的数。
             endedWorkflowRunCount={canRenderEndedWorkflows ? endedWorkflowRunCount : 0}
-            gitWorktreeChangeSummary={gitWorktreeChangeSummary}
             onOpenWorkflowSection={handleOpenWorkflowSection}
             onVariantChange={onVariantChange}
           />

@@ -333,7 +333,7 @@ modules:
         packages/ui/src/components/ai-elements/error-diagnostics.tsx,
       ]
     managed: true
-    requires: [ui, shared, services, external-engine-protocol, external-engine-service, mobile-ui]
+    requires: [ui, shared, services, external-engine-protocol, external-engine-service, mobile-ui, error-explanations]
     publicEntrypoints:
       - packages/ui/src/external-engine/index.ts
       - packages/ui/src/external-engine/contract.ts
@@ -351,6 +351,39 @@ modules:
     publicEntrypoints:
       - packages/ui/src/subagent-display/index.ts
       - packages/ui/src/subagent-display/contract.ts
+    layers: { ui: "." }
+    owner: conversation
+
+  # large-text-preview：Preview Pane 大文件分块预览（docs/ui/preview-pane.md「大文件预览」）
+  - id: large-text-preview
+    roots: [packages/ui/src/large-text-preview]
+    managed: true
+    requires: [shared, ui]
+    publicEntrypoints:
+      - packages/ui/src/large-text-preview/index.ts
+      - packages/ui/src/large-text-preview/contract.ts
+    layers: { ui: "." }
+    owner: desktop
+
+  # turn-stall：轮次无响应提示（docs/chat/turn-stall-indicator.md）
+  - id: turn-stall
+    roots: [packages/ui/src/turn-stall]
+    managed: true
+    requires: [shared, ui]
+    publicEntrypoints:
+      - packages/ui/src/turn-stall/index.ts
+      - packages/ui/src/turn-stall/contract.ts
+    layers: { ui: "." }
+    owner: conversation
+
+  # error-explanations：常见失败人话归类（docs/desktop/native-plan-errors-spec.md）
+  - id: error-explanations
+    roots: [packages/ui/src/error-explanations]
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/ui/src/error-explanations/index.ts
+      - packages/ui/src/error-explanations/contract.ts
     layers: { ui: "." }
     owner: conversation
 
@@ -959,6 +992,61 @@ modules:
     layers:
       adapters: .
     owner: conversation
+  # usage-stats-local-protocol：由 architecture:adopt 登记
+  - id: usage-stats-local-protocol
+    roots:
+      - packages/shared/src/usage-stats-local
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/shared/src/usage-stats-local/index.ts
+      - packages/shared/src/usage-stats-local/contract.ts
+    layers:
+      domain: .
+    owner: conversation
+  # usage-stats-local：由 architecture:adopt 登记
+  - id: usage-stats-local
+    roots:
+      - packages/services/src/usage-stats/local
+    managed: true
+    requires:
+      - services
+      - shared
+    publicEntrypoints:
+      - packages/services/src/usage-stats/local/index.ts
+      - packages/services/src/usage-stats/local/contract.ts
+    layers:
+      adapters: .
+    owner: conversation
+  # usage-stats-local-ui：由 architecture:adopt 登记
+  - id: usage-stats-local-ui
+    roots:
+      - packages/ui/src/settings/usage-stats/local
+    managed: true
+    requires:
+      - shared
+      - ui
+    publicEntrypoints:
+      - packages/ui/src/settings/usage-stats/local/index.ts
+      - packages/ui/src/settings/usage-stats/local/contract.ts
+      - packages/ui/src/settings/usage-stats/local/i18n.ts
+    layers:
+      ui: .
+    owner: conversation
+  # task-notifications-ui：由 architecture:adopt 登记
+  - id: task-notifications-ui
+    roots:
+      - packages/ui/src/task-notifications
+      - packages/ui/src/hooks/task-notifications
+    managed: true
+    requires: [ui, shared]
+    publicEntrypoints:
+      - packages/ui/src/task-notifications/index.ts
+      - packages/ui/src/task-notifications/contract.ts
+      - packages/ui/src/hooks/task-notifications/index.ts
+    layers:
+      ui: .
+    owner: desktop
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。

@@ -19,6 +19,8 @@ import {
   planStateSchema,
   TURN_FAILURE_SUMMARY_MAX_CHARS,
   turnFailureSchema,
+  type TurnActivityPhase,
+  type TurnActivityState,
   type TurnFailure,
 } from "@zcode/shared/zcode-protocol-v4";
 // ProductProjection —— CLI 权威投影第二 reducer。
@@ -393,6 +395,34 @@ export type ConversationRowTargetResolution =
 
 // 旧事件没有 retryable 字段；保持历史 UI 的可重试语义，但新事件必须尊重显式 false。
 const LEGACY_TURN_ERROR_RECOVERABLE_FALLBACK = true;
+
+// 轮次活动（docs/chat/turn-stall-indicator.md）：阶段/工具不变时最多每 5s 发布一次
+// lastActivityAt，避免逐 token 产生 state.updated；UI 阈值为 60s / 5min，滞后可忽略。
+const TURN_ACTIVITY_PUBLISH_INTERVAL_MS = 5_000;
+const TURN_ACTIVITY_TOOL_NAME_MAX_CHARS = 200;
+// 任何引擎事件都算活动：文本/思考/工具参数流、工具生命周期、审批请求与裁决。
+const TURN_ACTIVITY_EVENT_TYPES: ReadonlySet<string> = new Set([
+  SessionEventType.TurnStarted,
+  SessionEventType.ModelStreaming,
+  SessionEventType.ModelComplete,
+  SessionEventType.ToolCallScheduled,
+  SessionEventType.StreamingToolLedgerUpdated,
+  SessionEventType.ToolCallStarted,
+  SessionEventType.ToolCallProgress,
+  SessionEventType.ToolCallResult,
+  SessionEventType.ToolCallError,
+  SessionEventType.PermissionRequested,
+  SessionEventType.PermissionResolved,
+  SessionEventType.PermissionDenied,
+]);
+
+function sameTurnActivityPhase(left: TurnActivityPhase, right: TurnActivityPhase): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "running_tool" && right.kind === "running_tool") {
+    return left.toolName === right.toolName && left.toolCallId === right.toolCallId;
+  }
+  return true;
+}
 
 function modelRetryReasonCode(
   reason: Extract<ModelNetworkStatusPayload, { type: "model_retry_scheduled" }>["reason"],
@@ -1220,7 +1250,75 @@ export class ProductProjection {
       this.updateRowIndexAfterImmutableApply(previousRowsLength, finalDeltas);
     }
     this.updateToolIndexesAfterDeltas(finalDeltas);
-    return finalDeltas;
+    // 轮次活动依赖本事件归约后的 phase 与 open tool 索引，因此在提交之后单独派生；
+    // turnActivity 不计 revision，不经过 attachRevision。
+    const activityDeltas = this.turnActivityDeltas(event);
+    if (activityDeltas.length === 0) return finalDeltas;
+    if (this.hydrationAccumulator) {
+      applyConversationDeltasMutable(this.hydrationAccumulator, activityDeltas);
+    } else {
+      this.snapshot = {
+        ...applyConversationDeltas(this.snapshot, activityDeltas),
+        seq: event.sequenceNumber,
+      };
+    }
+    return [...finalDeltas, ...activityDeltas];
+  }
+
+  /**
+   * 轮次活动唯一写入点：running 期间每个当前轮次的引擎事件刷新 lastActivityAt，
+   * 并按 open foreground tool 重算阶段；离开 running 时清空。时间全部取事件 timestamp，
+   * 因此 live、resume replay 与 cold hydration 得到同一结果。
+   */
+  private turnActivityDeltas(event: SessionEvent): ConversationDelta[] {
+    const current = this.snapshot.turnActivity ?? null;
+    if (this.snapshot.control.phase !== "running") {
+      return current === null ? [] : [{ op: "state.updated", patch: { turnActivity: null } }];
+    }
+    if (!TURN_ACTIVITY_EVENT_TYPES.has(event.type)) return [];
+    if (event.type !== SessionEventType.TurnStarted && !this.acceptsActiveModelEvent(event)) {
+      return [];
+    }
+    const turnId = this.currentTurnId ?? (event.turnId === undefined ? null : String(event.turnId));
+    if (!turnId) return [];
+    const at = this.ms(event);
+    const activityPhase = this.resolveTurnActivityPhase();
+    const previous = current?.turnId === turnId ? current : null;
+    const lastActivityAt = previous ? Math.max(previous.lastActivityAt, at) : at;
+    const phaseUnchanged =
+      previous !== null && sameTurnActivityPhase(previous.activityPhase, activityPhase);
+    if (
+      previous !== null &&
+      phaseUnchanged &&
+      lastActivityAt - previous.lastActivityAt < TURN_ACTIVITY_PUBLISH_INTERVAL_MS
+    ) {
+      return [];
+    }
+    const next: TurnActivityState = {
+      turnId,
+      lastActivityAt,
+      phaseStartedAt: previous !== null && phaseUnchanged ? previous.phaseStartedAt : lastActivityAt,
+      activityPhase,
+    };
+    return [{ op: "state.updated", patch: { turnActivity: next } }];
+  }
+
+  private resolveTurnActivityPhase(): TurnActivityPhase {
+    let latest: ToolCallRow | undefined;
+    for (const toolCallId of this.openForegroundToolCallIds) {
+      const row = this.findToolRow(toolCallId);
+      // inputStreaming 表示模型仍在输出工具参数，pendingApproval 由 pendingInteractions 表达。
+      if (!row || row.status !== "running" || row.backgrounded === true) continue;
+      if (!latest || row.rowId > latest.rowId) latest = row;
+    }
+    if (!latest) return { kind: "waiting_model" };
+    const toolName =
+      latest.toolName.trim().slice(0, TURN_ACTIVITY_TOOL_NAME_MAX_CHARS) || "tool";
+    return {
+      kind: "running_tool",
+      toolName,
+      ...(latest.toolCallId ? { toolCallId: latest.toolCallId } : {}),
+    };
   }
 
   /**

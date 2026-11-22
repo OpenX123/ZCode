@@ -3,22 +3,28 @@ import {
   applyTaskbarOverlayToWindows,
   blendBadgeIntoBitmap,
   createWindowsTaskbarOverlayApplier,
-  renderTaskbarBadgePixels,
-  renderTaskbarStatusDotPixels,
-  TASKBAR_BADGE_IMAGE_SIZE,
+  renderCountBadgePixels,
+  renderTaskbarCountBadgePixels,
+  renderTrayCountBadgePixels,
 } from "../src/main/unreadBadge.js";
 import type { TaskbarOverlayWindow } from "../src/main/unreadBadge.js";
 
-const CIRCLE_RED_BGRA = [53, 57, 229, 255];
+const FILL_RED_BGRA = [53, 57, 229, 255];
 const WHITE_BGRA = [255, 255, 255, 255];
 
-function pixelAt(pixels: Uint8Array, x: number, y: number): number[] {
-  const offset = (y * TASKBAR_BADGE_IMAGE_SIZE + x) * 4;
+function pixelAt(pixels: Uint8Array, width: number, x: number, y: number): number[] {
+  const offset = (y * width + x) * 4;
   return [pixels[offset]!, pixels[offset + 1]!, pixels[offset + 2]!, pixels[offset + 3]!];
 }
 
-function isWhitePixel(bgra: number[]): boolean {
-  return bgra.every((value) => value === 255);
+function whiteColumns(pixels: Uint8Array, width: number, height: number): Set<number> {
+  const columns = new Set<number>();
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (pixelAt(pixels, width, x, y).every((value) => value === 255)) columns.add(x);
+    }
+  }
+  return columns;
 }
 
 function countWhitePixels(pixels: Uint8Array): number {
@@ -50,133 +56,81 @@ function createFakeWindow(options: { destroyed?: boolean } = {}): TaskbarOverlay
 }
 
 describe("windows taskbar overlay badge", () => {
-  describe("renderTaskbarBadgePixels", () => {
-    it("输出 32×32 BGRA 缓冲区", () => {
-      const pixels = renderTaskbarBadgePixels("1");
-      expect(pixels).toBeInstanceOf(Uint8Array);
-      expect(pixels.length).toBe(TASKBAR_BADGE_IMAGE_SIZE * TASKBAR_BADGE_IMAGE_SIZE * 4);
+  describe("renderTaskbarCountBadgePixels（1.5.0 数字徽章）", () => {
+    it.each([1, 2] as const)("%ix 表示铺满 16·scale 正方形画布", (scale) => {
+      const size = 16 * scale;
+      const pixels = renderTaskbarCountBadgePixels("3", scale);
+      expect(pixels.length).toBe(size * size * 4);
+      // 圆心附近是不透明的红/白，四角在圆外完全透明（预乘后全 0）
+      expect(pixelAt(pixels, size, 0, 0)).toEqual([0, 0, 0, 0]);
+      expect(pixelAt(pixels, size, size - 1, size - 1)).toEqual([0, 0, 0, 0]);
+      expect(pixelAt(pixels, size, 1, size / 2)[3]).toBeGreaterThan(0);
     });
 
-    it("圆内空白处是预乘 BGRA 的红色，数字笔画处是白色", () => {
-      const pixels = renderTaskbarBadgePixels("1");
-      // 圆心 (15.5, 15.5) 半径 15：(16,16) 落在数字 1 的笔画上（白），(4,16) 只落在圆上（红）。
-      expect(pixelAt(pixels, 16, 16)).toEqual(WHITE_BGRA);
-      expect(pixelAt(pixels, 4, 16)).toEqual(CIRCLE_RED_BGRA);
-    });
+    it.each(["1", "2", "3", "4", "5", "6", "7", "8", "9", "9+"])(
+      "%s 在 16px 与 32px 下都有白色字形且居中",
+      (label) => {
+        for (const scale of [1, 2] as const) {
+          const size = 16 * scale;
+          const pixels = renderTaskbarCountBadgePixels(label, scale);
+          expect(countWhitePixels(pixels)).toBeGreaterThan(4 * scale);
+          const columns = [...whiteColumns(pixels, size, size)];
+          const left = Math.min(...columns);
+          const right = size - 1 - Math.max(...columns);
+          // 左右留白差不超过 1 个字形像素，视觉居中
+          expect(Math.abs(left - right)).toBeLessThanOrEqual(scale);
+        }
+      },
+    );
 
-    it("圆外完全透明（预乘后全 0），保证任务栏图标不被遮挡", () => {
-      const pixels = renderTaskbarBadgePixels("1");
-      expect(pixelAt(pixels, 0, 0)).toEqual([0, 0, 0, 0]);
-    });
-
-    it("画布四周留透明边距，气泡本体只占约 3/4，避免任务栏观感过大", () => {
-      const pixels = renderTaskbarBadgePixels("1");
-      // 半径 12：画布边缘 2px 内是透明边距，向内一步就是红色圆面。
-      expect(pixelAt(pixels, 16, 2)).toEqual([0, 0, 0, 0]);
-      expect(pixelAt(pixels, 16, 4)).toEqual(CIRCLE_RED_BGRA);
-      expect(pixelAt(pixels, 2, 16)).toEqual([0, 0, 0, 0]);
-    });
-
-    it("任务栏红点锚定画布右下角（overlay 整图铺图标右下区域，居中会悬在图标中部）", () => {
-      const pixels = renderTaskbarBadgePixels("9+", {
-        size: 32,
-        padding: 8,
-        dot: true,
-        anchor: "bottom-right",
-      });
-      const at = (x: number, y: number): number[] => {
-        const offset = (y * 32 + x) * 4;
-        return [pixels[offset]!, pixels[offset + 1]!, pixels[offset + 2]!, pixels[offset + 3]!];
-      };
-      // radius=(32-16)/2-1=7，圆心 (24,24)：右下区域是红点，左上与画布最外角为空
-      expect(at(24, 24)).toEqual([53, 57, 229, 255]);
-      expect(at(31, 31)).toEqual([0, 0, 0, 0]);
-      expect(at(8, 8)).toEqual([0, 0, 0, 0]);
-    });
-
-    it("红点模式只画纯色圆，不渲染数字（托盘 16px 下数字不可读）", () => {
-      const pixels = renderTaskbarBadgePixels("9+", { size: 14, glyphScale: 1, padding: 0, dot: true });
-      const at = (x: number, y: number): number[] => {
-        const offset = (y * 14 + x) * 4;
-        return [pixels[offset]!, pixels[offset + 1]!, pixels[offset + 2]!, pixels[offset + 3]!];
-      };
-      // 圆心与圆面都是红色，无任何白色笔画像素
-      expect(at(7, 7)).toEqual(CIRCLE_RED_BGRA);
-      expect(countWhitePixels(pixels)).toBe(0);
-    });
-
-    it("每个数字字形都有可见像素，未知字符不产生字形", () => {
-      for (const label of ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "+"]) {
-        expect(countWhitePixels(renderTaskbarBadgePixels(label)), `label ${label}`).toBeGreaterThan(
-          0,
-        );
+    it("9+ 的两个字形之间留出一列红色间隙，不粘连", () => {
+      for (const scale of [1, 2] as const) {
+        const size = 16 * scale;
+        const columns = whiteColumns(renderTaskbarCountBadgePixels("9+", scale), size, size);
+        const sorted = [...columns].sort((a, b) => a - b);
+        const gaps = sorted.slice(1).filter((column, index) => column - sorted[index]! > 1);
+        expect(gaps.length).toBeGreaterThanOrEqual(1);
       }
-
-      const empty = renderTaskbarBadgePixels("");
-      expect(empty.every((value) => value === 0)).toBe(true);
     });
 
-    it("两位折叠文案 9+ 的两个字形都可见", () => {
-      const pixels = renderTaskbarBadgePixels("9+");
-      // 9+ 总宽 22，原点在 x=5：(8,16) 命中 "9" 的竖笔，(22,16) 命中 "+" 的横笔。
-      expect(isWhitePixel(pixelAt(pixels, 8, 16))).toBe(true);
-      expect(isWhitePixel(pixelAt(pixels, 22, 16))).toBe(true);
+    it("非字形区域是纯红，字形是纯白", () => {
+      const pixels = renderTaskbarCountBadgePixels("1", 1);
+      const all = new Set<string>();
+      for (let offset = 0; offset < pixels.length; offset += 4) {
+        if (pixels[offset + 3] === 255)
+          all.add(String(Array.from(pixels.slice(offset, offset + 4))));
+      }
+      expect(all).toEqual(new Set([String(FILL_RED_BGRA), String(WHITE_BGRA)]));
+    });
+
+    it("边缘使用半透明抗锯齿像素", () => {
+      const pixels = renderTaskbarCountBadgePixels("1", 1);
+      let partial = 0;
+      for (let offset = 3; offset < pixels.length; offset += 4) {
+        if (pixels[offset]! > 0 && pixels[offset]! < 255) partial += 1;
+      }
+      expect(partial).toBeGreaterThan(0);
+    });
+
+    it("未知字符不产生字形，只剩红底", () => {
+      expect(countWhitePixels(renderTaskbarCountBadgePixels("x", 1))).toBe(0);
     });
   });
 
-  describe("renderTaskbarStatusDotPixels", () => {
-    it("输出 Windows 原生 16px overlay 表示，并用半透明像素抗锯齿", () => {
-      const pixels = renderTaskbarStatusDotPixels(1);
-      expect(pixels.length).toBe(16 * 16 * 4);
-      let antialiasedPixels = 0;
-      for (let offset = 3; offset < pixels.length; offset += 4) {
-        const alpha = pixels[offset]!;
-        if (alpha > 0 && alpha < 255) antialiasedPixels += 1;
-      }
-      expect(antialiasedPixels).toBeGreaterThan(0);
+  describe("renderTrayCountBadgePixels", () => {
+    it("单数字为 9px 高的圆，9+ 拉成更宽的胶囊", () => {
+      expect(renderTrayCountBadgePixels("3", 1)).toMatchObject({ width: 9, height: 9 });
+      const wide = renderTrayCountBadgePixels("9+", 1);
+      expect(wide.height).toBe(9);
+      expect(wide.width).toBeGreaterThan(9);
+      expect(renderTrayCountBadgePixels("9+", 2).height).toBe(18);
     });
 
-    it("Win11：红点在 overlay 画布内居中，避免 Shell 二次偏移", () => {
-      const pixels = renderTaskbarStatusDotPixels(1, "windows-11");
-      const at = (x: number, y: number): number[] => {
-        const offset = (y * 16 + x) * 4;
-        return [pixels[offset]!, pixels[offset + 1]!, pixels[offset + 2]!, pixels[offset + 3]!];
-      };
-      expect(at(8, 8)).toEqual(CIRCLE_RED_BGRA);
-      expect(at(5, 8)).toEqual(CIRCLE_RED_BGRA);
-      // 左右/上下边缘对称抗锯齿，证明画布内居中
-      expect(at(4, 8)).toEqual([27, 29, 115, 128]);
-      expect(at(11, 8)).toEqual([27, 29, 115, 128]);
-      expect(at(8, 11)).toEqual([27, 29, 115, 128]);
-      expect(at(0, 0)).toEqual([0, 0, 0, 0]);
-      expect(at(15, 15)).toEqual([0, 0, 0, 0]);
-    });
-
-    it("Win10：红点在 overlay 画布内右下锚定，补偿旧任务栏的落点", () => {
-      const pixels = renderTaskbarStatusDotPixels(1, "windows-10");
-      const at = (x: number, y: number): number[] => {
-        const offset = (y * 16 + x) * 4;
-        return [pixels[offset]!, pixels[offset + 1]!, pixels[offset + 2]!, pixels[offset + 3]!];
-      };
-      expect(at(11, 11)).toEqual(CIRCLE_RED_BGRA);
-      expect(at(8, 11)).toEqual(CIRCLE_RED_BGRA);
-      expect(at(7, 11)).toEqual([13, 14, 57, 64]);
-      expect(at(15, 15)).toEqual([0, 0, 0, 0]);
-      // Win10 与 Win11 必须是两套不同圆心，不能退化成同一折中坐标
-      expect(at(8, 8)).not.toEqual(CIRCLE_RED_BGRA);
-    });
-
-    it("2x 高 DPI 表示尺寸为 32px，两种布局均按比例扩展", () => {
-      for (const [layout, center] of [
-        ["windows-11", 16],
-        ["windows-10", 22],
-      ] as const) {
-        const pixels = renderTaskbarStatusDotPixels(2, layout);
-        expect(pixels.length).toBe(32 * 32 * 4);
-        const centerOffset = (center * 32 + center) * 4;
-        expect(Array.from(pixels.slice(centerOffset, centerOffset + 4))).toEqual(CIRCLE_RED_BGRA);
-        expect(Array.from(pixels.slice(0, 4))).toEqual([0, 0, 0, 0]);
-      }
+    it("胶囊两端圆角透明，中间是数字", () => {
+      const badge = renderCountBadgePixels("9+", { height: 9, glyphScale: 1 });
+      expect(pixelAt(badge.pixels, badge.width, 0, 0)[3]).toBe(0);
+      expect(pixelAt(badge.pixels, badge.width, badge.width - 1, 0)[3]).toBe(0);
+      expect(countWhitePixels(badge.pixels)).toBeGreaterThan(10);
     });
   });
 
@@ -192,8 +146,8 @@ describe("windows taskbar overlay badge", () => {
         badgeImageForLabel: () => image,
       });
 
-      expect(winA.overlays).toEqual([{ image, description: "3 unread tasks" }]);
-      expect(winB.overlays).toEqual([{ image, description: "3 unread tasks" }]);
+      expect(winA.overlays).toEqual([{ image, description: "3 tasks need attention" }]);
+      expect(winB.overlays).toEqual([{ image, description: "3 tasks need attention" }]);
     });
 
     it("label 为 null 时清除 overlay 且不生成徽章图", () => {
@@ -242,8 +196,8 @@ describe("windows taskbar overlay badge", () => {
       expect(createBadgeImage).toHaveBeenCalledWith("2");
       const expectedImage = { __badge: true };
       expect(winA.overlays).toEqual([
-        { image: expectedImage, description: "2 unread tasks" },
-        { image: expectedImage, description: "2 unread tasks" },
+        { image: expectedImage, description: "2 tasks need attention" },
+        { image: expectedImage, description: "2 tasks need attention" },
       ]);
       expect(winB.overlays).toHaveLength(2);
     });
@@ -298,7 +252,8 @@ describe("windows taskbar overlay badge", () => {
         base,
         size: SIZE,
         badge: solidBadge({ b: 1, g: 2, r: 3, a: 255 }),
-        badgeSize: 2,
+        badgeWidth: 2,
+        badgeHeight: 2,
         originX: 2,
         originY: 2,
       });
@@ -316,7 +271,8 @@ describe("windows taskbar overlay badge", () => {
         base,
         size: SIZE,
         badge: solidBadge({ b: 100, g: 0, r: 0, a: 128 }),
-        badgeSize: 2,
+        badgeWidth: 2,
+        badgeHeight: 2,
         originX: 0,
         originY: 0,
       });
@@ -336,7 +292,8 @@ describe("windows taskbar overlay badge", () => {
         base,
         size: SIZE,
         badge,
-        badgeSize: 2,
+        badgeWidth: 2,
+        badgeHeight: 2,
         originX: 3,
         originY: 3, // 2×2 徽章只有 (3,3) 落在画布内，(4,3)(3,4)(4,4) 越界
       });

@@ -33,3 +33,27 @@ export function thoughtLevelLabelId(value: string): string | undefined {
     ? THOUGHT_LEVEL_LABEL_IDS[normalized]
     : undefined;
 }
+
+// 入口按钮的缩写（≤5 个字母，中英文一致）；下拉、列表与无障碍名称仍用上面的全称。
+const THOUGHT_LEVEL_SHORT_LABEL_IDS: Record<string, string> = {
+  off: "engine.effortShort.off",
+  on: "engine.effortShort.on",
+  minimal: "engine.effortShort.minimal",
+  low: "engine.effortShort.low",
+  medium: "engine.effortShort.medium",
+  high: "engine.effortShort.high",
+  xhigh: "engine.effortShort.xhigh",
+  max: "engine.effortShort.max",
+  ultra: "engine.effortShort.ultra",
+};
+
+/**
+ * 档位值 → 缩写词条 id；与全称共用同一张取值别名表，避免两处对「extra-high」等别名各自归一。
+ * 表里没有的值返回 undefined（调用方回退到全称）。
+ */
+export function thoughtLevelShortLabelId(value: string): string | undefined {
+  const fullId = thoughtLevelLabelId(value);
+  if (!fullId) return undefined;
+  const key = fullId.slice(fullId.lastIndexOf(".") + 1);
+  return THOUGHT_LEVEL_SHORT_LABEL_IDS[key];
+}

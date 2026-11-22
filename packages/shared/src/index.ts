@@ -135,6 +135,10 @@ export {
   DesktopCommandIds,
   buildLocalMediaPreviewUrl,
   createOpenInEditorRemoteTarget,
+  DEFAULT_TASK_NOTIFICATION_PREFERENCES,
+  TASK_NOTIFICATION_SOUND_IDS,
+  parseTaskNotificationSoundCue,
+  taskNotificationSoundCategory,
 } from "./platform.js";
 export { sanitizeTelemetrySkillName } from "./telemetry.js";
 export type { RedactTelemetryTextOptions } from "./telemetryRedaction.js";
@@ -207,6 +211,10 @@ export type {
   RemoteServiceSession,
   SSHConfigAliasOption,
   TaskNotificationPayload,
+  TaskNotificationPreferences,
+  TaskNotificationSoundCategory,
+  TaskNotificationSoundCue,
+  TaskNotificationSoundId,
   UpdateCheckResultPayload,
   UpdateStatePayload,
   WSLDistro,
@@ -272,6 +280,7 @@ export * from "./web-remote-control-rpc-transport.js";
 export * from "./settings-sync.js";
 export * from "./uuid.js";
 export * from "./usage-stats.js";
+export * from "./usage-stats-local/index.js";
 export * from "./intranetProbe.js";
 export * from "./intranetDefaults.js";
 export * from "./hooks.js";

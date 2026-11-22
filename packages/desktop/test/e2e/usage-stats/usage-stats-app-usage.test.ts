@@ -1,62 +1,46 @@
-import {
-  TID_SETTINGS_SECTION_NAV,
-  TID_SETTINGS_USAGE_TAB,
-  TID_TASK_SETTINGS_BUTTON,
-  testId,
-} from "@zcode/shared/test-ids";
+import { TID_SETTINGS_SECTION_NAV, TID_TASK_SETTINGS_BUTTON, testId } from "@zcode/shared/test-ids";
 import {
   clearAppData,
   clickTestIdByDom,
-  getE2EAppDataPaths,
   waitForDefaultWorkspaceReady,
 } from "../helpers/desktop-app.js";
-import { clearAppUsageE2EFixture } from "../helpers/usage-stats-app-usage-fixture.js";
 
 describe("Usage Stats App Usage E2E", () => {
   after(async () => {
     await clearAppData();
   });
 
-  it("US-AU-02/03/04/05: 聚合、range、Token Activity 与模型图表", async function () {
+  // 本机多来源面板（docs/usage-stats-local-sources.md）：ZCode 原生 usage facts 经 CLI 读取，
+  // 隔离 HOME 下没有 Claude Code / Codex 日志。
+  it("US-AU-02/03/04/05: 本机多来源聚合、range、Token Activity 与按模型明细", async function () {
     this.timeout(120_000);
     await openAppUsage();
 
     await assertBodyIncludes(["e2e-model-alpha", "e2e-model-beta"]);
     await assertBodyIncludesAny(["Token Activity", "Token 活动"]);
-    await assertBodyIncludesAny(["Daily Token Trend", "每日 Token 趋势图"]);
-    await assertBodyIncludesAny(["Model Usage", "模型用量"]);
-    // tokenNumberFormat 按 locale compact：英文为 9.5K，中文在 1 万以下保留 9510。
-    await assertBodyIncludesAny(["9.5K", "9,510", "9510"]);
-
-    await clickButtonByText(["Last 7 days", "近 7 日"]);
-    await assertPressedButton(["Last 7 days", "近 7 日"]);
-    await assertBodyIncludes(["e2e-model-alpha", "e2e-model-beta"]);
-    // 7d 使用精确时间戳边界，恰好第 7 天的 fixture 会落在窗口外。
-    await assertBodyIncludesAny(["2.4K", "2,406", "2406"]);
+    await assertBodyIncludesAny(["Usage trend", "用量趋势"]);
+    await assertBodyIncludesAny(["Estimated at API prices", "按 API 价格估算"]);
+    await assertBodyIncludesAny(["ZCode runtime metrics", "ZCode 运行指标"]);
 
     await clickButtonByText(["Weekly", "每周"]);
     await assertPressedButton(["Weekly", "每周"]);
     await clickButtonByText(["Cumulative", "累计"]);
     await assertPressedButton(["Cumulative", "累计"]);
 
-    await clickButtonByText(["Last 30 days", "近 30 日"]);
-    await assertPressedButton(["Last 30 days", "近 30 日"]);
+    await clickButtonByText(["30 days", "30 天"]);
+    await assertPressedButton(["30 days", "30 天"]);
     await assertBodyIncludes(["e2e-model-gamma"]);
-    await assertBodyIncludesAny(["4.5K", "4,510", "4510"]);
   });
 
-  it("US-AU-01: usage facts 清空后显示确定空态", async function () {
+  it("US-AU-01: 没有日志的来源显示确定空态并隐藏 ZCode 运行指标", async function () {
     this.timeout(60_000);
-    clearAppUsageE2EFixture(getE2EAppDataPaths().homeDir);
-    await clickButtonByText(["Refresh", "刷新"]);
-    await browser.waitUntil(
-      async () => {
-        const body = await $("body").getText();
-        return /No usage data yet|还没有可展示的数据/.test(body);
-      },
-      { timeout: 20_000, timeoutMsg: "清空 usage facts 后没有显示 App Usage 空态" },
-    );
-    await assertBodyExcludes(["e2e-model-alpha", "e2e-model-gamma"]);
+    await clickButtonByText(["Codex"]);
+    await assertPressedButton(["Codex"]);
+    await browser.waitUntil(async () => /No usage yet|暂无用量/.test(await $("body").getText()), {
+      timeout: 20_000,
+      timeoutMsg: "Codex 来源没有显示空态",
+    });
+    await assertBodyExcludes(["e2e-model-alpha", "ZCode 运行指标", "ZCode runtime metrics"]);
   });
 });
 
@@ -70,13 +54,9 @@ async function openAppUsage(): Promise<void> {
     timeout: 20_000,
     timeoutMsg: "设置页 Usage 分区没有出现",
   });
-  await clickTestIdByDom(testId(TID_SETTINGS_USAGE_TAB, "app"), {
-    timeout: 20_000,
-    timeoutMsg: "App Usage tab 没有出现",
-  });
   await browser.waitUntil(
     async () => /Token activity|Token 活动/i.test(await $("body").getText()),
-    { timeout: 30_000, timeoutMsg: "App Usage 数据没有完成加载" },
+    { timeout: 30_000, timeoutMsg: "本机用量数据没有完成加载" },
   );
 }
 

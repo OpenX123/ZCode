@@ -4,6 +4,10 @@ import {
   type SessionEngine,
 } from "@zcode/shared/external-engine";
 import { EngineControls, EngineSwitchRow, isEngineNotReadyError } from "@/external-engine/index.js";
+import { ENGINE_LABELS } from "@/external-engine/contract.js";
+import { ConversationStallNotice } from "@/turn-stall/index.js";
+import { runExportLogsAction } from "@/lib/exportLogsAction.js";
+import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import {
   useEngineConfigMemory,
   useEngineConnectionControl,
@@ -580,6 +584,7 @@ export function SessionPane({
   } = useV4Conversation();
   const { modelSelectionService, zcodeSessionService, zcodeTaskService } = useServices();
   const { intl, locale } = useZCodeIntl();
+  const platform = useOptionalPlatform();
   const slashCommands = useSlashCommands(workspacePath, workspaceIdentity);
   const baseWorkspaceServices = useBaseWorkspaceServices();
   const genUiService = baseWorkspaceServices.genUiService;
@@ -3778,6 +3783,72 @@ export function SessionPane({
   useEffect(() => {
     reconcileDraftOverlay(projectedTimelineRows);
   }, [projectedTimelineRows, reconcileDraftOverlay]);
+  // 无响应提示（docs/chat/turn-stall-indicator.md）：事实只来自 runtime 的 turnActivity。
+  // “中断并重试”复用 sendText startNow，由 CLI 原子停止当前轮并以同一用户输入开始新轮，
+  // UI 不串联 stop 与重发两条命令；找不到当前轮的真实用户输入时隐藏该按钮。
+  const turnActivity = timelineSnapshot?.turnActivity ?? null;
+  const stallRetryInput = useMemo(() => {
+    if (!turnActivity) return null;
+    for (let index = projectedTimelineRows.length - 1; index >= 0; index -= 1) {
+      const row = projectedTimelineRows[index];
+      if (row?.kind !== "userInput" || row.origin !== "realUser" || row.guided) continue;
+      return row.text.trim().length > 0 || (row.attachments?.length ?? 0) > 0 ? row : null;
+    }
+    return null;
+  }, [projectedTimelineRows, turnActivity]);
+  const handleStallInterruptAndRetry = useCallback(() => {
+    if (!stallRetryInput) return;
+    logger.lifecycle.info("[v4-pane] 无响应提示：中断并重试", { sessionId: sessionId ?? "" });
+    void Promise.resolve(
+      dispatchSendText(stallRetryInput.text, {
+        requestedDelivery: "startNow",
+        ...(stallRetryInput.attachments?.length
+          ? { attachments: stallRetryInput.attachments }
+          : {}),
+        ...(stallRetryInput.conversationQuotes?.length
+          ? { conversationQuotes: stallRetryInput.conversationQuotes }
+          : {}),
+      }),
+    ).catch((error: unknown) => {
+      logger.warn("[v4-pane] 无响应提示重试提交失败", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, [dispatchSendText, sessionId, stallRetryInput]);
+  const handleStallViewLogs = useCallback(() => {
+    if (platform) void runExportLogsAction(platform, intl);
+  }, [intl, platform]);
+  const stallRunning = timelineSnapshot?.control.phase === "running";
+  const stallHasPendingInteraction = (timelineSnapshot?.pendingInteractions.length ?? 0) > 0;
+  const stallCanRetry = stallRetryInput !== null;
+  const stallCanViewLogs = platform?.canOpenLocalFiles === true;
+  // ConversationTimeline 是 memo 组件：footer 元素必须随输入稳定，避免每次投影更新都重渲染时间线。
+  const stallNotice = useMemo(
+    () =>
+      turnActivity && !readOnly ? (
+        <ConversationStallNotice
+          turnActivity={turnActivity}
+          running={stallRunning}
+          hasPendingInteraction={stallHasPendingInteraction}
+          engineLabel={ENGINE_LABELS[sessionEngine]}
+          onInterrupt={handleStopFromButton}
+          {...(stallCanRetry ? { onInterruptAndRetry: handleStallInterruptAndRetry } : {})}
+          {...(stallCanViewLogs ? { onViewLogs: handleStallViewLogs } : {})}
+        />
+      ) : null,
+    [
+      handleStallInterruptAndRetry,
+      handleStallViewLogs,
+      handleStopFromButton,
+      readOnly,
+      sessionEngine,
+      stallCanRetry,
+      stallCanViewLogs,
+      stallHasPendingInteraction,
+      stallRunning,
+      turnActivity,
+    ],
+  );
   const shareHandoverContext =
     snapshot?.sharedContextImport && "contextId" in snapshot.sharedContextImport
       ? snapshot.sharedContextImport
@@ -4568,6 +4639,7 @@ export function SessionPane({
                   rows={timelineRows}
                   pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
                   apiRetry={timelineSnapshot?.control.apiRetry ?? null}
+                  liveTailFooter={stallNotice}
                   totalCount={
                     (timelineSnapshot?.rows.totalCount ?? 0) +
                     (timelineRows.length - projectedTimelineRows.length)

@@ -52,6 +52,7 @@ async function fixture(
     cacheDir: directory,
     fetch,
     openInstaller,
+    preferences: { autoDownload: false },
     ...overrides,
   });
   cleanups.push(async () => {
@@ -77,6 +78,19 @@ describe("发布矩阵外平台的 GitHub 更新", () => {
     });
     await expect(updater.downloadUpdate()).resolves.toEqual(manual);
     await expect(updater.installUpdate()).resolves.toEqual(manual);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(openInstaller).not.toHaveBeenCalled();
+    expect(updater.getState()).toMatchObject({ kind: "update-available", manualDownload: true });
+  });
+
+  it("自动下载开启时也不后台下载其他架构安装器，退出时不安装", async () => {
+    const { updater, fetch, openInstaller } = await fixture({
+      platform: "darwin",
+      arch: "x64",
+      preferences: { autoDownload: true },
+    });
+    await updater.checkForUpdates(false);
+    await expect(updater.installOnQuit()).resolves.toBe(false);
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(openInstaller).not.toHaveBeenCalled();
     expect(updater.getState()).toMatchObject({ kind: "update-available", manualDownload: true });

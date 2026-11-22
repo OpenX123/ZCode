@@ -12,7 +12,11 @@ import type {
   WindowHostTaskAddress,
   WindowHostControllerTaskActivity,
 } from "@/project-sidebar/contract.js";
-import { attachTaskListRowActivity } from "@/v4/taskListRowActivity.js";
+import {
+  attachTaskListRowActivity,
+  getTaskListAttention,
+  getTaskListRowActivity,
+} from "@/v4/taskListRowActivity.js";
 import { compareTaskListItemsByTime, compareZCodeTaskListItems } from "@/lib/taskListOrdering.js";
 import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
 import { LEGACY_SINGLE_ROOT_PROJECT_PREFIX } from "@/project-sidebar/contract.js";
@@ -114,6 +118,53 @@ export function projectHasUnread(
   );
 }
 
+type ProjectTreeTask = ProjectTree["tasks"][number];
+
+/** 角标去重身份：host + workspace identity（缺省回落路径）+ taskId。 */
+function badgeTaskKey(task: ProjectTreeTask): string {
+  return JSON.stringify([
+    task.hostId,
+    task.workspaceIdentity?.trim() || task.workspacePath,
+    task.taskId,
+  ]);
+}
+
+/**
+ * 角标只统计侧栏实际渲染的任务：孤儿任务（项目不存在）与已删项目的任务在界面上
+ * 没有落点，计入只会产生「有角标没蓝点」的幽灵提醒。可见性对齐渲染分区：置顶区跨项目渲染；
+ * 本地无项目任务区只渲染 host=local 的 null-project 任务；其余任务必须归属渲染项目。
+ */
+function createBadgeVisibility(tree: ProjectTree): (task: ProjectTreeTask) => boolean {
+  const renderedProjectKeys = new Set(
+    tree.projects
+      .filter((project) => !project.deleted)
+      .map((project) => `${project.hostId}::${project.id}`),
+  );
+  return (task) =>
+    !task.archived &&
+    (task.pinned ||
+      (task.projectId == null && task.hostId === "local") ||
+      renderedProjectKeys.has(`${task.hostId}::${task.projectId}`));
+}
+
+/**
+ * 任务等待用户操作（审批/提问）时的签名；未等待返回 null。
+ * 优先使用 sessions-index 的队首交互 ID，缺失时用活动摘要计数，签名变化即视为新的等待请求。
+ */
+export function taskWaitingSignature(task: ProjectTreeTask): string | null {
+  const interactionId = task.pendingInteraction?.interactionId?.trim();
+  if (interactionId) return interactionId;
+  const attention = getTaskListAttention(task);
+  if (!attention) return null;
+  const summary = getTaskListRowActivity(task)?.pendingInteractions;
+  return `attention:${summary?.permissionCount ?? 0}:${summary?.userInputCount ?? 0}`;
+}
+
+/** 等待确认（acknowledgement）键：任务身份 + 等待签名。 */
+function badgeWaitingAcknowledgementKey(task: ProjectTreeTask, signature: string): string {
+  return JSON.stringify([badgeTaskKey(task), signature]);
+}
+
 /**
  * 任务栏/托盘角标的未读总数：与侧栏蓝点同源（host readTree 的权威树），
  * 过滤条件与 projectHasUnread 一致（非归档 + 有 unreadAt），按 host+workspace+task 去重。
@@ -121,39 +172,67 @@ export function projectHasUnread(
  * 背景工作区有蓝点时这两份缓存是空的，角标会丢数。
  */
 export function countProjectTreeUnreadTasks(tree: ProjectTree): number {
-  // 只统计侧边栏实际渲染的项目（非软删）：孤儿任务（项目不存在）与已删项目的
-  // 未读在界面上没有蓝点落点，计入只会产生「有角标没蓝点」的幽灵提醒。
-  const renderedProjectKeys = new Set(
-    tree.projects
-      .filter((project) => !project.deleted)
-      .map((project) => `${project.hostId}::${project.id}`),
-  );
+  const visible = createBadgeVisibility(tree);
   const seen = new Set<string>();
   for (const task of tree.tasks) {
-    if (task.archived || !task.unreadAt) {
-      continue;
-    }
-
-    // 可见性对齐渲染分区：置顶区跨项目渲染；本地无项目任务区只渲染
-    // host=local 的 null-project 任务；其余任务必须归属渲染项目。
-    const visible =
-      task.pinned ||
-      (task.projectId == null && task.hostId === "local") ||
-      renderedProjectKeys.has(`${task.hostId}::${task.projectId}`);
-    if (!visible) {
-      continue;
-    }
-
-    seen.add(
-      JSON.stringify([
-        task.hostId,
-        task.workspaceIdentity?.trim() || task.workspacePath,
-        task.taskId,
-      ]),
-    );
+    if (task.unreadAt && visible(task)) seen.add(badgeTaskKey(task));
   }
-
   return seen.size;
+}
+
+/**
+ * 1.5.0 角标计数（spec：docs/desktop/windows-taskbar-unread-badge.md）：
+ * 未读已完成任务 ∪ 等待用户操作且未被本窗口确认的任务，同一任务只计一次。
+ */
+export function countProjectTreeBadgeTasks(
+  tree: ProjectTree,
+  acknowledgedWaiting: ReadonlySet<string> = new Set(),
+): number {
+  const visible = createBadgeVisibility(tree);
+  const seen = new Set<string>();
+  for (const task of tree.tasks) {
+    if (!visible(task)) continue;
+    if (task.unreadAt) {
+      seen.add(badgeTaskKey(task));
+      continue;
+    }
+    const signature = taskWaitingSignature(task);
+    if (signature && !acknowledgedWaiting.has(badgeWaitingAcknowledgementKey(task, signature))) {
+      seen.add(badgeTaskKey(task));
+    }
+  }
+  return seen.size;
+}
+
+/**
+ * 计算“已查看”任务当前等待签名的确认键，并裁剪已不再等待的旧确认。
+ * viewed 为本窗口聚焦时各分栏激活 tab 的任务（按 workspace key + sessionId）。
+ */
+export function reconcileBadgeWaitingAcknowledgements(params: {
+  tree: ProjectTree;
+  previous: ReadonlySet<string>;
+  viewed: ReadonlySet<string>;
+}): ReadonlySet<string> {
+  const next = new Set<string>();
+  for (const task of params.tree.tasks) {
+    const signature = taskWaitingSignature(task);
+    if (!signature) continue;
+    const key = badgeWaitingAcknowledgementKey(task, signature);
+    const viewKey = badgeViewedTaskKey(
+      task.workspaceIdentity?.trim() || task.workspacePath,
+      task.taskId,
+    );
+    if (params.previous.has(key) || params.viewed.has(viewKey)) next.add(key);
+  }
+  if (next.size === params.previous.size && [...next].every((key) => params.previous.has(key))) {
+    return params.previous;
+  }
+  return next;
+}
+
+/** 已查看任务键：工作台 tab 只知道 workspace key 与 sessionId，不含 hostId。 */
+export function badgeViewedTaskKey(workspaceKey: string, taskId: string): string {
+  return JSON.stringify([workspaceKey, taskId]);
 }
 
 export function projectKey(project: Pick<VirtualProject, "id" | "hostId">): string {

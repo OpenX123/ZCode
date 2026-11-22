@@ -82,10 +82,29 @@ sequenceDiagram
 
 三个引擎共用一个行内错误行组件，渲染在受影响轮次末尾：
 
-- 重试中（当前运行轮）：显示“正在重新连接 n/m”，上限未知时显示“正在重新连接（第 n 次）”，并附 HTTP 状态；展开可见上游原文、HTTP 状态、URL 与请求 ID，并可复制。
-- 终态失败：`turnHeader.failure` 描述的失败固定在该轮末尾，随历史持久化（外部引擎写入 assistant message 的 `error.data.failure`，冷恢复复用 TurnError 合成），冷恢复与重启后仍可见；展开内容同上。
-- 输入框上方横幅只承载与轮次无关的错误：`control.lastError.turnId` 存在且该轮已渲染行内错误时不再显示横幅；旧快照缺 `turnId` 时维持原横幅。
-- “重新发送”仅在最新一轮失败、该轮没有助手正文/思考且没有工具执行、原始输入不含附件时出现，点击后经正常发送路径重新发送该轮原始用户文本；任何路径都不自动重发，在途时按钮锁定，被挡下时提示并保留按钮。
+- 重试中（当前运行轮）：显示“正在重新连接 n/m”，上限未知时显示“正在重新连接（第 n 次）”，并附 HTTP 状态；“详情”展开同下方诊断卡。
+- 终态失败：`turnHeader.failure` 描述的失败固定在该轮末尾，随历史持久化（外部引擎写入 assistant message 的 `error.data.failure`，冷恢复复用 TurnError 合成），冷恢复与重启后仍可见。
+- 输入框上方横幅只承载与轮次无关的错误（引擎未配置、连接断开、发送被拒等）：`control.lastError.turnId` 存在时该错误由失败轮的行内错误行承载，横幅不再显示；旧快照缺 `turnId` 时维持原横幅。同一错误不得两处同时出现。
+- “重试”（1.5.0 前文案为“重新发送”）仅在最新一轮失败、该轮没有助手正文/思考且没有工具执行、原始输入不含附件时出现，点击后经正常发送路径重新发送该轮原始用户文本；任何路径都不自动重发，在途时按钮锁定，被挡下时提示并保留按钮。
+
+#### 1.5.0 外观（Codex 式，来源 `docs/plans/2026-11-22-experience-1.5.0.md` B1）
+
+- 一行：⚠ 图标（`CircleAlertIcon`，destructive 色）+ 一句人话 + “重试”（仅满足上条时）+ “详情”展开箭头（有诊断字段时）。不显示常驻 HTTP 徽标，HTTP 状态进入诊断卡。
+- 人话：先用横幅同一本地化裁决（稳定错误码按界面语言重写）；未被本地化时按下表归类，命中则一行显示归类说明，未命中显示已脱敏摘要。归类为纯函数 `classifyTurnFailure`（`components/ai-elements/error-explanations.ts`），只读 HTTP 状态、错误码与脱敏消息，不新增协议字段。
+
+| 归类             | 判定（任一）                                                                                       | 说明 / 建议词条（`chat.error.explain.<kind>.title/hint`）  |
+| ---------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `auth`           | HTTP 401；消息含 unauthorized / invalid api key / authentication                                    | 鉴权失败 / 检查 API Key 或重新登录                         |
+| `forbidden`      | HTTP 403；消息含 forbidden / permission denied                                                     | 无权访问 / 检查账号权限、模型可用范围或网关配置            |
+| `rateLimit`      | HTTP 429；消息含 rate limit / too many requests                                                    | 请求过于频繁 / 稍候再试或检查配额                          |
+| `overloaded`     | HTTP 529 / 503；消息含 overloaded                                                                  | 服务繁忙 / 上游过载，稍后重试                              |
+| `timeout`        | HTTP 408 / 504；消息含 timeout / timed out / ETIMEDOUT                                             | 请求超时 / 检查网络后重试                                  |
+| `network`        | 错误源 `network`；消息含 ECONNRESET / ECONNREFUSED / ENOTFOUND / fetch failed / socket hang up 等 | 网络连接中断 / 检查网络、代理或网关地址                    |
+| `contextTooLong` | 消息含 context length / context window / prompt is too long / too many tokens / maximum context   | 上下文过长 / 压缩对话、减少附件或新建任务                  |
+
+- 详情卡：展开后在行下方显示等宽、灰底（`bg-foreground/[0.04]`）、细边框的卡片，依次列出建议（归类命中时）、错误码、HTTP 状态、请求 ID、Trace ID、URL（scheme + host + path）、原始报错；只列存在的字段。右上角“复制全部”复制卡片全部字段的纯文本。所有字段在 ACP adapter / V4 投影边界已脱敏，UI 不再加工。
+- 输入框横幅外观与行内错误一致：一行图标 + 人话 + 次要操作（详情、复制、重试、关闭），低饱和 surface 背景；未本地化的错误同样套用上表归类说明。
+- 不做全局错误日志面板。
 
 旧快照缺少新增可选字段（`failure`、`turnId`、`url`、`failureId`、`nativeOptions`、`startWithoutReview`）时仍可读取，界面按旧行为降级。计划/错误新增事件经现有 session event journal 及 V4 state.updated 交付；清单和文档恢复沿既有 session entry，不创建第二份会话业务库。
 

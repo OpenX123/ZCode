@@ -33,13 +33,16 @@ export interface ComposerModelOptions {
   effortLabel: string;
   effortShortcutLabel?: string;
   selectModelLabel: string;
-  levels: readonly { value: string; label: string }[];
+  /** `shortLabel`：入口按钮上的缩写（≤5 个字母）；缺省时入口显示全称。 */
+  levels: readonly { value: string; label: string; shortLabel?: string }[];
   value: string;
   onValueChange: (value: string) => void;
 }
 
 export function ComposerThoughtIndicator({ options }: { options: ComposerModelOptions }) {
-  const label = options.levels.find((level) => level.value === options.value)?.label ?? "—";
+  const level = options.levels.find((candidate) => candidate.value === options.value);
+  // 1.5.0 B2：入口按钮只放缩写，展开的弹层仍显示全称。
+  const label = level ? (level.shortLabel ?? level.label) : "—";
   return (
     // 窄布局也保留档位文字，避免强度竖条被误认为运行状态。
     <span className="shrink-0 text-foreground-subtle" data-composer-thought-label>

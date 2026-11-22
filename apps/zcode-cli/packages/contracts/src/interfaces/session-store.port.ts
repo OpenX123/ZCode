@@ -1060,6 +1060,25 @@ export interface AppUsageDayModelRow {
   totalTokens: number;
 }
 
+/** model_usage 按（本地日, 模型, 会话目录）聚合；供 Host 本机多来源统计计价。 */
+export interface AppUsageFactRow {
+  dayIndex: number;
+  modelId: string | null;
+  cwd: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  requestCount: number;
+}
+
+/** 外部引擎会话的原生会话 ID（含已删除会话，避免其日志被误归为 CLI 来源）。 */
+export interface AppUsageExternalSessionRow {
+  engine: string;
+  externalSessionId: string;
+}
+
 export interface AppUsageQueryResult {
   totals: AppUsageTotalsRow;
   turnTotals: AppUsageTurnTotalsRow;
@@ -1068,6 +1087,8 @@ export interface AppUsageQueryResult {
   tools: AppUsageToolRow[];
   days: AppUsageDayRow[];
   dayModels: AppUsageDayModelRow[];
+  facts?: AppUsageFactRow[];
+  externalSessions?: AppUsageExternalSessionRow[];
 }
 
 export interface TaskUsageQueryInput {

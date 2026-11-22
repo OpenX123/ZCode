@@ -8,7 +8,7 @@ import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { usePendingInteractionTaskNotifications } from "@/hooks/useTaskNotifications.js";
 import { logger } from "@/logger.js";
-import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
+import { useTaskNotificationPreferencesSnapshot } from "@/lib/taskNotificationPreferences.js";
 import { useWorkspaceHookReviewStore } from "@/store/workspaceHookReviewStore.js";
 import {
   getTaskUiState,
@@ -163,7 +163,7 @@ export function V4InteractionDialogs({
   const workspaceHookReview = currentSnapshot?.pendingInteractions.find(
     (interaction) => interaction.payload.kind === "workspaceHookReview",
   );
-  const notificationEnabled = useZCodeStoreWithDefault((state) => state.notificationEnabled, true);
+  const notificationEnabled = useTaskNotificationPreferencesSnapshot().enabled;
   const botElicitationProgress = useZCodeSessionStore(
     (state) =>
       getTaskUiState(getWorkspaceState(state, workspacePath, workspaceIdentity), sessionId)

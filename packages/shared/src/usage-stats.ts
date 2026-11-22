@@ -252,6 +252,28 @@ export const appUsageToolUsageSchema = z.object({
   avgDurationMs: z.number().nullable(),
 });
 
+/**
+ * ZCode 原生 model_usage 按（日期, 模型, 会话目录）聚合的事实行，供本机多来源统计计价与按项目分组。
+ * inputTokens 为含缓存的总输入（与 summary 口径一致）。见 docs/usage-stats-local-sources.md。
+ */
+export const appUsageFactSchema = z.object({
+  date: z.string(),
+  modelId: z.string().nullable(),
+  cwd: z.string().nullable(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  reasoningTokens: z.number(),
+  cacheCreationTokens: z.number(),
+  cacheReadTokens: z.number(),
+  requestCount: z.number(),
+});
+
+/** ZCode 外部引擎会话记录的原生会话 ID（Claude Code sessionId / Codex thread id）。 */
+export const appUsageExternalSessionSchema = z.object({
+  engine: z.enum(["claude-code", "codex"]),
+  externalSessionId: z.string(),
+});
+
 export const appUsageSnapshotSchema = z.object({
   range: z.enum(APP_USAGE_RANGES),
   generatedAt: z.number(),
@@ -262,6 +284,9 @@ export const appUsageSnapshotSchema = z.object({
   dailyModelUsage: z.array(appUsageDailyModelUsageSchema),
   models: z.array(appUsageModelUsageSchema),
   tools: z.array(appUsageToolUsageSchema),
+  // additive：旧 CLI 不返回时为空，本机多来源统计按“不可用”处理映射与原生计价。
+  usageFacts: z.array(appUsageFactSchema).optional(),
+  externalSessions: z.array(appUsageExternalSessionSchema).optional(),
 });
 
 export type AppUsageSummary = z.infer<typeof appUsageSummarySchema>;
@@ -274,6 +299,8 @@ export type AppUsageModelUsage = z.infer<typeof appUsageModelUsageSchema>;
 export type AppUsageToolUsage = z.infer<typeof appUsageToolUsageSchema>;
 export type AppUsageFavoriteModel = z.infer<typeof appUsageFavoriteModelSchema>;
 export type AppUsageSnapshot = z.infer<typeof appUsageSnapshotSchema>;
+export type AppUsageFact = z.infer<typeof appUsageFactSchema>;
+export type AppUsageExternalSession = z.infer<typeof appUsageExternalSessionSchema>;
 
 export interface AppUsageRequest {
   range: AppUsageRange;

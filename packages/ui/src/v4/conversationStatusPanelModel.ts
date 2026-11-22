@@ -356,6 +356,22 @@ export function buildSubagentControlWorkIndex(
   return index;
 }
 
+/**
+ * 只有 Git Tools 可展示（1.5.0 起收起态胶囊不再显示 Git 指标）：此时 mini 形态没有摘要，
+ * 面板只在展开形态出现，避免留下空胶囊壳（docs/chat/turn-changes-card.md）。
+ */
+export function isGitOnlyStatusPanelContent(model: ConversationStatusPanelModel): boolean {
+  return Boolean(
+    model.git &&
+    !model.goal &&
+    !model.sessionPlans &&
+    !model.plan &&
+    model.runningBashWorks.length === 0 &&
+    model.runningSubagentWorks.length === 0 &&
+    model.runningWorkflowRuns.length === 0,
+  );
+}
+
 export function buildConversationStatusPanelModel(
   input: BuildConversationStatusPanelModelInput,
 ): ConversationStatusPanelModel {

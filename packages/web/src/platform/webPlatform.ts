@@ -1,4 +1,5 @@
 import { playTaskNotificationSound } from "@zcode/ui";
+import { taskNotificationSoundCategory } from "@zcode/shared";
 import type { IPlatformService, RemoteTarget } from "@zcode/shared";
 
 /** Web 与手机远控网页共用的平台实现：没有宿主进程，原生能力统一降级。 */
@@ -66,7 +67,14 @@ export function createWebPlatform(): IPlatformService {
     openExternalFile: () => Promise.resolve({ success: false, error: "Not supported in web mode" }),
     notifyRendererReady: () => {},
     showTaskNotification: (payload) => {
-      if (document.hasFocus()) {
+      // 1.5.0：提示音与系统通知解耦——前台不弹通知，但是否发声交给播放器按偏好判定
+      // （类别音色、前台是否也响）。spec：docs/desktop/task-notification-sounds.md
+      const appFocused = document.hasFocus();
+      void playTaskNotificationSound({
+        category: taskNotificationSoundCategory(payload.status),
+        appFocused,
+      });
+      if (appFocused) {
         return;
       }
       if (
@@ -80,7 +88,6 @@ export function createWebPlatform(): IPlatformService {
           body: payload.body,
           silent: true,
         });
-        void playTaskNotificationSound();
       } catch {
         // 浏览器通知不可用时静默忽略，避免打断主流程
       }

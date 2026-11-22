@@ -2,7 +2,7 @@
  * `chart` 预置渲染器的**入口**：懒加载 + 局部故障隔离，本模块自己不碰 recharts。
  *
  * 为什么必须懒：recharts 在模块初始化阶段会触发 decimal.js-light 的 LN10 校验，在 Electron
- * Linux 容器里会阻断整个 renderer 启动（`AppUsagePanel.tsx` 里记着的那次修复；spec 的
+ * Linux 容器里会阻断整个 renderer 启动（`LocalUsagePanel.tsx` 里记着的那次修复；spec 的
  * 「预置渲染器」行也把 `lazy()` 写成硬要求）。所以：
  * - 绘图体在 `ArtifactChartView.tsx`，只经 `lazy()` 的动态 import 抵达；
  * - 这个文件与 `index.ts` 的静态依赖里没有 recharts，谁 import 它们都不会把图表打进首屏。

@@ -1,10 +1,5 @@
-import type { AppUsageRange } from "@zcode/shared";
-import { Flame } from "lucide-react";
-import { cn } from "@/components/lib/utils.js";
-import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { formatCompactTokenNumber } from "@/lib/tokenNumberFormat.js";
 
-export const RANGE_OPTIONS: AppUsageRange[] = ["7d", "30d"];
 export const USAGE_STATS_TABS_LIST_CLASS =
   "flex h-7 rounded-full bg-surface p-0.5 group-data-horizontal/tabs:h-7";
 export const USAGE_STATS_TABS_TRIGGER_CLASS =
@@ -22,13 +17,6 @@ export function formatCompactNumber(locale: string, value: number): string {
 
 export function formatCompactTokenUsage(locale: string, value: number): string {
   return formatCompactTokenNumber(locale, value);
-}
-
-export function formatSummaryCompactTokenUsage(locale: string, value: number): string {
-  const formatted = formatCompactTokenUsage(locale, value);
-
-  // 通用紧凑格式会把中文单位直接贴在数字后；摘要卡片与相邻的时长、天数指标统一保留单位间距。
-  return locale.startsWith("zh") ? formatted.replace(/(?<=\d)(?=[万亿])/u, " ") : formatted;
 }
 
 export function formatPercent(locale: string, value: number): string {
@@ -82,79 +70,7 @@ export function formatMonth(locale: string, dateKey: string): string {
   }).format(date);
 }
 
-export function resolveModelLabel(
-  intl: ReturnType<typeof useZCodeIntl>["intl"],
-  modelId: string | null,
-): string {
-  return (
-    modelId?.trim() || intl.formatMessage({ id: "settings.usage.unknownModel" })
-  );
-}
-
-export function UsageMetricCard({
-  icon: Icon,
-  label,
-  value,
-  helper,
-  helperPlacement = "below",
-  valueSize = "xl",
-}: {
-  icon: typeof Flame;
-  label: string;
-  value: string;
-  helper?: string;
-  helperPlacement?: "below" | "inline";
-  valueSize?: "sm" | "base" | "lg" | "xl";
-}) {
-  const valueNode = (
-    <div
-      className={cn(
-        "truncate font-semibold text-foreground",
-        valueSize === "sm"
-          ? "text-ui-base"
-          : valueSize === "base"
-          ? "text-ui-lg"
-          : valueSize === "lg"
-            ? "text-lg"
-            : "text-3xl",
-      )}
-    >
-      {value}
-    </div>
-  );
-
-  return (
-    <div className="min-w-0 rounded-xl bg-surface px-3.5 py-3">
-      <div className="flex min-w-0 items-center gap-2 text-ui-base text-foreground-subtle">
-        <Icon className="size-3.5 shrink-0 text-foreground-subtle" />
-        <span className="truncate">{label}</span>
-      </div>
-      {helperPlacement === "inline" && helper ? (
-        <div className="mt-2 flex min-w-0 items-baseline gap-2">
-          {valueNode}
-          <div className="min-w-0 truncate text-ui-base text-foreground-subtle">
-            {helper}
-          </div>
-        </div>
-      ) : (
-        <div className="mt-2">{valueNode}</div>
-      )}
-      {helper && helperPlacement === "below" ? (
-        <div className="mt-0.5 truncate text-ui-base text-foreground-subtle">
-          {helper}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-export function UsageEmptyState({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
+export function UsageEmptyState({ title, description }: { title: string; description: string }) {
   return (
     <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center">
       <div className="text-ui-base font-medium text-foreground">{title}</div>

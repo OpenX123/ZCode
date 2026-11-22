@@ -28,6 +28,7 @@ import {
   sessionUsageStateSchema,
   subagentProjectionStateSchema,
   workspaceHookAdmissionStateSchema,
+  turnActivityStateSchema,
 } from "./snapshot.js";
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -61,6 +62,8 @@ export const statePatchSchema = z.object({
   plan: planStateSchema.nullable().optional(),
   // 软门禁：null = pending 清零(提示条消失);对象 = 待审核状态更新。
   workspaceHookAdmission: workspaceHookAdmissionStateSchema.nullable().optional(),
+  // 轮次活动（1.5.0）：null = 轮次结束；不计入 revision（见 projection-state.ts）。
+  turnActivity: turnActivityStateSchema.nullable().optional().catch(null),
 });
 export type StatePatch = z.infer<typeof statePatchSchema>;
 

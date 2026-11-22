@@ -72,15 +72,6 @@ export async function seedAppUsageE2EFixture(options: {
   }
 }
 
-export function clearAppUsageE2EFixture(e2eHomeDir: string): void {
-  const database = new DatabaseSync(appUsageDatabasePath(e2eHomeDir));
-  try {
-    database.exec("delete from tool_usage; delete from turn_usage; delete from model_usage;");
-  } finally {
-    database.close();
-  }
-}
-
 async function seedHistory(
   options: { cliEntryPoint: string; e2eHomeDir: string; workspacePath: string },
   sessionId: string,

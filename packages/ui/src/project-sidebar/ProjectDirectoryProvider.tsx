@@ -1,14 +1,19 @@
 import { useSourceServerDisplayNames } from "@/hooks/useSourceServerDisplayNames.js";
-import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
-import { countProjectTreeUnreadTasks } from "@/project-sidebar/view.js";
+import {
+  badgeViewedTaskKey,
+  countProjectTreeBadgeTasks,
+  reconcileBadgeWaitingAcknowledgements,
+} from "@/project-sidebar/view.js";
+import { useTaskNotificationPreferencesSnapshot } from "@/lib/taskNotificationPreferences.js";
 import { useProjectTree } from "@/project-sidebar/useProjectTree.js";
 import { useProjectSidebarPreferences } from "@/project-sidebar/useProjectSidebarPreferences.js";
-import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { useTaskGroups } from "@/project-sidebar/useTaskGroups.js";
 import { selectSortedProjects } from "@/project-sidebar/view.js";
 import {
   remoteHostIdFromWorkspaceIdentity,
+  type ProjectTree,
   type VirtualProject,
 } from "@/project-sidebar/contract.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
@@ -52,23 +57,85 @@ export function ProjectDirectoryProvider({
 }
 function DirectoryOwner({ children, isDesktop }: { children: ReactNode; isDesktop: boolean }) {
   const directory = useDirectoryState(isDesktop);
-  // 任务栏/托盘角标与侧栏蓝点同源：数权威树的未读任务（过滤与 projectHasUnread 一致）。
+  // 任务栏/托盘角标 = 未读已完成任务 ∪ 等待用户操作的任务（spec：
+  // docs/desktop/windows-taskbar-unread-badge.md）。未读与侧栏蓝点同源（权威树）。
   // 挂在 Provider owner（Root 顶层，常驻不卸载）而不是 ProjectSidebar：侧栏卸载期间
   // 后台完成的未读变化也要同步到任务栏/托盘。嵌入 pane / 测试环境无 Provider 时跳过。
   const platform = useOptionalPlatform();
   // 任务通知开关同时门控任务栏/托盘角标：关掉通知 = 连常驻提醒一起关闭
   // （同步 0 清空角标），侧栏蓝点作为应用内状态不受影响。
-  const notificationEnabled = useZCodeStoreWithDefault((state) => state.notificationEnabled, true);
-  const unreadTaskCount = useMemo(
-    () => countProjectTreeUnreadTasks(directory.tree),
-    [directory.tree],
+  const notificationEnabled = useTaskNotificationPreferencesSnapshot().enabled;
+  const acknowledgedWaiting = useBadgeWaitingAcknowledgements(directory.tree);
+  const badgeTaskCount = useMemo(
+    () => countProjectTreeBadgeTasks(directory.tree, acknowledgedWaiting),
+    [directory.tree, acknowledgedWaiting],
   );
   useEffect(() => {
-    platform?.syncWindowUnreadCount(notificationEnabled ? unreadTaskCount : 0);
-  }, [platform, notificationEnabled, unreadTaskCount]);
+    platform?.syncWindowUnreadCount(notificationEnabled ? badgeTaskCount : 0);
+  }, [platform, notificationEnabled, badgeTaskCount]);
   useReleaseDeletedProjectDrafts(directory.factTree.projects);
   return <Context.Provider value={directory}>{children}</Context.Provider>;
 }
+/** 窗口聚焦且可见：只有用户真正看着窗口时，激活 tab 上的等待态才算“已查看”。 */
+function useWindowViewing(): boolean {
+  const read = () =>
+    typeof document !== "undefined" &&
+    document.visibilityState === "visible" &&
+    document.hasFocus();
+  const [viewing, setViewing] = useState(read);
+  useEffect(() => {
+    const sync = () => setViewing(read());
+    window.addEventListener("focus", sync);
+    window.addEventListener("blur", sync);
+    document.addEventListener("visibilitychange", sync);
+    sync();
+    return () => {
+      window.removeEventListener("focus", sync);
+      window.removeEventListener("blur", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, []);
+  return viewing;
+}
+
+/** 本窗口各分栏激活 tab 绑定的任务；以稳定字符串订阅，避免无关 tab 变化重算。 */
+function useViewedTaskKeys(): ReadonlySet<string> {
+  const serialized = useWorkbenchTabsStore((state) =>
+    JSON.stringify(
+      state.groups
+        .map((group) => state.tabs[group.activeTabId])
+        .flatMap((tab) =>
+          tab?.sessionId
+            ? [badgeViewedTaskKey(workbenchWorkspaceKey(tab.workspaceScope), tab.sessionId)]
+            : [],
+        )
+        .sort(),
+    ),
+  );
+  return useMemo(() => new Set(JSON.parse(serialized) as string[]), [serialized]);
+}
+
+/**
+ * 等待态“打开即清除”：窗口被查看时，激活 tab 任务的当前等待签名记为已确认；
+ * 等待签名变化（新的审批/提问）重新计入，等待结束后确认随之裁剪。
+ * 确认是本窗口 UI 局部状态，不写回 Host，也不冒充服务端事实。
+ */
+function useBadgeWaitingAcknowledgements(tree: ProjectTree): ReadonlySet<string> {
+  const viewing = useWindowViewing();
+  const viewedTaskKeys = useViewedTaskKeys();
+  const [acknowledged, setAcknowledged] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    setAcknowledged((previous) =>
+      reconcileBadgeWaitingAcknowledgements({
+        tree,
+        previous,
+        viewed: viewing ? viewedTaskKeys : new Set(),
+      }),
+    );
+  }, [tree, viewing, viewedTaskKeys]);
+  return acknowledged;
+}
+
 /**
  * 修复「连接引擎失败: project.deleted」：项目被删除后草稿仍保留其 ID，界面按过滤后的列表显示
  * “选择项目”，预热却带着已删 ID 调用 createSession。目录 owner 是唯一知道删除事实的常驻方，
