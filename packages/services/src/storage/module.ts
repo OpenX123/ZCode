@@ -4,7 +4,7 @@
  */
 export const storageModule = {
   id: "storage",
-  requires: ["shared", "rpc", "services"],
+  requires: ["shared", "rpc", "services", "ycode-data-root"],
   provides: ["storage-service"],
   publicEntrypoints: ["contract.ts"],
 } as const;

@@ -4,7 +4,7 @@
  */
 export const usageStatsLocalModule = {
   id: "usage-stats-local",
-  requires: ["services", "shared"],
+  requires: ["services", "shared", "ycode-data-root"],
   provides: ["usage-stats-local"],
   publicEntrypoints: ["index.ts", "contract.ts"],
 } as const;
