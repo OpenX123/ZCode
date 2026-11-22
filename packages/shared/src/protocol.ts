@@ -444,6 +444,8 @@ export interface AppSettings {
   skippedElectronUpdateVersions?: Partial<Record<ElectronReleaseChannel, string>>;
   /** 首次启动设置同步提示是否已消费；只表示弹窗不再出现，不代表导入成功。 */
   settingsSyncFirstRunPromptHandled?: boolean;
+  /** Skills Hub 冲突选择：nameKey → 采用的技能真实目录（docs/skills-hub-spec.md）。 */
+  skillsHubConflictChoices?: Record<string, string>;
   /** 外部 Web 远控 relay 的非敏感设备身份；passHash 必须存 credentialService。 */
   /** V2 非敏感注册身份；JWT 和一次性 token 不持久化于 AppSettings。 */
   webRemoteControlRelayV2Device?: {

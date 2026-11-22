@@ -1094,6 +1094,20 @@ modules:
       ui: .
     owner: desktop
 
+  # skills-hub-contract：外部技能统一管理的纯领域逻辑（docs/skills-hub-spec.md）
+  - id: skills-hub-contract
+    roots:
+      - packages/shared/src/skills-hub
+      - packages/shared/test/skills-hub
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/shared/src/skills-hub/index.ts
+      - packages/shared/src/skills-hub/contract.ts
+    layers:
+      domain: .
+    owner: plugin
+
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
   # 基于领先 staging 很多的分支开工时，merge-base 之前的"新增"文件不应被追溯。
