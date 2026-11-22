@@ -63,7 +63,7 @@ describe("remote prompt attachment materialization", () => {
 
     const remotePath = upload.mock.calls[0]?.[1] ?? "";
     expect(remotePath).toMatch(
-      /^\/home\/tester\/\.zcode\/tmp\/prompt-attachments\/trace-abc-123\/[A-Za-z0-9._-]+\/01-pasted-text\.txt$/,
+      /^\/home\/tester\/\.ycode\/tmp\/prompt-attachments\/trace-abc-123\/[A-Za-z0-9._-]+\/01-pasted-text\.txt$/,
     );
     expect(upload).toHaveBeenCalledWith(hostPath, remotePath);
     expect(exec.mock.calls[0]?.[0]).toBe('printf %s "$HOME"');

@@ -123,9 +123,9 @@ export interface CreateSourceServerTransportAdapterOptions {
   createBackend?: (target: RemoteTarget) => Promise<IRemoteBackend>;
 }
 
-const SERVER_ROOT_READ_PATH = "~/.zcode/server";
-const SERVER_ROOT_SHELL = '"$HOME/.zcode/server"';
-const SERVER_BIN_SHELL = '"$HOME/.zcode/server/bin/zcode"';
+const SERVER_ROOT_READ_PATH = "~/.ycode/server";
+const SERVER_ROOT_SHELL = '"$HOME/.ycode/server"';
+const SERVER_BIN_SHELL = '"$HOME/.ycode/server/bin/zcode"';
 const STALE_BOOTSTRAP_AGE_MS = 30 * 60 * 1_000;
 const INSTALL_PROGRESS_MESSAGES: Record<SourceServerInstallProgress["phase"], string> = {
   "verify-archive": "Verifying Source Server archive",
@@ -215,7 +215,7 @@ class BackendSourceServerTransportAdapter implements SourceServerTransportAdapte
     const operationId = `${process.pid}-${Date.now()}`;
     const bootstrapRootShell = `${SERVER_ROOT_SHELL}/.bootstrap-${operationId}`;
     const bootstrapDirShell = `${bootstrapRootShell}/extract`;
-    const remoteArchive = `~/.zcode/server/.bootstrap-${operationId}/zcode-server.tar.gz`;
+    const remoteArchive = `~/.ycode/server/.bootstrap-${operationId}/zcode-server.tar.gz`;
     const remoteArchiveShell = `${bootstrapRootShell}/zcode-server.tar.gz`;
     const cleanupCommand = `rm -rf ${bootstrapRootShell}`;
     const cleanupStaleBootstrapRootsCommand =
@@ -331,7 +331,10 @@ class BackendSourceServerTransportAdapter implements SourceServerTransportAdapte
       }
       const event = sourceServerInstallProgressSchema.safeParse(value);
       if (event.success) {
-        context.onLog?.({ phase: event.data.phase, message: INSTALL_PROGRESS_MESSAGES[event.data.phase] });
+        context.onLog?.({
+          phase: event.data.phase,
+          message: INSTALL_PROGRESS_MESSAGES[event.data.phase],
+        });
       }
     });
     if (result.exitCode !== 0) {

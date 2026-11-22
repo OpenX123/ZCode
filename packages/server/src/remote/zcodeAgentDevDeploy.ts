@@ -266,7 +266,7 @@ async function shouldSkipDevelopmentZCodeAgentDeploy(params: {
   try {
     await waitForClose(
       await params.backend.exec(
-        `"\${ZCODE_SERVER_RUNTIME_ROOT:-$HOME/.zcode/server}/node" -e ${quotePosixShellArg(verifyBundleScript)} ${quotePosixPathArg(params.remoteBundlePath)} ${quotePosixShellArg(params.localBundleSha256)}`,
+        `"\${ZCODE_SERVER_RUNTIME_ROOT:-$HOME/.ycode/server}/node" -e ${quotePosixShellArg(verifyBundleScript)} ${quotePosixPathArg(params.remoteBundlePath)} ${quotePosixShellArg(params.localBundleSha256)}`,
       ),
     );
   } catch {

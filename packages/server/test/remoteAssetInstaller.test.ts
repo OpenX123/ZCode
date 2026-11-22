@@ -254,20 +254,20 @@ describe("remote asset installer command builders", () => {
     const command = buildRemoteArtifactDownloadCommand({
       tool: "curl",
       urls: ["https://cdn.example.test/a b/component.tar.gz"],
-      outputPath: "~/.zcode/server/asset-cache/staging/a b/component.tar.gz",
+      outputPath: "~/.ycode/server/asset-cache/staging/a b/component.tar.gz",
       progressLabel: "server-bundle@1.0.0-server-bundle",
     });
 
     expect(command).toContain("curl");
     expect(command).toContain("'https://cdn.example.test/a b/component.tar.gz'");
-    expect(command).toContain("\"$HOME\"'/.zcode/server/asset-cache/staging/a b/component.tar.gz'");
+    expect(command).toContain("\"$HOME\"'/.ycode/server/asset-cache/staging/a b/component.tar.gz'");
   });
 
   it("emits remote download progress lines while downloading artifacts", () => {
     const command = buildRemoteArtifactDownloadCommand({
       tool: "wget",
       urls: ["https://cdn.example.test/component.tar.gz"],
-      outputPath: "~/.zcode/server/asset-cache/staging/component.tar.gz",
+      outputPath: "~/.ycode/server/asset-cache/staging/component.tar.gz",
       progressLabel: "server-bundle@1.0.0-server-bundle",
     });
 
@@ -282,7 +282,7 @@ describe("remote asset installer command builders", () => {
     const command = buildRemoteArtifactDownloadCommand({
       tool: "wget",
       urls: ["https://cdn.example.test/component.tar.gz"],
-      outputPath: "~/.zcode/server/asset-cache/staging/component.tar.gz",
+      outputPath: "~/.ycode/server/asset-cache/staging/component.tar.gz",
       progressLabel: "server-bundle@1.0.0-server-bundle",
       totalBytes: 2 * 1024 * 1024,
     });
@@ -297,7 +297,7 @@ describe("remote asset installer command builders", () => {
     const command = buildRemoteArtifactDownloadCommand({
       tool: "curl",
       urls: ["https://cdn.example.test/component.tar.gz"],
-      outputPath: "~/.zcode/server/component.tar.gz",
+      outputPath: "~/.ycode/server/component.tar.gz",
       progressLabel: "source-server-linux-x64",
       supportsProgress: false,
     });
@@ -341,7 +341,7 @@ describe("remote asset installer command builders", () => {
   it("builds sha256 commands for openssl", () => {
     const command = buildRemoteChecksumCommand({
       tool: "openssl",
-      filePath: "~/.zcode/server/component.tar.gz",
+      filePath: "~/.ycode/server/component.tar.gz",
     });
     expect(command).toContain("openssl dgst -sha256");
     expect(command).not.toContain("awk");
@@ -379,7 +379,7 @@ describe("LocalUploadAssetInstaller", () => {
       installer.installFile({
         componentId: "server-bundle",
         sourceRelativePath: "server/zcode-server.cjs",
-        remotePath: "~/.zcode/server/zcode-server.cjs",
+        remotePath: "~/.ycode/server/zcode-server.cjs",
       }),
     ).rejects.toMatchObject({ name: "AbortError" });
 
@@ -470,7 +470,7 @@ describe("LocalUploadAssetInstaller", () => {
     const installing = installer.installFile({
       componentId: "server-bundle",
       sourceRelativePath: "server/zcode-server.cjs",
-      remotePath: "~/.zcode/server/zcode-server.cjs",
+      remotePath: "~/.ycode/server/zcode-server.cjs",
     });
     await uploadStarted;
     controller.abort();
@@ -521,7 +521,7 @@ describe("LocalUploadAssetInstaller", () => {
     const installing = installer.installDirectory({
       componentId: "ripgrep",
       sourceRelativePath: "tools/linux-x64/ripgrep",
-      remoteDir: "~/.zcode/server/tools/ripgrep",
+      remoteDir: "~/.ycode/server/tools/ripgrep",
     });
     await uploadStarted;
     controller.abort();
@@ -551,7 +551,7 @@ describe("LocalUploadAssetInstaller", () => {
     await installer.installDirectory({
       componentId: "ripgrep",
       sourceRelativePath: "tools/linux-x64/ripgrep",
-      remoteDir: "~/.zcode/server/tools/ripgrep",
+      remoteDir: "~/.ycode/server/tools/ripgrep",
     });
 
     expect(backend.commands[0]).toContain("find");
@@ -574,11 +574,11 @@ describe("LocalUploadAssetInstaller", () => {
     await installer.installFile({
       componentId: "server-bundle",
       sourceRelativePath: "server/zcode-server.cjs",
-      remotePath: "~/.zcode/server/zcode-server.cjs",
+      remotePath: "~/.ycode/server/zcode-server.cjs",
     });
 
     expect(backend.uploads[0]?.remotePath).toMatch(
-      /^~\/\.zcode\/server\/zcode-server\.cjs\.new-[\w-]+$/u,
+      /^~\/\.ycode\/server\/zcode-server\.cjs\.new-[\w-]+$/u,
     );
     expect(backend.commands.join("\n")).toContain(backend.uploads[0]!.remotePath.split("/").at(-1));
     expect(backend.commands[0]).not.toContain("find");
@@ -599,7 +599,7 @@ describe("LocalUploadAssetInstaller", () => {
       installer.installFile({
         componentId: "node-runtime",
         sourceRelativePath: "node/node",
-        remotePath: "~/.zcode/server/node",
+        remotePath: "~/.ycode/server/node",
         executable: true,
       }),
     ).rejects.toThrow("chmod denied");
@@ -685,7 +685,7 @@ describe("LocalUploadAssetInstaller", () => {
     const installParams = {
       componentId: "ripgrep",
       sourceRelativePath: "tools/linux-x64/ripgrep",
-      remoteDir: "~/.zcode/server/tools/ripgrep",
+      remoteDir: "~/.ycode/server/tools/ripgrep",
     };
     await Promise.all([
       installer.installDirectory(installParams),
@@ -696,7 +696,7 @@ describe("LocalUploadAssetInstaller", () => {
     const remoteTarPaths = backend.uploads.map((upload) => upload.remotePath);
     expect(new Set(remoteTarPaths)).toHaveLength(2);
     for (const remoteTarPath of remoteTarPaths) {
-      expect(remoteTarPath).toMatch(/^~\/.zcode\/server\/tools\/ripgrep\.tar\.gz-[\w-]+$/u);
+      expect(remoteTarPath).toMatch(/^~\/.ycode\/server\/tools\/ripgrep\.tar\.gz-[\w-]+$/u);
     }
     expect(backend.commands.join("\n")).toContain("ripgrep.extract-");
     expect(backend.commands.join("\n")).toContain("trap cleanup_staging EXIT");
@@ -826,8 +826,8 @@ describe("RemoteDownloadAssetInstaller", () => {
             ? 'wget() { while [ "$1" != -O ]; do shift; done; shift; printf corrupt > "$1"; }'
             : 'tar() { echo "fixture extraction failed" >&2; return 2; }';
       const backend = new ShellInstallerBackend(rootDir, `${download}\n${failure}`);
-      const installedPath = join(rootDir, ".zcode/server/zcode-server.cjs");
-      await mkdir(join(rootDir, ".zcode/server"), { recursive: true });
+      const installedPath = join(rootDir, ".ycode/server/zcode-server.cjs");
+      await mkdir(join(rootDir, ".ycode/server"), { recursive: true });
       await writeFile(installedPath, "previous server");
       const installer = new RemoteDownloadAssetInstaller(
         backend,
@@ -849,29 +849,29 @@ describe("RemoteDownloadAssetInstaller", () => {
           installer.installFile({
             componentId: "server-bundle",
             sourceRelativePath: "server/zcode-server.cjs",
-            remotePath: "~/.zcode/server/zcode-server.cjs",
+            remotePath: "~/.ycode/server/zcode-server.cjs",
           }),
         ).rejects.toThrow(diagnostic);
         expect(backend.commands).toHaveLength(1);
-        await expect(readdir(join(rootDir, ".zcode/server/asset-cache/staging"))).resolves.toEqual(
+        await expect(readdir(join(rootDir, ".ycode/server/asset-cache/staging"))).resolves.toEqual(
           [],
         );
         await expect(
-          readdir(join(rootDir, ".zcode/server/asset-cache/components/linux-x64/server-bundle")),
+          readdir(join(rootDir, ".ycode/server/asset-cache/components/linux-x64/server-bundle")),
         ).resolves.toEqual([]);
         await expect(readFile(installedPath, "utf8")).resolves.toBe("previous server");
         backend.prelude = download;
         await installer.installFile({
           componentId: "server-bundle",
           sourceRelativePath: "server/zcode-server.cjs",
-          remotePath: "~/.zcode/server/zcode-server.cjs",
+          remotePath: "~/.ycode/server/zcode-server.cjs",
         });
         await expect(readFile(installedPath, "utf8")).resolves.toBe("current server");
-        await expect(readdir(join(rootDir, ".zcode/server/asset-cache/staging"))).resolves.toEqual(
+        await expect(readdir(join(rootDir, ".ycode/server/asset-cache/staging"))).resolves.toEqual(
           [],
         );
         await expect(
-          readdir(join(rootDir, ".zcode/server/asset-cache/components/linux-x64/server-bundle")),
+          readdir(join(rootDir, ".ycode/server/asset-cache/components/linux-x64/server-bundle")),
         ).resolves.toEqual([sha256]);
       } finally {
         vi.unstubAllGlobals();
@@ -901,7 +901,7 @@ describe("RemoteDownloadAssetInstaller", () => {
       installer.installFile({
         componentId: "server-bundle",
         sourceRelativePath: "server/zcode-server.cjs",
-        remotePath: "~/.zcode/server/zcode-server.cjs",
+        remotePath: "~/.ycode/server/zcode-server.cjs",
       }),
     ).rejects.toMatchObject({ name: "AbortError" });
 
@@ -938,7 +938,7 @@ describe("RemoteDownloadAssetInstaller", () => {
       await installer.installFile({
         componentId: "server-bundle",
         sourceRelativePath: "server/zcode-server.cjs",
-        remotePath: "~/.zcode/server/zcode-server.cjs",
+        remotePath: "~/.ycode/server/zcode-server.cjs",
       });
 
       expect(directFetch).not.toHaveBeenCalled();
@@ -984,7 +984,7 @@ describe("RemoteDownloadAssetInstaller", () => {
     const installing = installer.installFile({
       componentId: "server-bundle",
       sourceRelativePath: "server/zcode-server.cjs",
-      remotePath: "~/.zcode/server/zcode-server.cjs",
+      remotePath: "~/.ycode/server/zcode-server.cjs",
     });
     await headStarted;
     controller.abort();
@@ -1017,7 +1017,7 @@ describe("RemoteDownloadAssetInstaller", () => {
     await installer.installFile({
       componentId: "server-bundle",
       sourceRelativePath: "server/zcode-server.cjs",
-      remotePath: "~/.zcode/server/zcode-server.cjs",
+      remotePath: "~/.ycode/server/zcode-server.cjs",
     });
 
     const command = backend.commands.join("\n");
@@ -1027,7 +1027,7 @@ describe("RemoteDownloadAssetInstaller", () => {
     expect(command).toContain("stat -f %m");
     expect(command).toContain("stale lock for server-bundle@1.0.0-server-bundle");
     expect(command).toContain(
-      'touch "$HOME"\'/.zcode/server/asset-cache/components/linux-x64/server-bundle/',
+      'touch "$HOME"\'/.ycode/server/asset-cache/components/linux-x64/server-bundle/',
     );
     expect(command).toContain('kill "$lock_heartbeat_pid"');
     expect(command).toMatch(/\.new-[^\s']+/u);
@@ -1061,7 +1061,7 @@ describe("RemoteDownloadAssetInstaller", () => {
     await installer.installFile({
       componentId: "server-bundle",
       sourceRelativePath: "server/zcode-server.cjs",
-      remotePath: "~/.zcode/server/zcode-server.cjs",
+      remotePath: "~/.ycode/server/zcode-server.cjs",
     });
 
     expect(logs).toContain(
@@ -1088,7 +1088,7 @@ describe("RemoteDownloadAssetInstaller", () => {
     await installer.installFile({
       componentId: "server-bundle",
       sourceRelativePath: "server/zcode-server.cjs",
-      remotePath: "~/.zcode/server/zcode-server.cjs",
+      remotePath: "~/.ycode/server/zcode-server.cjs",
     });
 
     expect(backend.commands.join("\n")).toContain("total=2097152");
@@ -1111,7 +1111,7 @@ describe("RemoteDownloadAssetInstaller", () => {
     const backend = new InstallerBackend(
       [],
       new Set([
-        `~/.zcode/server/asset-cache/components/linux-x64/server-bundle/${expectedCacheSegment}/.ready`,
+        `~/.ycode/server/asset-cache/components/linux-x64/server-bundle/${expectedCacheSegment}/.ready`,
       ]),
     );
     const logs: string[] = [];
@@ -1132,7 +1132,7 @@ describe("RemoteDownloadAssetInstaller", () => {
     await installer.installFile({
       componentId: "server-bundle",
       sourceRelativePath: "server/zcode-server.cjs",
-      remotePath: "~/.zcode/server/zcode-server.cjs",
+      remotePath: "~/.ycode/server/zcode-server.cjs",
     });
 
     const commands = backend.commands.join("\n");
@@ -1165,7 +1165,7 @@ describe("RemoteDownloadAssetInstaller", () => {
     const expectedCacheSegment = "b".repeat(64);
     const backend = new InstallerBackend(
       [],
-      new Set([`~/.zcode/server/asset-cache/components/linux-x64/glm/${oldCacheSegment}/.ready`]),
+      new Set([`~/.ycode/server/asset-cache/components/linux-x64/glm/${oldCacheSegment}/.ready`]),
     );
     const logs: string[] = [];
     const warnings: string[] = [];
@@ -1186,18 +1186,18 @@ describe("RemoteDownloadAssetInstaller", () => {
     await installer.installFile({
       componentId: "glm",
       sourceRelativePath: "glm/linux-x64/zcode.cjs",
-      remotePath: "~/.zcode/server/agents/glm/zcode.cjs",
+      remotePath: "~/.ycode/server/agents/glm/zcode.cjs",
     });
 
     const commands = backend.commands.join("\n");
     expect(commands).toContain("curl -fL");
     expect(commands).toContain(`asset-cache/components/linux-x64/glm/${expectedCacheSegment}`);
     expect(commands).not.toContain(
-      `rm -rf "$HOME"'/.zcode/server/asset-cache/components/linux-x64/glm/${oldCacheSegment}'`,
+      `rm -rf "$HOME"'/.ycode/server/asset-cache/components/linux-x64/glm/${oldCacheSegment}'`,
     );
     expect(logs).not.toContain(`[remote-assets] remote component cache hit: glm@${hashedVersion}`);
     expect(warnings).toContain(
-      `[remote-assets] download required: component=glm reason=remote component cache missing path=~/.zcode/server/asset-cache/components/linux-x64/glm/${expectedCacheSegment}/.ready`,
+      `[remote-assets] download required: component=glm reason=remote component cache missing path=~/.ycode/server/asset-cache/components/linux-x64/glm/${expectedCacheSegment}/.ready`,
     );
     vi.unstubAllGlobals();
   });
@@ -1222,7 +1222,7 @@ describe("RemoteDownloadAssetInstaller", () => {
       installer.installFile({
         componentId: "server-bundle",
         sourceRelativePath: "server/zcode-server.cjs",
-        remotePath: "~/.zcode/server/zcode-server.cjs",
+        remotePath: "~/.ycode/server/zcode-server.cjs",
       }),
     ).rejects.toThrow("sha256 is invalid");
     vi.unstubAllGlobals();
