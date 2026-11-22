@@ -124,6 +124,21 @@ describe("queryAppUsage", () => {
       expect(result.dayModels.some((d) => d.modelId === "model-a" && d.totalTokens === 100)).toBe(
         true,
       );
+
+      // 本机多来源统计：按日/模型/目录给出完整 token 拆分
+      expect(result.facts).toHaveLength(2);
+      expect(result.facts).toContainEqual(
+        expect.objectContaining({
+          modelId: "model-a",
+          cwd: tempRoot,
+          inputTokens: 95,
+          outputTokens: 5,
+          cacheReadTokens: 80,
+          cacheCreationTokens: 5,
+          requestCount: 1,
+        }),
+      );
+      expect(result.externalSessions).toEqual([]);
     } finally {
       store.close();
       await rm(tempRoot, { force: true, recursive: true });
@@ -400,6 +415,42 @@ describe("queryTaskUsage", () => {
           main_turn: 95,
         },
       });
+    } finally {
+      store.close();
+      await rm(tempRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("exposes external engine native session ids (including deleted sessions)", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "zcode-usage-external-"));
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    try {
+      const base = { projectID: createProjectId("ext"), directory: tempRoot, version: "0.1.0" };
+      await store.createSession({
+        ...base,
+        id: createSessionId("ext-claude"),
+        slug: "c",
+        title: "c",
+        engine: "claude-code",
+        externalSessionId: "claude-native-1",
+      });
+      await store.createSession({
+        ...base,
+        id: createSessionId("ext-codex"),
+        slug: "x",
+        title: "x",
+        engine: "codex",
+        externalSessionId: "codex-thread-1",
+      });
+      await store.createSession({ ...base, id: createSessionId("native"), slug: "n", title: "n" });
+      const result = await store.queryAppUsage({ since: 0, until: Date.now(), tzOffsetMs: 0 });
+      expect(result.externalSessions).toEqual(
+        expect.arrayContaining([
+          { engine: "claude-code", externalSessionId: "claude-native-1" },
+          { engine: "codex", externalSessionId: "codex-thread-1" },
+        ]),
+      );
+      expect(result.externalSessions).toHaveLength(2);
     } finally {
       store.close();
       await rm(tempRoot, { force: true, recursive: true });
