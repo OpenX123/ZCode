@@ -27,6 +27,8 @@ import type {
 } from "@zcode/shared";
 import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "@zcode/shared";
 import type { ISkillsService } from "./skills.js";
+import type { ISettingService } from "../setting/setting.js";
+import { createSkillsHub, type SkillsHubChoiceStore } from "#src/skills-hub/index.js";
 import { SKILL_FILE_NAME, walkSkillMarkdownPaths } from "./skillDiscoveryWalk.js";
 import { readInstalledPluginRoots } from "#src/plugins/installedPluginRoots.js";
 
@@ -67,6 +69,27 @@ function resolveUserHomeDir() {
 
 interface SkillsServiceOptions {
   isDesktopRuntime?: boolean;
+  /** Skills Hub 冲突选择持久化到 AppSettings；未注入时仅保存在进程内（测试/无设置宿主）。 */
+  settingService?: Pick<ISettingService, "get" | "update">;
+}
+
+function createSkillsHubChoiceStore(
+  settingService: SkillsServiceOptions["settingService"],
+): SkillsHubChoiceStore {
+  let memory: Record<string, string> = {};
+  if (!settingService) {
+    return {
+      read: async () => ({ ...memory }),
+      write: async (next) => {
+        memory = { ...next };
+      },
+    };
+  }
+  return {
+    read: async () => ({ ...(await settingService.get()).skillsHubConflictChoices }),
+    // 冲突选择不写 cli/config.json：CLI 配置 schema 为 strict，新增顶层键会让 CLI 拒绝整份配置。
+    write: (next) => settingService.update({ skillsHubConflictChoices: next }),
+  };
 }
 
 /** ZCode Agent 工作区级技能目录。 */
@@ -1035,8 +1058,21 @@ function attachEnabledState(
 
 export function createSkillsService(options?: SkillsServiceOptions): ISkillsService {
   let writeQueue = Promise.resolve();
+  // Skills Hub 是外部技能链接与清单的唯一写入者；只在桌面用户范围可用。
+  const skillsHub = createSkillsHub({
+    homeDir: resolveUserHomeDir,
+    isAvailable: () => resolveCapabilities(options).userScopeAvailable,
+    choices: createSkillsHubChoiceStore(options?.settingService),
+  });
 
   return {
+    onDidChangeHub: skillsHub.onDidChange,
+    getHubState: () => skillsHub.getState(),
+    syncHub: () => skillsHub.sync(),
+    pruneHubLinks: (params) => skillsHub.prune(params.entryNames),
+    setHubConflictChoice: (params) => skillsHub.setConflictChoice(params.nameKey, params.realDir),
+    dismissHubDiscoveries: () => skillsHub.dismissDiscoveries(),
+
     async list(params: {
       workspacePath: string;
       workspaceIdentity?: string;

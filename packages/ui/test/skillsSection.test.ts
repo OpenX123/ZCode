@@ -535,6 +535,40 @@ describe("SkillsSection", () => {
     expect(html).toContain('aria-label="Open"');
   });
 
+  it("用户范围展示外部技能同步面板、来源筛选与来源小标", async () => {
+    activeScopeFilter = "user";
+    mockCapabilityState = { userScopeAvailable: true };
+    mockSkillsState = [
+      {
+        id: "glm:user:claude-skill",
+        name: "claude-skill",
+        description: "linked from claude",
+        body: "",
+        path: "/Users/dev/.claude/skills/claude-skill/SKILL.md",
+        scope: "user",
+        enabled: true,
+      },
+    ];
+
+    const html = await renderSkillsSection();
+
+    expect(html).toContain('data-skills-hub-panel="true"');
+    expect(html).toContain("settings.skills.hub.engineNote");
+    expect(html).toContain("settings.skills.hub.filter.codex");
+    expect(html).toContain('data-skill-source-badge="true"');
+    expect(html).toContain(">Claude<");
+  });
+
+  it("工作区范围不展示外部技能同步面板与来源筛选", async () => {
+    activeScopeFilter = "workspace";
+    mockCapabilityState = { userScopeAvailable: true };
+
+    const html = await renderSkillsSection();
+
+    expect(html).not.toContain("data-skills-hub-panel");
+    expect(html).not.toContain("settings.skills.hub.filter.codex");
+  });
+
   it("技能详情弹窗的文件路径可以打开", async () => {
     const skill = {
       id: "skill-1",

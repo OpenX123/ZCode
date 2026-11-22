@@ -11,6 +11,7 @@ import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { NewTaskButtonGroup } from "@/NewTaskButtonGroup.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { MemoTaskItem, TaskListItemContextMenuContent } from "@/TaskListItem.js";
+import { TaskTitleLookupProvider } from "@/reference-icons/index.js";
 import { TaskListLoadingHint } from "@/TaskListLoadingHint.js";
 import { TaskRenameDialog } from "@/TaskRenameDialog.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
@@ -359,125 +360,127 @@ export const TaskList = memo(function TaskList({
   }
 
   return (
-    <div data-testid={TID_TASK_LIST} className={"flex flex-col gap-2"}>
-      {renamingTaskId !== null ? (
-        <TaskRenameDialog
-          open
-          value={renameDraft}
-          inputRef={renameInputRef}
-          intl={intl}
-          onOpenChange={(open) => {
-            if (!open) {
-              handleCancelRenameTask();
-            }
-          }}
-          onChange={setRenameDraft}
-          onCancel={handleCancelRenameTask}
-          onConfirm={() => {
-            logger.info("[TaskList] rename confirm dispatched", {
-              renamingTaskId,
-              workspacePath,
-              workspaceIdentity,
-              draftLength: renameDraft.length,
-            });
-            if (!renamingTaskId) {
-              return;
-            }
-            void handleSubmitRenameTask(renamingTaskId);
-          }}
-        />
-      ) : null}
+    <TaskTitleLookupProvider tasks={taskLookup}>
+      <div data-testid={TID_TASK_LIST} className={"flex flex-col gap-2"}>
+        {renamingTaskId !== null ? (
+          <TaskRenameDialog
+            open
+            value={renameDraft}
+            inputRef={renameInputRef}
+            intl={intl}
+            onOpenChange={(open) => {
+              if (!open) {
+                handleCancelRenameTask();
+              }
+            }}
+            onChange={setRenameDraft}
+            onCancel={handleCancelRenameTask}
+            onConfirm={() => {
+              logger.info("[TaskList] rename confirm dispatched", {
+                renamingTaskId,
+                workspacePath,
+                workspaceIdentity,
+                draftLength: renameDraft.length,
+              });
+              if (!renamingTaskId) {
+                return;
+              }
+              void handleSubmitRenameTask(renamingTaskId);
+            }}
+          />
+        ) : null}
 
-      {showCreateButton ? (
-        <div className="border-b p-3">
-          <ControlHintTooltip
-            title={readOnlyReason ?? intl.formatMessage({ id: "taskList.newThread" })}
-          >
-            <div>
-              <NewTaskButtonGroup
-                onCreateTask={handleCreateTask}
-                disabled={Boolean(readOnlyReason)}
-              />
-            </div>
-          </ControlHintTooltip>
-        </div>
-      ) : null}
-
-      {/* 任务列表 */}
-      <div>
-        <div className="space-y-1">
-          {Boolean(inputLoading) && visibleSourceTasks.length === 0 ? (
-            <TaskListLoadingHint />
-          ) : visibleSourceTasks.length === 0 ? (
-            showEmptyState ? (
-              <div
-                data-testid={TID_TASK_EMPTY}
-                className="px-8.5 py-2 text-ui-base text-foreground-subtlest"
-              >
-                {intl.formatMessage({ id: "taskList.noTasks" })}
-              </div>
-            ) : null
-          ) : (
-            <ContextMenu
-              onOpenChange={(open) => {
-                if (!open) {
-                  setContextMenuTaskId(null);
-                }
-              }}
+        {showCreateButton ? (
+          <div className="border-b p-3">
+            <ControlHintTooltip
+              title={readOnlyReason ?? intl.formatMessage({ id: "taskList.newThread" })}
             >
-              <ContextMenuTrigger asChild>
-                <ul className="space-y-0.5">{visibleSourceTasks.map(renderTaskItem)}</ul>
-              </ContextMenuTrigger>
-              {contextMenuTask ? (
-                <TaskListItemContextMenuContent
-                  workspacePath={workspacePath}
-                  remoteSessionId={remoteSessionId}
-                  task={contextMenuTask}
-                  isPinned={pinnedTaskIdSet.has(contextMenuTask.taskId)}
-                  isArchived={isArchived}
-                  organizationActions={organizationActions}
-                  intl={intl}
-                  onTogglePinTask={handleTogglePinTask}
-                  onStartRenameTask={handleStartRenameTask}
-                  onArchiveTask={handleArchiveTask}
-                  onMarkTaskAsUnread={handleMarkTaskAsUnread}
-                  disableTaskActions={Boolean(readOnlyReason)}
-                  disabledReason={readOnlyReason}
+              <div>
+                <NewTaskButtonGroup
+                  onCreateTask={handleCreateTask}
+                  disabled={Boolean(readOnlyReason)}
                 />
-              ) : null}
-            </ContextMenu>
-          )}
+              </div>
+            </ControlHintTooltip>
+          </div>
+        ) : null}
+
+        {/* 任务列表 */}
+        <div>
+          <div className="space-y-1">
+            {Boolean(inputLoading) && visibleSourceTasks.length === 0 ? (
+              <TaskListLoadingHint />
+            ) : visibleSourceTasks.length === 0 ? (
+              showEmptyState ? (
+                <div
+                  data-testid={TID_TASK_EMPTY}
+                  className="px-8.5 py-2 text-ui-base text-foreground-subtlest"
+                >
+                  {intl.formatMessage({ id: "taskList.noTasks" })}
+                </div>
+              ) : null
+            ) : (
+              <ContextMenu
+                onOpenChange={(open) => {
+                  if (!open) {
+                    setContextMenuTaskId(null);
+                  }
+                }}
+              >
+                <ContextMenuTrigger asChild>
+                  <ul className="space-y-0.5">{visibleSourceTasks.map(renderTaskItem)}</ul>
+                </ContextMenuTrigger>
+                {contextMenuTask ? (
+                  <TaskListItemContextMenuContent
+                    workspacePath={workspacePath}
+                    remoteSessionId={remoteSessionId}
+                    task={contextMenuTask}
+                    isPinned={pinnedTaskIdSet.has(contextMenuTask.taskId)}
+                    isArchived={isArchived}
+                    organizationActions={organizationActions}
+                    intl={intl}
+                    onTogglePinTask={handleTogglePinTask}
+                    onStartRenameTask={handleStartRenameTask}
+                    onArchiveTask={handleArchiveTask}
+                    onMarkTaskAsUnread={handleMarkTaskAsUnread}
+                    disableTaskActions={Boolean(readOnlyReason)}
+                    disabledReason={readOnlyReason}
+                  />
+                ) : null}
+              </ContextMenu>
+            )}
+          </div>
+          {hasMore && onShowMore ? (
+            <div className="pl-8.5">
+              <button
+                type="button"
+                data-task-list-show-more="true"
+                className="rounded-sm bg-transparent p-0 text-ui-sm text-foreground-subtle outline-none transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring/30"
+                onClick={onShowMore}
+              >
+                {intl.formatMessage({ id: "taskList.showMore" })}
+              </button>
+            </div>
+          ) : null}
         </div>
-        {hasMore && onShowMore ? (
-          <div className="pl-8.5">
-            <button
+
+        {showFooter ? (
+          <div className="border-t border-outline/40 p-3">
+            <Button
               type="button"
-              data-task-list-show-more="true"
-              className="rounded-sm bg-transparent p-0 text-ui-sm text-foreground-subtle outline-none transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring/30"
-              onClick={onShowMore}
+              variant="outline"
+              size="sm"
+              onClick={openSettingsTab}
+              data-testid={TID_TASK_SETTINGS_BUTTON}
+              className="w-full justify-center"
             >
-              {intl.formatMessage({ id: "taskList.showMore" })}
-            </button>
+              <Settings2 className="h-3.5 w-3.5" />
+              {intl.formatMessage({ id: "taskList.openSettings" })}
+            </Button>
           </div>
         ) : null}
       </div>
-
-      {showFooter ? (
-        <div className="border-t border-outline/40 p-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={openSettingsTab}
-            data-testid={TID_TASK_SETTINGS_BUTTON}
-            className="w-full justify-center"
-          >
-            <Settings2 className="h-3.5 w-3.5" />
-            {intl.formatMessage({ id: "taskList.openSettings" })}
-          </Button>
-        </div>
-      ) : null}
-    </div>
+    </TaskTitleLookupProvider>
   );
 });
 

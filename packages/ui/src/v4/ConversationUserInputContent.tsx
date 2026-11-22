@@ -1,15 +1,8 @@
 import { memo, useState } from "react";
-import {
-  Bot,
-  Cable,
-  GoalIcon,
-  MessagesSquare,
-  ScrollText,
-  SquareSlash,
-  WandSparkles,
-} from "lucide-react";
+import { Bot, Cable, GoalIcon, ScrollText, SquareSlash } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { FileDisplayInline } from "@/lib/fileDisplay.js";
+import { ReferenceIcon } from "@/reference-icons/index.js";
 import { isTrustedPluginIconSource } from "@/lib/pluginIconSource.js";
 import { usePluginReferenceIconProjection } from "@/v4/pluginReferenceIconContext.js";
 import {
@@ -99,7 +92,8 @@ function V4UserInputMention({
   if (part.type === "skill") {
     return (
       <span className={mentionClassName("skills")}>
-        <WandSparkles aria-hidden="true" className="size-4 shrink-0" />
+        {/* 技能与引用会话使用与侧边栏标题一致的引用图标（docs/ui/task-title-reference-display.md）。 */}
+        <ReferenceIcon kind="skill" className="size-4" />
         {formatSkillMentionDisplayLabel(part.label)}
       </span>
     );
@@ -108,7 +102,7 @@ function V4UserInputMention({
   if (part.type === "session") {
     return (
       <span className={mentionClassName("sessions")}>
-        <MessagesSquare aria-hidden="true" className="size-4 shrink-0" />
+        <ReferenceIcon kind="session" className="size-4" />
         {part.label}
       </span>
     );

@@ -13,6 +13,7 @@ export const projectSidebarModule = {
     "remote-connection-flow",
     "conversation-workbench",
     "side-pane-full-view",
+    "reference-icons",
   ],
   provides: ["project-sidebar"],
   publicEntrypoints: [

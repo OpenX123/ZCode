@@ -34,6 +34,7 @@
     "./external-engine": "./src/external-engine/index.ts",
     "./session-navigation": "./src/session-navigation/index.ts",
     "./mobile-remote": "./src/mobile-remote/index.ts",
+    "./skills-hub": "./src/skills-hub/index.ts",
     "./testing/fake-relay-v2": "./test/fixtures/fake-relay-v2.ts"
   },
   "scripts": {

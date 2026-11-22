@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, realpath, rm, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -111,10 +111,35 @@ describe("NodeSkillAdapter", () => {
 
       expect(outcome.skills.map((skill) => skill.name)).toEqual(["linked-skill"]);
       expect(outcome.skills[0]?.description).toBe("Imported via symlink");
-      expect(outcome.skills[0]?.path).toBe(join(linkedSkill, "SKILL.md"));
+      // 与桌面一致跟随链接：路径为真实位置，便于按来源（Claude / Codex）展示。
+      const realSkill = await realpath(sourceSkill);
+      expect(outcome.skills[0]?.path).toBe(join(realSkill, "SKILL.md"));
       expect(outcome.diagnostics).toEqual([]);
       expect(loaded.content).toContain("# Body");
-      expect(loaded.baseDirectory).toBe(linkedSkill);
+      expect(loaded.baseDirectory).toBe(realSkill);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("dedupes a skill linked into ~/.zcode/skills that is also scanned from ~/.agents/skills", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zcode-skills-"));
+    const agentsSkill = join(dir, "home", ".agents", "skills", "shared-skill");
+    const userSkillRoot = join(dir, "home", ".zcode", "skills");
+
+    try {
+      await mkdir(agentsSkill, { recursive: true });
+      await mkdir(userSkillRoot, { recursive: true });
+      await writeSkill(agentsSkill, "shared-skill", "Linked and scanned twice");
+      const linkType = process.platform === "win32" ? "junction" : "dir";
+      await symlink(agentsSkill, join(userSkillRoot, "shared-skill"), linkType);
+      await symlink(agentsSkill, join(userSkillRoot, "shared-skill-copy"), linkType);
+
+      const adapter = createNodeSkillAdapter({ homeDirectory: join(dir, "home") });
+      const outcome = await adapter.discoverSkills({ workingDirectory: dir });
+
+      expect(outcome.skills.map((skill) => skill.name)).toEqual(["shared-skill"]);
+      expect(outcome.skills[0]?.path).toBe(join(await realpath(agentsSkill), "SKILL.md"));
     } finally {
       await rm(dir, { force: true, recursive: true });
     }

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseEngineDefaultModelName } from "@/external-engine/engineOptionDisplay.js";
+import {
+  formatEngineModelName,
+  parseEngineDefaultModelName,
+} from "@/external-engine/engineOptionDisplay.js";
 
 // 形态来自本机 Claude adapter 0.95.0（session-model.js buildModelConfigOption）与
 // SDK 0.3.309 supportedModels() 的实测输出，见 docs/desktop/external-agent-engines-spec.md。
@@ -43,5 +46,23 @@ describe("parseEngineDefaultModelName", () => {
     ["A very long description that is clearly a sentence and not a model name at all"],
   ])("无法可靠取名时返回 undefined：%s", (description) => {
     expect(parseEngineDefaultModelName(description)).toBeUndefined();
+  });
+});
+
+// 1.5.2：非 default 目录条目的 adapter name 可能就是原始 id，同样格式化。
+describe("formatEngineModelName", () => {
+  it.each([
+    ["claude-opus-5-5", "Opus 5.5"],
+    ["claude-fable-5-2", "Fable 5.2"],
+    ["claude-sonnet-5-5", "Sonnet 5.5"],
+    ["claude-haiku-5-5", "Haiku 5.5"],
+    ["claude-opus-5-5[1m]", "Opus 5.5"],
+    ["Claude Opus 5.5", "Opus 5.5"],
+    ["GPT-5.5", "GPT-5.5"],
+    ["gpt-5.5-codex", "GPT-5.5-Codex"],
+    ["gpt-5.5", "GPT-5.5"],
+    ["gpt-5.5-codex-mini", "GPT-5.5-Codex-Mini"],
+  ])("%s → %s", (name, expected) => {
+    expect(formatEngineModelName(name)).toBe(expected);
   });
 });

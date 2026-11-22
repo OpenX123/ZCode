@@ -156,6 +156,7 @@ modules:
       - remote-connection-flow
       - conversation-workbench
       - side-pane-full-view
+      - reference-icons
     publicEntrypoints:
       - packages/ui/src/project-sidebar/index.tsx
       - packages/ui/src/project-sidebar/WorkbenchLayoutButton.tsx
@@ -406,6 +407,17 @@ modules:
     publicEntrypoints:
       - packages/ui/src/turn-stall/index.ts
       - packages/ui/src/turn-stall/contract.ts
+    layers: { ui: "." }
+    owner: conversation
+
+  # reference-icons：引用图标与任务标题引用显示（docs/ui/task-title-reference-display.md）
+  - id: reference-icons
+    roots: [packages/ui/src/reference-icons]
+    managed: true
+    requires: [shared, ui, session-navigation]
+    publicEntrypoints:
+      - packages/ui/src/reference-icons/index.ts
+      - packages/ui/src/reference-icons/contract.ts
     layers: { ui: "." }
     owner: conversation
 
@@ -1081,6 +1093,49 @@ modules:
     layers:
       ui: .
     owner: desktop
+
+  # skills-hub-contract：外部技能统一管理的纯领域逻辑（docs/skills-hub-spec.md）
+  - id: skills-hub-contract
+    roots:
+      - packages/shared/src/skills-hub
+      - packages/shared/test/skills-hub
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/shared/src/skills-hub/index.ts
+      - packages/shared/src/skills-hub/contract.ts
+    layers:
+      domain: .
+    owner: plugin
+  # skills-hub-sync：外部技能链接与清单的唯一写入者（docs/skills-hub-spec.md）
+  - id: skills-hub-sync
+    roots:
+      - packages/services/src/skills-hub
+      - packages/services/test/skills-hub
+    managed: true
+    requires: [services, shared, rpc, skills-hub-contract]
+    publicEntrypoints:
+      - packages/services/src/skills-hub/index.ts
+      - packages/services/src/skills-hub/contract.ts
+    layers:
+      adapters: .
+    owner: plugin
+  # skills-hub-ui：设置页外部技能同步面板、来源标与来源筛选（docs/skills-hub-spec.md）
+  - id: skills-hub-ui
+    roots:
+      - packages/ui/src/settings/skills-hub
+      - packages/ui/src/hooks/skills-hub
+      - packages/ui/test/skills-hub
+    managed: true
+    requires: [ui, shared, skills-hub-contract]
+    publicEntrypoints:
+      - packages/ui/src/settings/skills-hub/index.ts
+      - packages/ui/src/settings/skills-hub/contract.ts
+      - packages/ui/src/settings/skills-hub/i18n.ts
+      - packages/ui/src/hooks/skills-hub/index.ts
+    layers:
+      ui: .
+    owner: plugin
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。

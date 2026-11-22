@@ -3366,6 +3366,8 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               },
               parentPort,
               settingService,
+              // 外部技能统一管理：本地窗口 Host 启动后后台同步一次（docs/skills-hub-spec.md）。
+              syncSkillsHubOnStartup: true,
               hostApiNetworkTransport,
               resolveClientLanguage: () => applicationLocale,
               authorizeLocalMediaPreviewPath,

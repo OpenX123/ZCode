@@ -1,9 +1,12 @@
 /** 中文翻译 */
 import { usageStatsLocalZhCN } from "@/settings/usage-stats/local/i18n.js";
+import { skillsHubZhCN } from "@/settings/skills-hub/i18n.js";
 
 const zhCN: Record<string, string> = {
   // 使用统计本机多来源独立命名空间（settings.usageStats.local.*）。
   ...usageStatsLocalZhCN,
+  // 外部技能统一管理独立命名空间（settings.skills.hub.*）。
+  ...skillsHubZhCN,
   "engine.default.title": "默认 AI 引擎",
   "engine.default.description":
     "新会话沿用最近一次选择，并恢复该引擎上次确认的模型与思考深度；远程工作区使用 YCode，已有会话和草稿保持原样。",
@@ -2766,6 +2769,8 @@ const zhCN: Record<string, string> = {
   "taskList.viewModelTrajectory": "查看调用轨迹",
   "taskList.feedbackOpened": "已打开反馈，并自动带上当前任务信息",
   "taskList.untitled": "新任务",
+  "taskList.titleReference.session": "引用的会话",
+  "taskList.titleReference.image": "图片",
   "taskList.justNow": "刚刚",
   "taskList.minutesAgo": "{minutes}分",
   "taskList.hoursAgo": "{hours}小时",

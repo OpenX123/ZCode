@@ -4,7 +4,7 @@
 
 import { realpathSync } from "node:fs";
 import { open, readFile, realpath, stat } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import type {
   SkillContent,
   SkillDiagnostic,
@@ -71,17 +71,22 @@ export class NodeSkillAdapter implements SkillPort {
     for (const root of roots.toSorted((a, b) => a.priority - b.priority)) {
       throwIfAborted(options);
       const skillPaths = await this.skillFilesUnderRoot(root, diagnostics);
+      const canonicalRoot = await realpath(root.path).catch(() => resolve(root.path));
       for (const path of skillPaths) {
         throwIfAborted(options);
         const parsed = await this.parseSkill(path, root, diagnostics);
         if (!parsed) continue;
         if (await this.isDisabledSkillPath(parsed.path)) continue;
         totalDiscovered++;
-        // 同名技能可能来自不同技能生态或版本，不能只按 name 去重；路径才是安装项身份。
-        if (selected.has(parsed.path)) {
+        // Bugfix（docs/skills-hub-spec.md「CLI 发现」）：之前只按扫描路径去重，经
+        // ~/.zcode/skills 链接导入的技能与 ~/.agents/skills 等根里的原目录各算一份，CLI
+        // 技能目录出现重复。改为按 realpath 去重：同一物理技能只保留优先级最高的根命中。
+        // 同名但真实路径不同的技能仍是不同安装项，继续分别保留。
+        const canonicalPath = await realpath(parsed.path).catch(() => resolve(parsed.path));
+        if (selected.has(canonicalPath)) {
           continue;
         }
-        selected.set(parsed.path, parsed);
+        selected.set(canonicalPath, followSkillLink(parsed, canonicalPath, canonicalRoot, root.path));
       }
     }
 
@@ -272,6 +277,23 @@ export class NodeSkillAdapter implements SkillPort {
     }
     return cached;
   }
+}
+
+/**
+ * 技能目录（或 SKILL.md）本身是根内的链接时，与桌面 skillsService 一致改用真实路径，
+ * 这样设置页与 Composer 能按真实位置识别来源（Claude / Codex / 插件）。
+ * 根本身经过系统链接（如 macOS /var → /private/var）而根内没有链接时保留扫描路径，
+ * 避免无链接技能的路径形态变化。
+ */
+function followSkillLink(
+  metadata: SkillMetadata,
+  canonicalPath: string,
+  canonicalRoot: string,
+  rootPath: string,
+): SkillMetadata {
+  const expected = join(canonicalRoot, relative(resolve(rootPath), resolve(metadata.path)));
+  if (expected === canonicalPath) return metadata;
+  return { ...metadata, path: canonicalPath, directory: dirname(canonicalPath) };
 }
 
 export function createNodeSkillAdapter(options: NodeSkillAdapterOptions = {}): NodeSkillAdapter {

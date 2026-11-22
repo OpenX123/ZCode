@@ -1343,3 +1343,8 @@ row media -> session + workspace identity + remote session -> 原 Host attachmen
 投影在文本增量前接纳媒体，不增加流式 kind；终态/陈旧 run 仍由原有生命周期拒收。
 冷恢复从 FilePart 的同源 media 元数据重建，不依赖内存或 UI 缓存。资源丢失仍保留引用
 与失败状态。存储失败必须可见，不能把未持久化的媒体发布为成功成果。
+
+### 1.5.2 目录条目模型名
+
+- 问题：1.5.1 只对 `default` 别名解析真实模型名；本机 Claude adapter 对其他目录条目给出的 name 就是原始 id，下拉显示 `claude-opus-5-5`、`claude-fable-5-2`。
+- 规则：所有模型条目与“当前值不在目录中”的回退值统一经 `formatEngineModelName`：原始 Claude id → `家族 主.次`（`Fable 5.2`），原始 Codex id → 官方写法（`gpt-5.5-codex` → `GPT-5.5-Codex`），已是展示名的只去掉 `Claude ` 前缀。提交值仍为原始 id。

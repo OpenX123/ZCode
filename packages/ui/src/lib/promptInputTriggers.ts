@@ -20,6 +20,8 @@ export interface PromptInputSuggestionItem {
   label: string;
   description: string;
   keywords?: string[];
+  /** 仅供面板渲染的来源小标；不进入插入后的 mention 载荷。 */
+  badge?: string;
   data?: {
     path?: string;
     scope?: "built-in" | "workspace" | "user" | "plugin";

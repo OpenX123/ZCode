@@ -31,7 +31,8 @@ describe("skills mention provider", () => {
     expect(items[0]).toMatchObject({
       label: "review",
       value: "review",
-      description: "Workspace · workspace review",
+      description: "workspace review",
+      badge: "Workspace",
       data: {
         scope: "workspace",
         path: "/repo/.claude/skills/review/SKILL.md",
@@ -53,8 +54,37 @@ describe("skills mention provider", () => {
     expect(items[0]).toMatchObject({
       label: "agent-browser",
       value: "agent-browser",
-      keywords: ["agent-browser", "browser", "user"],
+      // 用户级技能按真实路径显示来源（docs/skills-hub-spec.md「UI」）。
+      badge: "Claude",
+      keywords: ["agent-browser", "browser", "user", "Claude"],
     });
+  });
+
+  it("labels user skills linked from Codex and Claude plugins by their real source", () => {
+    const items = mapSkillsToMentionItemsForTest([
+      {
+        id: "glm:user:a",
+        name: "codex-skill",
+        description: "codex",
+        path: "C:\\Users\\me\\.codex\\skills\\codex-skill\\SKILL.md",
+        scope: "user",
+      },
+      {
+        id: "glm:user:b",
+        name: "brainstorming",
+        description: "plugin",
+        path: "/home/me/.claude/plugins/cache/official/superpowers/4.0.3/skills/brainstorming/SKILL.md",
+        scope: "user",
+      },
+      {
+        id: "glm:user:c",
+        name: "own",
+        description: "own",
+        path: "/home/me/.ycode/skills/own/SKILL.md",
+        scope: "user",
+      },
+    ]);
+    expect(items.map((item) => item.badge)).toEqual(["Codex", "superpowers", "YCode"]);
   });
 
   it("localizes bundled plugin skill descriptions for the $ panel", () => {
@@ -67,11 +97,12 @@ describe("skills mention provider", () => {
       pluginName: "document-skills",
     };
 
-    expect(mapSkillsToMentionItemsForTest([skill], "en-US")[0]?.description).toContain(
-      "Plugin · Professional PDF toolkit",
-    );
+    expect(mapSkillsToMentionItemsForTest([skill], "en-US")[0]).toMatchObject({
+      description: expect.stringContaining("Professional PDF toolkit"),
+      badge: "document-skills",
+    });
     expect(mapSkillsToMentionItemsForTest([skill], "zh-CN")[0]?.description).toContain(
-      "插件 · 专业 PDF 工具集",
+      "专业 PDF 工具集",
     );
   });
 
@@ -85,11 +116,12 @@ describe("skills mention provider", () => {
       pluginName: "browser-use",
     };
 
-    expect(mapSkillsToMentionItemsForTest([skill], "en-US")[0]?.description).toContain(
-      "Plugin · Run pure GUI black-box tests",
-    );
+    expect(mapSkillsToMentionItemsForTest([skill], "en-US")[0]).toMatchObject({
+      description: expect.stringContaining("Run pure GUI black-box tests"),
+      badge: "browser-use",
+    });
     expect(mapSkillsToMentionItemsForTest([skill], "zh-CN")[0]?.description).toContain(
-      "插件 · 使用 YCode Browser Use 对网页和本地 Web 前端执行纯 GUI 黑盒测试",
+      "使用 YCode Browser Use 对网页和本地 Web 前端执行纯 GUI 黑盒测试",
     );
   });
 });

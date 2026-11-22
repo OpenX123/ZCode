@@ -7,6 +7,7 @@ import { useSkills } from "@/hooks/useSkills.js";
 import { filterSkillsForProvider } from "@/lib/skillSourceFilter.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { resolveSkillDisplayDescription, resolveSkillSourceLabel } from "@/lib/builtinSkillI18n.js";
+import { resolveSkillSourceLabel as resolveSkillHubSourceLabel } from "@/settings/skills-hub/index.js";
 
 export function mapSkillsToMentionItemsForTest(
   skills: Array<{
@@ -38,16 +39,24 @@ export function mapSkillsToMentionItemsForTest(
   const uniqueSkills = [...uniqueSkillsByName.values()];
 
   return uniqueSkills.map((skill) => {
-    const sourceLabel = resolveSkillSourceLabel(skill.scope, locale);
+    // 来源小标（docs/skills-hub-spec.md「UI」）：工作区显示“工作区”，YCode 插件显示插件名，
+    // 用户级技能按真实路径显示 YCode / Claude / Codex / Agents / Claude 插件名。
+    const sourceLabel = resolveSkillHubSourceLabel(skill, {
+      workspace: resolveSkillSourceLabel("workspace", locale),
+      plugin: resolveSkillSourceLabel("plugin", locale),
+    });
     const description = resolveSkillDisplayDescription(skill, locale);
     return {
       id: `skill:${skill.id}`,
       category: "skills",
       label: skill.name,
-      description: description ? `${sourceLabel} · ${description}` : sourceLabel,
+      description,
+      badge: sourceLabel,
       value: skill.name,
       markdown: buildSkillMentionMarkdown(skill.name, skill.path),
-      keywords: [...new Set([skill.name, skill.description, description, skill.scope])],
+      keywords: [
+        ...new Set([skill.name, skill.description, description, skill.scope, sourceLabel]),
+      ],
       data: {
         path: skill.path,
         scope: skill.scope,
@@ -66,6 +75,8 @@ export function useSkillsMentionProvider(
   requireQuery: boolean,
   emptyText: string,
   title: string,
+  /** `@` 面板无查询时只预览少量技能，避免技能分组淹没文件分组；`$` 不限制。 */
+  limit?: number,
 ): MentionCategoryResult {
   const { locale } = useZCodeIntl();
   const { skills, loading, error } = useSkills({
@@ -88,8 +99,9 @@ export function useSkillsMentionProvider(
     () =>
       filterMentionItemsWithOptions(allItems, query, {
         requireQuery,
+        ...(limit !== undefined ? { limit } : {}),
       }),
-    [allItems, query, requireQuery],
+    [allItems, limit, query, requireQuery],
   );
 
   return {

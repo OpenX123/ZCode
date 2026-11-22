@@ -126,10 +126,11 @@ export function SlashCommandPlugin({
     () => filterPromptInputSuggestions(skillSuggestions, activeTrigger?.query ?? null),
     [skillSuggestions, activeTrigger?.query],
   );
+  // 技能排在命令之前（docs/skills-hub-spec.md「UI」）；键盘索引顺序必须与面板分组顺序一致。
   const filteredSuggestions = useMemo(
     () => [
-      ...filteredCommandSuggestions,
       ...filteredSkillSuggestions,
+      ...filteredCommandSuggestions,
       ...filteredSubagentSuggestions,
     ],
     [filteredCommandSuggestions, filteredSkillSuggestions, filteredSubagentSuggestions],

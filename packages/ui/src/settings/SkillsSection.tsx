@@ -63,6 +63,15 @@ import {
   selectPluginsForScope,
   selectSkillsForScope,
 } from "@/settings/pluginCapabilityProjection.js";
+import {
+  SkillSourceBadge,
+  SkillSourceFilterBar,
+  SkillsHubPanel,
+  filterSkillsBySource,
+  resolveSkillSourceLabel,
+  type SkillHubSourceFilter,
+} from "@/settings/skills-hub/index.js";
+import { useSkillsHub, type SkillsHubCommandKind } from "@/hooks/skills-hub/index.js";
 
 function getWorkspaceBasename(workspacePath: string | null): string {
   if (!workspacePath) return "";
@@ -220,6 +229,8 @@ export function SkillsSection({
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [remoteSkillSyncOpen, setRemoteSkillSyncOpen] = useState(false);
+  // 来源筛选只作用于用户范围列表（docs/skills-hub-spec.md「UI」）；新 useState 追加在既有调用之后。
+  const [sourceFilter, setSourceFilter] = useState<SkillHubSourceFilter>("all");
   const latestRequestIdRef = useRef(0);
   const activeSkillTargetKey = buildSourceSettingsProjectionKey(
     activeWorkspacePath,
@@ -379,6 +390,35 @@ export function SkillsSection({
     });
   }, [activeWorkspaceIdentity, activeWorkspacePath, skillsService]);
 
+  // 外部技能同步只在桌面用户范围生效：Hub 写的是用户级 YCode 技能根。
+  const skillsHubEnabled =
+    targetServiceResolution.rpcReady &&
+    scopeFilter === "user" &&
+    Boolean(activeWorkspacePath) &&
+    Boolean(capability?.userScopeAvailable);
+  const handleSkillsHubChanged = useCallback(
+    async (kind: SkillsHubCommandKind, changed: boolean) => {
+      if (kind === "dismiss" || (kind === "sync" && !changed)) return;
+      await invalidateDeferredDraftSessionForSkillChange({
+        workspacePath: activeWorkspacePath,
+        workspaceIdentity: activeWorkspaceIdentity,
+        reason: "settings-skill-hub",
+      });
+      await Promise.all([loadSkills(false), refreshSharedSkillStoreForCurrentWorkspace()]);
+    },
+    [
+      activeWorkspaceIdentity,
+      activeWorkspacePath,
+      loadSkills,
+      refreshSharedSkillStoreForCurrentWorkspace,
+    ],
+  );
+  const skillsHub = useSkillsHub({
+    skillsService,
+    enabled: skillsHubEnabled,
+    onChanged: handleSkillsHubChanged,
+  });
+
   const setEnabled = useCallback(
     async (skillId: string, enabled: boolean) => {
       if (!activeWorkspacePath) {
@@ -489,9 +529,16 @@ export function SkillsSection({
     scopeFilter,
     skills,
   ]);
+  const sourceFilteredSkills = useMemo(
+    () =>
+      scopeFilter === "user"
+        ? filterSkillsBySource(scopedProviderSkills, sourceFilter)
+        : scopedProviderSkills,
+    [scopeFilter, scopedProviderSkills, sourceFilter],
+  );
   const groupedSkills = useMemo(
-    () => groupSkillsByPlugin(scopedProviderSkills, query),
-    [query, scopedProviderSkills],
+    () => groupSkillsByPlugin(sourceFilteredSkills, query),
+    [query, sourceFilteredSkills],
   );
   const skillSourceGroups = useMemo(() => {
     return groupScopedSkillsBySource(
@@ -623,6 +670,16 @@ export function SkillsSection({
         >
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="truncate text-ui-base font-medium text-foreground">{skill.name}</span>
+            {skill.scope === "plugin" ? null : (
+              <SkillSourceBadge
+                label={resolveSkillSourceLabel(skill, {
+                  workspace:
+                    workspaceLabel ||
+                    intl.formatMessage({ id: "settings.skills.hub.source.workspace" }),
+                  plugin: intl.formatMessage({ id: "settings.skills.hub.source.plugin" }),
+                })}
+              />
+            )}
           </div>
           <div className="mt-0.5 truncate text-ui-sm text-foreground-subtle">
             {skill.description ||
@@ -800,6 +857,22 @@ export function SkillsSection({
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-ui-base text-destructive">
           {error}
         </div>
+      ) : null}
+
+      {skillsHubEnabled ? (
+        <SkillsHubPanel
+          state={skillsHub.state}
+          busy={skillsHub.busy}
+          error={skillsHub.error}
+          onSync={skillsHub.sync}
+          onPrune={skillsHub.prune}
+          onChoose={skillsHub.choose}
+          onDismissNew={skillsHub.dismissNew}
+        />
+      ) : null}
+
+      {targetServiceResolution.rpcReady && scopeFilter === "user" ? (
+        <SkillSourceFilterBar value={sourceFilter} onChange={setSourceFilter} />
       ) : null}
 
       {!targetServiceResolution.rpcReady ? (

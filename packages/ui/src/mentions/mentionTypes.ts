@@ -38,6 +38,8 @@ export interface MentionItem {
    * composer chip 与消息气泡（按 markdown label 重建）显示不一致；面板展示名单独走此字段。
    */
   displayLabel?: string;
+  /** 仅供面板渲染的来源小标（技能：YCode / Claude / Codex / 插件名）；不进入 chip 与 markdown。 */
+  badge?: string;
   /** 禁选态（V1 同名 Plugin 冲突 fail closed）：面板可见但不可选择。 */
   disabled?: boolean;
   /** 禁选原因，展示在候选行右侧弱信息位。 */

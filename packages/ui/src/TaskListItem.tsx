@@ -41,6 +41,7 @@ import {
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceReadOnly } from "@/store/tabStore.js";
 import { TaskTitleOverflowText } from "@/components/TaskTitleOverflowText.js";
+import { TaskTitleDisplay, type TaskTitleFallbackLabels } from "@/reference-icons/index.js";
 import { createTaskWorkbenchDragPreview } from "@/lib/taskWorkbenchDragPreview.js";
 import { resolveTaskSourceLabel } from "@/lib/taskSourceAttribution.js";
 import { logger } from "@/logger.js";
@@ -215,6 +216,14 @@ export const MemoTaskItem = memo(function TaskListItem({
     intl.formatMessage({
       id: task.forkedFromTaskId ? "taskList.forkedUntitled" : "taskList.untitled",
     });
+  // 标题里的路径、链接、技能和引用会话只在显示层换成「图标 + 简短名称」，存储标题不变。
+  const titleReferenceLabels = useMemo<TaskTitleFallbackLabels>(
+    () => ({
+      session: intl.formatMessage({ id: "taskList.titleReference.session" }),
+      image: intl.formatMessage({ id: "taskList.titleReference.image" }),
+    }),
+    [intl],
+  );
   const handleSelect = useCallback(() => {
     onSelectTask(task.taskId);
   }, [onSelectTask, task.taskId]);
@@ -497,7 +506,7 @@ export const MemoTaskItem = memo(function TaskListItem({
             >
               {/* Bugfix: task 标题之前使用 truncate，会在长标题末尾显示省略号；
                       这里统一改为右侧渐隐，避免同一侧栏里出现两种截断语义。 */}
-              {taskTitle}
+              <TaskTitleDisplay title={taskTitle} fallbackLabels={titleReferenceLabels} />
             </TaskTitleOverflowText>
             {taskStatusNode}
             {task.pendingInteraction ? (
@@ -579,7 +588,7 @@ export const MemoTaskItem = memo(function TaskListItem({
               >
                 {/* Bugfix: 默认 workspace task item 和 timeline item 共享标题溢出规则；
                         使用 mask 渐隐而不是省略号，和 grouped task row 保持一致。 */}
-                {taskTitle}
+                <TaskTitleDisplay title={taskTitle} fallbackLabels={titleReferenceLabels} />
               </TaskTitleOverflowText>
               {changeSummaryNode ? (
                 <span className={cn(shouldSuppressWorkspaceTaskMetadata ? "hidden" : undefined)}>
