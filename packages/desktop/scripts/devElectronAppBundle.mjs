@@ -25,7 +25,9 @@ function replacePlistString(plist, key, value) {
 }
 
 function hasAllProtocolSchemes(plist) {
-  return DEV_ELECTRON_PROTOCOL_SCHEMES.every((scheme) => plist.includes(`<string>${scheme}</string>`));
+  return DEV_ELECTRON_PROTOCOL_SCHEMES.every((scheme) =>
+    plist.includes(`<string>${scheme}</string>`),
+  );
 }
 
 function appendProtocolDeclaration(plist) {

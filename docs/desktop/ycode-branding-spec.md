@@ -57,14 +57,14 @@
 
 ### 深链
 
-| 动作 | 所有者 | 规则 |
-| --- | --- | --- |
-| 注册 | desktop main `registerDeepLinkProtocol` | 依次对 `ycode`、`zcode` 调用 `setAsDefaultProtocolClient`；单个失败只记 warn，不影响另一个 |
-| Linux 注册 | `registerLinuxDeepLinkProtocol` | `.desktop` `MimeType` 同时列出 `x-scheme-handler/ycode;x-scheme-handler/zcode;`，并对两个 MIME 执行 `xdg-mime default` |
-| 打包声明 | electron-builder `protocols.schemes` | `["ycode", "zcode"]`（macOS Info.plist、Linux 包 desktop entry） |
-| Dev macOS | `devElectronAppBundle.mjs` | `CFBundleURLSchemes` 同时含两者；副本布局版本递增，已有旧副本自动重建 |
-| 解析 | `desktopDeepLinkUrl.ts`、`parseSessionDeepLink` | 两个 scheme 等价，路由规则（oauth/payment/workspace/share/session）不变 |
-| 生成 | `buildSessionDeepLink`、Finder workflow | 一律 `ycode://` |
+| 动作       | 所有者                                          | 规则                                                                                                                   |
+| ---------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 注册       | desktop main `registerDeepLinkProtocol`         | 依次对 `ycode`、`zcode` 调用 `setAsDefaultProtocolClient`；单个失败只记 warn，不影响另一个                             |
+| Linux 注册 | `registerLinuxDeepLinkProtocol`                 | `.desktop` `MimeType` 同时列出 `x-scheme-handler/ycode;x-scheme-handler/zcode;`，并对两个 MIME 执行 `xdg-mime default` |
+| 打包声明   | electron-builder `protocols.schemes`            | `["ycode", "zcode"]`（macOS Info.plist、Linux 包 desktop entry）                                                       |
+| Dev macOS  | `devElectronAppBundle.mjs`                      | `CFBundleURLSchemes` 同时含两者；副本布局版本递增，已有旧副本自动重建                                                  |
+| 解析       | `desktopDeepLinkUrl.ts`、`parseSessionDeepLink` | 两个 scheme 等价，路由规则（oauth/payment/workspace/share/session）不变                                                |
+| 生成       | `buildSessionDeepLink`、Finder workflow         | 一律 `ycode://`                                                                                                        |
 
 已安装 1.5.0 之前版本与 1.5.1 并存时，`ycode://` 只由 1.5.1 处理；`zcode://` 由最后注册者处理（与此前行为一致）。
 
