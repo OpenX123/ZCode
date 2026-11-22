@@ -6,10 +6,7 @@ type Env = Readonly<Record<string, string | undefined>>;
 /** 与 settingService 一致：独立桌面 Dev 实例的显式 home 优先，避免污染/读取真实用户目录。 */
 export function resolveLocalHomeDir(env: Env = process.env): string {
   return (
-    env.ZCODE_DESKTOP_HOME_DIR?.trim() ||
-    env.HOME?.trim() ||
-    env.USERPROFILE?.trim() ||
-    homedir()
+    env.ZCODE_DESKTOP_HOME_DIR?.trim() || env.HOME?.trim() || env.USERPROFILE?.trim() || homedir()
   );
 }
 
@@ -21,7 +18,10 @@ export function resolveClaudeProjectDirs(env: Env = process.env): string[] {
   const roots =
     configured && configured.length > 0
       ? configured
-      : [join(resolveLocalHomeDir(env), ".claude"), join(resolveLocalHomeDir(env), ".config", "claude")];
+      : [
+          join(resolveLocalHomeDir(env), ".claude"),
+          join(resolveLocalHomeDir(env), ".config", "claude"),
+        ];
   return [...new Set(roots.map((root) => join(root, "projects")))];
 }
 

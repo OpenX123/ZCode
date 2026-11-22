@@ -2,7 +2,7 @@
  * `chart` 预置渲染器的**实现**（recharts 在这个模块里，且只在这里）。
  *
  * 不要直接从 index 静态导入它：recharts 在模块初始化阶段会触发 decimal.js-light 的 LN10 校验，
- * 在 Electron Linux 容器里能阻断整个 renderer 启动（同 `AppUsagePanel.tsx` 里记下的那次修复）。
+ * 在 Electron Linux 容器里能阻断整个 renderer 启动（同 `LocalUsagePanel.tsx` 里记下的那次修复）。
  * 对外的入口是 `ArtifactChart.tsx`，它用 `lazy()` 把这个模块推到首屏之外。
  *
  * 两种形态：

@@ -7,14 +7,14 @@ import {
 } from "@zcode/shared";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import type { IZCodeAgentService } from "../zcode-agent/zcodeAgent.js";
-import { aggregateLocalUsage } from "./local/localUsageAggregator.js";
 import {
+  aggregateLocalUsage,
+  LocalUsageScanner,
+  ModelPricingStore,
   resolveClaudeProjectDirs,
   resolveCodexHome,
   resolveUsageStatsDataDir,
-} from "./local/localUsagePaths.js";
-import { LocalUsageScanner } from "./local/localUsageScanner.js";
-import { ModelPricingStore } from "./local/modelPricingStore.js";
+} from "./local/index.js";
 import type { IUsageStatsService } from "./usageStats.js";
 
 const logger = createServiceLogger("usage-stats");
@@ -100,7 +100,9 @@ export function createUsageStatsService(dependencies: {
 
     async syncModelPrices() {
       const result = await pricingStore.syncFromModelsDev();
-      logger.info(undefined, "[usage-stats] 已从 models.dev 同步价格", { modelCount: result.modelCount });
+      logger.info(undefined, "[usage-stats] 已从 models.dev 同步价格", {
+        modelCount: result.modelCount,
+      });
       return modelPriceSyncResultSchema.parse(result);
     },
   };

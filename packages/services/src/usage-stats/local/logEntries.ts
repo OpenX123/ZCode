@@ -198,7 +198,10 @@ function toCodexUsage(raw: z.infer<typeof codexUsageSchema>): CodexTokenUsage | 
   };
 }
 
-function subtractUsage(current: CodexTokenUsage, previous: CodexTokenUsage | null): CodexTokenUsage {
+function subtractUsage(
+  current: CodexTokenUsage,
+  previous: CodexTokenUsage | null,
+): CodexTokenUsage {
   // 总量回退（新会话/重置）时取当次总量，避免负数。
   if (!previous || current.total < previous.total || current.input < previous.input) return current;
   return {

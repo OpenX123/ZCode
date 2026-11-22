@@ -27,7 +27,14 @@ async function makeHome() {
   await copyFile(join(FIXTURES, "claude-session.jsonl"), join(project, "sess-cli.jsonl"));
   await copyFile(join(FIXTURES, "claude-resumed.jsonl"), join(project, "sess-zcode.jsonl"));
   await copyFile(join(FIXTURES, "codex-rollout.jsonl"), join(codexDay, "rollout-thread-cli.jsonl"));
-  return { root, claudeProjects, project, codexHome, codexDay, cacheFile: join(root, "cache.json") };
+  return {
+    root,
+    claudeProjects,
+    project,
+    codexHome,
+    codexDay,
+    cacheFile: join(root, "cache.json"),
+  };
 }
 
 function createScanner(
@@ -93,7 +100,12 @@ describe("LocalUsageScanner", () => {
         timestamp: "2026-11-21T10:00:00Z",
         sessionId: "sess-zcode",
         requestId: "req_4",
-        message: { id: "msg_4", model: "claude-haiku-4-5", stop_reason: "end_turn", usage: { input_tokens: 7, output_tokens: 3 } },
+        message: {
+          id: "msg_4",
+          model: "claude-haiku-4-5",
+          stop_reason: "end_turn",
+          usage: { input_tokens: 7, output_tokens: 3 },
+        },
       })}\n`,
     );
     clock.now += LOCAL_USAGE_SCAN_REUSE_MS + 1;
@@ -107,7 +119,11 @@ describe("LocalUsageScanner", () => {
         type: "assistant",
         timestamp: "2026-11-22T10:00:00Z",
         sessionId: "sess-zcode",
-        message: { id: "msg_new", model: "claude-haiku-4-5", usage: { input_tokens: 1, output_tokens: 1 } },
+        message: {
+          id: "msg_new",
+          model: "claude-haiku-4-5",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
       })}\n`,
     );
     clock.now += LOCAL_USAGE_SCAN_REUSE_MS + 1;
@@ -163,7 +179,9 @@ describe("LocalUsageScanner", () => {
     const offline = await createScanner(home, async () => null).scan("UTC");
     expect(offline.zcodeNativeAvailable).toBe(false);
     expect(offline.zcodeFacts).toEqual([fact]);
-    expect(offline.externalSessions).toEqual([{ engine: "claude-code", externalSessionId: "sess-zcode" }]);
+    expect(offline.externalSessions).toEqual([
+      { engine: "claude-code", externalSessionId: "sess-zcode" },
+    ]);
   });
 
   it("原生按日聚合合并：同日期取请求数更大的一份", () => {

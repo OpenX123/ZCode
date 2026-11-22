@@ -21,7 +21,9 @@ const readLines = (name: string) =>
 
 describe("Claude Code 日志解析（LU-01/02/05）", () => {
   it("只取 assistant usage 行，跳过 <synthetic> 与非 assistant 行，损坏行计为 malformed", () => {
-    const results = readLines("claude-session.jsonl").map((line) => parseClaudeLine(line, "fallback"));
+    const results = readLines("claude-session.jsonl").map((line) =>
+      parseClaudeLine(line, "fallback"),
+    );
     const entries = results.filter((r): r is LocalLogEntry => typeof r === "object");
     expect(entries).toHaveLength(3);
     expect(results.filter((r) => r === "malformed")).toHaveLength(1);
@@ -55,7 +57,11 @@ describe("Claude Code 日志解析（LU-01/02/05）", () => {
       JSON.stringify({
         type: "assistant",
         timestamp: "2026-11-20T00:00:00Z",
-        message: { id: "m", model: "claude-haiku-4-5", usage: { input_tokens: 1, output_tokens: 1 } },
+        message: {
+          id: "m",
+          model: "claude-haiku-4-5",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
       }),
       "parent-session",
     ) as LocalLogEntry;
@@ -116,7 +122,9 @@ describe("模型 ID 归一化与查价（LU-09）", () => {
   });
 
   it("按 - 边界前缀匹配，不把 gpt-5.5 误配为 gpt-5", () => {
-    expect(resolveModelPrice("gpt-5.1-codex-max", { manual: {}, synced: {} })?.price.input).toBe(1.25);
+    expect(resolveModelPrice("gpt-5.1-codex-max", { manual: {}, synced: {} })?.price.input).toBe(
+      1.25,
+    );
     expect(resolveModelPrice("gpt-5.5", { manual: {}, synced: {} })).toBeNull();
   });
 
@@ -124,7 +132,9 @@ describe("模型 ID 归一化与查价（LU-09）", () => {
     const manual = { input: 9, output: 9, cacheRead: 0, cacheWrite: 0 };
     const synced = { input: 8, output: 8, cacheRead: 0, cacheWrite: 0 };
     expect(resolveModelPrice("gpt-5", { manual: {}, synced: {} })?.origin).toBe("builtin");
-    expect(resolveModelPrice("gpt-5", { manual: {}, synced: { "gpt-5": synced } })?.origin).toBe("synced");
+    expect(resolveModelPrice("gpt-5", { manual: {}, synced: { "gpt-5": synced } })?.origin).toBe(
+      "synced",
+    );
     expect(
       resolveModelPrice("gpt-5", { manual: { "gpt-5": manual }, synced: { "gpt-5": synced } }),
     ).toEqual({ price: manual, origin: "manual" });

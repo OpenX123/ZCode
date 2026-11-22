@@ -1,5 +1,9 @@
 /** English translations */
+import { usageStatsLocalEnUS } from "@/settings/usage-stats/local/i18n.js";
+
 const enUS: Record<string, string> = {
+  // 使用统计本机多来源独立命名空间（settings.usageStats.local.*）。
+  ...usageStatsLocalEnUS,
   "engine.default.title": "Default AI engine",
   "engine.default.description":
     "New sessions remember your last selection and restore that engine's last confirmed model and thinking depth. Remote workspaces use YCode; existing sessions and drafts stay unchanged.",

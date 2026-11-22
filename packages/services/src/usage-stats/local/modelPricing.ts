@@ -5,7 +5,7 @@ import type { ModelPrice, ModelPriceOrigin } from "@zcode/shared";
  * cacheWrite = 5 分钟缓存写入；cacheWrite1h 仅 Claude。表外模型为未定价。
  * key 必须是 normalizeModelId 之后的形式。
  */
-export const BUILTIN_MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
+const BUILTIN_MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
   // Anthropic
   "claude-opus-4": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75, cacheWrite1h: 30 },
   "claude-opus-4.1": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75, cacheWrite1h: 30 },
@@ -59,7 +59,7 @@ export function normalizeModelId(raw: string | null | undefined): string {
 }
 
 /** 精确匹配 → 以 `-` 为边界的最长前缀匹配（gpt-5.1-codex-max → gpt-5.1-codex）。 */
-export function findPriceKey(
+function findPriceKey(
   modelId: string,
   table: Readonly<Record<string, unknown>>,
 ): string | null {

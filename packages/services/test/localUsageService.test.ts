@@ -60,7 +60,11 @@ async function setup(options: { cliAvailable?: boolean } = {}) {
 describe("本机多来源用量快照", () => {
   it("全部来源只计一次，ZCode 启动的 Claude 会话标为 ZCode（LU-07）", async () => {
     const { service, fetch } = await setup();
-    const snapshot = await service.getLocalUsageSnapshot({ source: "all", range: "all", timeZone: "UTC" });
+    const snapshot = await service.getLocalUsageSnapshot({
+      source: "all",
+      range: "all",
+      timeZone: "UTC",
+    });
     // Claude 3（msg_1 去重）+ Codex 2 + ZCode 原生 4
     expect(snapshot.summary.requestCount).toBe(9);
     expect(snapshot.requests.map((r) => r.origin)).toEqual(
@@ -78,7 +82,11 @@ describe("本机多来源用量快照", () => {
 
   it("来源筛选：ZCode 含原生与 ZCode 启动的会话，Claude Code 含全部 Claude 日志", async () => {
     const { service } = await setup();
-    const zcode = await service.getLocalUsageSnapshot({ source: "zcode", range: "all", timeZone: "UTC" });
+    const zcode = await service.getLocalUsageSnapshot({
+      source: "zcode",
+      range: "all",
+      timeZone: "UTC",
+    });
     expect(zcode.summary.requestCount).toBe(4 + 1);
     expect(new Set(zcode.requests.map((r) => r.origin))).toEqual(new Set(["zcode-claude-code"]));
     const claude = await service.getLocalUsageSnapshot({
@@ -87,13 +95,25 @@ describe("本机多来源用量快照", () => {
       timeZone: "UTC",
     });
     expect(claude.summary.requestCount).toBe(3);
-    const codex = await service.getLocalUsageSnapshot({ source: "codex", range: "all", timeZone: "UTC" });
-    expect(codex.summary).toMatchObject({ requestCount: 2, outputTokens: 150, cacheReadTokens: 1100 });
+    const codex = await service.getLocalUsageSnapshot({
+      source: "codex",
+      range: "all",
+      timeZone: "UTC",
+    });
+    expect(codex.summary).toMatchObject({
+      requestCount: 2,
+      outputTokens: 150,
+      cacheReadTokens: 1100,
+    });
   });
 
   it("ZCode 原生 input 为含缓存总量，计价时拆出未缓存输入", async () => {
     const { service } = await setup();
-    const snapshot = await service.getLocalUsageSnapshot({ source: "zcode", range: "today", timeZone: "UTC" });
+    const snapshot = await service.getLocalUsageSnapshot({
+      source: "zcode",
+      range: "today",
+      timeZone: "UTC",
+    });
     expect(snapshot.summary).toMatchObject({
       inputTokens: 400,
       cacheReadTokens: 600,
@@ -111,7 +131,11 @@ describe("本机多来源用量快照", () => {
 
   it("时间范围：7d 连续补 0，自定义范围按自然日过滤", async () => {
     const { service } = await setup();
-    const week = await service.getLocalUsageSnapshot({ source: "all", range: "7d", timeZone: "UTC" });
+    const week = await service.getLocalUsageSnapshot({
+      source: "all",
+      range: "7d",
+      timeZone: "UTC",
+    });
     expect(week.daily).toHaveLength(7);
     expect(week.startDate).toBe("2026-11-16");
     const custom = await service.getLocalUsageSnapshot({
@@ -122,7 +146,12 @@ describe("本机多来源用量快照", () => {
       timeZone: "UTC",
     });
     expect(custom.summary.requestCount).toBe(2);
-    expect(resolveLocalUsageDateRange({ range: "custom", customStartDate: "2026-11-10", customEndDate: "2026-11-01" }, "2026-11-22")).toEqual({
+    expect(
+      resolveLocalUsageDateRange(
+        { range: "custom", customStartDate: "2026-11-10", customEndDate: "2026-11-01" },
+        "2026-11-22",
+      ),
+    ).toEqual({
       startDate: "2026-11-01",
       endDate: "2026-11-10",
     });
@@ -130,7 +159,11 @@ describe("本机多来源用量快照", () => {
 
   it("CLI 不可用时仍统计日志，并标记原生不可用（LU-08）", async () => {
     const { service } = await setup({ cliAvailable: false });
-    const snapshot = await service.getLocalUsageSnapshot({ source: "all", range: "all", timeZone: "UTC" });
+    const snapshot = await service.getLocalUsageSnapshot({
+      source: "all",
+      range: "all",
+      timeZone: "UTC",
+    });
     expect(snapshot.scan.zcodeNativeAvailable).toBe(false);
     expect(snapshot.summary.requestCount).toBe(5);
     expect(snapshot.requests.every((r) => r.origin !== "zcode-claude-code")).toBe(true);
@@ -142,19 +175,29 @@ describe("本机多来源用量快照", () => {
       modelId: "GLM-4.6",
       price: { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 },
     });
-    let snapshot = await service.getLocalUsageSnapshot({ source: "zcode", range: "today", timeZone: "UTC" });
+    let snapshot = await service.getLocalUsageSnapshot({
+      source: "zcode",
+      range: "today",
+      timeZone: "UTC",
+    });
     expect(snapshot.pricing.find((p) => p.modelId === "glm-4.6")?.origin).toBe("manual");
     expect(snapshot.summary.costUsd).toBeCloseTo(1100 / 1e6, 10);
 
     fetch.mockResolvedValue(
       new Response(
-        JSON.stringify({ zai: { models: { "glm-4.6": { cost: { input: 2, output: 2, cache_read: 2 } } } } }),
+        JSON.stringify({
+          zai: { models: { "glm-4.6": { cost: { input: 2, output: 2, cache_read: 2 } } } },
+        }),
       ),
     );
     await expect(service.syncModelPrices()).resolves.toEqual({ syncedAt: NOW, modelCount: 1 });
     expect(fetch).toHaveBeenCalledWith("https://models.dev/api.json", expect.anything());
     await service.setModelPriceOverride({ modelId: "glm-4.6", price: null });
-    snapshot = await service.getLocalUsageSnapshot({ source: "zcode", range: "today", timeZone: "UTC" });
+    snapshot = await service.getLocalUsageSnapshot({
+      source: "zcode",
+      range: "today",
+      timeZone: "UTC",
+    });
     expect(snapshot.pricing.find((p) => p.modelId === "glm-4.6")?.origin).toBe("synced");
     expect(snapshot.pricingSyncedAt).toBe(NOW);
   });

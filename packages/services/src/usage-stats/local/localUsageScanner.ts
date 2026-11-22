@@ -83,7 +83,8 @@ function mergeExternalSessions(
   fresh: AppUsageExternalSession[],
 ): AppUsageExternalSession[] {
   const byKey = new Map<string, AppUsageExternalSession>();
-  for (const item of [...cached, ...fresh]) byKey.set(`${item.engine}:${item.externalSessionId}`, item);
+  for (const item of [...cached, ...fresh])
+    byKey.set(`${item.engine}:${item.externalSessionId}`, item);
   return [...byKey.values()];
 }
 
@@ -129,9 +130,15 @@ export class LocalUsageScanner {
       const files = await listJsonlFiles(root, maxDepth);
       for (const file of files) {
         seen.add(file);
-        const fallbackSessionId = engine === "claude-code" ? claudeFallbackSessionId(root, file) : null;
+        const fallbackSessionId =
+          engine === "claude-code" ? claudeFallbackSessionId(root, file) : null;
         try {
-          const result = await this.scanFile(engine, file, state.files.get(file), fallbackSessionId);
+          const result = await this.scanFile(
+            engine,
+            file,
+            state.files.get(file),
+            fallbackSessionId,
+          );
           malformedLines += result.malformedLines;
           if (result.next) {
             state.files.set(file, result.next);
@@ -157,7 +164,7 @@ export class LocalUsageScanner {
       (await scanFiles("codex", join(codexHome, "sessions"), CODEX_MAX_DEPTH)) +
       (await scanFiles("codex", join(codexHome, "archived_sessions"), 1));
 
-    for (const file of [...state.files.keys()]) {
+    for (const file of state.files.keys()) {
       if (!seen.has(file)) {
         state.files.delete(file);
         changed = true;
@@ -174,7 +181,10 @@ export class LocalUsageScanner {
             ? mergeZCodeFacts(state.zcodeFacts, native.facts)
             : native.facts;
         state.zcodeFactsTimeZone = timeZone;
-        state.externalSessions = mergeExternalSessions(state.externalSessions, native.externalSessions);
+        state.externalSessions = mergeExternalSessions(
+          state.externalSessions,
+          native.externalSessions,
+        );
         changed = true;
       }
     } catch (error) {

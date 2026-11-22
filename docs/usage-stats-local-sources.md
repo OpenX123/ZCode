@@ -138,6 +138,7 @@ Renderer(LocalUsagePanel)          Host UsageStatsService            CLI usage s
 - 缓存文件：版本号 + 字符串表（模型、cwd、会话）+ 每文件游标与紧凑记录 + ZCode 按日聚合 + 外部会话映射。
   zod 校验失败或版本不符 → 丢弃缓存并全量重扫。写入使用原子写（临时文件 + rename）。
 - ZCode 原生按日聚合合并：同一日期取“请求数更大”的一份（CLI 30 天裁剪只会让旧日期变少）。
+  因此 agent-db 被裁剪或清空后，缓存中已见过的日期仍保留（删除 `local-usage-cache.json` 可重置）。
 
 ## 5. 价格
 

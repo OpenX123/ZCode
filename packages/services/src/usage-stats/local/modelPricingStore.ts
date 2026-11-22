@@ -4,7 +4,7 @@ import { modelPriceSchema, type ModelPrice, type ModelPriceSyncResult } from "@z
 import { atomicWriteText } from "../../fs/atomicFileUtils.js";
 import { normalizeModelId, type PricingTables } from "./modelPricing.js";
 
-export const MODELS_DEV_API_URL = "https://models.dev/api.json";
+const MODELS_DEV_API_URL = "https://models.dev/api.json";
 const SYNC_TIMEOUT_MS = 15_000;
 /** 只取与本机来源相关的提供商；靠前者优先（同一模型在多家出现时）。 */
 const MODELS_DEV_PROVIDERS = ["anthropic", "openai", "zai", "zhipuai"] as const;
@@ -84,7 +84,9 @@ export class ModelPricingStore {
   private async load(): Promise<PricingFile> {
     if (this.data) return this.data;
     try {
-      const parsed = pricingFileSchema.safeParse(JSON.parse(await readFile(this.options.file, "utf8")));
+      const parsed = pricingFileSchema.safeParse(
+        JSON.parse(await readFile(this.options.file, "utf8")),
+      );
       this.data = parsed.success ? parsed.data : null;
     } catch {
       this.data = null;

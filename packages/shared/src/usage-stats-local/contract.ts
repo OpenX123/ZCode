@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { appUsageHeatmapWeekSchema } from "./usage-stats.js";
 
 // 本机多来源用量（ZCode 原生 / Claude Code / Codex 日志）。
 // 规则与所有者见 docs/usage-stats-local-sources.md；RPC 两端都用这里的 schema 做运行时校验。
@@ -21,6 +20,23 @@ export const LOCAL_USAGE_ORIGINS = [
 export type LocalUsageOrigin = (typeof LOCAL_USAGE_ORIGINS)[number];
 
 const dateKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+// 与 AppUsageHeatmapWeek 同形（结构类型兼容，可直接交给既有热力图组件）；本模块保持自包含、不反向依赖 shared 根。
+const localUsageHeatmapWeekSchema = z.object({
+  weekIndex: z.number(),
+  days: z.array(
+    z
+      .object({
+        date: z.string(),
+        level: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+        totalTokens: z.number(),
+        /** 本机多来源统计中表示请求数。 */
+        turnCount: z.number(),
+        toolCallCount: z.number(),
+      })
+      .nullable(),
+  ),
+});
 const nonNegative = z.number().finite().nonnegative();
 
 export const localUsageRequestSchema = z
@@ -151,7 +167,7 @@ export const localUsageSnapshotSchema = z.object({
   summary: localUsageSummarySchema,
   daily: z.array(localUsageDailyPointSchema),
   /** 最近 53 个自然周，受来源筛选影响、不受时间范围影响；turnCount 表示请求数。 */
-  heatmapWeeks: z.array(appUsageHeatmapWeekSchema),
+  heatmapWeeks: z.array(localUsageHeatmapWeekSchema),
   models: z.array(localUsageModelRowSchema),
   projects: z.array(localUsageProjectRowSchema),
   requests: z.array(localUsageRequestRowSchema),

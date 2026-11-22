@@ -171,6 +171,9 @@ export async function loadCacheState(cacheFile: string): Promise<LocalUsageCache
   }
 }
 
-export async function saveCacheState(cacheFile: string, state: LocalUsageCacheState): Promise<void> {
+export async function saveCacheState(
+  cacheFile: string,
+  state: LocalUsageCacheState,
+): Promise<void> {
   await atomicWriteText(cacheFile, serializeCacheState(state));
 }

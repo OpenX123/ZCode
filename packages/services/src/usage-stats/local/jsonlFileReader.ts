@@ -44,7 +44,9 @@ export async function readJsonlLines(
           oversizedLines += 1;
         } else {
           const lineBuffer =
-            pendingBytes > 0 ? Buffer.concat([...pending, piece], pendingBytes + piece.length) : piece;
+            pendingBytes > 0
+              ? Buffer.concat([...pending, piece], pendingBytes + piece.length)
+              : piece;
           let line = lineBuffer.toString("utf8");
           if (line.endsWith("\r")) line = line.slice(0, -1);
           if (line.length > 0) onLine(line);

@@ -109,7 +109,8 @@ function buildRows(index: LocalUsageIndex, toDateKey: (ms: number) => string): U
   );
   const rows: UsageRow[] = [];
   const fromLog = (engine: "claude-code" | "codex", entry: LocalLogEntry, ordinal: number) => {
-    const launchedByZCode = entry.sessionId !== null && zcodeLaunched.has(`${engine}:${entry.sessionId}`);
+    const launchedByZCode =
+      entry.sessionId !== null && zcodeLaunched.has(`${engine}:${entry.sessionId}`);
     rows.push({
       origin: launchedByZCode
         ? engine === "claude-code"
@@ -137,7 +138,10 @@ function buildRows(index: LocalUsageIndex, toDateKey: (ms: number) => string): U
   index.codexEntries.forEach((entry, i) => fromLog("codex", entry, i));
   for (const fact of index.zcodeFacts) {
     // model_usage.input_tokens 为含缓存的总输入；计价前拆出未缓存部分。
-    const uncached = Math.max(0, fact.inputTokens - fact.cacheReadTokens - fact.cacheCreationTokens);
+    const uncached = Math.max(
+      0,
+      fact.inputTokens - fact.cacheReadTokens - fact.cacheCreationTokens,
+    );
     rows.push({
       origin: "zcode",
       engine: "zcode",
@@ -280,7 +284,12 @@ export function aggregateLocalUsage(input: AggregateLocalUsageInput): LocalUsage
     if (cost === null) summary.unpricedTokens += tokens;
     else summary.costUsd += cost;
 
-    const day = daily.get(row.date) ?? { date: row.date, totalTokens: 0, requestCount: 0, costUsd: 0 };
+    const day = daily.get(row.date) ?? {
+      date: row.date,
+      totalTokens: 0,
+      requestCount: 0,
+      costUsd: 0,
+    };
     day.totalTokens += tokens;
     day.requestCount += row.requestCount;
     day.costUsd += cost ?? 0;
@@ -318,7 +327,8 @@ export function aggregateLocalUsage(input: AggregateLocalUsageInput): LocalUsage
     project.totalTokens += tokens;
     project.requestCount += row.requestCount;
     project.costUsd += cost ?? 0;
-    if (!project.lastActiveDate || row.date > project.lastActiveDate) project.lastActiveDate = row.date;
+    if (!project.lastActiveDate || row.date > project.lastActiveDate)
+      project.lastActiveDate = row.date;
     projects.set(projectKey, project);
 
     if (row.timestamp !== null) requestRows.push({ row, cost });
