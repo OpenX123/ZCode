@@ -143,7 +143,7 @@ Renderer(LocalUsagePanel)          Host UsageStatsService            CLI usage s
 ## 5. 价格
 
 - 内置价格表（USD / 百万 token）：input、output、cacheRead、cacheWrite（5m）、cacheWrite1h（Claude）。
-  覆盖 Claude（Opus 4/4.1、Opus 4.5+、Sonnet 3.7/4/4.5、Haiku 3.5/4.5）、OpenAI GPT-5 系列（含 codex/mini）、
+  覆盖 Claude（Fable 5/5.1/5.2、Opus 4–5.5、Sonnet 3.5–5.5、Haiku 3.5/4.5/5.5；5m 写 = 1.25×input、1h 写 = 2×input）、OpenAI GPT-5 系列（含 codex/mini）、
   GLM 4.5/4.6/4.7。表外模型为“未定价”。
 - 模型 ID 归一化：小写；去掉 `provider/` 前缀与 `us.anthropic.` / `anthropic.` 等区域前缀；去掉 `[1m]`
   等方括号后缀、`-v1:0`、`@20250514` / `-20250514` 日期后缀、`-latest`；Claude 版本 `4-5` → `4.5`、

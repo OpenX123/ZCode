@@ -6,7 +6,22 @@ import type { ModelPrice, ModelPriceOrigin } from "@zcode/shared";
  * key 必须是 normalizeModelId 之后的形式。
  */
 const BUILTIN_MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
-  // Anthropic
+  // Anthropic（input/output/读缓存取自官方价格表；5m 写 = 1.25×input，1h 写 = 2×input）
+  "claude-fable-5.2": { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10, cacheWrite1h: 16 },
+  "claude-fable-5.1": { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5, cacheWrite1h: 20 },
+  "claude-fable-5": { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5, cacheWrite1h: 20 },
+  "claude-opus-5.5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5, cacheWrite1h: 8 },
+  "claude-opus-5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 },
+  "claude-opus-4.8": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 },
+  "claude-sonnet-5.5": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5, cacheWrite1h: 4 },
+  "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5, cacheWrite1h: 4 },
+  "claude-haiku-5.5": {
+    input: 0.1,
+    output: 0.5,
+    cacheRead: 0.01,
+    cacheWrite: 0.125,
+    cacheWrite1h: 0.2,
+  },
   "claude-opus-4": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75, cacheWrite1h: 30 },
   "claude-opus-4.1": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75, cacheWrite1h: 30 },
   "claude-opus-4.5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 },
@@ -59,10 +74,7 @@ export function normalizeModelId(raw: string | null | undefined): string {
 }
 
 /** 精确匹配 → 以 `-` 为边界的最长前缀匹配（gpt-5.1-codex-max → gpt-5.1-codex）。 */
-function findPriceKey(
-  modelId: string,
-  table: Readonly<Record<string, unknown>>,
-): string | null {
+function findPriceKey(modelId: string, table: Readonly<Record<string, unknown>>): string | null {
   if (Object.hasOwn(table, modelId)) return modelId;
   let best: string | null = null;
   for (const key of Object.keys(table)) {
