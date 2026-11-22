@@ -10,7 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { ENGINE_LABELS, type EngineControlsProps } from "./contract.js";
 import { TaskClientLogo } from "./TaskClientLogo.js";
-import { ErrorDiagnostics } from "@/components/ai-elements/error-diagnostics.js";
+import { DiagnosticsCard } from "@/components/ai-elements/error-diagnostics.js";
 import { EngineConfigMenu, EngineModelPopover } from "./EngineConfigPicker.js";
 import {
   ENGINE_DEFAULT_ALIAS,
@@ -235,9 +235,9 @@ export function EngineControls({
                 className="w-80 max-w-[calc(100vw-1.5rem)]"
                 data-testid="engine-error-details"
               >
-                <ErrorDiagnostics
-                  text={diagnostic}
-                  label={intl.formatMessage({ id: "engine.errorDetails" })}
+                {/* 弹层本身即「错误详情」，直接展示诊断卡，不再嵌套第二层展开。 */}
+                <DiagnosticsCard
+                  rows={[{ label: "", value: diagnostic }]}
                   copyLabel={intl.formatMessage({ id: "engine.copyErrorDetails" })}
                 />
               </PopoverContent>

@@ -93,13 +93,24 @@ function render(rows: ConversationRow[]): string {
 }
 
 describe("失败轮末尾的行内错误行", () => {
-  it("显示失败摘要与 HTTP 状态；没有输出与工具执行的最新失败轮提供重新发送", () => {
+  it("一行显示摘要、重试与详情开关，诊断卡默认收起；没有输出与工具执行的最新失败轮提供重试", () => {
     const html = render([header(), userInput()]);
     expect(html).toContain('data-testid="turn-failure-row"');
     expect(html).toContain("unexpected status 502 Bad Gateway: Bad gateway");
-    expect(html).toContain("HTTP 502");
-    expect(html).toContain("https://gateway.example.test/v1/responses");
+    expect(html).toContain('data-testid="error-details-toggle"');
+    expect(html).toContain('aria-expanded="false"');
+    // 1.5.0：HTTP 状态与 URL 进入展开后的诊断卡，不再常驻行内。
+    expect(html).not.toContain('data-testid="error-diagnostics-card"');
     expect(html).toContain('data-testid="turn-failure-resend"');
+    expect(html).toContain(">重试<");
+  });
+
+  it("常见错误码按人话归类：429 显示限流说明而非原文", () => {
+    const limited = header();
+    limited.failure = { ...limited.failure!, summary: "429 Too Many Requests", httpStatus: 429 };
+    const html = render([limited, userInput()]);
+    expect(html).toContain('data-explanation="rateLimit"');
+    expect(html).toContain("请求过于频繁（429），已被限流");
   });
 
   it("已有助手输出或原始输入带附件时不提供重新发送", () => {
