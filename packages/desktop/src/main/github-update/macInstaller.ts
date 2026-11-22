@@ -17,6 +17,7 @@ work="$4"
 log="$5"
 opener="$6"
 remaining="$7"
+relaunch="$8"
 backup="$work/previous.app"
 moved=0
 cleanup() {
@@ -26,7 +27,7 @@ cleanup() {
     echo '安装失败，恢复旧版'
     if [ -e "$target" ]; then /bin/mv "$target" "$work/failed.app" || exit 1; fi
     /bin/mv "$backup" "$target" || exit 1
-    "$opener" -n "$target" || true
+    if [ "$relaunch" = 1 ]; then "$opener" -n "$target" || true; fi
   fi
   /bin/rm -rf "$work"
   exit "$result"
@@ -44,9 +45,9 @@ done
 /bin/mv "$target" "$backup"
 moved=1
 /bin/mv "$staged" "$target"
-"$opener" -n "$target"
+if [ "$relaunch" = 1 ]; then "$opener" -n "$target"; fi
 moved=0
-echo '已替换并启动新版'
+echo '已替换新版'
 `;
 
 export interface MacInstallOptions {
@@ -57,6 +58,8 @@ export interface MacInstallOptions {
   signal: AbortSignal;
   confirmInstall(): boolean;
   quitForInstall(): Promise<void>;
+  /** “重启以更新”替换后启动新版；退出时安装（1.5.0）只替换不启动。 */
+  relaunch?: boolean;
 }
 
 async function plistValue(appPath: string, key: string): Promise<string> {
@@ -123,7 +126,17 @@ export async function installMacUpdate(options: MacInstallOptions): Promise<bool
     // 在退出屏障前确认助手已运行；Main 退出时不能依赖其自身继续执行文件替换。
     helper = spawn(
       "/bin/sh",
-      [script, appPath, staged, String(process.pid), work, options.logPath, "/usr/bin/open", "120"],
+      [
+        script,
+        appPath,
+        staged,
+        String(process.pid),
+        work,
+        options.logPath,
+        "/usr/bin/open",
+        "120",
+        options.relaunch === false ? "0" : "1",
+      ],
       {
         detached: true,
         stdio: ["ignore", "pipe", "ignore"],

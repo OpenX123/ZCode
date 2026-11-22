@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { UpdateCheckResultPayload, UpdateStatePayload } from "@zcode/shared";
-import type { GithubDesktopUpdateContract, GithubDesktopUpdateOptions } from "./contract.js";
+import type {
+  GithubDesktopInstallMode,
+  GithubDesktopUpdateContract,
+  GithubDesktopUpdateOptions,
+  GithubDesktopUpdatePreferences,
+} from "./contract.js";
 import {
   GITHUB_UPDATE_MANIFEST_URL,
   MAX_MANIFEST_BYTES,
@@ -78,6 +83,14 @@ export function createGithubDesktopUpdater(
   let lastCheckAt: number | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
   let started = false;
+  // 1.5.0：自动检查 / 自动下载偏好由 Main 从本机设置注入，缺省均开启。
+  let preferences: GithubDesktopUpdatePreferences = {
+    autoCheck: true,
+    autoDownload: true,
+    ...options.preferences,
+  };
+  // 退出时安装只交接一次；“重启以更新”取消后仍允许退出时安装。
+  let quitHandoffDone = false;
 
   function publish(next: UpdateStatePayload): void {
     if (lifetime.signal.aborted) return;
@@ -172,13 +185,33 @@ export function createGithubDesktopUpdater(
       );
     if (downloadFlight) return Promise.resolve(currentResult());
     if (checkFlight) return checkFlight;
+    // 关闭“自动检查更新”后，启动/定时/唤醒检查都不请求网络；手动检查不受影响。
+    if (!manual && !preferences.autoCheck) return Promise.resolve(currentResult());
     if (!manual && lastCheckAt !== undefined && now() - lastCheckAt < UPDATE_INTERVAL_MS)
       return Promise.resolve(currentResult());
     lastCheckAt = now();
-    checkFlight = performCheck().finally(() => {
-      checkFlight = undefined;
-    });
+    checkFlight = performCheck()
+      .then((result) => {
+        if (result.kind === "available") scheduleBackgroundDownload();
+        return result;
+      })
+      .finally(() => {
+        checkFlight = undefined;
+      });
     return checkFlight;
+  }
+
+  /** 自动下载开启且有可自动安装的候选时，在后台下载并校验；失败不发布持久错误。 */
+  function scheduleBackgroundDownload(): void {
+    if (
+      !preferences.autoDownload ||
+      downloadFlight ||
+      lifetime.signal.aborted ||
+      state.kind !== "update-available" ||
+      !candidate?.asset
+    )
+      return;
+    void runDownload("background");
   }
 
   function installerPath(selected: Candidate): string {
@@ -189,12 +222,20 @@ export function createGithubDesktopUpdater(
       selected.asset.fileName,
     );
   }
-  async function openVerified(selected: Candidate): Promise<UpdateCheckResultPayload> {
+  async function openVerified(
+    selected: Candidate,
+    mode: GithubDesktopInstallMode,
+  ): Promise<UpdateCheckResultPayload> {
     const path = installerPath(selected);
     if (!(await verifyInstaller(path, selected.asset)))
       throw new Error("更新安装器缺失或校验失败，请重新下载");
     lifetime.signal.throwIfAborted();
-    const message = await options.openInstaller(path, selected.manifest.version, lifetime.signal);
+    const message = await options.openInstaller(
+      path,
+      selected.manifest.version,
+      lifetime.signal,
+      mode,
+    );
     if (message) throw new Error(`无法打开更新安装器：${message}`);
     publish({ kind: "update-downloaded", enabled, version: selected.manifest.version });
     return { kind: "ready", version: selected.manifest.version };
@@ -255,7 +296,11 @@ export function createGithubDesktopUpdater(
     }
   }
 
-  function runInstall(download: boolean): Promise<UpdateCheckResultPayload> {
+  /** 下载与安装共用同一 flight：重复点击只执行一次，检查不会覆盖进度。 */
+  function runExclusive(
+    task: (selected: Candidate) => Promise<UpdateCheckResultPayload>,
+    onError: (error: unknown) => UpdateCheckResultPayload,
+  ): Promise<UpdateCheckResultPayload> {
     if (downloadFlight) return downloadFlight;
     if (!enabled || lifetime.signal.aborted)
       return Promise.resolve({ kind: "error", message: "当前环境不支持 GitHub 更新" });
@@ -265,21 +310,9 @@ export function createGithubDesktopUpdater(
         if (!candidate) return { kind: "error", message: "请先检查并选择可用更新" };
         // 发布矩阵外的平台没有可校验的安装器，只返回手动下载结果，不改变状态。
         if (!candidate.asset) return manualResult(candidate.manifest);
-        const selected: Candidate = candidate;
-        if (download) {
-          publish({
-            kind: "download-progress",
-            enabled,
-            version: selected.manifest.version,
-            progress: "0%",
-            transferredBytes: 0,
-            totalBytes: selected.asset.size,
-          });
-          await downloadInstaller(selected);
-        }
-        return await openVerified(selected);
+        return await task(candidate);
       } catch (error) {
-        return failure(error);
+        return onError(error);
       }
     })().finally(() => {
       downloadFlight = undefined;
@@ -287,11 +320,85 @@ export function createGithubDesktopUpdater(
     return downloadFlight;
   }
 
+  /** 下载并校验，完成后为 update-downloaded（“重启以更新”）；不打开安装器。 */
+  function runDownload(origin: "user" | "background"): Promise<UpdateCheckResultPayload> {
+    return runExclusive(
+      async (selected) => {
+        publish({
+          kind: "download-progress",
+          enabled,
+          version: selected.manifest.version,
+          progress: "0%",
+          transferredBytes: 0,
+          totalBytes: selected.asset.size,
+        });
+        await downloadInstaller(selected);
+        lifetime.signal.throwIfAborted();
+        publish({ kind: "update-downloaded", enabled, version: selected.manifest.version });
+        return { kind: "ready", version: selected.manifest.version };
+      },
+      (error) => {
+        if (origin === "user" || lifetime.signal.aborted) return failure(error);
+        // 后台下载失败不是用户操作失败：恢复“发现新版”，由用户手动下载或下一轮检查重试。
+        const message = error instanceof Error ? error.message : String(error);
+        if (candidate)
+          publish({ kind: "update-available", enabled, version: candidate.manifest.version });
+        return { kind: "error", message };
+      },
+    );
+  }
+
+  async function installOnQuit(): Promise<boolean> {
+    if (!enabled || lifetime.signal.aborted || quitHandoffDone || downloadFlight) return false;
+    if (state.kind !== "update-downloaded" || !candidate?.asset) return false;
+    const selected: Candidate = candidate;
+    try {
+      const path = installerPath(selected);
+      // 交接前重新校验；缓存缺失或损坏时照常退出，不启动安装器。
+      if (!(await verifyInstaller(path, selected.asset))) return false;
+      lifetime.signal.throwIfAborted();
+      const message = await options.openInstaller(
+        path,
+        selected.manifest.version,
+        lifetime.signal,
+        "quit",
+      );
+      if (message) return false;
+      quitHandoffDone = true;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function startTimer(): void {
+    if (timer) return;
+    timer = setInterval(() => {
+      void checkForUpdates(false);
+    }, UPDATE_INTERVAL_MS);
+    timer.unref();
+  }
+
   return {
     getState: () => ({ ...state }),
     checkForUpdates,
-    downloadUpdate: () => runInstall(true),
-    installUpdate: () => runInstall(false),
+    downloadUpdate: () => runDownload("user"),
+    installUpdate: () => runExclusive((selected) => openVerified(selected, "restart"), failure),
+    installOnQuit,
+    setPreferences(patch) {
+      const previous = preferences;
+      preferences = { ...preferences, ...patch };
+      if (!started || lifetime.signal.aborted || !enabled) return;
+      if (preferences.autoCheck && !previous.autoCheck) {
+        startTimer();
+        void checkForUpdates(false);
+      }
+      if (!preferences.autoCheck && timer) {
+        clearInterval(timer);
+        timer = undefined;
+      }
+      if (preferences.autoDownload && !previous.autoDownload) scheduleBackgroundDownload();
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => {
@@ -301,11 +408,9 @@ export function createGithubDesktopUpdater(
     start() {
       if (started || lifetime.signal.aborted || !enabled) return;
       started = true;
+      if (!preferences.autoCheck) return;
       void checkForUpdates(false);
-      timer = setInterval(() => {
-        void checkForUpdates(false);
-      }, UPDATE_INTERVAL_MS);
-      timer.unref();
+      startTimer();
     },
     dispose() {
       lifetime.abort(new Error("更新服务已关闭"));

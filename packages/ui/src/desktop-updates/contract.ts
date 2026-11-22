@@ -1,4 +1,4 @@
-import type { UpdateStatePayload } from "@zcode/shared";
+import type { AppSettings, UpdateStatePayload } from "@zcode/shared";
 
 /** Main 是更新状态唯一所有者；UI 只决定当前状态对应的用户动作。 */
 export function getDesktopUpdateAction(
@@ -31,4 +31,31 @@ export function getDesktopUpdateProgress(state: UpdateStatePayload | null): numb
   if (state?.kind !== "download-progress") return 0;
   const value = Number.parseFloat(state.progress);
   return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0;
+}
+
+/** 设置页的两项本机更新偏好；缺席按开启（spec：docs/desktop/github-desktop-update-spec.md）。 */
+export interface DesktopUpdatePreferences {
+  autoCheck: boolean;
+  autoDownload: boolean;
+}
+
+export function resolveDesktopUpdatePreferences(
+  settings:
+    | Pick<AppSettings, "desktopUpdateAutoCheck" | "desktopUpdateAutoDownload">
+    | null
+    | undefined,
+): DesktopUpdatePreferences {
+  return {
+    autoCheck: settings?.desktopUpdateAutoCheck !== false,
+    autoDownload: settings?.desktopUpdateAutoDownload !== false,
+  };
+}
+
+export function desktopUpdatePreferencesPatch(
+  patch: Partial<DesktopUpdatePreferences>,
+): Pick<AppSettings, "desktopUpdateAutoCheck" | "desktopUpdateAutoDownload"> {
+  return {
+    ...(patch.autoCheck !== undefined ? { desktopUpdateAutoCheck: patch.autoCheck } : {}),
+    ...(patch.autoDownload !== undefined ? { desktopUpdateAutoDownload: patch.autoDownload } : {}),
+  };
 }

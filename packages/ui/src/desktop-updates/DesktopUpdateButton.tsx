@@ -1,4 +1,4 @@
-import { Download, ExternalLink, LoaderCircle, RefreshCw, X } from "lucide-react";
+import { Download, ExternalLink, LoaderCircle, RefreshCw, RotateCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useDesktopUpdates } from "@/hooks/desktop-updates/index.js";
@@ -7,7 +7,7 @@ import { getDesktopUpdateAction, getDesktopUpdateProgress } from "./contract.js"
 export function DesktopUpdateButton({
   isWindowsDesktop = false,
 }: {
-  /** 应用外壳注入的桌面平台；Windows 打开安装程序，macOS 自动安装并重启。 */
+  /** 应用外壳注入的桌面平台；两端均为后台下载、重启或退出时安装（文案按平台保留独立 key）。 */
   isWindowsDesktop?: boolean;
 }) {
   const { intl } = useZCodeIntl();
@@ -46,6 +46,9 @@ export function DesktopUpdateButton({
             <RefreshCw className="size-4" />
           ) : manualDownload ? (
             <ExternalLink className="size-4" />
+          ) : state.kind === "update-downloaded" ? (
+            // 已下载并校验：主动作是“重启以更新”；不点也会在退出应用时安装。
+            <RotateCw className="size-4" />
           ) : (
             <Download className="size-4" />
           )}

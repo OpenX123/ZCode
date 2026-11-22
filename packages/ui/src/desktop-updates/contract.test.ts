@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  desktopUpdatePreferencesPatch,
   getDesktopUpdateAction,
   getDesktopUpdateProgress,
   isDesktopUpdateDismissible,
+  resolveDesktopUpdatePreferences,
 } from "./contract.js";
 
 describe("桌面更新 UI 动作契约", () => {
@@ -85,5 +87,32 @@ describe("桌面更新 UI 动作契约", () => {
         getDesktopUpdateProgress({ kind: "download-progress", enabled: true, progress: value }),
       ).toBe(expected);
     }
+  });
+});
+
+describe("自动更新偏好（1.5.0）", () => {
+  it("缺席按开启，显式 false 关闭", () => {
+    expect(resolveDesktopUpdatePreferences(null)).toEqual({ autoCheck: true, autoDownload: true });
+    expect(
+      resolveDesktopUpdatePreferences({
+        desktopUpdateAutoCheck: false,
+        desktopUpdateAutoDownload: true,
+      }),
+    ).toEqual({ autoCheck: false, autoDownload: true });
+  });
+
+  it("补丁只写入变化的设置字段", () => {
+    expect(desktopUpdatePreferencesPatch({ autoDownload: false })).toEqual({
+      desktopUpdateAutoDownload: false,
+    });
+    expect(desktopUpdatePreferencesPatch({ autoCheck: true })).toEqual({
+      desktopUpdateAutoCheck: true,
+    });
+  });
+
+  it("已下载的更新动作为重启以更新（install），且不可关闭", () => {
+    const ready = { kind: "update-downloaded" as const, enabled: true, version: "1.5.0" };
+    expect(getDesktopUpdateAction(ready)).toBe("install");
+    expect(isDesktopUpdateDismissible(ready)).toBe(false);
   });
 });

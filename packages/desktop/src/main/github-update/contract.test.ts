@@ -35,7 +35,9 @@ async function fixture(overrides: Partial<GithubDesktopUpdateOptions> = {}, rele
   const fetch = vi.fn<typeof globalThis.fetch>(async (input) =>
     String(input) === GITHUB_UPDATE_MANIFEST_URL ? Response.json(release) : new Response(body),
   );
-  const openInstaller = vi.fn(async (_path: string) => "");
+  const openInstaller = vi.fn(
+    async (_path: string, _version: string, _signal: AbortSignal, _mode: string) => "",
+  );
   const updater = createGithubDesktopUpdater({
     currentVersion: "1.0.0",
     platform: "darwin",
@@ -44,6 +46,8 @@ async function fixture(overrides: Partial<GithubDesktopUpdateOptions> = {}, rele
     cacheDir: directory,
     fetch,
     openInstaller,
+    // 既有合同默认关闭自动下载，单独用例覆盖 1.5.0 的后台下载。
+    preferences: { autoDownload: false },
     ...overrides,
   });
   fixtures.push({ dispose: updater.dispose, directory });
@@ -154,7 +158,7 @@ describe("GitHub 桌面更新合同", () => {
   });
 
   it.each(["darwin", "win32"])(
-    "%s 用户点击只下载本机架构，合并点击并打开一次",
+    "%s 用户点击只下载本机架构并校验，合并点击；重启以更新时打开一次",
     async (platform) => {
       const { updater, fetch, openInstaller } = await fixture({ platform, arch: "x64" });
       await updater.checkForUpdates();
@@ -166,9 +170,13 @@ describe("GitHub 桌面更新合同", () => {
       expect(String(fetch.mock.calls[1]![0])).toContain(
         `${platform === "darwin" ? "mac" : "win"}-x64.${platform === "darwin" ? "dmg" : "exe"}`,
       );
-      expect(openInstaller).toHaveBeenCalledTimes(1);
-      expect(await readFile(openInstaller.mock.calls[0]![0]!, "utf8")).toBe(body);
+      // 1.5.0：下载只到“重启以更新”，不打开安装器、不退出应用。
+      expect(openInstaller).not.toHaveBeenCalled();
       expect(updater.getState()).toMatchObject({ kind: "update-downloaded", version: "1.0.1" });
+      await expect(updater.installUpdate()).resolves.toEqual({ kind: "ready", version: "1.0.1" });
+      expect(openInstaller).toHaveBeenCalledTimes(1);
+      expect(openInstaller.mock.calls[0]![3]).toBe("restart");
+      expect(await readFile(openInstaller.mock.calls[0]![0]!, "utf8")).toBe(body);
     },
   );
 
@@ -193,14 +201,15 @@ describe("GitHub 桌面更新合同", () => {
     await updater.downloadUpdate();
     fetch.mockRejectedValue(new Error("offline"));
     await expect(updater.installUpdate()).resolves.toMatchObject({ kind: "ready" });
-    expect(openInstaller).toHaveBeenCalledTimes(2);
+    expect(openInstaller).toHaveBeenCalledTimes(1);
     const path = openInstaller.mock.calls[0]![0]!;
     await writeFile(path, "corrupt");
     await expect(updater.installUpdate()).resolves.toMatchObject({ kind: "error" });
-    expect(openInstaller).toHaveBeenCalledTimes(2);
+    expect(openInstaller).toHaveBeenCalledTimes(1);
     fetch.mockImplementation(async () => new Response(body));
     await expect(updater.downloadUpdate()).resolves.toMatchObject({ kind: "ready" });
-    expect(openInstaller).toHaveBeenCalledTimes(3);
+    await expect(updater.installUpdate()).resolves.toMatchObject({ kind: "ready" });
+    expect(openInstaller).toHaveBeenCalledTimes(2);
   });
 
   it.each(["wrong-sha", "short", "oversize", "wrong-header"])(
@@ -228,7 +237,7 @@ describe("GitHub 桌面更新合同", () => {
       ).toEqual([]);
       fetch.mockImplementation(async () => new Response(body));
       await expect(updater.downloadUpdate()).resolves.toMatchObject({ kind: "ready" });
-      expect(openInstaller).toHaveBeenCalledTimes(1);
+      expect(openInstaller).not.toHaveBeenCalled();
     },
   );
 
