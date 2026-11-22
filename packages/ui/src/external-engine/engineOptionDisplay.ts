@@ -99,9 +99,32 @@ export function isEngineDefaultModelEntry(entry: EngineConfigOptionValue | undef
   return entry?.value === ENGINE_DEFAULT_ALIAS;
 }
 
+/**
+ * 普通模型名显示：原始 Claude id（`claude-fable-5-2`、`claude-opus-5-5[1m]`）格式化为
+ * `Fable 5.2`；已是展示名的（`Claude Opus 5.5`、`GPT-5.5`）只去掉 `Claude ` 前缀。
+ *
+ * Bug 修复（1.5.2）：1.5.1 只对 `default` 别名解析真实名，其余目录条目原样显示 adapter
+ * name；本机 adapter 对这些条目给出的 name 就是原始 id，下拉中出现 `claude-opus-5-5` 等。
+ */
+export function formatEngineModelName(name: string): string {
+  const candidate = name.replace(CONTEXT_SUFFIX_PATTERN, "").trim();
+  return (
+    formatClaudeModelId(candidate) ?? formatGptModelId(candidate) ?? stripClaudeModelPrefix(name)
+  );
+}
+
+/** Codex 原始 id → 官方写法：`gpt-5.5-codex` → `GPT-5.5-Codex`；已是展示名的原样返回。 */
+function formatGptModelId(candidate: string): string | undefined {
+  const match = /^gpt-(\d+(?:\.\d+)?)((?:-[a-z]+)*)$/.exec(candidate);
+  if (!match) return undefined;
+  const [, version = "", suffix = ""] = match;
+  const words = suffix.split("-").filter(Boolean).map(capitalize);
+  return ["GPT", version, ...words].join("-");
+}
+
 /** 模型条目显示名：`default` 别名不显示 adapter name（如 "Default (recommended)"）。 */
 export function engineModelEntryLabel(intl: IntlInstance, entry: EngineConfigOptionValue): string {
-  if (!isEngineDefaultModelEntry(entry)) return stripClaudeModelPrefix(entry.name);
+  if (!isEngineDefaultModelEntry(entry)) return formatEngineModelName(entry.name);
   const parsed = parseEngineDefaultModelName(entry.description);
   return parsed
     ? stripClaudeModelPrefix(parsed)
@@ -117,7 +140,7 @@ export function engineModelCurrentLabel(
   if (entry) return engineModelEntryLabel(intl, entry);
   if (option.currentValue === ENGINE_DEFAULT_ALIAS)
     return intl.formatMessage({ id: "engine.model.default" });
-  return option.currentValue || undefined;
+  return option.currentValue ? formatEngineModelName(option.currentValue) : undefined;
 }
 
 /**
