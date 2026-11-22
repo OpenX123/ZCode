@@ -62,6 +62,12 @@ import { invalidateDeferredDraftSessionForSkillChange } from "@/lib/zcodeDraftSk
 import { refreshSharedSkillStoreForWorkspace } from "@/lib/skillStoreRefresh.js";
 import { refreshWorkspacePluginCapabilitiesAfterRemoteSync } from "@/lib/remotePluginSyncRefresh.js";
 import { useMcpStore } from "@/store/mcpStore.js";
+import {
+  TaskTitleDisplay,
+  getTaskTitleDisplayText,
+  parseTaskTitleDisplay,
+  type TaskTitleFallbackLabels,
+} from "@/reference-icons/index.js";
 import { useSourceServerDisplayNames } from "@/hooks/useSourceServerDisplayNames.js";
 import { useRemoteDevicePresentationInput } from "@/hooks/useSourceServerStatuses.js";
 
@@ -121,6 +127,22 @@ export function WorkspaceHeaderTitleSection({
   showDraftTitle = false,
 }: WorkspaceHeaderTitleSectionProps) {
   const { intl } = useZCodeIntl();
+  const titleReferenceLabels = useMemo<TaskTitleFallbackLabels>(
+    () => ({
+      session: intl.formatMessage({ id: "taskList.titleReference.session" }),
+      image: intl.formatMessage({ id: "taskList.titleReference.image" }),
+    }),
+    [intl],
+  );
+  const activeTaskTitleText = useMemo(
+    () =>
+      activeTaskTitle
+        ? getTaskTitleDisplayText(
+            parseTaskTitleDisplay(activeTaskTitle, { fallbackLabels: titleReferenceLabels }),
+          )
+        : activeTaskTitle,
+    [activeTaskTitle, titleReferenceLabels],
+  );
   const services = useWorkspaceServices(workspaceAbsPath, remoteSessionId, workspaceIdentity);
   const baseServices = useBaseWorkspaceServices();
   const removeTaskState = useZCodeSessionStore((state) => state.removeTaskState);
@@ -511,9 +533,12 @@ export function WorkspaceHeaderTitleSection({
             simplifyForNarrowRemote && "max-md:max-w-[42vw]",
             "text-ui-base",
           )}
-          title={activeTaskTitle}
+          title={activeTaskTitleText}
         >
-          <span className="min-w-0 truncate">{activeTaskTitle}</span>
+          {/* 1.5.2：标题栏与侧边栏同用引用图标显示，原始链接/路径不再直接露出。 */}
+          <span className="flex min-w-0 items-center truncate">
+            <TaskTitleDisplay title={activeTaskTitle ?? ""} fallbackLabels={titleReferenceLabels} />
+          </span>
           {/* {activeTaskChangeSummary ? (
           <>
             {activeTaskChangeSummary.added > 0 ? (
