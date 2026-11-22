@@ -86,6 +86,7 @@ const enUS: Record<string, string> = {
   "engine.switch.locked": "The engine can't be changed after the session starts",
   "engine.model.default": "Default model",
   "engine.model.defaultTag": "Default",
+  "engine.modelShort.default": "Auto",
   "engine.effort.default": "Default",
   "engine.effort.minimal": "Minimal",
   "engine.effort.low": "Low",

@@ -714,7 +714,7 @@ sequenceDiagram
 
 **Fast 开关映射（`engineFastToggle`）：** YCode 不向 adapter 声明 `session.configOptions.boolean`，本机 Claude adapter 0.95.0（`acp-agent.js` `createFastModeConfigOption`，id `fast`）与 Codex adapter 2.2.2（`index.js` `FastModeConfig`，id `fast-mode`）因此都发 `type:"select"`、两个取值 `on` / `off`。判定规则：选项恰好两个取值，一个取值（忽略大小写）属于开启集 `on/true/enabled`、另一个属于关闭集 `off/false/disabled`，才渲染为闪电；`currentValue` 等于开启取值即点亮（强调色 `text-icon-blue`、`aria-pressed=true`）。点击回传对侧原始取值，仍走 `onConfigChange` → `setEngineConfigOption`，等 snapshot 确认后才变化。形态不符的 Fast 类选项（多档 `service_tier` 等）不猜语义，作为普通菜单进入「更多选项」。原生 boolean 选项当前会被 `engineConfigOptionSchema`（`currentValue` 为字符串）拒绝，不在本次范围。引擎没有 Fast 类选项时不显示闪电。
 
-**右下角入口（三个引擎统一）：** 14px 引擎图标 + 文案。外部引擎：模型当前值为 adapter 别名 `default` 时只显示思考档位缩写（如 `High`）；否则「模型名 档位缩写」（如 `Opus 4.7 XHigh`，1.5.0 起中间不再有 `·`，两段之间只有一个窄间距 `gap-1`，不额外占位，见下文「模型名与思考档位显示（1.5.0）」）；没有思考档位时只显示模型名（`default` 用解析出的真实名）；没有模型与档位时显示「更多选项」；尚无原生目录（草稿连接中）时显示引擎名。YCode 入口在本地工作区显示 YCode 图标，Web/远程沿用原样式。
+**右下角入口（三个引擎统一）：** 14px 引擎图标 + 文案。外部引擎：始终「模型名 档位缩写」（如 `Opus 4.7 XHigh`，1.5.0 起中间不再有 `·`，两段之间只有一个窄间距 `gap-1`，不额外占位，见下文「模型名与思考档位显示（1.5.0）」）。模型当前值为 adapter 别名 `default` 时，模型名用 description 解析出的真实名（如 `Opus 5.5 Med`）；解析不出时模型段显示 `Auto`（`engine.modelShort.default`），悬停 `title` 与可访问名称读「默认模型」（如「默认模型 Medium」）。1.5.1 起废止「`default` 时入口只显示档位」的旧规则：只显示 `Med` 时用户无法知道当前模型（1.5.0 实机截图反馈）。没有思考档位时只显示模型名（`default` 规则同上）；没有模型与档位时显示「更多选项」；尚无原生目录（草稿连接中）时显示引擎名。YCode 入口在本地工作区显示 YCode 图标，Web/远程沿用原样式。
 
 **弹层结构（自上而下）：**
 
@@ -725,7 +725,26 @@ sequenceDiagram
 3. 思考滑杆：存在其他档位时隐藏 `default` 档；当前值为 `default` 时滑块不填充。头部行与滑杆读数显示档位全称（`Minimal/Low/Medium/High/Extra high/Max`，`default` 为「默认/Default」），滑杆下方一行说明当前档位（adapter 提供 description 时用其原文，否则用内置说明）；未知取值沿用 adapter 文案；提交仍回传原始 value。
 4. 「更多选项」：placement 为 `more` 的选项（及形态不符的 Fast 类）。
 
-**`default` 模型别名显示：** Claude adapter（`session-model.js` `buildModelConfigOption`）对 `value:"default"` 的条目把 description 设为真实模型的 `displayName`（无对应条目时为 `resolvedModel` id）；未解析出 resolvedModel 时 description 为 SDK 原文。解析规则：description 含 `(currently X)` 取 X；否则 description 不含 `(`、`·`、句号且不超过 48 字符时整体视为模型名；都不满足时显示本地化「默认模型」。模型菜单与头部行显示解析名 + 「默认」标记；界面任何位置不显示 adapter 的 `name`（如 "Default (recommended)"）。
+**`default` 模型别名显示：** Claude adapter（`session-model.js` `buildModelConfigOption`）对 `value:"default"` 的条目把 description 设为真实模型的 `displayName`（无对应条目时为 `resolvedModel` id）；未解析出 resolvedModel 时 description 为 SDK 原文。注意 adapter 按 `resolvedModel` 严格相等匹配对应条目，SDK 的 `default` 与别名条目大小写不同（`claude-opus-5-5[1m]` vs `claude-opus-5-5[1M]`）时匹配失败，description 退化为 `resolvedModel` id。
+
+本机实测形态（2026-11-22，Claude adapter 0.95.0 / SDK 0.3.309 `supportedModels()`）与解析结果：
+
+| description 形态 | 来源 | 解析结果 |
+| --- | --- | --- |
+| `claude-opus-5-5[1m]`、`claude-fable-5-2`、`us.anthropic.claude-opus-5-5-v1:0`、`claude-sonnet-4-5-20250929` | adapter：`resolvedModel` id | `Opus 5.5` / `Fable 5.2` / `Opus 5.5` / `Sonnet 4.5` |
+| `Use the default model (currently Opus 5.5 (1M context)) · $4/$20 per Mtok` | SDK 原文（括号嵌套） | `Opus 5.5` |
+| `Opus 5.5 · Best for everyday, complex tasks` | SDK 原文（served 形态） | `Opus 5.5` |
+| `Opus 5.5`、`Claude Sonnet 4.6`、`Opus (1M context)` | adapter：对应条目 displayName | `Opus 5.5` / `Sonnet 4.6` / `Opus` |
+| `Uses the recommended model for your plan. Changes over time.` | 句子 | 无（显示「默认模型」/入口 `Auto`） |
+
+解析规则（`engineOptionDisplay.ts` `parseEngineDefaultModelName`，纯函数）：
+
+1. 含 `(currently X)` 时按括号配对取 X（允许 X 内再含一层括号）；否则取第一个 ` · ` 之前的部分。
+2. 候选去掉末尾上下文说明 `(1M context)` / `[1m]`。
+3. 候选为 Claude 模型 id（可带 `anthropic/`、`<region>.anthropic.` 前缀，`-YYYYMMDD` 日期、`-vN:M`、`[1m]` 后缀）时格式化为「家族 主.次」（`claude-opus-5-5` → `Opus 5.5`，`claude-opus-5` → `Opus 5`）。
+4. 剩余候选不含括号、不以句号结尾且不超过 48 字符时视为模型名；否则无解析结果。
+
+模型菜单与头部行显示解析名 + 「默认」标记，解析不出时显示「默认模型」；界面任何位置不显示 adapter 的 `name`（如 "Default (recommended)"）。
 
 **引擎名：** 原生引擎统一显示「YCode」（`ENGINE_LABELS` 与 `TaskClientLogo` 同源）。
 
@@ -736,7 +755,7 @@ sequenceDiagram
 - 全称：弹层头部行、滑杆 `aria-valuetext`、下拉/列表（ListModels 卡、工作流子代理模型说明）继续显示全称，下拉或弹层内附一行说明。
 - 组合：入口为两个相邻 span（模型名可截断、档位不截断），间距 `gap-1`，可访问名称为「模型名 档位全称」。
 
-**验收：** UI UT（`packages/ui/test/externalEnginePickers.test.ts`、`externalEngineSettings.test.ts`）覆盖：Claude `agent` 不出芯片、在更多选项可选；Codex `fast-mode` 只渲染为闪电、点亮与回传 on/off；`default` 模型入口只显示档位、弹层显示解析名与「默认」；滑杆无 Default 档、档位中文化；切换行新草稿可切换、已有会话只读、未传入时不渲染、方向键选择；YCode ↔ 外部引擎往返后新入口不自动弹出、外部引擎之间切换弹层保持打开、切换行等分网格且弹层按内容撑宽。shared `contract.test.ts` 覆盖 placement 与 Fast 映射。桌面候选 `conversation-session-external-engine-prewarm.test.ts` 改为经弹层切换引擎，并断言往返切换后入口外无残留弹层、三段等宽且名称 `scrollWidth <= clientWidth`、弹层底边不低于入口顶边且右缘与入口对齐（深浅主题、中英文）。
+**验收：** UI UT（`packages/ui/test/externalEnginePickers.test.ts`、`externalEngineSettings.test.ts`）覆盖：Claude `agent` 不出芯片、在更多选项可选；Codex `fast-mode` 只渲染为闪电、点亮与回传 on/off；`default` 模型入口显示「解析名 档位缩写」（解析不出时 `Auto` + 读屏「默认模型」）、弹层显示解析名与「默认」；`parseEngineDefaultModelName` 覆盖上表全部实测形态；滑杆无 Default 档、档位中文化；切换行新草稿可切换、已有会话只读、未传入时不渲染、方向键选择；YCode ↔ 外部引擎往返后新入口不自动弹出、外部引擎之间切换弹层保持打开、切换行等分网格且弹层按内容撑宽。shared `contract.test.ts` 覆盖 placement 与 Fast 映射。桌面候选 `conversation-session-external-engine-prewarm.test.ts` 改为经弹层切换引擎，并断言往返切换后入口外无残留弹层、三段等宽且名称 `scrollWidth <= clientWidth`、弹层底边不低于入口顶边且右缘与入口对齐（深浅主题、中英文）。
 
 ### 原生配置菜单与滑杆（通用）
 

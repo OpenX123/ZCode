@@ -72,6 +72,7 @@ const zhCN: Record<string, string> = {
   "engine.switch.locked": "会话创建后不可切换引擎",
   "engine.model.default": "默认模型",
   "engine.model.defaultTag": "默认",
+  "engine.modelShort.default": "Auto",
   "engine.effort.default": "Default",
   "engine.effort.minimal": "Minimal",
   "engine.effort.low": "Low",
