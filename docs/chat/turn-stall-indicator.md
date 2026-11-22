@@ -66,11 +66,11 @@ mobile: replayable ── snapshot.turnActivity + gap repair ─┘
 
 ## UI
 
-- 派生函数：`packages/ui/src/v4/conversationStallState.ts` `resolveConversationStallState`（纯函数，可单测）。
-- 组件：`packages/ui/src/v4/ConversationStallNotice.tsx`，由 `SessionPane` 作为 `ConversationTimeline` 的 live tail 附加内容渲染在运行中轮次末尾；组件只在 `turnActivity` 非空时每 5s 自行 tick。
+- 模块：managed UI 模块 `turn-stall`（`packages/ui/src/turn-stall/`）。派生函数 `resolveConversationStallState`（纯函数，可单测）。
+- 组件：`ConversationStallNotice`，由 `SessionPane` 通过 `ConversationTimeline` 的 `liveTailFooter` 渲染在运行中轮次（live tail）末尾；组件只在 `turnActivity` 非空且运行时每 5s 自行 tick。只读会话（`readOnly`）不显示。
 - “中断并重试”：以当前轮次的真实用户输入（`userInput` 行，`origin=realUser`）的文本、附件和引用，通过既有 `sendText` 路径提交 `requestedDelivery: "startNow"`，由 CLI 原子停止当前轮并开始新轮（与 Cmd/Ctrl+Enter 立即发送同一路径）；找不到可重发输入时隐藏该按钮。
 - “中断”：复用 `handleStop("button")`。
-- “查看日志”：复用 `runExportLogsAction`（导出日志并在文件管理器中定位）；平台不支持导出日志时隐藏。
+- “查看日志”：复用 `runExportLogsAction`（导出日志并在文件管理器中定位）；仅在 `platform.canOpenLocalFiles`（桌面）时显示，Web / 手机远控隐藏。
 - i18n 命名空间：`chat.stall.*`（zh-CN / en-US 同步）。
 
 ## 验收

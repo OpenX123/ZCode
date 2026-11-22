@@ -17,8 +17,8 @@
 ## 所有者与接口
 
 - 统计所有者：CLI runtime（`header.fileChanges` 与 `v4/conversation/fileChanges`），UI 不从工具调用重算。
-- UI：`packages/ui/src/v4/ConversationFileSummaryPanel.tsx` 渲染卡片；多文件 patch 由纯函数 `buildTurnChangesPatch`（`packages/ui/src/v4/turnChangesPatch.ts`）生成，可单测。
-- 胶囊：`StatusSummaryRow` 去掉 Git 分支；`conversationStatusPanelModel` 的 `git` 模型仍为展开区服务。
+- UI：`packages/ui/src/v4/ConversationFileSummaryPanel.tsx` 渲染卡片；多文件 patch 由同文件导出的纯函数 `buildTurnChangesPatch` 生成（每个文件带 `diff --git` 头，侧栏按多文件 patch 走轻量 diff 预览），可单测。
+- 胶囊：`StatusSummaryRow` 去掉 Git 分支；`conversationStatusPanelModel` 的 `git` 模型仍为展开区服务。只有 Git 内容时（`isGitOnlyStatusPanelContent`）收起态没有摘要：显式 mini 不渲染面板，auto 形态在 container query 的 mini 区间（`<1280px`）隐藏面板，避免空胶囊壳。
 - i18n 命名空间：`chat.turnChanges.*`（zh-CN / en-US 同步）。
 
 ## 验收
