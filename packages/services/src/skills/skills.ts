@@ -1,4 +1,6 @@
+import type { Event } from "@zcode/rpc";
 import type { ZCodeProvider, SkillsPromptContext, SkillsListResult } from "@zcode/shared";
+import type { SkillsHubState } from "@zcode/shared/skills-hub";
 import { ServiceChannels } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 
@@ -43,6 +45,21 @@ export interface ISkillsService {
     workspaceIdentity?: string;
     skillId: string;
   }): Promise<void>;
+  /** Skills Hub：最近一次外部技能同步结果；尚未同步时执行一次（docs/skills-hub-spec.md）。 */
+  getHubState(): Promise<SkillsHubState>;
+  /** 立即同步外部技能（Claude / Codex / Claude 插件）到 YCode 技能根。 */
+  syncHub(): Promise<SkillsHubState>;
+  /** 删除用户确认且仍为清理候选的链接条目（只删链接）。 */
+  pruneHubLinks(params: { entryNames: string[] }): Promise<SkillsHubState>;
+  /** 冲突选择：realDir 为 null 时恢复默认优先级。 */
+  setHubConflictChoice(params: {
+    nameKey: string;
+    realDir: string | null;
+  }): Promise<SkillsHubState>;
+  /** 清空“新发现”提示。 */
+  dismissHubDiscoveries(): Promise<SkillsHubState>;
+  /** 每次同步、清理或改选后广播最新 Hub 状态。 */
+  readonly onDidChangeHub: Event<SkillsHubState>;
 }
 
 export const ISkillsService = createServiceDescriptor<ISkillsService>(ServiceChannels.Skills);

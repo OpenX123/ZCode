@@ -1107,6 +1107,19 @@ modules:
     layers:
       domain: .
     owner: plugin
+  # skills-hub-sync：外部技能链接与清单的唯一写入者（docs/skills-hub-spec.md）
+  - id: skills-hub-sync
+    roots:
+      - packages/services/src/skills-hub
+      - packages/services/test/skills-hub
+    managed: true
+    requires: [services, shared, rpc, skills-hub-contract]
+    publicEntrypoints:
+      - packages/services/src/skills-hub/index.ts
+      - packages/services/src/skills-hub/contract.ts
+    layers:
+      adapters: .
+    owner: plugin
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。

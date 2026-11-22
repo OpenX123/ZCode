@@ -554,7 +554,7 @@ export function getCommandFileSymlinkType(): "file" {
   return "file";
 }
 
-async function createDirectorySymlink(sourcePath: string, targetPath: string): Promise<void> {
+export async function createDirectorySymlink(sourcePath: string, targetPath: string): Promise<void> {
   // Windows 创建目录软链需要 junction；其它平台使用 dir。source 使用绝对路径，避免 junction
   // 在不同 cwd 下解析目标不一致。
   await symlink(resolve(sourcePath), targetPath, getSkillDirectorySymlinkType());
@@ -830,7 +830,7 @@ function readLooseSkillVersion(frontmatterText: string): string | undefined {
   return version.length > 0 ? version : undefined;
 }
 
-function readSkillMetadataFromMarkdown(
+export function readSkillMetadataFromMarkdown(
   content: string,
   fallbackName: string,
 ): { name: string; version?: string } {

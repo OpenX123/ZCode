@@ -987,6 +987,8 @@ export function createLocalServices(options: {
   }) => Promise<{ workspacePath: string; workspaceIdentity: string } | null>;
   /** Host 装配层注入的设置权威；与网络 transport 必须来自同一 Window Host 生命周期。 */
   settingService?: ISettingService;
+  /** Desktop 本地 Host 启动后后台同步一次外部技能（docs/skills-hub-spec.md）；远端/Web 宿主不注入。 */
+  syncSkillsHubOnStartup?: boolean;
   setWorkspaceProjection?: ReturnType<
     typeof createSettingServiceWithMigrations
   >["setWorkspaceProjection"];
@@ -1223,7 +1225,15 @@ export function createLocalServices(options: {
   const sourceServerWorkspaceService =
     options.sourceServerWorkspaceService ?? createSourceServerWorkspaceService();
   // mcpSync/hooks 里引用 zcodeAgentService 的闭包是惰性调用，声明顺序不影响初始化。
-  const skillsService = createSkillsService({ isDesktopRuntime: true });
+  const skillsService = createSkillsService({ isDesktopRuntime: true, settingService });
+  if (options.syncSkillsHubOnStartup) {
+    // 启动同步在后台执行，不阻塞 Host 就绪；失败只记录，下一次打开技能设置页或手动同步会重试。
+    void skillsService.syncHub().catch((error: unknown) => {
+      createServiceLogger("skills-hub").warn("[skills-hub] 启动同步失败", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
   const mcpSyncService = createMcpSyncService({
     // mcp/list 的 host 消费点收拢到 mcpSync 服务；真实状态检查仍在 agent 进程。
     listMcpServerStatuses: (params) => zcodeAgentService.listMcpServerStatuses(params),
