@@ -1,4 +1,7 @@
-import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelLabels.js";
+import {
+  thoughtLevelLabelId,
+  thoughtLevelShortLabelId,
+} from "@/chat-input-toolbar/thoughtLevelLabels.js";
 export { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelLabels.js";
 import type { ZCodeConfigOption, ZCodeProvider } from "@zcode/shared";
 import type { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -53,4 +56,13 @@ export function getThoughtLevelLabel(
   }
 
   return getConfigOptionEntryLabel(intl, provider, option, entry);
+}
+
+/** 入口按钮缩写（`{ shortLabel }`，可直接展开进档位条目）；未知取值返回空对象，入口回退全称。 */
+export function thoughtLevelShortLabel(
+  intl: ReturnType<typeof useZCodeIntl>["intl"],
+  value: string,
+): { shortLabel?: string } {
+  const shortId = thoughtLevelShortLabelId(value);
+  return shortId ? { shortLabel: intl.formatMessage({ id: shortId }) } : {};
 }

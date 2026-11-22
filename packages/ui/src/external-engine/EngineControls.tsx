@@ -15,6 +15,7 @@ import { EngineConfigMenu, EngineModelPopover } from "./EngineConfigPicker.js";
 import {
   ENGINE_DEFAULT_ALIAS,
   engineEffortCurrentLabel,
+  engineEffortCurrentShortLabel,
   engineModelCurrentLabel,
 } from "./engineOptionDisplay.js";
 
@@ -125,22 +126,27 @@ export function EngineControls({
 
   const modelLabel = model ? engineModelCurrentLabel(intl, model) : undefined;
   const effortLabel = effort ? engineEffortCurrentLabel(intl, effort) : undefined;
-  // W1：模型为 adapter 的 `default` 别名时入口只显示档位，否则「模型 · 档位」。
+  // 1.5.0 B2：入口按钮只放档位缩写（≤5 个字母），全称留给弹层与无障碍名称。
+  const effortShortLabel = effort ? engineEffortCurrentShortLabel(intl, effort) : undefined;
+  // W1：模型为 adapter 的 `default` 别名时入口只显示档位，否则「模型 档位」（1.5.0 起无 `·`）。
   const triggerLabel =
     model && modelLabel
-      ? effortLabel
+      ? effortShortLabel
         ? model.currentValue === ENGINE_DEFAULT_ALIAS
-          ? { text: effortLabel }
-          : { modelPart: modelLabel, effortPart: effortLabel }
+          ? { text: effortShortLabel }
+          : { modelPart: modelLabel, effortPart: effortShortLabel }
         : { text: modelLabel }
       : effort
-        ? { text: effortLabel ?? effort.name }
+        ? { text: effortShortLabel ?? effort.name }
         : fast || more.length
           ? { text: intl.formatMessage({ id: "engine.moreOptions" }) }
           : { text: ENGINE_LABELS[engine] };
+  // 可访问名称读全称：缩写（XHigh/Med）对读屏不友好。
   const triggerText = triggerLabel.modelPart
-    ? `${triggerLabel.modelPart} · ${triggerLabel.effortPart}`
-    : (triggerLabel.text ?? "");
+    ? `${triggerLabel.modelPart} ${effortLabel ?? triggerLabel.effortPart}`
+    : triggerLabel.text === effortShortLabel && effortLabel
+      ? effortLabel
+      : (triggerLabel.text ?? "");
   const hasInteractiveConfig =
     (effort?.options.length ?? 0) > 0 ||
     (model?.options.length ?? 0) > 0 ||
@@ -160,7 +166,7 @@ export function EngineControls({
         engineSwitchRow={engineSwitchRow}
         triggerIcon={<TaskClientLogo engine={engine} size="compact" />}
         triggerLabel={triggerLabel}
-        // 仅深度时沿用深度名作为可访问名称；有模型时读出可见的「模型 · 档位」。
+        // 仅深度时沿用深度名作为可访问名称；有模型时读出「模型 档位全称」。
         triggerAriaLabel={model ? triggerText : (effort?.name ?? triggerText)}
         // 切换行存在时入口不随原生配置禁用：草稿连接中或失败仍要能换引擎。
         triggerDisabled={engineSwitchRow ? false : configDisabled || !hasInteractiveConfig}

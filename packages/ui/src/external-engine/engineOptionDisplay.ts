@@ -1,5 +1,6 @@
 import type { EngineConfigOption, EngineConfigOptionValue } from "@zcode/shared/external-engine";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
+import { thoughtLevelShortLabelId } from "@/chat-input-toolbar/thoughtLevelLabels.js";
 
 /** adapter 的模型别名：Claude 未声明 AIR recommendedValue 时保留 `value:"default"` 条目。 */
 export const ENGINE_DEFAULT_ALIAS = "default";
@@ -28,17 +29,25 @@ export function parseEngineDefaultModelName(description: string | undefined): st
   return undefined;
 }
 
+/**
+ * 显示层去掉模型名开头的 `Claude `（1.5.0 B2）：`Claude Opus 4.7` → `Opus 4.7`。
+ * 只在其后仍有内容时去掉；Codex 等其他名称（`GPT-5.5`）原样返回。catalog 原始值不改。
+ */
+export function stripClaudeModelPrefix(name: string): string {
+  return name.replace(/^\s*claude\s+(?=\S)/i, "");
+}
+
 export function isEngineDefaultModelEntry(entry: EngineConfigOptionValue | undefined): boolean {
   return entry?.value === ENGINE_DEFAULT_ALIAS;
 }
 
 /** 模型条目显示名：`default` 别名不显示 adapter name（如 "Default (recommended)"）。 */
 export function engineModelEntryLabel(intl: IntlInstance, entry: EngineConfigOptionValue): string {
-  if (!isEngineDefaultModelEntry(entry)) return entry.name;
-  return (
-    parseEngineDefaultModelName(entry.description) ??
-    intl.formatMessage({ id: "engine.model.default" })
-  );
+  if (!isEngineDefaultModelEntry(entry)) return stripClaudeModelPrefix(entry.name);
+  const parsed = parseEngineDefaultModelName(entry.description);
+  return parsed
+    ? stripClaudeModelPrefix(parsed)
+    : intl.formatMessage({ id: "engine.model.default" });
 }
 
 /** 当前模型显示名；当前值不在目录中时沿用原始值，空值返回 undefined。 */
@@ -76,4 +85,43 @@ export function engineEffortCurrentLabel(
   const entry = option.options.find((candidate) => candidate.value === option.currentValue);
   if (entry) return engineEffortEntryLabel(intl, entry);
   return option.currentValue || undefined;
+}
+
+/**
+ * 入口按钮上的档位缩写（≤5 个字母）：已知取值走共享缩写表，`default` 显示 `Auto`，
+ * 未知取值回退全称 / adapter 文案。全称仍用于弹层头部、滑杆读数与无障碍名称。
+ */
+export function engineEffortEntryShortLabel(
+  intl: IntlInstance,
+  entry: EngineConfigOptionValue,
+): string {
+  if (entry.value.toLowerCase() === ENGINE_DEFAULT_ALIAS)
+    return intl.formatMessage({ id: "engine.effortShort.default" });
+  const shortId = thoughtLevelShortLabelId(entry.value);
+  return shortId ? intl.formatMessage({ id: shortId }) : engineEffortEntryLabel(intl, entry);
+}
+
+/** 当前档位缩写；当前值不在目录中时沿用原始值。 */
+export function engineEffortCurrentShortLabel(
+  intl: IntlInstance,
+  option: EngineConfigOption,
+): string | undefined {
+  const entry = option.options.find((candidate) => candidate.value === option.currentValue);
+  if (entry) return engineEffortEntryShortLabel(intl, entry);
+  return option.currentValue || undefined;
+}
+
+const EFFORT_HINT_VALUES = new Set(["default", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+/** 档位说明：adapter 提供 description 时用原文，否则已知取值用内置说明；未知取值无说明。 */
+export function engineEffortEntryHint(
+  intl: IntlInstance,
+  entry: EngineConfigOptionValue,
+): string | undefined {
+  const description = entry.description?.trim();
+  if (description) return description;
+  const value = entry.value.toLowerCase();
+  return EFFORT_HINT_VALUES.has(value)
+    ? intl.formatMessage({ id: `engine.effortShort.hint.${value}` })
+    : undefined;
 }

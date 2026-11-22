@@ -33,6 +33,7 @@ import { ENGINE_SWITCH_HOST_CLASS, TaskClientLogo } from "@/external-engine/inde
 import {
   getNextThoughtLevelValue,
   getThoughtLevelLabel,
+  thoughtLevelShortLabel,
 } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import type { V4ComposerConfigPicker } from "@/v4/composer/configPickerState.js";
 import { useToolbarShortcutBindings } from "@/v4/composer/toolbarShortcuts.js";
@@ -423,6 +424,7 @@ function V4ComposerModelControlsImpl({
         thoughtOption?.options?.map((entry) => ({
           value: entry.value,
           label: getThoughtLevelLabel(intl, displayProvider, thoughtOption, entry),
+          ...thoughtLevelShortLabel(intl, entry.value),
         })) ?? [],
       value: String(thoughtOption?.currentValue ?? ""),
       onValueChange: handleThoughtValueChange,
