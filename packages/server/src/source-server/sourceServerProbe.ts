@@ -89,7 +89,7 @@ function assertSupportedGlibc(platform: string, libcText: string): void {
   if (major > minMajor || (major === minMajor && minor >= minMinor)) return;
   const required = SOURCE_SERVER_MIN_GLIBC_VERSION.join(".");
   throw new SourceServerProbeEnvironmentError(
-    `Remote glibc ${major}.${minor} is older than glibc ${required} required by ZCode Source Server. ` +
+    `Remote glibc ${major}.${minor} is older than glibc ${required} required by YCode Source Server. ` +
       `Use a Linux system with glibc ${required} or later, such as RHEL 8+, Ubuntu 20.04+ or Debian 10+.`,
   );
 }
