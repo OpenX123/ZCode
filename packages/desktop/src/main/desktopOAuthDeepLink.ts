@@ -5,7 +5,11 @@ import { app, BrowserWindow, dialog } from "electron";
 import type { WebContents } from "electron";
 import { type Locale, PlatformChannels } from "@zcode/shared";
 import { parseSessionDeepLink, type SessionLocator } from "@zcode/shared/session-navigation";
-import { extractWorkspaceOpenPath, isWorkspaceOpenUrl } from "./desktopDeepLinkUrl.js";
+import {
+  DEEP_LINK_SCHEMES,
+  extractWorkspaceOpenPath,
+  isWorkspaceOpenUrl,
+} from "./desktopDeepLinkUrl.js";
 import { registerLinuxDeepLinkProtocol } from "./desktopLinuxDeepLinkRegistration.js";
 
 interface DeepLinkWorkspaceGateOptions {
@@ -235,7 +239,7 @@ export function handleDeepLink(
     const targetWindow = options.resolveApplicationWindow
       ? options.resolveApplicationWindow()
       : (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null);
-    // zcode://workspace/open 来自浏览器/IM 等外部应用，不能等同于用户在
+    // ycode://（及旧 zcode://）workspace/open 来自浏览器/IM 等外部应用，不能等同于用户在
     // YCode 内部选择目录；确认必须发生在 statSync 之前，避免项目配置被静默信任。
     if (
       !confirmExternalWorkspaceOpen(workspacePath, logger, targetWindow, options.confirmationCopy)
@@ -259,38 +263,41 @@ export function registerDeepLinkProtocol(
   },
   options: { iconPath?: string } = {},
 ) {
-  const scheme = "zcode";
-
+  // 1.5.1：ycode 与 zcode 双注册；单个 scheme 注册失败只记录，不影响另一个。
   // 外部 URL 必须位于 -- 后；否则 Windows 引号拆分可把 URL 内容变成 Electron 启动参数。
   // Inspector 早于应用 JS 和单实例锁启动，不能依赖后续 handleDeepLink 校验拦截。
   if (process.defaultApp && process.argv.length >= 2) {
     const entry = resolve(process.argv[1]!);
     const args = process.platform === "win32" ? [entry, "--"] : [entry];
-    const ok = app.setAsDefaultProtocolClient(scheme, process.execPath, args);
-    if (!ok) {
-      logger.warn("[deep-link] 注册协议失败（defaultApp）", {
-        scheme,
-        execPath: process.execPath,
-        entry: process.argv[1],
-      });
-    } else {
-      logger.info("[deep-link] 注册协议成功（defaultApp）", {
-        scheme,
-        execPath: process.execPath,
-        entry: process.argv[1],
-      });
+    for (const scheme of DEEP_LINK_SCHEMES) {
+      const ok = app.setAsDefaultProtocolClient(scheme, process.execPath, args);
+      if (!ok) {
+        logger.warn("[deep-link] 注册协议失败（defaultApp）", {
+          scheme,
+          execPath: process.execPath,
+          entry: process.argv[1],
+        });
+      } else {
+        logger.info("[deep-link] 注册协议成功（defaultApp）", {
+          scheme,
+          execPath: process.execPath,
+          entry: process.argv[1],
+        });
+      }
     }
     return;
   }
 
-  const ok =
-    process.platform === "win32"
-      ? app.setAsDefaultProtocolClient(scheme, process.execPath, ["--"])
-      : app.setAsDefaultProtocolClient(scheme);
-  if (!ok) {
-    logger.warn("[deep-link] 注册协议失败", { scheme });
-  } else {
-    logger.info("[deep-link] 注册协议成功", { scheme });
+  for (const scheme of DEEP_LINK_SCHEMES) {
+    const ok =
+      process.platform === "win32"
+        ? app.setAsDefaultProtocolClient(scheme, process.execPath, ["--"])
+        : app.setAsDefaultProtocolClient(scheme);
+    if (!ok) {
+      logger.warn("[deep-link] 注册协议失败", { scheme });
+    } else {
+      logger.info("[deep-link] 注册协议成功", { scheme });
+    }
   }
 
   if (process.platform === "linux" && app.isPackaged) {

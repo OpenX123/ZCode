@@ -9,9 +9,15 @@ import {
 } from "./desktopLinuxXdg.js";
 
 const LINUX_DEEP_LINK_DESKTOP_FILE = "zcode.desktop";
-const LINUX_DEEP_LINK_MIME_TYPE = "x-scheme-handler/zcode";
-// 归属标记：用于识别用户级 zcode.desktop 是否由本应用写入（历史所有版本都带这行 Comment）。
-const LINUX_DESKTOP_ENTRY_OWNERSHIP_MARKER = "Comment=ZCode Desktop App";
+// 1.5.1：ycode 为主 scheme，zcode 继续注册，旧链接和第三方回调不失效。
+const LINUX_DEEP_LINK_MIME_TYPES = ["x-scheme-handler/ycode", "x-scheme-handler/zcode"] as const;
+// 归属标记：用于识别用户级 zcode.desktop 是否由本应用写入。1.5.1 起写入 YCode Comment；
+// 旧版本写入的 ZCode Comment 仍视为本应用条目，否则遗留条目无法被覆盖或清理。
+const LINUX_DESKTOP_ENTRY_OWNERSHIP_MARKER = "Comment=YCode Desktop App";
+const LINUX_DESKTOP_ENTRY_OWNERSHIP_MARKERS = new Set([
+  LINUX_DESKTOP_ENTRY_OWNERSHIP_MARKER,
+  "Comment=ZCode Desktop App",
+]);
 
 type LinuxDesktopEnv = {
   APPIMAGE?: string;
@@ -61,7 +67,7 @@ export function resolveLinuxDeepLinkCommand(params: {
 
   return {
     executablePath: appImagePath,
-    // AppImage 的 zcode:// 回调会由 xdg-open 按 .desktop Exec 二次启动。
+    // AppImage 的 ycode:// / zcode:// 回调会由 xdg-open 按 .desktop Exec 二次启动。
     // 用户手动启动时附加的 sandbox/GPU 参数不会自动继承，二次启动可能在 Electron 初始化前崩溃。
     // 这里只持久化影响启动成败的 allowlist 参数，避免把 deep link URL、调试端口或工作区路径写死。
     args: resolveAppImageDeepLinkArgs(params.argv ?? []),
@@ -124,7 +130,7 @@ export function createLinuxDeepLinkDesktopEntry(params: {
     "Type=Application",
     `Icon=${iconName}`,
     "Categories=Development;",
-    `MimeType=${LINUX_DEEP_LINK_MIME_TYPE};`,
+    `MimeType=${LINUX_DEEP_LINK_MIME_TYPES.map((mimeType) => `${mimeType};`).join("")}`,
     `StartupWMClass=${productName}`,
     "",
   ].join("\n");
@@ -174,7 +180,7 @@ function isOwnedDesktopEntry(path: string): boolean {
     // 避免可清理的遗留条目被误判为用户自定义条目而永久残留。
     return content
       .split("\n")
-      .some((line) => line.replaceAll("\r", "").trim() === LINUX_DESKTOP_ENTRY_OWNERSHIP_MARKER);
+      .some((line) => LINUX_DESKTOP_ENTRY_OWNERSHIP_MARKERS.has(line.replaceAll("\r", "").trim()));
   } catch {
     return false;
   }
@@ -260,13 +266,15 @@ export function registerLinuxDeepLinkProtocol(options: RegisterLinuxDeepLinkProt
     // deep link 是 OAuth/支付/工作区打开的核心链路，必须先完成用户级协议处理器刷新；
     // 图标安装是可选增强，放到核心注册成功后独立降级，避免扩大登录回调失败域。
     const updateResult = runCommand("update-desktop-database", [applicationsDir]);
-    const defaultResult = runCommand("xdg-mime", [
-      "default",
-      LINUX_DEEP_LINK_DESKTOP_FILE,
-      LINUX_DEEP_LINK_MIME_TYPE,
-    ]);
+    // 每个 scheme 单独设置默认处理器；任一失败都按注册失败报告，便于定位缺失的 handler。
+    const defaultResults = LINUX_DEEP_LINK_MIME_TYPES.map((mimeType) => ({
+      mimeType,
+      result: runCommand("xdg-mime", ["default", LINUX_DEEP_LINK_DESKTOP_FILE, mimeType]),
+    }));
+    const failedDefault = defaultResults.find(({ result }) => result.status !== 0);
+    const defaultResult = failedDefault?.result ?? defaultResults[0]!.result;
 
-    if (defaultResult.status === 0) {
+    if (!failedDefault) {
       protocolRegistered = true;
       options.logger.info("[deep-link] Linux 用户级协议注册成功", {
         desktopFilePath,
@@ -278,6 +286,7 @@ export function registerLinuxDeepLinkProtocol(options: RegisterLinuxDeepLinkProt
     } else {
       options.logger.warn("[deep-link] Linux 用户级协议注册失败", {
         desktopFilePath,
+        mimeType: failedDefault.mimeType,
         executablePath: command.executablePath,
         args: command.args,
         status: defaultResult.status,

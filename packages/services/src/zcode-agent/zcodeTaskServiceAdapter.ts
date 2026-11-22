@@ -4278,7 +4278,7 @@ function mapSessionEvent(
           params.taskId,
           traceId,
           eventInputId,
-          stringValue(errorPayload.message) ?? "ZCode compact failed",
+          stringValue(errorPayload.message) ?? "YCode compact failed",
         ),
       ];
     }
@@ -4290,7 +4290,7 @@ function mapSessionEvent(
         taskId: params.taskId,
         traceId,
         ...(eventInputId ? { inputId: eventInputId } : {}),
-        error: stringValue(errorPayload.message) ?? "ZCode session failed",
+        error: stringValue(errorPayload.message) ?? "YCode session failed",
         // type 是外层错误分类，code 才是 provider/subagent 要展示的真实错误码。
         code: stringValue(errorPayload.code) ?? stringValue(errorPayload.type),
         detail: stringValue(errorPayload.detail),

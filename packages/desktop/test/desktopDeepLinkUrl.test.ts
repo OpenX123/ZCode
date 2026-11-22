@@ -13,6 +13,35 @@ describe("desktop deep link url helpers", () => {
     expect(isOAuthCallbackUrl(new URL("https://oauth/callback?code=1&state=s"))).toBe(false);
   });
 
+  it("ycode:// 与旧 zcode:// 走同一套路由规则，其它 scheme 被拒绝", async () => {
+    const {
+      extractDeepLinkUrlFromArgs,
+      extractShareImportCode,
+      extractWorkspaceOpenPath,
+      isOAuthCallbackUrl,
+      isPaymentCallbackUrl,
+    } = await import("../src/main/desktopDeepLinkUrl.js");
+
+    for (const scheme of ["ycode", "zcode"]) {
+      expect(isOAuthCallbackUrl(new URL(`${scheme}://oauth/callback?code=1&state=s`))).toBe(true);
+      expect(isOAuthCallbackUrl(new URL(`${scheme}:/oauth/callback?code=1&state=s`))).toBe(true);
+      expect(isPaymentCallbackUrl(new URL(`${scheme}://payment/callback?status=return`))).toBe(
+        true,
+      );
+      expect(extractWorkspaceOpenPath(new URL(`${scheme}://workspace/open?path=%2Ftmp%2Fa`))).toBe(
+        "/tmp/a",
+      );
+      expect(extractShareImportCode(new URL(`${scheme}://share/import?code=abc`))).toBe("abc");
+    }
+    expect(extractWorkspaceOpenPath(new URL("xcode://workspace/open?path=%2Ftmp"))).toBeNull();
+    expect(
+      extractDeepLinkUrlFromArgs([
+        "/opt/YCode/ycode",
+        "ycode%3A%2F%2Foauth%2Fcallback%3Fcode%3D1%26state%3Ds",
+      ]),
+    ).toBe("ycode://oauth/callback?code=1&state=s");
+  });
+
   it("accepts Linux one-slash callback urls", async () => {
     const { isOAuthCallbackUrl, isPaymentCallbackUrl } =
       await import("../src/main/desktopDeepLinkUrl.js");
@@ -196,8 +225,8 @@ describe("desktop deep link url helpers", () => {
     const { buildWindowsOpenFolderRegistryOperations, getWindowsOpenFolderMenuName } =
       await import("../src/main/desktopWindowsOpenFolderContextMenu.js");
 
-    expect(getWindowsOpenFolderMenuName("zh-CN")).toBe("在ZCode中打开");
-    expect(getWindowsOpenFolderMenuName("en-US")).toBe("Open in ZCode");
+    expect(getWindowsOpenFolderMenuName("zh-CN")).toBe("在YCode中打开");
+    expect(getWindowsOpenFolderMenuName("en-US")).toBe("Open in YCode");
 
     const operations = buildWindowsOpenFolderRegistryOperations({
       executablePath: "C:\\Program Files\\ZCode\\ZCode.exe",
@@ -210,7 +239,7 @@ describe("desktop deep link url helpers", () => {
         "HKCU\\Software\\Classes\\Directory\\shell\\ZCode.OpenInZCode",
         "/ve",
         "/d",
-        "在ZCode中打开",
+        "在YCode中打开",
         "/f",
       ],
     });
@@ -223,7 +252,7 @@ describe("desktop deep link url helpers", () => {
         "/t",
         "REG_SZ",
         "/d",
-        "在ZCode中打开",
+        "在YCode中打开",
         "/f",
       ],
     });
