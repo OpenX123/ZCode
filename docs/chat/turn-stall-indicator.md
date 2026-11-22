@@ -93,3 +93,9 @@ mobile: replayable ── snapshot.turnActivity + gap repair ─┘
 | 提示条比轮内容更靠左                                  | `ConversationTimeline` 的 `data-v4-live-tail-footer` 容器只有 `pb-2`；轮内容的 `px-4 @md/conversation:px-6` 在 `ConversationTurnGroup` 的 `<section>` 上，footer 是其兄弟节点，拿不到该内边距 | footer 复用同一内边距常量                        |
 | “正在执行 Bash，已 1 分钟”与上方“正在执行 curl …”重复 | `resolveConversationStallState` 对 `running_tool` 也返回 `tool` 提示，而运行中工具行本身已在表达“正在执行”                                                                                    | `running_tool` 返回 `none`；耗时改为工具行尾追加 |
 | 提示用原始工具名 `Bash`                               | 提示直接显示 `activityPhase.toolName`（runtime 原始名），没有经过工具行的显示名映射                                                                                                           | 不再显示独立工具提示，工具名由工具行自身渲染     |
+
+## 1.5.1 上下文用量环（外部引擎）
+
+- 现象：外部引擎 composer 停止按钮左侧的上下文用量环在 1M 上下文、用量约 1% 时只剩淡色整圆，被误认为加载转圈。该环自 1.0 前即存在，非 1.5.0 回归。
+- 规则：外部引擎（Claude/Codex）composer 中，用量占比低于 20% 时不渲染用量环；达到 20% 后显示，悬停面板不变。原生引擎的用量环同时是压缩入口，保持常显。
+- 实现：`ChatContextUsage` 的 `hideBelowRatio` 由外部引擎调用方传入 0.2。

@@ -179,6 +179,7 @@ export function ChatContextUsage({
   taskUsage,
   intl,
   locale,
+  hideBelowRatio,
 }: {
   taskUsage: {
     used: number;
@@ -191,6 +192,12 @@ export function ChatContextUsage({
   locale: string;
   onSendCompressionCommand?: (command: string) => void;
   compressionDisabled?: boolean;
+  /**
+   * 1.5.1：用量占比低于该值时不渲染入口。1M 上下文下用量常约 1%，弧几乎不可见，
+   * 静态环被误认为加载转圈（用户实机反馈）；仅外部引擎 composer 传入，原生引擎
+   * 的环同时是压缩入口，保持常显。
+   */
+  hideBelowRatio?: number;
 }) {
   const [contextOpen, handleContextOpenChange] = useState(false);
   const renderableTaskUsage = getRenderableTaskUsage(taskUsage);
@@ -235,6 +242,7 @@ export function ChatContextUsage({
   const usagePercent = renderableTaskUsage
     ? Math.min(Math.max(renderableTaskUsage.used / renderableTaskUsage.size, 0), 1)
     : 0;
+  if (hideBelowRatio !== undefined && usagePercent < hideBelowRatio && !contextOpen) return null;
   const compactTokenUsageLabel = renderableTaskUsage
     ? formatContextUsageSummary({
         locale,
