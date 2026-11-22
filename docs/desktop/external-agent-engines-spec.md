@@ -714,7 +714,7 @@ sequenceDiagram
 
 **Fast 开关映射（`engineFastToggle`）：** YCode 不向 adapter 声明 `session.configOptions.boolean`，本机 Claude adapter 0.95.0（`acp-agent.js` `createFastModeConfigOption`，id `fast`）与 Codex adapter 2.2.2（`index.js` `FastModeConfig`，id `fast-mode`）因此都发 `type:"select"`、两个取值 `on` / `off`。判定规则：选项恰好两个取值，一个取值（忽略大小写）属于开启集 `on/true/enabled`、另一个属于关闭集 `off/false/disabled`，才渲染为闪电；`currentValue` 等于开启取值即点亮（强调色 `text-icon-blue`、`aria-pressed=true`）。点击回传对侧原始取值，仍走 `onConfigChange` → `setEngineConfigOption`，等 snapshot 确认后才变化。形态不符的 Fast 类选项（多档 `service_tier` 等）不猜语义，作为普通菜单进入「更多选项」。原生 boolean 选项当前会被 `engineConfigOptionSchema`（`currentValue` 为字符串）拒绝，不在本次范围。引擎没有 Fast 类选项时不显示闪电。
 
-**右下角入口（三个引擎统一）：** 14px 引擎图标 + 文案。外部引擎：模型当前值为 adapter 别名 `default` 时只显示思考档位（如「高」）；否则「模型名 · 档位」；没有思考档位时只显示模型名（`default` 用解析出的真实名）；没有模型与档位时显示「更多选项」；尚无原生目录（草稿连接中）时显示引擎名。YCode 入口在本地工作区显示 YCode 图标，Web/远程沿用原样式。
+**右下角入口（三个引擎统一）：** 14px 引擎图标 + 文案。外部引擎：模型当前值为 adapter 别名 `default` 时只显示思考档位缩写（如 `High`）；否则「模型名 档位缩写」（如 `Opus 4.7 XHigh`，1.5.0 起中间不再有 `·`，两段之间只有一个窄间距 `gap-1`，不额外占位，见下文「模型名与思考档位显示（1.5.0）」）；没有思考档位时只显示模型名（`default` 用解析出的真实名）；没有模型与档位时显示「更多选项」；尚无原生目录（草稿连接中）时显示引擎名。YCode 入口在本地工作区显示 YCode 图标，Web/远程沿用原样式。
 
 **弹层结构（自上而下）：**
 
@@ -722,12 +722,19 @@ sequenceDiagram
    - **唯一入口与锚点（2026-11-19）：** 切换行只存在于右下角模型入口的弹层内，不在输入框内另设悬浮入口。弹层只由点击入口（或键盘激活入口）打开，锚定入口按钮向上弹出：外部引擎弹层 `side="top"`、`align="end"`，右缘与按钮对齐；YCode 模型菜单沿用既有 `side="top"`、`align="center"`。打开态按「入口所在控件族」限定：YCode ↔ 外部引擎切换会整体替换入口与弹层（YCode 为 `V4ComposerToolbar` 模型菜单，外部引擎为 `EngineControls` 弹层），旧弹层随卸载关闭，新入口挂载时一律为关闭态，不得沿用旧控件族遗留的打开态自动弹出；外部引擎之间（Claude Code ↔ Codex）切换复用同一弹层，保持打开。打开态的唯一所有者仍是 `EngineControls.activePicker` 与 `ConversationComposer.configPickerState`，以控件族作为 scope，不新增状态。
    - **等宽与完整名称：** 三段用三等分网格列（`grid-cols-3`），宽度一致；名称不截断（`whitespace-nowrap`，不加省略号）。挂载切换行的弹层/菜单宽度为 `max(18rem, 切换行内容宽度)`，其余内容（头部行、滑杆、更多选项、YCode 模型列表）不参与撑宽（`contain: inline-size`），因此「Claude Code」在中英文界面都完整显示；只有视口窄到弹层上限（`100vw - 1.5rem` / 菜单可用宽度）以下时才三段同比收缩。远程/Web（含手机 Web）不渲染切换行，弹层维持原 18rem 宽度。
 2. 头部行 `[⚡] <模型名> <档位> ›`：闪电见上；`›` 按钮打开模型完整目录。
-3. 思考滑杆：存在其他档位时隐藏 `default` 档；当前值为 `default` 时滑块不填充、档位文案显示「默认」。已知取值本地化 `minimal/low/medium/high/xhigh/max` → 最低/低/中/高/超高/最高，未知取值沿用 adapter 文案；提交仍回传原始 value。
+3. 思考滑杆：存在其他档位时隐藏 `default` 档；当前值为 `default` 时滑块不填充。头部行与滑杆读数显示档位全称（`Minimal/Low/Medium/High/Extra high/Max`，`default` 为「默认/Default」），滑杆下方一行说明当前档位（adapter 提供 description 时用其原文，否则用内置说明）；未知取值沿用 adapter 文案；提交仍回传原始 value。
 4. 「更多选项」：placement 为 `more` 的选项（及形态不符的 Fast 类）。
 
 **`default` 模型别名显示：** Claude adapter（`session-model.js` `buildModelConfigOption`）对 `value:"default"` 的条目把 description 设为真实模型的 `displayName`（无对应条目时为 `resolvedModel` id）；未解析出 resolvedModel 时 description 为 SDK 原文。解析规则：description 含 `(currently X)` 取 X；否则 description 不含 `(`、`·`、句号且不超过 48 字符时整体视为模型名；都不满足时显示本地化「默认模型」。模型菜单与头部行显示解析名 + 「默认」标记；界面任何位置不显示 adapter 的 `name`（如 "Default (recommended)"）。
 
 **引擎名：** 原生引擎统一显示「YCode」（`ENGINE_LABELS` 与 `TaskClientLogo` 同源）。
+
+**模型名与思考档位显示（1.5.0）：** 来源 `docs/plans/2026-11-22-experience-1.5.0.md` B2。只改显示层，adapter catalog、snapshot、偏好与提交值一律保持原始值。
+
+- 模型名：显示前去掉开头的 `Claude `（忽略大小写，仅当其后仍有内容），如 `Claude Opus 4.7` → `Opus 4.7`、`Claude Sonnet 4.6` → `Sonnet 4.6`；Codex/其他名称（如 `GPT-5.5`）原样显示。`default` 别名解析出的真实名同样去前缀。唯一实现为 `engineOptionDisplay.ts` 的 `stripClaudeModelPrefix`，入口、头部行、模型菜单共用。
+- 档位缩写（只用于入口按钮这类窄位置，≤5 个字母，中英文界面一致）：Minimal→`Min`、Low→`Low`、Medium→`Med`、High→`High`、Extra high / xhigh→`XHigh`、Max→`Max`、Ultra→`Ultra`、Default→`Auto`、Off/On 不变。词条在 `engine.effortShort.*`，取值 → 词条映射与全称表同住 `chat-input-toolbar/thoughtLevelLabels.ts`（`thoughtLevelShortLabelId`），外部引擎与 YCode 原生输入框入口共用；未知取值沿用全称/adapter 文案。
+- 全称：弹层头部行、滑杆 `aria-valuetext`、下拉/列表（ListModels 卡、工作流子代理模型说明）继续显示全称，下拉或弹层内附一行说明。
+- 组合：入口为两个相邻 span（模型名可截断、档位不截断），间距 `gap-1`，可访问名称为「模型名 档位全称」。
 
 **验收：** UI UT（`packages/ui/test/externalEnginePickers.test.ts`、`externalEngineSettings.test.ts`）覆盖：Claude `agent` 不出芯片、在更多选项可选；Codex `fast-mode` 只渲染为闪电、点亮与回传 on/off；`default` 模型入口只显示档位、弹层显示解析名与「默认」；滑杆无 Default 档、档位中文化；切换行新草稿可切换、已有会话只读、未传入时不渲染、方向键选择；YCode ↔ 外部引擎往返后新入口不自动弹出、外部引擎之间切换弹层保持打开、切换行等分网格且弹层按内容撑宽。shared `contract.test.ts` 覆盖 placement 与 Fast 映射。桌面候选 `conversation-session-external-engine-prewarm.test.ts` 改为经弹层切换引擎，并断言往返切换后入口外无残留弹层、三段等宽且名称 `scrollWidth <= clientWidth`、弹层底边不低于入口顶边且右缘与入口对齐（深浅主题、中英文）。
 
