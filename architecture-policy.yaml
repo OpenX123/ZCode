@@ -43,7 +43,7 @@ modules:
   - id: storage
     roots: [packages/services/src/storage]
     managed: true
-    requires: [shared, rpc, services]
+    requires: [shared, rpc, services, ycode-data-root]
     publicEntrypoints: [packages/services/src/storage/contract.ts]
     layers: { domain: domain, app: app, adapters: adapters }
     layerOrder: [domain, app, adapters]
@@ -277,6 +277,30 @@ modules:
     publicEntrypoints: [packages/shared/src/gen-ui/index.ts, packages/shared/src/gen-ui/contract.ts]
     layers: { domain: "." }
     owner: conversation
+  - id: ycode-data-root
+    roots: [packages/shared/src/ycode-data-root]
+    managed: true
+    requires: []
+    publicEntrypoints:
+      [
+        packages/shared/src/ycode-data-root/index.ts,
+        packages/shared/src/ycode-data-root/contract.ts,
+        packages/shared/src/ycode-data-root/node.ts,
+      ]
+    layers: { adapters: "." }
+    owner: desktop-settings
+  - id: desktop-data-dir-migration
+    roots: [packages/desktop/src/main/data-dir-migration]
+    managed: true
+    requires: [ycode-data-root]
+    publicEntrypoints:
+      [
+        packages/desktop/src/main/data-dir-migration/index.ts,
+        packages/desktop/src/main/data-dir-migration/contract.ts,
+        packages/desktop/src/main/data-dir-migration/early.ts,
+      ]
+    layers: { adapters: "." }
+    owner: desktop-settings
   - id: external-engine-protocol
     roots: [packages/shared/src/external-engine, packages/shared/src/feedbackPrivacy.ts]
     managed: true
@@ -333,7 +357,16 @@ modules:
         packages/ui/src/components/ai-elements/error-diagnostics.tsx,
       ]
     managed: true
-    requires: [ui, shared, services, external-engine-protocol, external-engine-service, mobile-ui, error-explanations]
+    requires:
+      [
+        ui,
+        shared,
+        services,
+        external-engine-protocol,
+        external-engine-service,
+        mobile-ui,
+        error-explanations,
+      ]
     publicEntrypoints:
       - packages/ui/src/external-engine/index.ts
       - packages/ui/src/external-engine/contract.ts
@@ -1012,6 +1045,7 @@ modules:
     requires:
       - services
       - shared
+      - ycode-data-root
     publicEntrypoints:
       - packages/services/src/usage-stats/local/index.ts
       - packages/services/src/usage-stats/local/contract.ts

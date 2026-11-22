@@ -4,7 +4,30 @@ import type { StdioStream } from "@zcode/server/remote/backend.js";
 import { quotePosixPathArg } from "@zcode/server/remote/posixShell.js";
 import type { RemoteAssetNetworkPort } from "@zcode/server/remote/remoteAssetNetwork.js";
 
-export const REMOTE_BASE = "~/.zcode/server";
+// 远端数据根随 YCode 改名迁移到 ~/.ycode（docs/desktop/ycode-data-dir-migration.md）；
+// 每次部署/探测前先执行 buildRemoteDataDirMigrationScript，保证该路径可用且只有一份数据。
+export const REMOTE_BASE = "~/.ycode/server";
+
+/**
+ * 远端 ~/.zcode → ~/.ycode 迁移脚本（POSIX sh，单行，输出丢弃，永不失败）：
+ * 1. 旧目录为真实目录且新位置为空：停止旧 Source Server（若已安装）→ mv → 在旧位置建 symlink；
+ *    建链接失败则 mv 回滚。
+ * 2. 仍只有旧目录（mv 失败等）：建立反向链接 ~/.ycode → ~/.zcode，新路径可用且不产生第二份数据。
+ * 新 daemon 由后续 ensureDaemon 在 ~/.ycode/server 启动；POSIX rename 不受打开文件影响。
+ */
+export function buildRemoteDataDirMigrationScript(): string {
+  const legacy = '"$HOME/.zcode"';
+  const next = '"$HOME/.ycode"';
+  const legacyBin = '"$HOME/.zcode/server/bin/zcode"';
+  const steps = [
+    `if [ -d ${legacy} ] && [ ! -L ${legacy} ] && [ ! -e ${next} ] && [ ! -L ${next} ]; then`,
+    `if [ -x ${legacyBin} ]; then ${legacyBin} stop --server-root "$HOME/.zcode/server" || true; fi;`,
+    `if command mv ${legacy} ${next}; then command ln -s ${next} ${legacy} || command mv ${next} ${legacy}; fi;`,
+    "fi;",
+    `if [ -d ${legacy} ] && [ ! -L ${legacy} ] && [ ! -e ${next} ] && [ ! -L ${next} ]; then command ln -s ${legacy} ${next}; fi`,
+  ];
+  return `{ ${steps.join(" ")}; } >/dev/null 2>&1 || true`;
+}
 
 export interface RemoteAssetDeployOptions {
   /** 取消当前连接初始化；共享 cache 仍可独立完成，但不得继续写入远端 staging。 */

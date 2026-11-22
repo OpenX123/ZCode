@@ -8,10 +8,12 @@ import {
   DATA_BASE_DIR_FORBIDDEN_WINDOWS_INSTALL_DIR_ERROR_CODE,
   ZCODE_AGENT_RUNTIME,
 } from "@zcode/shared";
+import { readYCodeEnv, resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 
 let _dataBaseDir: string | null = null;
 export const ZCODE_WINDOWS_APP_INSTALL_DIR_ENV = "ZCODE_WINDOWS_APP_INSTALL_DIR";
-const envDataBaseDir = process.env.ZCODE_DATA_BASE_DIR?.trim() || null;
+// YCODE_DATA_BASE_DIR 优先，旧 ZCODE_DATA_BASE_DIR 继续生效（docs/desktop/ycode-data-dir-migration.md）。
+const envDataBaseDir = readYCodeEnv(process.env, "DATA_BASE_DIR") ?? null;
 const defaultDataBaseDir = process.env.HOME?.trim() || homedir();
 
 export interface DataBaseDirTargetValidationOptions {
@@ -33,7 +35,7 @@ export function setDataBaseDir(dir: string | null): void {
   _dataBaseDir = dir?.trim() || null;
 }
 
-/** Get the current base directory. Priority: setDataBaseDir() > env ZCODE_DATA_BASE_DIR > homedir(). */
+/** Get the current base directory. Priority: setDataBaseDir() > env YCODE_/ZCODE_DATA_BASE_DIR > homedir(). */
 export function getDataBaseDir(): string {
   if (_dataBaseDir) return _dataBaseDir;
   if (envDataBaseDir) return envDataBaseDir;
@@ -42,14 +44,16 @@ export function getDataBaseDir(): string {
   return defaultDataBaseDir;
 }
 
-/** {dataBaseDir}/.zcode */
+/** {dataBaseDir}/.ycode；未迁移时为 {dataBaseDir}/.zcode。 */
 export function getZCodeDataRootDir(): string {
-  return join(getDataBaseDir(), ".zcode");
+  return resolveYCodeDataRoot(getDataBaseDir());
 }
 
 /** 非项目对话共享的真实工作目录；默认 ~/.zcode/workspace/default。 */
 export function getConversationWorkspaceDir(): string {
-  return join(getZCodeDataRootDir(), "workspace", "default");
+  // 该路径是 workspace 身份（会话按 workspacePath 哈希、项目库按 root_path 识别默认工作区）。
+  // ~/.ycode 迁移后继续使用旧 .zcode 路径，经链接访问同一目录，避免历史非项目对话失联。
+  return join(getDataBaseDir(), ".zcode", "workspace", "default");
 }
 
 /** {dataBaseDir}/.zcode/v2 */
@@ -220,9 +224,9 @@ export function getLegacyDeletedTaskSessionSnapshotPath(
  * 避免同机不同工作区配置漂移。
  */
 export function getProviderWorkspaceConfigDir(): string {
-  return ZCODE_AGENT_RUNTIME.nativeConfigDir
-    ? join(getDataBaseDir(), ZCODE_AGENT_RUNTIME.nativeConfigDir)
-    : join(getDataBaseDir(), ".zcode", "cli");
+  // nativeConfigDir 形如 ".zcode/cli"：首段是用户级数据根，随 .ycode 迁移解析，其余段保持。
+  const [, ...rest] = (ZCODE_AGENT_RUNTIME.nativeConfigDir || ".zcode/cli").split(/[\\/]/);
+  return join(getZCodeDataRootDir(), ...(rest.length > 0 ? rest : ["cli"]));
 }
 
 /**
@@ -231,8 +235,9 @@ export function getProviderWorkspaceConfigDir(): string {
  * state must only live at the default homedir location.
  */
 export async function copyDataDirectory(oldBaseDir: string, newBaseDir: string): Promise<void> {
-  const oldDir = join(oldBaseDir, ".zcode", "v2");
-  const newDir = join(newBaseDir, ".zcode", "v2");
+  // 旧根可能已迁移为 .ycode；新根为空时解析为 .ycode（下次启动由 Desktop main 补建 .zcode 链接）。
+  const oldDir = join(resolveYCodeDataRoot(oldBaseDir), "v2");
+  const newDir = join(resolveYCodeDataRoot(newBaseDir), "v2");
   await cp(oldDir, newDir, {
     recursive: true,
     force: false,

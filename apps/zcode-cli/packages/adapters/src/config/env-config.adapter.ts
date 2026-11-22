@@ -1,6 +1,7 @@
 // Env Config Adapter - Parse the intentionally small ZCODE_* environment surface.
 
 import type { RuntimeConfigPatch } from "@zcode/contracts";
+import { readYCodeEnv } from "@zcode/shared/ycode-data-root";
 
 interface EnvConfigOptions {
   prefix?: string;
@@ -56,6 +57,18 @@ export function parseEnvConfig(
     else if (configKey === "MAX_TOOL_CONCURRENCY") {
       if (!config.toolConcurrency) config.toolConcurrency = {};
       config.toolConcurrency.maxConcurrency = normalizeNumber(value);
+    }
+  }
+
+  // YCODE_STORAGE_DIR / YCODE_SESSION_DB_PATH 优先于旧 ZCODE_ 名称（docs/desktop/ycode-data-dir-migration.md）。
+  if (prefix === DEFAULT_PREFIX) {
+    const storageDir = readYCodeEnv(env, "STORAGE_DIR");
+    const sessionDbPath = readYCodeEnv(env, "SESSION_DB_PATH");
+    if (storageDir) {
+      config.storage = { ...config.storage, dir: storageDir };
+    }
+    if (sessionDbPath) {
+      config.storage = { ...config.storage, sessionDbPath };
     }
   }
 

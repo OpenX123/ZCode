@@ -1,5 +1,7 @@
 // Config Port - Scoped configuration with change notification
 
+import { homedir } from "node:os";
+import { resolveYCodeDataRootDirName } from "@zcode/shared/ycode-data-root";
 import type { CollaborationMode } from "../interfaces/session.port.js";
 import type { McpServerConfig } from "../interfaces/mcp.port.js";
 import type { HooksRuntimeConfig, HooksRuntimeConfigPatch } from "../hooks/index.js";
@@ -287,6 +289,9 @@ export interface ModelStreamConfig {
   idleTimeoutMs: number;
 }
 
+// CLI 是独立进程：默认存储根与 Desktop 同一规则解析（~/.ycode 优先，未迁移时 ~/.zcode），保留 "~/" 形式。
+const DEFAULT_STORAGE_DIR_NAME = resolveYCodeDataRootDirName(homedir());
+
 export const DefaultRuntimeConfig: RuntimeConfig = {
   modelStream: {
     idleTimeoutMs: DEFAULT_MODEL_STREAM_IDLE_TIMEOUT_MS,
@@ -301,8 +306,8 @@ export const DefaultRuntimeConfig: RuntimeConfig = {
     allowMediumRiskInAuto: false,
   },
   storage: {
-    dir: "~/.zcode",
-    sessionDbPath: "~/.zcode/cli/db/db.sqlite",
+    dir: `~/${DEFAULT_STORAGE_DIR_NAME}`,
+    sessionDbPath: `~/${DEFAULT_STORAGE_DIR_NAME}/cli/db/db.sqlite`,
   },
   network: {
     timeout: 180000,

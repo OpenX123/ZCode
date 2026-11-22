@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 import { join } from "node:path";
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -30,7 +31,7 @@ export function resolveCodexHome(env: Env = process.env): string {
   return env.CODEX_HOME?.trim() || join(resolveLocalHomeDir(env), ".codex");
 }
 
-/** 本机用量缓存与价格文件位于应用数据目录 ~/.zcode/v2/usage-stats。 */
+/** 本机用量缓存与价格文件位于应用数据目录 ~/.ycode/v2/usage-stats（未迁移时为 ~/.zcode）。 */
 export function resolveUsageStatsDataDir(env: Env = process.env): string {
-  return join(resolveLocalHomeDir(env), ".zcode", "v2", "usage-stats");
+  return join(resolveYCodeDataRoot(resolveLocalHomeDir(env)), "v2", "usage-stats");
 }

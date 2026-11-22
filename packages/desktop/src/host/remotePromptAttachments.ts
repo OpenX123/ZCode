@@ -3,8 +3,12 @@ import { quotePosixPathArg } from "@zcode/server/remote/posixShell.js";
 import type { TraceId, ZCodePromptAttachment } from "@zcode/shared";
 import { randomUUID } from "node:crypto";
 
-export const REMOTE_PROMPT_ATTACHMENT_ROOT = "~/.zcode/tmp/prompt-attachments";
-const REMOTE_PROMPT_ATTACHMENT_RELATIVE_ROOT = ".zcode/tmp/prompt-attachments";
+// 远端数据根随部署迁移为 ~/.ycode（未能迁移时部署建立 ~/.ycode → ~/.zcode 反向链接）。
+export const REMOTE_PROMPT_ATTACHMENT_ROOT = "~/.ycode/tmp/prompt-attachments";
+const REMOTE_PROMPT_ATTACHMENT_RELATIVE_ROOT = ".ycode/tmp/prompt-attachments";
+// 迁移前已物化的附件仍在旧路径（经链接与新路径同一目录），视为已上传，不重复上传。
+const LEGACY_REMOTE_PROMPT_ATTACHMENT_ROOT = "~/.zcode/tmp/prompt-attachments";
+const LEGACY_REMOTE_PROMPT_ATTACHMENT_RELATIVE_ROOT = ".zcode/tmp/prompt-attachments";
 
 export interface RemotePromptAttachmentMaterializeInput {
   taskId?: string;
@@ -49,7 +53,10 @@ export async function materializeRemotePromptAttachments(
       continue;
     }
 
-    if (isPathInRoot(localPath, REMOTE_PROMPT_ATTACHMENT_ROOT)) {
+    if (
+      isPathInRoot(localPath, REMOTE_PROMPT_ATTACHMENT_ROOT) ||
+      isPathInRoot(localPath, LEGACY_REMOTE_PROMPT_ATTACHMENT_ROOT)
+    ) {
       nextAttachments.push(attachment);
       continue;
     }
@@ -228,7 +235,15 @@ function getAttachmentLocalPath(attachment: ZCodePromptAttachment): string | und
 }
 
 function isRemotePromptAttachmentPath(path: string, remoteRoot: string): boolean {
-  return isPathInRoot(path, REMOTE_PROMPT_ATTACHMENT_ROOT) || isPathInRoot(path, remoteRoot);
+  const legacyRemoteRoot = remoteRoot.endsWith(`/${REMOTE_PROMPT_ATTACHMENT_RELATIVE_ROOT}`)
+    ? `${remoteRoot.slice(0, -REMOTE_PROMPT_ATTACHMENT_RELATIVE_ROOT.length)}${LEGACY_REMOTE_PROMPT_ATTACHMENT_RELATIVE_ROOT}`
+    : remoteRoot;
+  return (
+    isPathInRoot(path, REMOTE_PROMPT_ATTACHMENT_ROOT) ||
+    isPathInRoot(path, LEGACY_REMOTE_PROMPT_ATTACHMENT_ROOT) ||
+    isPathInRoot(path, remoteRoot) ||
+    isPathInRoot(path, legacyRemoteRoot)
+  );
 }
 
 function isPathInRoot(path: string, root: string): boolean {

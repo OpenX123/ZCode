@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- desktop runtime/env 解析需要集中维护 main/host/remote assets 的启动边界，拆分会扩大远程连接回归面。 */
+import { resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 import type { ConnectOptions } from "@zcode/server/remote";
 import {
   getAppConfigDir,
@@ -426,7 +427,7 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
             )
           ? rawInheritedEnv.ZCODE_CUA_BUNDLED_HELPER_APP_PATH?.trim() ||
             join(
-              rawInheritedEnv.ZCODE_HOME?.trim() || join(homedir(), ".zcode"),
+              rawInheritedEnv.ZCODE_HOME?.trim() || resolveYCodeDataRoot(homedir()),
               "computer-use",
               "dev",
               DEV_HELPER_APP_NAME,

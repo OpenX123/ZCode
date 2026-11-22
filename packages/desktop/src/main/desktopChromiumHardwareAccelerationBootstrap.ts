@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 
 interface ChromiumHardwareAccelerationApp {
   disableHardwareAcceleration(): void;
@@ -9,7 +10,7 @@ interface ChromiumHardwareAccelerationApp {
 export function resolveChromiumHardwareAccelerationSettingsFile(
   homePath: string = homedir(),
 ): string {
-  return join(homePath, ".zcode", "v2", "setting.json");
+  return join(resolveYCodeDataRoot(homePath), "v2", "setting.json");
 }
 
 export function extractBootstrapChromiumHardwareAccelerationEnabled(rawValue: unknown): boolean {

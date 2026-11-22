@@ -2,6 +2,7 @@ import { readFile, mkdir, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { AppSettings } from "@zcode/shared";
+import { resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 import {
   appSettingsPatchSchema,
   appSettingsSchema,
@@ -250,7 +251,7 @@ export function createSettingServiceWithMigrations(): {
 } {
   // 原因：每次 IO 动态读 HOME 会让旧异步投影写进后来实例的目录。
   // 在实例创建时取值，既支持测试/Host 注入，也让读取、文件锁与替换始终同源。
-  const settingsFile = join(resolveUserHomeDir(), ".zcode", "v2", "setting.json");
+  const settingsFile = join(resolveYCodeDataRoot(resolveUserHomeDir()), "v2", "setting.json");
   const getSettingsFile = () => settingsFile;
   const getSettingsDir = () => dirname(settingsFile);
   const readSettingsWithMeta = () => readSettingsWithMetaAt(settingsFile);

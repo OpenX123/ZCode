@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { join } from "node:path";
-import { stablePathId, type ServerLayout } from "../runtime/paths.js";
+import { stableServerRootId, type ServerLayout } from "../runtime/paths.js";
 
 export type ServicePlatform = "darwin" | "linux" | "win32";
 
@@ -36,7 +36,7 @@ export function createDaemonServiceDescriptor(options: {
       options.platform === "win32" ? "zcode.cmd" : "zcode",
     ),
     args: ["serve", "--supervisor", "--service-entry", "--server-root", options.layout.serverRoot],
-    name: `com.zhipu.zcode.server.${stablePathId(options.layout.serverRoot)}`,
+    name: `com.zhipu.zcode.server.${stableServerRootId(options.layout.serverRoot)}`,
   });
 }
 

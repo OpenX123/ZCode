@@ -19,6 +19,7 @@
     "./media-preview": "./src/media-preview.ts",
     "./config-schema": "./src/config-schema.ts",
     "./node": "./src/node.ts",
+    "./ycode-data-root": "./src/ycode-data-root/index.ts",
     "./sqlite-migrations": "./src/sqlite-migrations/index.ts",
     "./zcodeEndpoint": "./src/zcodeEndpoint.ts",
     "./workspaceFileSearch": "./src/workspaceFileSearch.ts",

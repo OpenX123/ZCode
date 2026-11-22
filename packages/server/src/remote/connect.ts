@@ -16,6 +16,7 @@ import type { IRemoteBackend } from "./backend.js";
 import { wrapStdioStream } from "./stdio-socket.js";
 import { performHandshake } from "./handshake.js";
 import { deployServer } from "./deploy.js";
+import { buildRemoteDataDirMigrationScript } from "./deployShared.js";
 import type { DeployOptions } from "./deploy.js";
 import { assertSupportedRemoteEnvironment } from "@zcode/server/remote/remotePlatformSupport.js";
 import { quotePosixShellArg } from "./posixShell.js";
@@ -190,6 +191,10 @@ async function connectRemoteUnchecked(
     options?.remoteRuntimeNetwork,
     log,
   );
+
+  // 远端 ~/.zcode → ~/.ycode 迁移必须先于部署与启动命令（二者都使用 ~/.ycode/server）。
+  await runRemoteDataDirMigration(backend, log);
+  throwIfRemoteConnectAborted(options?.signal);
 
   // 2. Deploy server if needed
   if (!options?.skipDeploy) {
@@ -379,7 +384,7 @@ function buildRemoteServerCommand(
 ): string {
   const envParts = [
     `${SERVICE_AUTHORITY_MODE_ENV}="desktop-attached-remote"`,
-    'ZCODE_SERVER_RUNTIME_ROOT="$HOME/.zcode/server"',
+    'ZCODE_SERVER_RUNTIME_ROOT="$HOME/.ycode/server"',
   ];
   for (const [key, value] of Object.entries(
     pickRemoteRuntimeEnv(options?.remoteRuntimeEnv ?? {}),
@@ -405,5 +410,21 @@ function buildRemoteServerCommand(
       );
     }
   }
-  return `${envParts.join(" ")} ~/.zcode/server/node ~/.zcode/server/zcode-server.cjs`;
+  return `${envParts.join(" ")} ~/.ycode/server/node ~/.ycode/server/zcode-server.cjs`;
+}
+
+async function runRemoteDataDirMigration(
+  backend: IRemoteBackend,
+  log: (...args: unknown[]) => void,
+): Promise<void> {
+  try {
+    const stream = await backend.exec(buildRemoteDataDirMigrationScript());
+    await new Promise<void>((resolve) => stream.onClose(() => resolve()));
+  } catch (error) {
+    // 脚本自身永不失败；exec 传输失败时保持旧行为继续，后续部署会暴露真实连接错误。
+    log(
+      "remote data dir migration skipped:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }

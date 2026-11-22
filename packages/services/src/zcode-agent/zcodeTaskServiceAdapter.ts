@@ -3,6 +3,7 @@ import {
   remoteHostIdFromWorkspaceIdentity,
   buildRemoteHostWorkspaceIdentity,
 } from "@zcode/shared";
+import { resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 import type { IGitService } from "#src/git/git.js";
 import { isAuxiliarySessionKind } from "@zcode/shared";
 import { createBotTopicAdmission } from "#src/zcode-agent/botTopicAdmission.js";
@@ -243,7 +244,7 @@ function formatZCodeAgentLogDate(now: Date): string {
 
 function resolveZCodeAgentCurrentLogFilePath(now = new Date()): string {
   const configuredLogDir = process.env.ZCODE_LOG_DIR?.trim();
-  const logDir = configuredLogDir || join(homedir(), ".zcode", "cli", "log");
+  const logDir = configuredLogDir || join(resolveYCodeDataRoot(homedir()), "cli", "log");
   return join(logDir, `zcode-${formatZCodeAgentLogDate(now)}.jsonl`);
 }
 

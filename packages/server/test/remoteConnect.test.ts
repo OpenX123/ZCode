@@ -1,4 +1,5 @@
 import { PassThrough } from "node:stream";
+import { buildRemoteDataDirMigrationScript } from "../src/remote/deployShared.js";
 import { describe, expect, it, vi } from "vitest";
 import { Emitter, ChannelClient, SocketProtocol, type IDisposable, type Event } from "@zcode/rpc";
 import { ZCODE_VERSION, TOPIC_RESOURCE_RELAY_CHANNEL } from "@zcode/shared";
@@ -35,6 +36,18 @@ class FakeConnectBackend implements IRemoteBackend {
 
   async exec(command: string): Promise<StdioStream> {
     this.commands.push(command);
+    if (command === buildRemoteDataDirMigrationScript()) {
+      // 数据目录迁移脚本是一次性命令：立即结束，不进入 server stdio 生命周期。
+      return {
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        onClose: (listener): IDisposable => {
+          queueMicrotask(() => listener(0));
+          return { dispose: () => undefined };
+        },
+      };
+    }
     const stdin = new PassThrough();
     const stdout = new PassThrough();
     const stderr = new PassThrough();
@@ -277,7 +290,9 @@ describe("connectRemote", () => {
     });
     connection.dispose();
 
-    expect(backend.commands[0]).toContain('ZCODE_SERVER_RUNTIME_ROOT="$HOME/.zcode/server"');
+    // 迁移脚本先于启动命令执行，启动命令使用迁移后的 ~/.ycode/server。
+    expect(backend.commands[0]).toBe(buildRemoteDataDirMigrationScript());
+    expect(backend.commands.at(-1)).toContain('ZCODE_SERVER_RUNTIME_ROOT="$HOME/.ycode/server"');
   });
 
   it("启动 desktop attached 远端 server 时注入服务权威模式", async () => {
@@ -289,7 +304,9 @@ describe("connectRemote", () => {
     });
     connection.dispose();
 
-    expect(backend.commands[0]).toContain('ZCODE_SERVICE_AUTHORITY_MODE="desktop-attached-remote"');
+    expect(backend.commands.at(-1)).toContain(
+      'ZCODE_SERVICE_AUTHORITY_MODE="desktop-attached-remote"',
+    );
   });
 
   it("启动远端 server 时 shell quote 注入 app version", async () => {
@@ -302,7 +319,7 @@ describe("connectRemote", () => {
     });
     connection.dispose();
 
-    expect(backend.commands[0]).toContain(`ZCODE_APP_VERSION='2.13.1+build'"'"'7'`);
+    expect(backend.commands.at(-1)).toContain(`ZCODE_APP_VERSION='2.13.1+build'"'"'7'`);
   });
 
   it("启动远端 server 时只注入受控的测试环境 endpoint 变量", async () => {
@@ -321,12 +338,12 @@ describe("connectRemote", () => {
     });
     connection.dispose();
 
-    expect(backend.commands[0]).toContain("ZCODE_ENV='test'");
-    expect(backend.commands[0]).toContain("ZCODE_BASE_URL='https://zcode.z.ai/api/v1'");
-    expect(backend.commands[0]).toContain("ZAI_OAUTH_ORIGIN='https://chat.z.ai'");
-    expect(backend.commands[0]).toContain(`ZAI_OAUTH_CLIENT_ID='client_'"'"'test'`);
-    expect(backend.commands[0]).not.toContain("ZAI_OAUTH_APP_SECRET");
-    expect(backend.commands[0]).not.toContain("must-not-cross-ssh");
+    expect(backend.commands.at(-1)).toContain("ZCODE_ENV='test'");
+    expect(backend.commands.at(-1)).toContain("ZCODE_BASE_URL='https://zcode.z.ai/api/v1'");
+    expect(backend.commands.at(-1)).toContain("ZAI_OAUTH_ORIGIN='https://chat.z.ai'");
+    expect(backend.commands.at(-1)).toContain(`ZAI_OAUTH_CLIENT_ID='client_'"'"'test'`);
+    expect(backend.commands.at(-1)).not.toContain("ZAI_OAUTH_APP_SECRET");
+    expect(backend.commands.at(-1)).not.toContain("must-not-cross-ssh");
   });
 
   it("只把显式 WSL 运行时代理注入远端 server 命令", async () => {
@@ -347,9 +364,11 @@ describe("connectRemote", () => {
     connection.dispose();
 
     expect(resolveRuntimeProxy).toHaveBeenCalledWith("http://127.0.0.1:7890");
-    expect(backend.commands[0]).toContain("ZCODE_REMOTE_RUNTIME_NETWORK_AUTHORITY='1'");
-    expect(backend.commands[0]).toContain("ZCODE_REMOTE_HTTP_PROXY='http://172.21.240.1:7890/'");
-    expect(backend.commands[0]).toContain("ZCODE_REMOTE_NO_PROXY='localhost,127.0.0.1'");
+    expect(backend.commands.at(-1)).toContain("ZCODE_REMOTE_RUNTIME_NETWORK_AUTHORITY='1'");
+    expect(backend.commands.at(-1)).toContain(
+      "ZCODE_REMOTE_HTTP_PROXY='http://172.21.240.1:7890/'",
+    );
+    expect(backend.commands.at(-1)).toContain("ZCODE_REMOTE_NO_PROXY='localhost,127.0.0.1'");
   });
 
   it("backend 断连和 stdio close 同时到达时只上报一次", async () => {
@@ -397,7 +416,7 @@ describe("connectRemote", () => {
   it("远端 server 握手前退出时应把 stderr 和退出码带到错误信息", async () => {
     const backend = new FakeConnectBackend({
       code: 126,
-      stderr: "/bin/sh: 1: /root/.zcode/server/node: Text file busy\n",
+      stderr: "/bin/sh: 1: /root/.ycode/server/node: Text file busy\n",
     });
 
     await expect(
@@ -406,5 +425,23 @@ describe("connectRemote", () => {
         skipDeploy: true,
       }),
     ).rejects.toThrow(/Stream closed before handshake completed.*exit code 126.*Text file busy/s);
+  });
+});
+
+describe("buildRemoteDataDirMigrationScript", () => {
+  it("只在旧目录为真实目录且新位置为空时停止旧服务、迁移并建链接，失败时建反向链接", () => {
+    const script = buildRemoteDataDirMigrationScript();
+    expect(script).toContain(
+      'if [ -d "$HOME/.zcode" ] && [ ! -L "$HOME/.zcode" ] && [ ! -e "$HOME/.ycode" ] && [ ! -L "$HOME/.ycode" ]; then',
+    );
+    expect(script).toContain(
+      '"$HOME/.zcode/server/bin/zcode" stop --server-root "$HOME/.zcode/server" || true',
+    );
+    expect(script).toContain(
+      'if command mv "$HOME/.zcode" "$HOME/.ycode"; then command ln -s "$HOME/.ycode" "$HOME/.zcode" || command mv "$HOME/.ycode" "$HOME/.zcode"; fi;',
+    );
+    expect(script).toContain('then command ln -s "$HOME/.zcode" "$HOME/.ycode"; fi');
+    // 脚本输出丢弃且永不失败，可安全拼入 probe。
+    expect(script.endsWith("} >/dev/null 2>&1 || true")).toBe(true);
   });
 });

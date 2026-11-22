@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -216,7 +217,8 @@ test("prepares beta CLI runtime env with beta storage root", () => {
     ["/usr/bin/node", "/workspace/bin/zcode.js"],
   );
 
-  assert.equal(env.ZCODE_STORAGE_DIR, join(homedir(), ".zcode-beta"));
+  // Beta 根按 .ycode-beta 优先、未迁移时 .zcode-beta 的规则解析（只读判断，不写真实 home）。
+  assert.equal(env.ZCODE_STORAGE_DIR, resolveYCodeDataRoot(homedir(), "beta"));
 });
 
 test("preserves explicit storage root when beta mode is enabled", () => {
@@ -6558,4 +6560,12 @@ test("storage-migrate real entrypoint honors an isolated custom database and rej
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("YCODE_* storage env takes precedence and is propagated to the ZCODE_* name", () => {
+  const env = prepareCliRuntimeEnv(
+    { YCODE_STORAGE_DIR: "/ycode-storage", ZCODE_STORAGE_DIR: "/zcode-storage", YCODE_BETA: "1" },
+    ["/usr/bin/node", "/workspace/bin/zcode.js"],
+  );
+  assert.equal(env.ZCODE_STORAGE_DIR, "/ycode-storage");
 });

@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { readYCodeEnv, resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 
 export interface ServerLayout {
   readonly dataBaseDir: string;
@@ -23,8 +24,9 @@ export interface ServerLayout {
 }
 
 export function getDefaultServerDataRoot(): string {
-  const configured = process.env.ZCODE_DATA_BASE_DIR?.trim();
-  return join(configured || homedir(), ".zcode", "server");
+  // YCODE_DATA_BASE_DIR 优先；数据根迁移后为 ~/.ycode/server，未迁移时仍为 ~/.zcode/server。
+  const configured = readYCodeEnv(process.env, "DATA_BASE_DIR");
+  return join(resolveYCodeDataRoot(configured || homedir()), "server");
 }
 
 export function resolveServerLayout(serverRoot = getDefaultServerDataRoot()): ServerLayout {
@@ -45,7 +47,7 @@ export function resolveServerLayout(serverRoot = getDefaultServerDataRoot()): Se
     lockFile: join(runDir, "server.lock"),
     controlEndpoint:
       process.platform === "win32"
-        ? `\\\\.\\pipe\\zcode-server-${stablePathId(root)}`
+        ? `\\\\.\\pipe\\zcode-server-${stableServerRootId(root)}`
         : join(runDir, "control.sock"),
     serviceDir: join(root, "service"),
     uninstalledFile: join(root, "uninstalled.json"),
@@ -83,11 +85,25 @@ export async function resolveCanonicalServerLayout(
 
 function inferDataBaseDir(serverRoot: string): string {
   const parent = dirname(serverRoot);
-  if (basename(serverRoot) === "server" && basename(parent) === ".zcode") {
+  if (basename(serverRoot) === "server" && [".ycode", ".zcode"].includes(basename(parent))) {
     return dirname(parent);
   }
   // 非标准的显式 server root 仍保持隔离，不向其父目录扩散 Agent/SQLite 数据。
   return serverRoot;
+}
+
+/**
+ * Server root 的稳定标识（服务名、Windows 管道名）。~/.ycode/server 按迁移前的 ~/.zcode/server 计算：
+ * 数据目录迁移后服务名保持不变，重新注册覆盖原注册，不会遗留指向同一 root 的旧服务在登录时争锁。
+ */
+export function stableServerRootId(serverRoot: string): string {
+  const root = resolve(serverRoot);
+  const parent = dirname(root);
+  const identityRoot =
+    basename(root) === "server" && basename(parent) === ".ycode"
+      ? join(dirname(parent), ".zcode", "server")
+      : root;
+  return stablePathId(identityRoot);
 }
 
 export function stablePathId(pathValue: string): string {
@@ -145,5 +161,5 @@ export function assertServerDataRoot(serverRoot: string): string {
 }
 
 export function serverDataRootFromBase(baseDir: string): string {
-  return join(resolve(baseDir), ".zcode", "server");
+  return join(resolveYCodeDataRoot(resolve(baseDir)), "server");
 }
