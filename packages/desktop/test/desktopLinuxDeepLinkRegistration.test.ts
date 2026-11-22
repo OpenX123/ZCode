@@ -35,7 +35,8 @@ describe("desktop Linux deep link registration helpers", () => {
 
     expect(command.executablePath).toBe("/home/alice/Downloads/ZCode-2.8.0-linux-x64.AppImage");
     expect(entry).toContain('Exec="/home/alice/Downloads/ZCode-2.8.0-linux-x64.AppImage" %U');
-    expect(entry).toContain("MimeType=x-scheme-handler/zcode;");
+    expect(entry).toContain("MimeType=x-scheme-handler/ycode;x-scheme-handler/zcode;");
+    expect(entry).toContain("Comment=YCode Desktop App");
   });
 
   it("keeps AppImage sandbox and GPU launch switches for protocol callbacks", async () => {
@@ -110,7 +111,7 @@ describe("desktop Linux deep link registration helpers", () => {
     expect(entry).toContain("Name=ZCode Preview");
     expect(entry).toContain("StartupWMClass=ZCode Preview");
     expect(entry).toContain('Exec="/opt/ZCode Preview/zcode-preview" %U');
-    expect(entry).toContain("MimeType=x-scheme-handler/zcode;");
+    expect(entry).toContain("MimeType=x-scheme-handler/ycode;x-scheme-handler/zcode;");
   });
 
   it("escapes AppImage callback switches before writing desktop Exec", async () => {
@@ -235,6 +236,10 @@ describe("desktop Linux deep link registration helpers", () => {
         },
         {
           command: "xdg-mime",
+          args: ["default", "zcode.desktop", "x-scheme-handler/ycode"],
+        },
+        {
+          command: "xdg-mime",
           args: ["default", "zcode.desktop", "x-scheme-handler/zcode"],
         },
       ]);
@@ -316,6 +321,10 @@ describe("desktop Linux deep link registration helpers", () => {
         {
           command: "update-desktop-database",
           args: [join(homeDir, ".local", "share", "applications")],
+        },
+        {
+          command: "xdg-mime",
+          args: ["default", "zcode.desktop", "x-scheme-handler/ycode"],
         },
         {
           command: "xdg-mime",
@@ -419,6 +428,10 @@ describe("desktop Linux deep link registration helpers", () => {
         {
           command: "update-desktop-database",
           args: [join(homeDir, ".local", "share", "applications")],
+        },
+        {
+          command: "xdg-mime",
+          args: ["default", "zcode.desktop", "x-scheme-handler/ycode"],
         },
         {
           command: "xdg-mime",
@@ -530,6 +543,10 @@ describe("desktop Linux deep link registration helpers", () => {
         {
           command: "update-desktop-database",
           args: [join(homeDir, ".local", "share", "applications")],
+        },
+        {
+          command: "xdg-mime",
+          args: ["default", "zcode.desktop", "x-scheme-handler/ycode"],
         },
         {
           command: "xdg-mime",
@@ -654,6 +671,10 @@ describe("desktop Linux deep link registration helpers", () => {
           },
           {
             command: "xdg-mime",
+            args: ["default", "zcode.desktop", "x-scheme-handler/ycode"],
+          },
+          {
+            command: "xdg-mime",
             args: ["default", "zcode.desktop", "x-scheme-handler/zcode"],
           },
         ]);
@@ -663,4 +684,40 @@ describe("desktop Linux deep link registration helpers", () => {
       }
     },
   );
+  it("treats entries written with the YCode comment as owned and removes them under a system entry", async () => {
+    const { createLinuxDeepLinkDesktopEntry, registerLinuxDeepLinkProtocol } =
+      await import("../src/main/desktopLinuxDeepLinkRegistration.js");
+    const tempRoot = mkdtempSync(join(tmpdir(), "zcode-linux-ycode-owned-"));
+    const homeDir = join(tempRoot, "home");
+    const systemApplicationsDir = join(tempRoot, "system", "applications");
+    const desktopFilePath = join(homeDir, ".local", "share", "applications", "zcode.desktop");
+
+    try {
+      mkdirSync(systemApplicationsDir, { recursive: true });
+      writeFileSync(
+        join(systemApplicationsDir, "zcode.desktop"),
+        "[Desktop Entry]\nName=YCode\nExec=/opt/YCode/zcode %U\n",
+        "utf8",
+      );
+      mkdirSync(dirname(desktopFilePath), { recursive: true });
+      writeFileSync(
+        desktopFilePath,
+        createLinuxDeepLinkDesktopEntry({ executablePath: "/old/YCode.AppImage" }),
+        "utf8",
+      );
+
+      registerLinuxDeepLinkProtocol({
+        executablePath: "/opt/YCode/zcode",
+        homeDir,
+        env: {},
+        systemApplicationDirs: [systemApplicationsDir],
+        logger: { info: () => undefined, warn: () => undefined },
+        runCommand: () => ({ status: 0, stderr: "" }),
+      });
+
+      expect(existsSync(desktopFilePath)).toBe(false);
+    } finally {
+      rmSync(tempRoot, { force: true, recursive: true });
+    }
+  });
 });

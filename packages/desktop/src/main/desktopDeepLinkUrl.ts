@@ -1,7 +1,16 @@
 import { parseSessionDeepLink } from "@zcode/shared/session-navigation";
 
-const DEEP_LINK_SCHEME = "zcode";
-const DEEP_LINK_RE = /\bzcode:(?:\/\/|\/)?[^\s"'<>]+/i;
+/**
+ * 1.5.1 品牌更名：ycode 为新生成链接使用的主 scheme；zcode 继续注册与解析，
+ * 旧书签、已分享链接和第三方 OAuth/支付回调不失效。顺序即注册顺序。
+ */
+export const DEEP_LINK_SCHEMES = ["ycode", "zcode"] as const;
+const DEEP_LINK_PROTOCOLS = new Set<string>(DEEP_LINK_SCHEMES.map((scheme) => `${scheme}:`));
+const DEEP_LINK_RE = /\b[yz]code:(?:\/\/|\/)?[^\s"'<>]+/i;
+
+function isDeepLinkProtocol(parsedUrl: URL): boolean {
+  return DEEP_LINK_PROTOCOLS.has(parsedUrl.protocol);
+}
 const OAUTH_CALLBACK_HOSTS = new Set(["oauth"]);
 const PAYMENT_CALLBACK_HOST = "payment";
 const WORKSPACE_OPEN_HOST = "workspace";
@@ -17,7 +26,7 @@ function normalizeOAuthCallbackPath(pathname: string): string {
 }
 
 export function isOAuthCallbackUrl(parsedUrl: URL): boolean {
-  if (parsedUrl.protocol !== `${DEEP_LINK_SCHEME}:`) {
+  if (!isDeepLinkProtocol(parsedUrl)) {
     return false;
   }
 
@@ -37,7 +46,7 @@ export function isOAuthCallbackUrl(parsedUrl: URL): boolean {
 }
 
 export function isPaymentCallbackUrl(parsedUrl: URL): boolean {
-  if (parsedUrl.protocol !== `${DEEP_LINK_SCHEME}:`) {
+  if (!isDeepLinkProtocol(parsedUrl)) {
     return false;
   }
 
@@ -55,7 +64,7 @@ export function isPaymentCallbackUrl(parsedUrl: URL): boolean {
 }
 
 export function isWorkspaceOpenUrl(parsedUrl: URL): boolean {
-  if (parsedUrl.protocol !== `${DEEP_LINK_SCHEME}:`) {
+  if (!isDeepLinkProtocol(parsedUrl)) {
     return false;
   }
 
@@ -83,7 +92,7 @@ export function extractWorkspaceOpenPath(parsedUrl: URL): string | null {
 
 export function isShareImportUrl(parsedUrl: URL): boolean {
   return (
-    parsedUrl.protocol === `${DEEP_LINK_SCHEME}:` &&
+    isDeepLinkProtocol(parsedUrl) &&
     parsedUrl.hostname === SHARE_IMPORT_HOST &&
     normalizeOAuthCallbackPath(parsedUrl.pathname) === "/import"
   );
@@ -196,7 +205,7 @@ export function extractDeepLinkUrlFromArgs(args: readonly string[]): string | nu
       if (match) {
         // Debian/xdg 的协议回调可能被浏览器或桌面门户多次编码，
         // 也可能把 query 片段拆成相邻 argv。这里先生成有限候选再多轮解码，
-        // 避免浏览器确认“打开 ZCode”后主进程拿不到完整回调 URL。
+        // 避免浏览器确认“打开 YCode”后主进程拿不到完整回调 URL。
         if (isCompleteDeepLinkUrl(match)) {
           return match;
         }

@@ -1,11 +1,13 @@
 import { access, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, posix } from "node:path";
 
-export const DEV_ELECTRON_PROTOCOL_SCHEME = "zcode";
+// 1.5.1：ycode 为主 scheme，zcode 继续声明以兼容旧链接，与打包版 electron-builder protocols 一致。
+export const DEV_ELECTRON_PROTOCOL_SCHEMES = ["ycode", "zcode"];
 export const DEV_ELECTRON_APP_NAME = "YCode Dev";
 export const DEV_ELECTRON_APP_BUNDLE_ID = "dev.zcode.app.development";
 // 副本布局版本，见 prepareDevElectronAppBundle 中的指纹说明。
-export const DEV_ELECTRON_BUNDLE_FORMAT = 2;
+// 3：CFBundleURLSchemes 增加 ycode，已有副本需要重建。
+export const DEV_ELECTRON_BUNDLE_FORMAT = 3;
 
 function escapeXml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
@@ -22,8 +24,12 @@ function replacePlistString(plist, key, value) {
   );
 }
 
+function hasAllProtocolSchemes(plist) {
+  return DEV_ELECTRON_PROTOCOL_SCHEMES.every((scheme) => plist.includes(`<string>${scheme}</string>`));
+}
+
 function appendProtocolDeclaration(plist) {
-  if (plist.includes(`<string>${DEV_ELECTRON_PROTOCOL_SCHEME}</string>`)) {
+  if (hasAllProtocolSchemes(plist)) {
     return plist;
   }
 
@@ -32,12 +38,15 @@ function appendProtocolDeclaration(plist) {
     throw new Error("Dev Electron Info.plist is missing its root dict");
   }
 
-  const protocolDeclaration = `\n\t<key>CFBundleURLTypes</key>\n\t<array>\n\t\t<dict>\n\t\t\t<key>CFBundleURLName</key>\n\t\t\t<string>${DEV_ELECTRON_APP_NAME}</string>\n\t\t\t<key>CFBundleURLSchemes</key>\n\t\t\t<array>\n\t\t\t\t<string>${DEV_ELECTRON_PROTOCOL_SCHEME}</string>\n\t\t\t</array>\n\t\t</dict>\n\t</array>\n`;
+  const schemeEntries = DEV_ELECTRON_PROTOCOL_SCHEMES.map(
+    (scheme) => `\t\t\t\t<string>${scheme}</string>\n`,
+  ).join("");
+  const protocolDeclaration = `\n\t<key>CFBundleURLTypes</key>\n\t<array>\n\t\t<dict>\n\t\t\t<key>CFBundleURLName</key>\n\t\t\t<string>${DEV_ELECTRON_APP_NAME}</string>\n\t\t\t<key>CFBundleURLSchemes</key>\n\t\t\t<array>\n${schemeEntries}\t\t\t</array>\n\t\t</dict>\n\t</array>\n`;
   return `${plist.slice(0, closingDictIndex)}${protocolDeclaration}${plist.slice(closingDictIndex)}`;
 }
 
 /**
- * 为 macOS 本地 Dev runtime 写入产品身份和 zcode URL scheme。
+ * 为 macOS 本地 Dev runtime 写入产品身份和 ycode/zcode URL scheme。
  * raw Electron 的 Info.plist 没有 CFBundleURLTypes，系统只能把 zcode 交给
  * com.github.Electron；这里仅修改启动副本，避免污染 node_modules 中的 Electron。
  */
@@ -88,7 +97,7 @@ export async function prepareDevElectronAppBundle({
     const existingStamp = await readFile(sourceStampPath, "utf8");
     needsCopy =
       !existingInfoPlist.includes(`<string>${DEV_ELECTRON_APP_BUNDLE_ID}</string>`) ||
-      !existingInfoPlist.includes(`<string>${DEV_ELECTRON_PROTOCOL_SCHEME}</string>`) ||
+      !hasAllProtocolSchemes(existingInfoPlist) ||
       sourceStamp === undefined ||
       existingStamp !== sourceStamp;
   } catch {

@@ -51,7 +51,9 @@ describe("Windows Deep Link 启动参数边界", () => {
     registerDeepLinkProtocol(logger);
 
     expect(mocks.register.mock.calls).toEqual([
+      ["ycode", process.execPath, ["--"]],
       ["zcode", process.execPath, ["--"]],
+      ["ycode", process.execPath, ["--"]],
       ["zcode", process.execPath, ["--"]],
     ]);
   });
@@ -64,6 +66,7 @@ describe("Windows Deep Link 启动参数边界", () => {
 
     registerDeepLinkProtocol(logger);
 
+    expect(mocks.register).toHaveBeenCalledWith("ycode", process.execPath, [entry, "--"]);
     expect(mocks.register).toHaveBeenCalledWith("zcode", process.execPath, [entry, "--"]);
   });
 
@@ -73,11 +76,25 @@ describe("Windows Deep Link 启动参数边界", () => {
 
     registerDeepLinkProtocol(logger);
 
+    expect(logger.warn).toHaveBeenCalledWith("[deep-link] 注册协议失败", { scheme: "ycode" });
     expect(logger.warn).toHaveBeenCalledWith("[deep-link] 注册协议失败", { scheme: "zcode" });
     expect(logger.info).not.toHaveBeenCalled();
   });
 
+  it("单个 scheme 注册失败不影响另一个", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    mocks.register.mockImplementation(((scheme: string) => scheme !== "ycode") as never);
+
+    registerDeepLinkProtocol(logger);
+
+    expect(mocks.register).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledWith("[deep-link] 注册协议失败", { scheme: "ycode" });
+    expect(logger.info).toHaveBeenCalledWith("[deep-link] 注册协议成功", { scheme: "zcode" });
+  });
+
   it.each([
+    "ycode://oauth/callback?code=code%20value&state=state",
+    "ycode://workspace/open?path=C%3A%5CProject%20A%26B",
     "zcode://oauth/callback?code=code%20value&state=state",
     "zcode://payment/callback?provider=zai&status=return",
     "zcode://workspace/open?path=C%3A%5CProject%20A%26B",
@@ -97,6 +114,7 @@ describe("非 Windows 注册兼容性", () => {
 
     registerDeepLinkProtocol(logger);
 
+    expect(mocks.register).toHaveBeenCalledWith("ycode");
     expect(mocks.register).toHaveBeenCalledWith("zcode");
     expect(mocks.registerLinux).toHaveBeenCalledTimes(platform === "linux" ? 1 : 0);
   });
@@ -109,6 +127,7 @@ describe("非 Windows 注册兼容性", () => {
 
     registerDeepLinkProtocol(logger);
 
+    expect(mocks.register).toHaveBeenCalledWith("ycode", process.execPath, [entry]);
     expect(mocks.register).toHaveBeenCalledWith("zcode", process.execPath, [entry]);
     expect(mocks.registerLinux).not.toHaveBeenCalled();
   });

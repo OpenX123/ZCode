@@ -10,14 +10,14 @@
 - Finder 服务展示名跟随 ZCode 应用语言：`zh-CN` 显示为「在ZCode中打开」，`en-US` 显示为 `Open in ZCode`。
 - 只支持单个文件夹。多选时系统服务脚本应只传第一个目录。
 - 只支持本地绝对目录路径，不支持远程 workspace、手机 `/remote`、文件管理器空白处当前目录。
-- macOS 侧接受 `zcode://workspace/open?path=<encoded-absolute-directory>`。
+- macOS 侧接受 `ycode://workspace/open?path=<encoded-absolute-directory>`（旧 `zcode://` 同样接受）。
 - Windows 侧接受 `--open-workspace <absolute-directory>` 或 `--open-workspace=<absolute-directory>`。
 
 ## macOS 数据流
 
 1. ZCode Desktop 在 macOS 启动和应用语言切换时安装或更新 `~/Library/Services/Open in ZCode.workflow`；workflow 文件名保持稳定，避免升级后残留多个 Finder 服务，服务菜单展示名写入当前应用语言。
 2. Finder Quick Action / Service 接收单个文件夹路径。
-3. 服务脚本对绝对路径做 `encodeURIComponent`，调用 `/usr/bin/open "zcode://workspace/open?path=..."`。
+3. 服务脚本对绝对路径做 `encodeURIComponent`，调用 `/usr/bin/open "ycode://workspace/open?path=..."`；workflow 包名为 `Open in YCode.workflow`，安装时清理本应用写入的旧 `Open in ZCode.workflow`。
 4. Electron main 进程解析 deep link，校验 scheme、host、path、目录存在性。
 5. main 进程把目录路径通过 `OpenWorkspacePath` IPC 发给 renderer；冷启动时先缓存，等 renderer ready 后投递。
 6. renderer 复用 `handleSelectProject(path)`，保持已有 tab 去重、跨窗口激活、recentProjects 更新逻辑。
@@ -64,6 +64,6 @@ done
 
 if [ -n "$first" ]; then
   encoded=$(/usr/bin/osascript -l JavaScript -e 'function run(argv) { return encodeURIComponent(argv[0]); }' "$first")
-  /usr/bin/open "zcode://workspace/open?path=${encoded}"
+  /usr/bin/open "ycode://workspace/open?path=${encoded}"
 fi
 ```

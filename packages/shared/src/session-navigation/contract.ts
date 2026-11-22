@@ -26,10 +26,13 @@ export const sessionLocatorSchema = z
   .strict();
 export type SessionLocator = z.infer<typeof sessionLocatorSchema>;
 
+// 1.5.1 品牌更名：新链接使用 ycode://；zcode:// 继续解析，旧书签和已分享链接不失效。
+const SESSION_DEEP_LINK_PROTOCOLS = new Set(["ycode:", "zcode:"]);
+
 /** 纯编码；链接不包含临时连接 ID、凭据或正文。 */
 export function buildSessionDeepLink(locator: SessionLocator): string {
   const value = sessionLocatorSchema.parse(locator);
-  const url = new URL("zcode://session/open");
+  const url = new URL("ycode://session/open");
   url.searchParams.set("taskId", value.taskId);
   url.searchParams.set("path", value.workspacePath);
   if (value.workspaceIdentity) url.searchParams.set("identity", value.workspaceIdentity);
@@ -42,7 +45,7 @@ export function parseSessionDeepLink(input: string): SessionLocator | null {
   try {
     const url = new URL(input);
     if (
-      url.protocol !== "zcode:" ||
+      !SESSION_DEEP_LINK_PROTOCOLS.has(url.protocol) ||
       url.hostname !== "session" ||
       url.pathname !== "/open" ||
       url.username ||

@@ -191,7 +191,7 @@ function assertPackagedCuaHelper(context) {
     HELPER_APP_NAME,
   );
   if (!existsSync(appPath)) {
-    throw new Error(`Packaged ZCode is missing bundled Computer Use Helper: ${appPath}`);
+    throw new Error(`Packaged YCode is missing bundled Computer Use Helper: ${appPath}`);
   }
 }
 const shouldEnableWindowsVsign =
@@ -208,7 +208,7 @@ if (
   !macSigningIdentity
 ) {
   throw new Error(
-    "ZCode Preview macOS packaging requires APPLE_SIGNING_IDENTITY or CSC_NAME when ZCODE_ENABLE_MAC_SIGN=1",
+    "YCode Preview macOS packaging requires APPLE_SIGNING_IDENTITY or CSC_NAME when ZCODE_ENABLE_MAC_SIGN=1",
   );
 }
 
@@ -551,7 +551,7 @@ export default {
     zcodeProductFlavor: desktopProductIdentity.flavor,
     homepage: "https://zcode.z.ai",
     author: {
-      name: "ZCode",
+      name: "YCode",
       email: "dev@zcode.z.ai",
     },
   },
@@ -809,9 +809,10 @@ export default {
   protocols: [
     {
       // 协议处理器的展示名之前使用小写 scheme，打包产物里的协议描述无法体现产品名。
-      // 展示名跟随安装包身份；scheme 仍保持 zcode，因此两个应用中最后注册者会成为默认 handler。
+      // 展示名跟随安装包身份。1.5.1 起 ycode 为主 scheme，zcode 继续声明以兼容旧链接；
+      // 多个安装版本并存时，最后注册者成为默认 handler。
       name: desktopProductIdentity.productName,
-      schemes: ["zcode"],
+      schemes: ["ycode", "zcode"],
     },
   ],
   mac: {
@@ -876,7 +877,7 @@ export default {
     // 与 /usr/share/icons/hicolor/*/apps/zcode.png 保持一致。
     executableName: desktopProductIdentity.linuxExecutableName,
     category: "Development",
-    maintainer: "ZCode <dev@zcode.z.ai>",
+    maintainer: "YCode <dev@zcode.z.ai>",
   },
   deb: {
     // 生产版与 Preview 必须是两个 dpkg package；只改可执行名仍会让安装器把另一版本当成升级替换。
