@@ -141,6 +141,33 @@ export const apiRetryStateSchema = z.object({
 });
 export type ApiRetryState = z.infer<typeof apiRetryStateSchema>;
 
+// 轮次活动（1.5.0，docs/chat/turn-stall-indicator.md）：runtime ProductProjection 唯一所有者，
+// UI 只据此派生无响应提示。阶段对象 strict；容器键在 snapshot/patch 上对未知形状降级为 null，
+// 避免将来新增阶段让旧客户端整份快照解析失败。
+export const turnActivityPhaseSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("waiting_model") }).strict(),
+  z
+    .object({
+      kind: z.literal("running_tool"),
+      toolName: z.string().min(1).max(200),
+      toolCallId: z.string().min(1).optional(),
+    })
+    .strict(),
+]);
+export type TurnActivityPhase = z.infer<typeof turnActivityPhaseSchema>;
+
+export const turnActivityStateSchema = z
+  .object({
+    turnId: z.string().min(1),
+    // 最近一次引擎事件（文本/思考/工具调用/工具结果/审批）的事件时间。
+    lastActivityAt: timestampSchema,
+    // 进入当前阶段的事件时间；running_tool 用它展示“已执行 N 分钟”。
+    phaseStartedAt: timestampSchema,
+    activityPhase: turnActivityPhaseSchema,
+  })
+  .strict();
+export type TurnActivityState = z.infer<typeof turnActivityStateSchema>;
+
 export const sessionControlSchema = z.object({
   phase: sessionPhaseSchema,
   // 派生值（= phase ∈ completed*），为 UI 便利保留。
@@ -557,6 +584,8 @@ export const conversationSnapshotSchema = z.object({
   // 旧快照/旧发送端不携带此字段 → 解析得 null,不破坏兼容性(遵守冻结规则)。
   // pendingCount === 0 时投影层置 null(提示条消失)。
   workspaceHookAdmission: workspaceHookAdmissionStateSchema.nullable().default(null),
+  // 轮次活动（1.5.0）：additive，旧快照缺省；非运行态为 null。未知形状降级为 null。
+  turnActivity: turnActivityStateSchema.nullable().optional().catch(null),
   // （2026-09-12）：原 additive 字段 pluginUiSurfaces 已删除，插件面板 widgetState 只留在
   // 宿主 renderer 内存。
   // B 区

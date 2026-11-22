@@ -7,7 +7,11 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { ConversationFileSummaryPanel } from "@/v4/ConversationFileSummaryPanel.js";
+import { renderToStaticMarkup } from "react-dom/server";
+import {
+  ConversationFileSummaryPanel,
+  buildTurnChangesPatch,
+} from "@/v4/ConversationFileSummaryPanel.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 
 const { collapsibleOpenChanges, openSplitButtonProps } = vi.hoisted(() => ({
@@ -220,7 +224,7 @@ describe("ConversationFileSummaryPanel", () => {
         );
       });
       expect(fetchFileChanges).toHaveBeenCalledTimes(1);
-      expect(collectText(container)).toContain("1 个文件已更改");
+      expect(collectText(container)).toContain("已更改 1 个文件");
       expect(collectText(container)).toContain("+7");
       expect(collectText(container)).toContain("-2");
       expect(collectText(container)).not.toContain("+77");
@@ -335,7 +339,7 @@ describe("ConversationFileSummaryPanel", () => {
         ),
       ),
     );
-    expect(collectText(container)).toContain("1 个文件已更改");
+    expect(collectText(container)).toContain("已更改 1 个文件");
     await act(async () => collapsibleOpenChanges.at(-1)?.(true));
     expect(fetchFileChanges).toHaveBeenCalledTimes(2);
     expect(collectText(container)).toBe("");
@@ -388,7 +392,7 @@ describe("ConversationFileSummaryPanel", () => {
         ),
       );
     });
-    expect(collectText(container)).toContain("1 个文件已更改");
+    expect(collectText(container)).toContain("已更改 1 个文件");
 
     await act(async () => {
       collapsibleOpenChanges.at(-1)?.(true);
@@ -568,5 +572,89 @@ describe("ConversationFileSummaryPanel", () => {
       await revertedResult;
     });
     await act(async () => root.unmount());
+  });
+
+  // 1.5.0 轮次更改卡片（docs/chat/turn-changes-card.md）。
+  it("合并本轮所有文件 patch 为一个多文件 diff", () => {
+    const patch = buildTurnChangesPatch(
+      [
+        {
+          path: "/workspace/src/a.ts",
+          additions: 1,
+          deletions: 1,
+          writeCount: 1,
+          toolNames: ["Edit"],
+          patches: [
+            { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-old", "+new"] },
+          ],
+        },
+        {
+          path: "/workspace/b.md",
+          additions: 0,
+          deletions: 0,
+          writeCount: 1,
+          toolNames: ["Write"],
+          patches: [],
+        },
+      ] as unknown as V4ConversationFileChangesResult["items"],
+      "/workspace",
+    );
+    expect(patch).toBe(
+      [
+        "diff --git a/src/a.ts b/src/a.ts",
+        "--- a/src/a.ts",
+        "+++ b/src/a.ts",
+        "@@ -1,1 +1,1 @@",
+        "-old",
+        "+new",
+      ].join("\n"),
+    );
+  });
+
+  it("显示“已更改 N 个文件”卡片，可审阅时提供“审阅”按钮", () => {
+    const render = (withViewer: boolean) =>
+      renderToStaticMarkup(
+        createElement(
+          ZCodeIntlProvider,
+          { initialLocale: "zh-CN" },
+          createElement(ConversationFileSummaryPanel, {
+            header: header({
+              fileChanges: { files: 3, additions: 12, deletions: 4, state: "active" },
+            }),
+            context: {
+              workspacePath: "/workspace",
+              theme: "system",
+              codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
+              fetchFileChanges: vi.fn(),
+              ...(withViewer ? { onOpenCodeViewer: vi.fn() } : {}),
+            },
+          }),
+        ),
+      );
+    const html = render(true);
+    expect(html).toContain("已更改 3 个文件");
+    expect(html).toContain("+12");
+    expect(html).toContain('data-testid="turn-changes-review"');
+    expect(render(false)).not.toContain('data-testid="turn-changes-review"');
+  });
+
+  it("该轮没有文件改动时不显示卡片", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "zh-CN" },
+        createElement(ConversationFileSummaryPanel, {
+          header: header({
+            fileChanges: { files: 0, additions: 0, deletions: 0, state: "active" },
+          }),
+          context: {
+            workspacePath: "/workspace",
+            theme: "system",
+            codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
+          },
+        }),
+      ),
+    );
+    expect(html).toBe("");
   });
 });

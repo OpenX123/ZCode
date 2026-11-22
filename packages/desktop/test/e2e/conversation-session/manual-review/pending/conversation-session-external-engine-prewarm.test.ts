@@ -1667,7 +1667,7 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     }
   });
 
-  it("HTML 文件链接静态预览保留页面，并可切换源码", async () => {
+  it("HTML 文件链接默认源码，可切换静态预览并保留页面", async () => {
     await installExternalEngineFixtures();
     await startNewV4Draft();
     await prepareV4ConversationE2E({
@@ -1686,6 +1686,15 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     await waitForV4ConversationState((snapshot) => snapshot.state === "idle", "HTML 链接生成完成");
     await (await displayed("button=E2E_HTML_LINK")).click();
     const frame = $('[data-testid="html-file-preview"]');
+    const preview = $('[data-testid="preview-pane"]');
+    // 文件预览标题栏通过 portal 挂在文件管理器顶栏，不在正文 aside 内。
+    const more = () => displayed('[data-file-manager-pane] button[aria-label="更多"]');
+    // 1.5.0：HTML 默认显示源码，需要从更多菜单切换到预览。
+    await browser.waitUntil(async () => (await preview.getText()).includes("E2E_HTML_VISIBLE"));
+    expect(await frame.isDisplayed()).toBe(false);
+    await (await more()).click();
+    await (await displayed('[role="menuitemradio"]=预览')).click();
+    await $('[role="menu"]').waitForExist({ reverse: true });
     try {
       await frame.waitForDisplayed({ timeout: 30000 });
     } catch (error) {
@@ -1731,9 +1740,6 @@ describe("外部引擎首发前配置与同会话续聊", () => {
     } finally {
       await browser.switchFrame(null);
     }
-    const preview = $('[data-testid="preview-pane"]');
-    // 文件预览标题栏通过 portal 挂在文件管理器顶栏，不在正文 aside 内。
-    const more = () => displayed('[data-file-manager-pane] button[aria-label="更多"]');
     await (await more()).click();
     await $('[role="menuitem"]=用内置浏览器运行').waitForDisplayed();
     await $('[role="menuitemradio"]=源码').click();

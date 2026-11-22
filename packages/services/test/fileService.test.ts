@@ -435,18 +435,53 @@ describe("fileService", () => {
       expect(result.isBinary).toBe(false);
     });
 
-    it("clamps length to MAX_TEXT_READ_BYTES (256KB)", async () => {
+    it("clamps length to MAX_TEXT_READ_BYTES (1MB)", async () => {
       const rootPath = makeTempDir("zcode-readtext-clamp-");
       const filePath = join(rootPath, "huge.txt");
-      const content = "y".repeat(512 * 1024);
+      const content = "y".repeat(2 * 1024 * 1024);
       writeFileSync(filePath, content);
 
       const service = createFileService();
-      // 请求读取 512KB，应被截断到 256KB
-      const result = await service.readTextFile({ path: filePath, length: 512 * 1024 });
+      // 请求读取 2MB，应被截断到 1MB 的单次 RPC 上限
+      const result = await service.readTextFile({ path: filePath, length: 2 * 1024 * 1024 });
 
-      expect(result.bytesRead).toBe(256 * 1024);
+      expect(result.bytesRead).toBe(1024 * 1024);
       expect(result.truncated).toBe(true);
+    });
+
+    it("never splits a multi-byte UTF-8 character across chunks", async () => {
+      const rootPath = makeTempDir("zcode-readtext-utf8-");
+      const filePath = join(rootPath, "zh.txt");
+      // "a" + 3 字节中文 × 4：按 5 字节分块时第一块会落在第二个汉字中间。
+      const content = "a中文测试";
+      writeFileSync(filePath, content);
+
+      const service = createFileService();
+      const chunks: string[] = [];
+      let offset = 0;
+      for (let guard = 0; guard < 20; guard += 1) {
+        const result = await service.readTextFile({ path: filePath, offset, length: 5 });
+        expect(result.content).not.toContain("�");
+        chunks.push(result.content);
+        offset = result.offset + result.bytesRead;
+        if (!result.truncated) break;
+      }
+
+      expect(chunks.join("")).toBe(content);
+      expect(chunks[0]).toBe("a中");
+    });
+
+    it("skips leading continuation bytes when offset lands inside a character", async () => {
+      const rootPath = makeTempDir("zcode-readtext-utf8-lead-");
+      const filePath = join(rootPath, "zh.txt");
+      writeFileSync(filePath, "中文");
+
+      const service = createFileService();
+      const result = await service.readTextFile({ path: filePath, offset: 1, length: 10 });
+
+      expect(result.offset).toBe(3);
+      expect(result.content).toBe("文");
+      expect(result.truncated).toBe(false);
     });
 
     it("throws when path is not a file", async () => {

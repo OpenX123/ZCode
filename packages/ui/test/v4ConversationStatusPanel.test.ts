@@ -563,17 +563,29 @@ describe("ConversationStatusPanel", () => {
     expect(indexes).toEqual([...indexes].sort((left, right) => left - right));
   });
 
-  it("renders the mini shell with one-line git summary", async () => {
+  // 1.5.0：收起态胶囊不再显示工作区 Git 变更（docs/chat/turn-changes-card.md）。
+  it("does not render a mini capsule for workspace git changes alone", async () => {
     const html = await renderStatusPanel({
       summaryPanelVariantOverride: "mini",
     });
 
-    expect(html).toContain('data-state="collapsed"');
-    expect(html).toContain("chat.summaryPanel.showPanel");
-    expect(html).toContain("chat.statusPanel.changes");
-    expect(html).toContain("+12");
-    expect(html).toContain("-3");
-    expect(html).not.toContain("mock-git-action-menu");
+    expect(html).toBe("");
+  });
+
+  it("hides the auto-mode panel in the mini range when only git tools have content", async () => {
+    const html = await renderStatusPanel({});
+
+    expect(html).toContain("@max-[1280px]/conversation:hidden");
+  });
+
+  it("keeps git out of the mini capsule even when another primary status exists", async () => {
+    const html = await renderStatusPanel({
+      summaryPanelVariantOverride: "mini",
+      goal: goalState({ status: "verified", summaryTitle: "已完成主目标" }),
+    });
+
+    expect(html).toContain("已完成主目标");
+    expect(capsuleOf(html)).not.toContain("chat.statusPanel.changes");
   });
 
   // 1.1.0 胶囊优先级：工作流 > 运行中的智能体 > 计划/进度 > 目标 > Git
@@ -1350,13 +1362,13 @@ describe("ConversationStatusPanel", () => {
   });
 
   it("shows realtime activity only when the capsule has no primary status", async () => {
-    const gitPrimary = await renderStatusPanel({
+    // 1.5.0：Git 不再是胶囊主状态，只有后台终端时回落到实时计数。
+    const gitOnly = await renderStatusPanel({
       summaryPanelVariantOverride: "mini",
       backgroundWorks: [backgroundWork({ kind: "bash" })],
     });
-    expect(gitPrimary).toContain("chat.statusPanel.changes");
-    expect(gitPrimary).not.toContain("chat.summaryPanel.runningBackgroundTasksMiniValue 1");
-    expect(gitPrimary).not.toContain("lucide-square-terminal");
+    expect(capsuleOf(gitOnly)).not.toContain("chat.statusPanel.changes");
+    expect(gitOnly).toContain("lucide-square-terminal");
 
     const completedGoalPrimary = await renderStatusPanel({
       gitSummary: null,

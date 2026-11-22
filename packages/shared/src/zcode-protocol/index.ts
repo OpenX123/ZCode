@@ -102,6 +102,12 @@ export const zcodeTopicResourceCancelResultSchema = z.object({ cancelled: z.bool
 export type ZCodeTopicResourceReadParams = z.infer<typeof zcodeTopicResourceReadParamsSchema>;
 export type ZCodeTopicResourceReadResult = z.infer<typeof zcodeTopicResourceReadResultSchema>;
 export { activeWorkSummarySchema, type ActiveWorkSummary } from "../zcode-protocol-v4/snapshot.js";
+export {
+  turnActivityPhaseSchema,
+  turnActivityStateSchema,
+  type TurnActivityPhase,
+  type TurnActivityState,
+} from "../zcode-protocol-v4/snapshot.js";
 // browser-use 命令/结果契约单一来源：agent 构造、协议校验和 main executor 共用同一 schema。
 import {
   browserBackendListResultSchema,

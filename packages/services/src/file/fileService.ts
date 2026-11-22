@@ -30,7 +30,8 @@ import {
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import { getConversationWorkspaceDir } from "../paths.js";
 const DEFAULT_TEXT_READ_BYTES = 128 * 1024;
-const MAX_TEXT_READ_BYTES = 256 * 1024;
+// 1.5.0：大文件预览按 1MB 分块读取，单次 RPC 上限与分块大小一致（不提供 50MB 单次读取）。
+const MAX_TEXT_READ_BYTES = 1024 * 1024;
 const DEFAULT_MEDIA_PREVIEW_BYTES = 4 * 1024 * 1024;
 const MAX_MEDIA_PREVIEW_BYTES = 8 * 1024 * 1024;
 const DEFAULT_BINARY_READ_BYTES = 256 * 1024;
@@ -57,6 +58,28 @@ function clampReadLength(length?: number) {
     ? Math.trunc(length ?? DEFAULT_TEXT_READ_BYTES)
     : DEFAULT_TEXT_READ_BYTES;
   return Math.min(Math.max(safeLength, 1), MAX_TEXT_READ_BYTES);
+}
+/**
+ * 返回 chunk 内完整 UTF-8 字符的边界 [start, end)：跳过开头的续字节，并在未到 EOF 时
+ * 去掉末尾不完整的多字节序列。分块读取若直接 toString 会在字符中间产生 U+FFFD 乱码，
+ * 调用方以 offset + bytesRead 推进即可保证每块都从字符边界开始。
+ */
+function resolveUtf8ChunkBounds(chunk: Uint8Array, atEof: boolean): { start: number; end: number } {
+  let start = 0;
+  // UTF-8 单字符最长 4 字节，最多跳过 3 个前导续字节。
+  while (start < chunk.length && start < 3 && ((chunk[start] ?? 0) & 0xc0) === 0x80) start += 1;
+  let end = chunk.length;
+  if (!atEof) {
+    // 从末尾向前找最后一个字符首字节，判断它声明的长度在本块内是否完整。
+    let lead = end - 1;
+    while (lead >= start && end - lead < 4 && ((chunk[lead] ?? 0) & 0xc0) === 0x80) lead -= 1;
+    if (lead >= start) {
+      const byte = chunk[lead] ?? 0;
+      const expected = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+      if (end - lead < expected) end = lead;
+    }
+  }
+  return { start, end: Math.max(start, end) };
 }
 function clampMediaPreviewBytes(length?: number) {
   const safeLength = Number.isFinite(length)
@@ -502,17 +525,34 @@ export function createFileService(options: CreateFileServiceOptions = {}): IFile
       try {
         const buffer = Buffer.allocUnsafe(readLength);
         const { bytesRead } = await handle.read(buffer, 0, readLength, offset);
-        const chunk = buffer.subarray(0, bytesRead);
-        const isBinary = isProbablyBinary(chunk);
-        // 性能说明：文本读取始终受 256KB 硬上限约束，调用方可据 truncated 决定是否展示，
-        // 避免大文件或远程文件一次性 readFile 把 utility process 和 renderer 一起拖慢。
+        const rawChunk = buffer.subarray(0, bytesRead);
+        const isBinary = isProbablyBinary(rawChunk);
+        // 性能说明：文本读取始终受 1MB 单次上限约束，调用方据 truncated/totalBytes 决定是否
+        // 继续按块读取，避免大文件或远程文件一次性 readFile 把 utility process 和 renderer 一起拖慢。
+        if (isBinary) {
+          return {
+            path: params.path,
+            content: "",
+            offset,
+            bytesRead,
+            totalBytes: fileStat.size,
+            truncated: offset + bytesRead < fileStat.size,
+            isBinary,
+          };
+        }
+        const bounds = resolveUtf8ChunkBounds(rawChunk, offset + bytesRead >= fileStat.size);
+        // 极端情况（整块都是不完整字节）至少推进 1 字节，避免调用方原地循环。
+        const end =
+          bounds.end > bounds.start ? bounds.end : Math.min(rawChunk.length, bounds.start + 1);
+        const chunkOffset = offset + bounds.start;
+        const chunkBytes = end - bounds.start;
         return {
           path: params.path,
-          content: isBinary ? "" : chunk.toString("utf-8"),
-          offset,
-          bytesRead,
+          content: rawChunk.subarray(bounds.start, end).toString("utf-8"),
+          offset: chunkOffset,
+          bytesRead: chunkBytes,
           totalBytes: fileStat.size,
-          truncated: offset + bytesRead < fileStat.size,
+          truncated: chunkOffset + chunkBytes < fileStat.size,
           isBinary,
         };
       } finally {

@@ -501,16 +501,17 @@ describe("PreviewPane helpers", () => {
     expect(isPreviewPaneFileTooLargeError(new Error("permission denied"))).toBe(false);
   });
 
-  it("only treats truncated text as too large and preserves binary detection", () => {
+  it("routes truncated text by size and preserves binary detection", () => {
     const truncatedText = {
       path: "/workspace/large.log",
       content: "partial",
       offset: 0,
-      bytesRead: 256 * 1024,
-      totalBytes: 256 * 1024 + 1,
+      bytesRead: 1024 * 1024,
+      totalBytes: 50 * 1024 * 1024 + 1,
       truncated: true,
       isBinary: false,
     };
+    const largeText = { ...truncatedText, totalBytes: 5 * 1024 * 1024 };
     const truncatedBinary = {
       ...truncatedText,
       content: "",
@@ -520,10 +521,17 @@ describe("PreviewPane helpers", () => {
     expect(resolvePreviewPaneTextFileResult(truncatedText)).toEqual({
       filePreview: null,
       fileTooLarge: true,
+      largeTextFile: null,
+    });
+    expect(resolvePreviewPaneTextFileResult(largeText)).toEqual({
+      filePreview: null,
+      fileTooLarge: false,
+      largeTextFile: largeText,
     });
     expect(resolvePreviewPaneTextFileResult(truncatedBinary)).toEqual({
       filePreview: truncatedBinary,
       fileTooLarge: false,
+      largeTextFile: null,
     });
   });
 
