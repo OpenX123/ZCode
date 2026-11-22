@@ -12,6 +12,7 @@ import {
   createMentionSvgIcon,
   GOAL_COMMAND_MENTION_ICON_NODE,
   PLUGIN_MENTION_ICON_NODE,
+  REFERENCE_MENTION_ICON_VIEW_BOX,
   SESSION_MENTION_ICON_NODE,
   SKILL_MENTION_ICON_NODE,
   SUBAGENT_MENTION_ICON_NODE,
@@ -27,8 +28,8 @@ function cssUrl(url: string): string {
   return `url(${JSON.stringify(new URL(url, document.baseURI).href)})`;
 }
 
-function setMask(dom: HTMLElement, icon: MentionLucideIconNode) {
-  const svg = createMentionSvgIcon(icon);
+function setMask(dom: HTMLElement, icon: MentionLucideIconNode, viewBox?: string) {
+  const svg = createMentionSvgIcon(icon, viewBox);
   svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   dom.style.removeProperty("--mention-image");
   dom.style.setProperty(
@@ -81,22 +82,27 @@ export function decoratePromptMention(
     );
     return;
   }
+  // 技能与引用会话使用 reference-icons 的 16×16 图标，画布与 lucide 的 24×24 不同。
+  if (category === "skills" || category === "sessions") {
+    setMask(
+      dom,
+      category === "skills" ? SKILL_MENTION_ICON_NODE : SESSION_MENTION_ICON_NODE,
+      REFERENCE_MENTION_ICON_VIEW_BOX,
+    );
+    return;
+  }
   const command = value.trim().replace(/^\/+/, "");
   const icon =
-    category === "skills"
-      ? SKILL_MENTION_ICON_NODE
-      : category === "subagents"
-        ? SUBAGENT_MENTION_ICON_NODE
-        : category === "sessions"
-          ? SESSION_MENTION_ICON_NODE
-          : category === "whiteboards"
-            ? WHITEBOARD_MENTION_ICON_NODE
-            : command === "goal"
-              ? GOAL_COMMAND_MENTION_ICON_NODE
-              : command === "workflow"
-                ? WORKFLOW_COMMAND_MENTION_ICON_NODE
-                : command === "compact"
-                  ? COMPACT_COMMAND_MENTION_ICON_NODE
-                  : COMMAND_MENTION_ICON_NODE;
+    category === "subagents"
+      ? SUBAGENT_MENTION_ICON_NODE
+      : category === "whiteboards"
+        ? WHITEBOARD_MENTION_ICON_NODE
+        : command === "goal"
+          ? GOAL_COMMAND_MENTION_ICON_NODE
+          : command === "workflow"
+            ? WORKFLOW_COMMAND_MENTION_ICON_NODE
+            : command === "compact"
+              ? COMPACT_COMMAND_MENTION_ICON_NODE
+              : COMMAND_MENTION_ICON_NODE;
   setMask(dom, icon);
 }

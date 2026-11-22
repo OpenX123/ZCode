@@ -127,7 +127,7 @@ describe("V4 user input mention rendering", () => {
       }),
     );
 
-    expect(html).toContain("lucide-wand-sparkles");
+    expect(html).toContain('data-reference-icon="skill"');
     expect(html).toContain("text-skill-node-foreground");
     expect(html).toContain("Ai Model Nodejs");
     expect(html).toContain("111");
@@ -142,7 +142,7 @@ describe("V4 user input mention rendering", () => {
       }),
     );
 
-    expect(html.match(/lucide-messages-square/g)).toHaveLength(2);
+    expect(html.match(/data-reference-icon="session"/g)).toHaveLength(2);
     expect(html.match(/text-session-node-foreground/g)).toHaveLength(2);
     expect(html).toContain("Review mailbox flow");
     expect(html).toContain("sess_legacy_target");
