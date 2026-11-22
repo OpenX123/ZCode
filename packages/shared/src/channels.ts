@@ -53,6 +53,7 @@ import type {
   SaveFileResult,
   SSHConfigAliasOption,
   TaskNotificationPayload,
+  TaskNotificationSoundCue,
   WindowControlsOverlayMetrics,
   WindowControlsOverlayReadyPayload,
   WSLDistro,
@@ -344,7 +345,7 @@ export const PlatformChannels = {
   ReportRendererHeapSample: "zcode:report-renderer-heap-sample",
   /** Renderer → Main：触发任务完成/失败的系统通知 */
   ShowTaskNotification: "zcode:show-task-notification",
-  /** Main → Preload：通知 renderer 播放任务通知提示音 */
+  /** Main → Preload：提示音意图（类别 + 应用是否在前台），renderer 播放器按偏好判定是否发声 */
   TaskNotificationSound: "zcode:task-notification-sound",
   /** Main → Preload：用户点击了系统通知，携带 taskId 让 renderer 跳转到对应任务 */
   TaskNotificationClick: "zcode:task-notification-click",
@@ -468,7 +469,7 @@ export const InternalChannels = {
   ScopedServicePortReady: "zcode:scoped-service-port-ready",
   /** main → renderer：在线 Source 的配置专用 MessagePort */
   SourceSettingsServicePort: "zcode:source-settings-service-port",
-  /** preload → renderer：主进程已确认系统通知展示，renderer 可播放提示音 */
+  /** preload → renderer：转发 Main 的提示音意图 { type, cue }，renderer 播放器按偏好判定 */
   TaskNotificationSound: "zcode:task-notification-sound",
   /** main → 宿主 renderer：插件 UI 沙箱的 MessagePort 组（port2[]），payload { sandboxId, initId, names } */
   PluginSandboxPorts: "zcode:plugin-sandbox-ports",
@@ -947,7 +948,7 @@ export interface PlatformChannelMap {
     response: void;
   };
   [PlatformChannels.TaskNotificationSound]: {
-    request: void;
+    request: TaskNotificationSoundCue;
     response: void;
   };
   [PlatformChannels.TaskNotificationClick]: {

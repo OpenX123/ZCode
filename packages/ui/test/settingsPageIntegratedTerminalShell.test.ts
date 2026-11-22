@@ -186,12 +186,8 @@ vi.mock("@/store/StoreProvider.js", () => ({
   useZCodeStore: (selector: (state: Record<string, unknown>) => unknown) =>
     selector({
       codePreviewSettings: {},
-      notificationEnabled: true,
-      notificationSoundEnabled: true,
       requestOnboardingDialog: vi.fn(),
       setCodePreviewSettings: vi.fn(),
-      setNotificationEnabled: vi.fn(),
-      setNotificationSoundEnabled: vi.fn(),
       setTheme: vi.fn(),
       theme: "system",
     }),

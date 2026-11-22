@@ -31,6 +31,15 @@ import { Switch } from "@/components/ui/switch.js";
 import { Input } from "@/components/ui/input.js";
 import { Button } from "@/components/ui/button.js";
 import { SettingsBadge, SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
+import {
+  DEFAULT_TASK_NOTIFICATION_PREFERENCES,
+  type TaskNotificationPreferences,
+} from "@zcode/shared";
+import {
+  TaskNotificationSettings,
+  type TaskNotificationPreferencesPatch,
+} from "@/task-notifications/index.js";
+import { DesktopUpdateSettings, type DesktopUpdatePreferences } from "@/desktop-updates/index.js";
 import { DataBaseDirControl } from "@/settings/DataBaseDirControl.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useOptionalServices } from "@/hooks/useServices.js";
@@ -131,8 +140,10 @@ export function GeneralSectionContent({
   localePreference,
   interfaceMode = "coding",
   setInterfaceMode = () => {},
-  notificationEnabled,
-  notificationSoundEnabled,
+  notificationPreferences = DEFAULT_TASK_NOTIFICATION_PREFERENCES,
+  onNotificationPreferencesChange = () => {},
+  desktopUpdatePreferences,
+  onDesktopUpdatePreferencesChange = () => {},
   closeToTrayOnWindows,
   keepAwakeWhileRunning = false,
   desktopChromiumHardwareAccelerationEnabled = true,
@@ -154,8 +165,6 @@ export function GeneralSectionContent({
   linuxCloseToTray,
   showIntegratedTerminalShell = false,
   setLocalePreference,
-  setNotificationEnabled,
-  setNotificationSoundEnabled,
   messageStreamShowReasoning,
   messageStreamShowTodos,
   toolGroupingExploreEnabled,
@@ -188,8 +197,12 @@ export function GeneralSectionContent({
   localePreference: LocalePreference;
   interfaceMode?: InterfaceMode;
   setInterfaceMode?: (mode: InterfaceMode) => void;
-  notificationEnabled: boolean;
-  notificationSoundEnabled: boolean;
+  /** 任务通知偏好投影；读写由 SettingsPage 经 useTaskNotificationPreferences 注入。 */
+  notificationPreferences?: TaskNotificationPreferences;
+  onNotificationPreferencesChange?: (patch: TaskNotificationPreferencesPatch) => void;
+  /** 仅桌面端支持 GitHub 更新时传入；缺省不渲染更新偏好。 */
+  desktopUpdatePreferences?: DesktopUpdatePreferences;
+  onDesktopUpdatePreferencesChange?: (patch: Partial<DesktopUpdatePreferences>) => void;
   closeToTrayOnWindows: boolean;
   keepAwakeWhileRunning?: boolean;
   desktopChromiumHardwareAccelerationEnabled?: boolean;
@@ -221,8 +234,6 @@ export function GeneralSectionContent({
   showIntegratedTerminalShell?: boolean;
   platform?: IPlatformService;
   setLocalePreference: (locale: LocalePreference) => void;
-  setNotificationEnabled: (enabled: boolean) => void;
-  setNotificationSoundEnabled: (enabled: boolean) => void;
   messageStreamShowReasoning: boolean;
   messageStreamShowTodos: boolean;
   toolGroupingExploreEnabled: boolean;
@@ -694,28 +705,16 @@ export function GeneralSectionContent({
             }
           />
         ) : null}
-        <SettingsRow
-          label={intl.formatMessage({ id: "settings.notification" })}
-          description={intl.formatMessage({
-            id: "settings.notificationDescription",
-          })}
-          control={
-            <Switch checked={notificationEnabled} onCheckedChange={setNotificationEnabled} />
-          }
+        <TaskNotificationSettings
+          preferences={notificationPreferences}
+          onChange={onNotificationPreferencesChange}
         />
-        <SettingsRow
-          label={intl.formatMessage({ id: "settings.notificationSound" })}
-          description={intl.formatMessage({
-            id: "settings.notificationSoundDescription",
-          })}
-          control={
-            <Switch
-              checked={notificationSoundEnabled}
-              disabled={!notificationEnabled}
-              onCheckedChange={setNotificationSoundEnabled}
-            />
-          }
-        />
+        {isDesktop && desktopUpdatePreferences ? (
+          <DesktopUpdateSettings
+            preferences={desktopUpdatePreferences}
+            onChange={onDesktopUpdatePreferencesChange}
+          />
+        ) : null}
         {isWindowsDesktop || isLinuxDesktop ? (
           <SettingsRow
             label={intl.formatMessage({ id: "settings.closeToTrayOnWindows" })}
