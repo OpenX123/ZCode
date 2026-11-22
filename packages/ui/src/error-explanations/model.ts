@@ -3,22 +3,7 @@
  * 纯函数：只读已在 ACP adapter / V4 投影边界脱敏的 HTTP 状态、错误码、错误源与消息，
  * 不新增协议字段；归类不到时返回 undefined，由调用方显示原摘要。
  */
-export type ErrorExplanationKind =
-  | "auth"
-  | "forbidden"
-  | "rateLimit"
-  | "overloaded"
-  | "timeout"
-  | "network"
-  | "contextTooLong";
-
-export interface ErrorExplanationInput {
-  httpStatus?: number;
-  code?: string;
-  source?: string;
-  message?: string;
-  summary?: string;
-}
+import type { ErrorExplanationInput, ErrorExplanationKind } from "./contract.js";
 
 const STATUS_KINDS: ReadonlyMap<number, ErrorExplanationKind> = new Map([
   [401, "auth"],

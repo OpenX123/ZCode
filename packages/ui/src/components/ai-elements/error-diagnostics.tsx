@@ -10,7 +10,7 @@ import {
   errorExplanationHintId,
   errorExplanationTitleId,
   type ErrorExplanationKind,
-} from "./error-explanations.js";
+} from "@/error-explanations/index.js";
 
 export interface DiagnosticsRow {
   label: string;

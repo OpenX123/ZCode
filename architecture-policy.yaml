@@ -333,7 +333,7 @@ modules:
         packages/ui/src/components/ai-elements/error-diagnostics.tsx,
       ]
     managed: true
-    requires: [ui, shared, services, external-engine-protocol, external-engine-service, mobile-ui]
+    requires: [ui, shared, services, external-engine-protocol, external-engine-service, mobile-ui, error-explanations]
     publicEntrypoints:
       - packages/ui/src/external-engine/index.ts
       - packages/ui/src/external-engine/contract.ts
@@ -373,6 +373,17 @@ modules:
     publicEntrypoints:
       - packages/ui/src/turn-stall/index.ts
       - packages/ui/src/turn-stall/contract.ts
+    layers: { ui: "." }
+    owner: conversation
+
+  # error-explanations：常见失败人话归类（docs/desktop/native-plan-errors-spec.md）
+  - id: error-explanations
+    roots: [packages/ui/src/error-explanations]
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/ui/src/error-explanations/index.ts
+      - packages/ui/src/error-explanations/contract.ts
     layers: { ui: "." }
     owner: conversation
 

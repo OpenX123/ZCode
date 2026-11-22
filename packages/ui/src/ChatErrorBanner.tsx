@@ -34,7 +34,7 @@ import {
   classifyErrorExplanation,
   errorExplanationHintId,
   errorExplanationTitleId,
-} from "@/components/ai-elements/error-explanations.js";
+} from "@/error-explanations/index.js";
 
 const HISTORICAL_MODEL_UNAVAILABLE_MESSAGES = [
   "历史任务使用的模型已不可用",

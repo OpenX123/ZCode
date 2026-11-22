@@ -6,7 +6,7 @@ import {
   TurnFailureRow,
   type TurnFailureRowProps,
 } from "@/components/ai-elements/error-diagnostics.js";
-import { classifyErrorExplanation } from "@/components/ai-elements/error-explanations.js";
+import { classifyErrorExplanation } from "@/error-explanations/index.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
 const toastMock = vi.hoisted(() => vi.fn());
