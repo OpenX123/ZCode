@@ -294,9 +294,15 @@ export function ChangesGroupToolCallBlock(context: ToolCallBlockRenderContext) {
       context.workspacePath,
     ],
   );
+  // 运行中耗时按子工具 id 命中（docs/chat/turn-stall-indicator.md「工具行耗时」）。
+  const activityToolCallIds = useMemo(
+    () => childToolCalls.map((child) => child.toolCall.toolId),
+    [childToolCalls],
+  );
   return (
     <ToolLayout
       toolId={toolCall.toolId}
+      activityToolCallIds={activityToolCallIds}
       icon={CHANGES_GROUP_ICON}
       canToggle={!context.isOfficeMode && (context.canToggle ?? true)}
       forceOpen={!context.isOfficeMode && (context.forceOpen ?? false)}

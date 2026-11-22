@@ -11,7 +11,7 @@ import { renderFilePath } from "@/ToolCallBlocks/shared.js";
 import { resolveToolCallIdentity } from "@/lib/toolIdentity.js";
 import { ToolLayout } from "../ToolLayout.js";
 import type { ToolCallBlockRenderContext } from "../shared.js";
-import { useCallback, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import type { TaskChatToolCallTreeNode } from "@/lib/toolCallTree.js";
 import type { ZCodePlanStep } from "@zcode/shared";
 
@@ -472,10 +472,16 @@ export function ExploreToolCallBlock(context: ToolCallBlockRenderContext) {
     ],
   );
 
+  // 运行中耗时按子工具 id 命中（docs/chat/turn-stall-indicator.md「工具行耗时」）。
+  const activityToolCallIds = useMemo(
+    () => childToolCalls.map((child) => child.toolCall.toolId),
+    [childToolCalls],
+  );
   return (
     <>
       <ToolLayout
         toolId={toolCall.toolId}
+        activityToolCallIds={activityToolCallIds}
         icon={EXPLORE_TOOL_ICON}
         canToggle={context.canToggle ?? true}
         forceOpen={context.forceOpen ?? false}

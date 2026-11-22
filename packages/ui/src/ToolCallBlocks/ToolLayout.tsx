@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/tooltip.js";
 import { ToolSummaryRow, type ToolSummaryAction } from "@/ToolCallBlocks/ToolSummaryRow.js";
 import { uiMemoryDiagnosticsRegistry } from "@/lib/memoryDiagnostics.js";
+import { useRunningToolElapsedLabel } from "@/turn-stall/index.js";
 
 import type { ConversationDisclosure } from "@/v4/conversation-presentation/index.js";
 import {
@@ -73,6 +74,11 @@ interface ToolLayoutProps {
   showStatusLabel?: boolean;
   showFailureStatus?: boolean;
   isRunning?: boolean;
+  /**
+   * 运行中耗时的匹配 id（docs/chat/turn-stall-indicator.md「工具行耗时」）。缺省为 `[toolId]`；
+   * 分组行传入子工具 id，组展开后由子行显示，组头不重复。
+   */
+  activityToolCallIds?: readonly string[];
   title?: string;
   expandedTitle?: string;
   content?: ReactNode;
@@ -115,6 +121,7 @@ function ToolLayoutComponent({
   showStatusLabel = false,
   showFailureStatus = false,
   isRunning = false,
+  activityToolCallIds,
   title,
   expandedTitle,
   content,
@@ -162,6 +169,13 @@ function ToolLayoutComponent({
   const resolvedSummaryContentKey =
     summaryContentKey ?? `${String(summaryTitle ?? "")}:${String(statusLabel ?? "")}`;
   const shouldShowDiffCount = diffCount != null && !(isExpanded && hideDiffCountWhenOpen);
+  // 1.5.1：工具执行 ≥60s 时在当前运行工具行尾追加耗时，替代 1.5.0 的独立提示条
+  // “正在执行 Bash，已 N 分钟”（与本行“正在执行 …”重复）。只订阅运行中的行。
+  const elapsedLabel = useRunningToolElapsedLabel(
+    !isRunning || (activityToolCallIds !== undefined && isExpanded)
+      ? null
+      : (activityToolCallIds ?? [toolId]),
+  );
   // toolcall 在流式期间数量多且持续更新，旋转 loading 图标会让
   // 动画长期占用渲染资源；运行态改由文案扫光和状态文字表达，图标保持静态。
   const summaryIcon = icon;
@@ -318,7 +332,7 @@ function ToolLayoutComponent({
         <span className="whitespace-nowrap">{statusLabel}</span>
       )
     ) : null;
-  const statusNode =
+  const statusIndicatedNode =
     statusWordNode !== null && statusIndicator != null ? (
       <span className="inline-flex shrink-0 items-center gap-1.5">
         {statusIndicator}
@@ -326,6 +340,22 @@ function ToolLayoutComponent({
       </span>
     ) : (
       statusWordNode
+    );
+  const elapsedNode =
+    elapsedLabel !== null ? (
+      <span className="inline-flex shrink-0 items-center gap-2" data-testid="tool-running-elapsed">
+        <span className="text-foreground-subtlest">·</span>
+        <span className="whitespace-nowrap">{elapsedLabel}</span>
+      </span>
+    ) : null;
+  const statusNode =
+    elapsedNode !== null && statusIndicatedNode !== null ? (
+      <span className="inline-flex shrink-0 items-center gap-2">
+        {statusIndicatedNode}
+        {elapsedNode}
+      </span>
+    ) : (
+      (elapsedNode ?? statusIndicatedNode)
     );
 
   return (

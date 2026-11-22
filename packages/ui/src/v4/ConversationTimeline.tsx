@@ -35,7 +35,10 @@ import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
-import { ConversationTurnGroup } from "@/v4/ConversationTurnGroup.js";
+import {
+  ConversationTurnGroup,
+  TURN_CONTENT_INLINE_PADDING_CLASS,
+} from "@/v4/ConversationTurnGroup.js";
 import {
   createLogicalUiInstancesSelector,
   getPluginUiDisclosureVersion,
@@ -2148,7 +2151,13 @@ function ConversationTimelineImpl({
                     onEdit={onEdit}
                   />
                   {liveTailFooter ? (
-                    <div data-v4-live-tail-footer="true" className="pb-2">
+                    // Bug 修复（1.5.1）：footer 是 ConversationTurnGroup <section> 的兄弟节点，拿不到
+                    // section 上的 px-4/@md:px-6；1.5.0 只有 pb-2，无响应提示条因此贴在内容列最左侧，
+                    // 比轮内工具行左移 16/24px。改为复用轮内容的同一水平内边距常量。
+                    <div
+                      data-v4-live-tail-footer="true"
+                      className={cn("pb-2", TURN_CONTENT_INLINE_PADDING_CLASS)}
+                    >
                       {liveTailFooter}
                     </div>
                   ) : null}
