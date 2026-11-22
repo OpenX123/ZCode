@@ -2,6 +2,8 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import type {
   AppUsageDayModelRow,
   AppUsageDayRow,
+  AppUsageExternalSessionRow,
+  AppUsageFactRow,
   AppUsageModelRow,
   AppUsageQueryInput,
   AppUsageQueryResult,
@@ -541,6 +543,50 @@ export async function queryAppUsage(
     )
     .all(tzOffsetMs, DAY_MS, since, until) as unknown as AppUsageDayModelRow[];
 
+  // 本机多来源统计（docs/usage-stats-local-sources.md）需要按日/模型/目录的完整 token 拆分来计价。
+  const facts = (
+    db
+      .prepare(
+        `select
+         cast((m.started_at + ?) / ? as integer) as dayIndex,
+         m.model_id as modelId,
+         s.directory as cwd,
+         coalesce(sum(m.input_tokens), 0) as inputTokens,
+         coalesce(sum(m.output_tokens), 0) as outputTokens,
+         coalesce(sum(m.reasoning_tokens), 0) as reasoningTokens,
+         coalesce(sum(m.cache_creation_input_tokens), 0) as cacheCreationTokens,
+         coalesce(sum(m.cache_read_input_tokens), 0) as cacheReadTokens,
+         count(*) as requestCount
+       from model_usage m
+       left join session s on s.id = m.session_id
+       where m.started_at >= ? and m.started_at <= ?
+       group by dayIndex, m.model_id, s.directory`,
+      )
+      .all(tzOffsetMs, DAY_MS, since, until) as unknown as AppUsageFactRow[]
+  ).map((row) => ({
+    dayIndex: Number(row.dayIndex),
+    modelId: row.modelId ?? null,
+    cwd: row.cwd ?? null,
+    inputTokens: Number(row.inputTokens),
+    outputTokens: Number(row.outputTokens),
+    reasoningTokens: Number(row.reasoningTokens),
+    cacheCreationTokens: Number(row.cacheCreationTokens),
+    cacheReadTokens: Number(row.cacheReadTokens),
+    requestCount: Number(row.requestCount),
+  }));
+
+  // 外部引擎会话不写 model_usage，其 token 由 Host 从官方 CLI 日志读取；这里只暴露会话 ID 映射，
+  // 让 Host 把 ZCode 启动的会话标为 ZCode 来源。包含已删除会话，避免删除后被误归为 CLI。
+  const externalSessions = (
+    db
+      .prepare(
+        `select engine, external_session_id as externalSessionId
+       from session
+       where engine != 'zcode' and external_session_id is not null and external_session_id != ''`,
+      )
+      .all() as unknown as AppUsageExternalSessionRow[]
+  ).map((row) => ({ engine: String(row.engine), externalSessionId: String(row.externalSessionId) }));
+
   return {
     totals: {
       totalTokens: Number(totals.totalTokens ?? 0),
@@ -584,6 +630,8 @@ export async function queryAppUsage(
       modelId: d.modelId ?? null,
       totalTokens: Number(d.totalTokens),
     })),
+    facts,
+    externalSessions,
   };
 }
 

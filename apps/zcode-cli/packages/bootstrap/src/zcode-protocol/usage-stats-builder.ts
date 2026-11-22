@@ -237,5 +237,14 @@ export function buildAppUsageSnapshot(
     dailyModelUsage,
     models,
     tools,
+    usageFacts: (result.facts ?? []).map(({ dayIndex, ...fact }) => ({
+      ...fact,
+      date: dayIndexToDate(dayIndex),
+    })),
+    externalSessions: (result.externalSessions ?? []).flatMap((row) =>
+      row.engine === "claude-code" || row.engine === "codex"
+        ? [{ engine: row.engine, externalSessionId: row.externalSessionId }]
+        : [],
+    ),
   };
 }

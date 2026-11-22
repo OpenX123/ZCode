@@ -30,9 +30,9 @@ App Usage、个人/团队 Coding Plan、访问刷新、Context/Footer/Provider S
 
 | Case                     | Setup                                                            | Action                            | Assertions                                                                         | Status       |
 | ------------------------ | ---------------------------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------- | ------------ |
-| US-AU-01 empty           | 隔离 HOME 中没有 usage facts                                     | 打开 Settings > Usage > App Usage | 全量摘要、Token Activity、趋势和模型分布显示确定空态，无远端套餐请求               | formal-green |
+| US-AU-01 empty           | 隔离 HOME 中没有 Codex 日志                                      | 打开 Settings > Usage，选择 Codex 来源 | 显示确定空态，隐藏 ZCode 运行指标，无远端请求（本机多来源面板，见 usage-stats-local-sources.md） | accepted（1.5.0 重写，待重跑） |
 | US-AU-02 mixed history   | seed 多 session：新版 usage、旧 character fallback、跨日和多模型 | 打开 App Usage                    | 全量 Token、session、active days、最长 session、连续天数正确；旧数据不丢失且不重复 | formal-green |
-| US-AU-03 range isolation | seed 超过 30 天的数据                                            | 切换 7d / 30d                     | 全量摘要和 52 周 activity 不变；趋势与模型分布只展示当前 range                     | formal-green |
+| US-AU-03 range isolation | seed 超过 30 天的数据                                            | 切换 7 天 / 30 天                 | 53 周 activity 不变；趋势与按模型明细只展示当前 range                              | accepted（1.5.0 重写，待重跑） |
 | US-AU-04 activity modes  | seed 稀疏日期、跨月、零值周                                      | 切换每日/每周/累计并 hover        | 周日起始、52 周、月份标签、列高亮、两行 tooltip 与累计单调性正确                   | formal-green |
 | US-AU-05 chart extremes  | seed 7 个以上模型、未知模型和极端 token                          | 查看趋势与模型饼图                | 空日期补零、首尾轴不裁切、Top 模型与“其他模型”聚合正确                             | formal-green |
 

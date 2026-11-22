@@ -24,6 +24,10 @@ Coding Plan:                         [ today / 7d / 30d ]
 
 ## App Usage
 
+> 1.5.0 起 App Usage 页由本机多来源面板替代（ZCode 原生 / Claude Code / Codex、费用估算、53 周热力图、
+> 按模型/项目/请求/定价 tab），规则以 [usage-stats-local-sources.md](usage-stats-local-sources.md) 为准；
+> 下方 agent-db 指标保留为“ZCode 运行指标”区块，仅在来源为 全部/ZCode 时显示。以下为历史布局说明。
+
 ```text
 [ 累计 Token 数 ] [ 峰值 Token 数 ] [ 最长聊天时长 ] [ 当前连续天数 ] [ 最长连续天数 ]
 

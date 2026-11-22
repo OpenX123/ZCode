@@ -34,7 +34,27 @@ interface HeatmapMonthLabel {
   span: number;
 }
 
-type HeatmapCountMetric = "turns" | "tools";
+type HeatmapCountMetric = "turns" | "tools" | "requests";
+type HeatmapTooltipKind = "daily" | "weekly" | "cumulative";
+
+const HEATMAP_TOOLTIP_IDS: Record<HeatmapCountMetric, Record<HeatmapTooltipKind, string>> = {
+  turns: {
+    daily: "settings.usage.heatmapCell",
+    weekly: "settings.usage.heatmapWeeklyCell",
+    cumulative: "settings.usage.heatmapCumulativeCell",
+  },
+  tools: {
+    daily: "settings.usage.heatmapToolCell",
+    weekly: "settings.usage.heatmapWeeklyToolCell",
+    cumulative: "settings.usage.heatmapCumulativeToolCell",
+  },
+  // 本机多来源统计：turnCount 字段承载请求数（docs/usage-stats-local-sources.md）。
+  requests: {
+    daily: "settings.usageStats.local.heatmapCell",
+    weekly: "settings.usageStats.local.heatmapWeeklyCell",
+    cumulative: "settings.usageStats.local.heatmapCumulativeCell",
+  },
+};
 
 function renderHeatmapTooltipTitle(
   locale: string,
@@ -43,9 +63,7 @@ function renderHeatmapTooltipTitle(
   countMetric: HeatmapCountMetric,
 ): string {
   return intl.formatMessage(
-    {
-      id: countMetric === "tools" ? "settings.usage.heatmapToolCell" : "settings.usage.heatmapCell",
-    },
+    { id: HEATMAP_TOOLTIP_IDS[countMetric].daily },
     {
       date: formatFullDay(locale, cell.date),
       tokens: formatCompactTokenUsage(locale, cell.totalTokens),
@@ -64,12 +82,7 @@ function renderWeeklyHeatmapTooltipTitle(
   countMetric: HeatmapCountMetric,
 ): string {
   return intl.formatMessage(
-    {
-      id:
-        countMetric === "tools"
-          ? "settings.usage.heatmapWeeklyToolCell"
-          : "settings.usage.heatmapWeeklyCell",
-    },
+    { id: HEATMAP_TOOLTIP_IDS[countMetric].weekly },
     {
       date: formatFullDay(locale, date),
       tokens: formatCompactTokenUsage(locale, totalTokens),
@@ -88,12 +101,7 @@ function renderCumulativeHeatmapTooltipTitle(
   countMetric: HeatmapCountMetric,
 ): string {
   return intl.formatMessage(
-    {
-      id:
-        countMetric === "tools"
-          ? "settings.usage.heatmapCumulativeToolCell"
-          : "settings.usage.heatmapCumulativeCell",
-    },
+    { id: HEATMAP_TOOLTIP_IDS[countMetric].cumulative },
     {
       date: formatFullDay(locale, date),
       tokens: formatCompactTokenUsage(locale, totalTokens),
@@ -129,7 +137,10 @@ function createEmptyHeatmapCell(date: string): AppUsageHeatmapCell {
   };
 }
 
-function buildDisplayHeatmapWeeks(weeks: AppUsageHeatmapWeek[]): AppUsageHeatmapWeek[] {
+function buildDisplayHeatmapWeeks(
+  weeks: AppUsageHeatmapWeek[],
+  weekCount: number,
+): AppUsageHeatmapWeek[] {
   const cells = weeks
     .flatMap((week) => week.days)
     .filter((cell): cell is AppUsageHeatmapCell => cell !== null);
@@ -146,12 +157,11 @@ function buildDisplayHeatmapWeeks(weeks: AppUsageHeatmapWeek[]): AppUsageHeatmap
   const cellsByDate = new Map(datedCells.map(({ cell }) => [cell.date, cell] as const));
   const endDayIndex = Math.max(...datedCells.map(({ dayIndex }) => dayIndex));
   const endWeekStartDayIndex = endDayIndex - getUtcWeekday(endDayIndex);
-  const startDayIndex =
-    endWeekStartDayIndex - (HEATMAP_DISPLAY_WEEK_COUNT - 1) * HEATMAP_DAYS_PER_WEEK;
+  const startDayIndex = endWeekStartDayIndex - (weekCount - 1) * HEATMAP_DAYS_PER_WEEK;
 
   // agent 只返回近 30 天真实数据会让热力图缩水；这里补齐展示用 0 格，
   // 同时按自然周对齐，保证所有范围的第一行都是周日。
-  return Array.from({ length: HEATMAP_DISPLAY_WEEK_COUNT }, (_, weekIndex) => ({
+  return Array.from({ length: weekCount }, (_, weekIndex) => ({
     weekIndex,
     days: Array.from({ length: HEATMAP_DAYS_PER_WEEK }, (_, dayOffset) => {
       const dayIndex = startDayIndex + weekIndex * HEATMAP_DAYS_PER_WEEK + dayOffset;
@@ -324,15 +334,22 @@ export function UsageHeatmap({
   intl,
   weeks,
   countMetric = "turns",
+  weekCount = HEATMAP_DISPLAY_WEEK_COUNT,
 }: {
   locale: string;
   intl: ReturnType<typeof useZCodeIntl>["intl"];
   weeks: AppUsageHeatmapWeek[];
   /** 本地活动计数的展示指标。 */
   countMetric?: HeatmapCountMetric;
+  /** 展示的自然周数；本机多来源统计使用 53 周。 */
+  weekCount?: number;
 }) {
   const [mode, setMode] = useState<TokenActivityMode>("daily");
-  const displayWeeks = buildDisplayHeatmapWeeks(weeks);
+  const displayWeeks = buildDisplayHeatmapWeeks(weeks, weekCount);
+  const gridStyle =
+    weekCount === HEATMAP_DISPLAY_WEEK_COUNT
+      ? HEATMAP_GRID_STYLE
+      : { gridTemplateColumns: `repeat(${weekCount}, minmax(0, 1fr))` };
   const displayColumns = buildHeatmapDisplayColumns(locale, intl, displayWeeks, mode, countMetric);
   const monthLabels = buildHeatmapMonthLabels(locale, displayColumns);
 
@@ -366,12 +383,12 @@ export function UsageHeatmap({
         </div>
 
         <div>
-          <div className="grid w-full gap-x-0.5" style={HEATMAP_GRID_STYLE}>
+          <div className="grid w-full gap-x-0.5" style={gridStyle}>
             {displayColumns.map((column) => (
               <HeatmapColumn key={column.key} column={column} mode={mode} />
             ))}
           </div>
-          <div className="mt-3 grid w-full gap-x-0.5" style={HEATMAP_GRID_STYLE}>
+          <div className="mt-3 grid w-full gap-x-0.5" style={gridStyle}>
             {monthLabels.map((label) => (
               <div
                 key={label.key}

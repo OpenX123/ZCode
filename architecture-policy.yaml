@@ -959,6 +959,47 @@ modules:
     layers:
       adapters: .
     owner: conversation
+  # usage-stats-local-protocol：由 architecture:adopt 登记
+  - id: usage-stats-local-protocol
+    roots:
+      - packages/shared/src/usage-stats-local
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/shared/src/usage-stats-local/index.ts
+      - packages/shared/src/usage-stats-local/contract.ts
+    layers:
+      domain: .
+    owner: conversation
+  # usage-stats-local：由 architecture:adopt 登记
+  - id: usage-stats-local
+    roots:
+      - packages/services/src/usage-stats/local
+    managed: true
+    requires:
+      - services
+      - shared
+    publicEntrypoints:
+      - packages/services/src/usage-stats/local/index.ts
+      - packages/services/src/usage-stats/local/contract.ts
+    layers:
+      adapters: .
+    owner: conversation
+  # usage-stats-local-ui：由 architecture:adopt 登记
+  - id: usage-stats-local-ui
+    roots:
+      - packages/ui/src/settings/usage-stats/local
+    managed: true
+    requires:
+      - shared
+      - ui
+    publicEntrypoints:
+      - packages/ui/src/settings/usage-stats/local/index.ts
+      - packages/ui/src/settings/usage-stats/local/contract.ts
+      - packages/ui/src/settings/usage-stats/local/i18n.ts
+    layers:
+      ui: .
+    owner: conversation
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。

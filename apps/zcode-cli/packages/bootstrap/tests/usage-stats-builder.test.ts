@@ -145,6 +145,49 @@ describe("buildAppUsageSnapshot", () => {
     expect(snapshot.summary.currentStreakDays).toBe(0);
   });
 
+  it("maps usage facts to local dates and keeps only known external engines", () => {
+    const result = emptyResult();
+    result.facts = [
+      {
+        dayIndex: 20_000,
+        modelId: "glm-4.6",
+        cwd: "/work/a",
+        inputTokens: 10,
+        outputTokens: 2,
+        reasoningTokens: 0,
+        cacheCreationTokens: 1,
+        cacheReadTokens: 3,
+        requestCount: 1,
+      },
+    ];
+    result.externalSessions = [
+      { engine: "claude-code", externalSessionId: "c1" },
+      { engine: "unknown-engine", externalSessionId: "u1" },
+    ];
+    const snapshot = buildAppUsageSnapshot(result, {
+      range: "all",
+      timeZone: "UTC",
+      tzOffsetMs: 0,
+      generatedAt: 20_001 * DAY,
+      since: 0,
+      until: 20_001 * DAY,
+    });
+    expect(snapshot.usageFacts).toEqual([
+      {
+        date: new Date(20_000 * DAY).toISOString().slice(0, 10),
+        modelId: "glm-4.6",
+        cwd: "/work/a",
+        inputTokens: 10,
+        outputTokens: 2,
+        reasoningTokens: 0,
+        cacheCreationTokens: 1,
+        cacheReadTokens: 3,
+        requestCount: 1,
+      },
+    ]);
+    expect(snapshot.externalSessions).toEqual([{ engine: "claude-code", externalSessionId: "c1" }]);
+  });
+
   it("resolveTzOffsetMs returns a finite offset for a named zone", () => {
     const off = resolveTzOffsetMs("UTC", 0);
     expect(off).toBe(0);
