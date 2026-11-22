@@ -137,6 +137,7 @@ export function buildSkillSuggestions(
     value: item.value,
     label: `$${item.value}`,
     description: item.description,
+    ...(item.badge ? { badge: item.badge } : {}),
     keywords: [...new Set([...(item.keywords ?? []), "skill", "skills", item.value])],
     data: item.data,
   }));

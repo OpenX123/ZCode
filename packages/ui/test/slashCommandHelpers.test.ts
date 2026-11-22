@@ -219,8 +219,10 @@ describe("slashCommandHelpers", () => {
         trigger: "/",
         value: "code-review",
         label: "$code-review",
-        description: "Workspace · review code",
-        keywords: ["code-review", "review code", "workspace", "skill", "skills"],
+        // 来源改为独立小标渲染（docs/skills-hub-spec.md「UI」），描述保持原文。
+        description: "review code",
+        badge: "Workspace",
+        keywords: ["code-review", "review code", "workspace", "Workspace", "skill", "skills"],
         data: {
           path: "/repo/.zcode/skills/code-review/SKILL.md",
           scope: "workspace",

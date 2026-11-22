@@ -9,6 +9,7 @@ describe("getMentionPanelGroupOrder", () => {
     expect(getMentionPanelGroupOrder("@")).toEqual([
       "plugins",
       "files",
+      "skills",
       "sessions",
       "whiteboards",
     ]);

@@ -34,6 +34,7 @@ import {
   hasMentionQuery,
   MENTION_DEFAULT_GROUP_PREVIEW_LIMIT,
   MENTION_FILES_ONLY_DEFAULT_PREVIEW_LIMIT,
+  getMentionGroupLimitForQuery,
   type MentionResultGroup,
 } from "./mentionSearch.js";
 import {
@@ -46,6 +47,7 @@ import { useFileMentionProvider } from "./providers/fileMentionProvider.js";
 import { usePluginsMentionProvider } from "./providers/pluginsMentionProvider.js";
 import { useSessionsMentionProvider } from "./providers/sessionsMentionProvider.js";
 import { useSkillsMentionProvider } from "./providers/skillsMentionProvider.js";
+import { SkillSourceBadge } from "@/settings/skills-hub/index.js";
 import { useWhiteboardMentionProvider } from "./providers/whiteboardMentionProvider.js";
 import type { MentionItem } from "./mentionTypes.js";
 import {
@@ -181,10 +183,13 @@ export function MentionPlugin({
     sessionId ?? null,
     provider,
     deferredActiveQuery,
-    isOpen && isSkillTrigger,
+    // `@` 面板新增“技能”分组（docs/skills-hub-spec.md「UI」）：无查询时与其他分组一样只预览
+    // 少量项；`$` 仍列出完整技能列表。
+    isOpen && (isSkillTrigger || isContextTrigger),
     false,
     intl.formatMessage({ id: "chat.mention.skills.empty" }),
     intl.formatMessage({ id: "chat.mention.skills.title" }),
+    isContextTrigger ? getMentionGroupLimitForQuery(deferredActiveQuery) : undefined,
   );
   const fileDefaultPreviewLimit = !hasActiveQuery
     ? MENTION_FILES_ONLY_DEFAULT_PREVIEW_LIMIT
@@ -346,6 +351,7 @@ export function MentionPlugin({
                 <span className="shrink-0 whitespace-nowrap text-ui-base font-medium text-foreground">
                   {item.label}
                 </span>
+                {item.badge ? <SkillSourceBadge label={item.badge} className="rounded-sm" /> : null}
                 <span className="min-w-0 truncate text-ui-xs text-foreground-subtlest">
                   {item.description}
                 </span>

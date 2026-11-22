@@ -3,9 +3,11 @@ import type { PromptInputTrigger } from "@/lib/promptInputTriggers.js";
 export type MentionPanelGroupId = "plugins" | "files" | "sessions" | "whiteboards" | "skills";
 export type SessionMentionWorkspaceScope = "current-workspace" | "same-authority-workspaces";
 
+// `@` 新增“技能”分组，排在文件之后（docs/skills-hub-spec.md「UI」）。
 const CONTEXT_GROUP_ORDER: readonly MentionPanelGroupId[] = [
   "plugins",
   "files",
+  "skills",
   "sessions",
   "whiteboards",
 ];
