@@ -65,6 +65,7 @@ import {
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { toast } from "@/components/ui/toast.js";
 import { logger } from "@/logger.js";
+import { TaskTitleLookupProvider } from "@/reference-icons/index.js";
 
 /** 恢复删除前的组件与手势（fd2f4f38a4a^1）；仅将旧事实缓存/applyOrder 改接当前 owner。 */
 export function TaskGroupedView({
@@ -336,7 +337,7 @@ export function TaskGroupedView({
     id: allExpanded ? "taskGroup.collapseAll" : "taskGroup.expandAll",
   });
   return (
-    <>
+    <TaskTitleLookupProvider tasks={tasks}>
       {toolbarTarget &&
         createPortal(
           <>
@@ -514,6 +515,6 @@ export function TaskGroupedView({
           document.body,
         )}
       </DndContext>
-    </>
+    </TaskTitleLookupProvider>
   );
 }

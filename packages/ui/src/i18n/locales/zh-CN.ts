@@ -2766,6 +2766,8 @@ const zhCN: Record<string, string> = {
   "taskList.viewModelTrajectory": "查看调用轨迹",
   "taskList.feedbackOpened": "已打开反馈，并自动带上当前任务信息",
   "taskList.untitled": "新任务",
+  "taskList.titleReference.session": "引用的会话",
+  "taskList.titleReference.image": "图片",
   "taskList.justNow": "刚刚",
   "taskList.minutesAgo": "{minutes}分",
   "taskList.hoursAgo": "{hours}小时",
