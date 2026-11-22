@@ -1,7 +1,7 @@
 import { TaskClientLogo } from "@/external-engine/index.js";
 import { TID_TASK_ITEM, testId } from "@zcode/shared/test-ids";
 import type { ProjectTask as ZCodeTaskMeta } from "@/project-sidebar/contract.js";
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { UniqueIdentifier } from "@dnd-kit/core";
@@ -34,6 +34,7 @@ import { useTaskInteractionAutoResolutionSnooze } from "@/hooks/useTaskInteracti
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceReadOnly } from "@/store/tabStore.js";
 import { TaskTitleOverflowText } from "@/components/TaskTitleOverflowText.js";
+import { TaskTitleDisplay, type TaskTitleFallbackLabels } from "@/reference-icons/index.js";
 
 function GroupedTaskRowComponent({
   task,
@@ -119,6 +120,14 @@ function GroupedTaskRowComponent({
     intl.formatMessage({
       id: task.forkedFromTaskId ? "taskList.forkedUntitled" : "taskList.untitled",
     });
+  // 标题里的路径、链接、技能和引用会话只在显示层换成「图标 + 简短名称」，存储标题不变。
+  const titleReferenceLabels = useMemo<TaskTitleFallbackLabels>(
+    () => ({
+      session: intl.formatMessage({ id: "taskList.titleReference.session" }),
+      image: intl.formatMessage({ id: "taskList.titleReference.image" }),
+    }),
+    [intl],
+  );
   const taskChangeParts = formatGroupedTaskHoverChangeParts(getTaskChangeSummary(task));
   const taskTimeLabel = formatTaskRelativeTime(task.updatedAt, intl);
   const isTaskCron = isCronTask(task);
@@ -174,7 +183,7 @@ function GroupedTaskRowComponent({
           title={dragOverlay ? undefined : taskTitle}
         >
           {/* Bugfix: grouped task 标题超出时不要显示省略号，右侧渐隐能保留标题连续性，避免和右侧状态元信息挤在一起。 */}
-          {taskTitle}
+          <TaskTitleDisplay title={taskTitle} fallbackLabels={titleReferenceLabels} />
         </TaskTitleOverflowText>
         <span className="ml-auto flex shrink-0 items-center gap-1.5 text-ui-sm text-foreground-subtle">
           {task.pendingInteraction ? (
@@ -352,7 +361,7 @@ function GroupedTaskRowComponent({
         <TaskClientLogo engine={task.engine} />
         <TaskTitleOverflowText as="span" className="text-foreground" title={taskTitle}>
           {/* Bugfix: grouped task 标题超出时不要显示省略号，右侧渐隐能保留标题连续性，避免和右侧状态元信息挤在一起。 */}
-          {taskTitle}
+          <TaskTitleDisplay title={taskTitle} fallbackLabels={titleReferenceLabels} />
         </TaskTitleOverflowText>
         <span className="ml-auto flex shrink-0 items-center gap-1.5 text-ui-sm text-foreground-subtle">
           {task.pendingInteraction ? (

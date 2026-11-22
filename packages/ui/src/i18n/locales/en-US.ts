@@ -2985,6 +2985,8 @@ const enUS: Record<string, string> = {
   "taskList.viewModelTrajectory": "View model trajectory",
   "taskList.feedbackOpened": "Feedback opened with the current task context attached",
   "taskList.untitled": "New task",
+  "taskList.titleReference.session": "Referenced session",
+  "taskList.titleReference.image": "Image",
   "taskList.justNow": "now",
   "taskList.minutesAgo": "{minutes}m",
   "taskList.hoursAgo": "{hours}h",

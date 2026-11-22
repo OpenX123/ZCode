@@ -156,6 +156,7 @@ modules:
       - remote-connection-flow
       - conversation-workbench
       - side-pane-full-view
+      - reference-icons
     publicEntrypoints:
       - packages/ui/src/project-sidebar/index.tsx
       - packages/ui/src/project-sidebar/WorkbenchLayoutButton.tsx
@@ -406,6 +407,17 @@ modules:
     publicEntrypoints:
       - packages/ui/src/turn-stall/index.ts
       - packages/ui/src/turn-stall/contract.ts
+    layers: { ui: "." }
+    owner: conversation
+
+  # reference-icons：引用图标与任务标题引用显示（docs/ui/task-title-reference-display.md）
+  - id: reference-icons
+    roots: [packages/ui/src/reference-icons]
+    managed: true
+    requires: [shared, ui, session-navigation]
+    publicEntrypoints:
+      - packages/ui/src/reference-icons/index.ts
+      - packages/ui/src/reference-icons/contract.ts
     layers: { ui: "." }
     owner: conversation
 

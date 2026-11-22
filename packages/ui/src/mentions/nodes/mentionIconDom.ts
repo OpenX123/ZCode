@@ -4,31 +4,18 @@
 //
 // PromptMentionNode 是 Lexical 自定义 DOM 节点，不能直接渲染 lucide-react 组件。
 // 这里保留 lucide 的 IconNode 数据形状，再用原生 SVG DOM 生成图标。
+import { REFERENCE_ICON_NODES, REFERENCE_ICON_VIEW_BOX } from "@/reference-icons/index.js";
+
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+const LUCIDE_MENTION_ICON_VIEW_BOX = "0 0 24 24";
+export { REFERENCE_ICON_VIEW_BOX as REFERENCE_MENTION_ICON_VIEW_BOX };
 
 export type MentionLucideIconNode = ReadonlyArray<
-  readonly [
-    "path" | "circle" | "rect",
-    Readonly<Record<string, string>>,
-  ]
+  readonly ["path" | "circle" | "rect", Readonly<Record<string, string>>]
 >;
 
-export const SKILL_MENTION_LUCIDE_ICON_NAME = "WandSparkles";
-export const SKILL_MENTION_ICON_NODE = [
-  [
-    "path",
-    {
-      d: "m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72",
-    },
-  ],
-  ["path", { d: "m14 7 3 3" }],
-  ["path", { d: "M5 6v4" }],
-  ["path", { d: "M19 14v4" }],
-  ["path", { d: "M10 2v2" }],
-  ["path", { d: "M7 8H3" }],
-  ["path", { d: "M21 16h-4" }],
-  ["path", { d: "M11 3H9" }],
-] as const satisfies MentionLucideIconNode;
+// 技能与引用会话改用 reference-icons 的 16×16 图标（与侧边栏标题、对话 chip 同一份数据）。
+export const SKILL_MENTION_ICON_NODE = REFERENCE_ICON_NODES.skill satisfies MentionLucideIconNode;
 
 export const SUBAGENT_MENTION_LUCIDE_ICON_NAME = "Bot";
 export const SUBAGENT_MENTION_ICON_NODE = [
@@ -92,16 +79,8 @@ export const COMMAND_MENTION_ICON_NODE = [
   ["path", { d: "m9 15 6-6" }],
 ] as const satisfies MentionLucideIconNode;
 
-export const SESSION_MENTION_LUCIDE_ICON_NAME = "MessagesSquare";
-export const SESSION_MENTION_ICON_NODE = [
-  [
-    "path",
-    {
-      d: "M14 9a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z",
-    },
-  ],
-  ["path", { d: "M18 9h2a2 2 0 0 1 2 2v10l-4-4h-6a2 2 0 0 1-2-2v-1" }],
-] as const satisfies MentionLucideIconNode;
+export const SESSION_MENTION_ICON_NODE =
+  REFERENCE_ICON_NODES.session satisfies MentionLucideIconNode;
 
 export const PLUGIN_MENTION_LUCIDE_ICON_NAME = "Cable";
 export const PLUGIN_MENTION_ICON_NODE = [
@@ -114,9 +93,12 @@ export const PLUGIN_MENTION_ICON_NODE = [
   ["path", { d: "M7 5V3" }],
 ] as const satisfies MentionLucideIconNode;
 
-export function createMentionSvgIcon(iconNode: MentionLucideIconNode): SVGSVGElement {
+export function createMentionSvgIcon(
+  iconNode: MentionLucideIconNode,
+  viewBox: string = LUCIDE_MENTION_ICON_VIEW_BOX,
+): SVGSVGElement {
   const svg = document.createElementNS(SVG_NAMESPACE, "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("viewBox", viewBox);
   svg.setAttribute("width", "16");
   svg.setAttribute("height", "16");
   svg.setAttribute("fill", "none");
