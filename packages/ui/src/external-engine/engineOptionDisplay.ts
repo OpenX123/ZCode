@@ -129,7 +129,9 @@ export function engineModelTriggerLabel(
   option: EngineConfigOption,
 ): { text: string; accessibleText: string } | undefined {
   const entry = option.options.find((candidate) => candidate.value === option.currentValue);
-  const isDefault = entry ? isEngineDefaultModelEntry(entry) : option.currentValue === ENGINE_DEFAULT_ALIAS;
+  const isDefault = entry
+    ? isEngineDefaultModelEntry(entry)
+    : option.currentValue === ENGINE_DEFAULT_ALIAS;
   if (isDefault) {
     const parsed = parseEngineDefaultModelName(entry?.description);
     if (parsed) {

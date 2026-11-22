@@ -729,17 +729,17 @@ sequenceDiagram
 
 本机实测形态（2026-11-22，Claude adapter 0.95.0 / SDK 0.3.309 `supportedModels()`）与解析结果：
 
-| description 形态 | 来源 | 解析结果 |
-| --- | --- | --- |
-| `claude-opus-5-5[1m]`、`claude-fable-5-2`、`us.anthropic.claude-opus-5-5-v1:0`、`claude-sonnet-4-5-20250929` | adapter：`resolvedModel` id | `Opus 5.5` / `Fable 5.2` / `Opus 5.5` / `Sonnet 4.5` |
-| `Use the default model (currently Opus 5.5 (1M context)) · $4/$20 per Mtok` | SDK 原文（括号嵌套） | `Opus 5.5` |
-| `Opus 5.5 · Best for everyday, complex tasks` | SDK 原文（served 形态） | `Opus 5.5` |
-| `Opus 5.5`、`Claude Sonnet 4.6`、`Opus (1M context)` | adapter：对应条目 displayName | `Opus 5.5` / `Sonnet 4.6` / `Opus` |
-| `Uses the recommended model for your plan. Changes over time.` | 句子 | 无（显示「默认模型」/入口 `Auto`） |
+| description 形态                                                                                             | 来源                          | 解析结果                                             |
+| ------------------------------------------------------------------------------------------------------------ | ----------------------------- | ---------------------------------------------------- |
+| `claude-opus-5-5[1m]`、`claude-fable-5-2`、`us.anthropic.claude-opus-5-5-v1:0`、`claude-sonnet-4-5-20250929` | adapter：`resolvedModel` id   | `Opus 5.5` / `Fable 5.2` / `Opus 5.5` / `Sonnet 4.5` |
+| `Use the default model (currently Opus 5.5 (1M context)) · $4/$20 per Mtok`                                  | SDK 原文（括号嵌套）          | `Opus 5.5`                                           |
+| `Opus 5.5 · Best for everyday, complex tasks`                                                                | SDK 原文（served 形态）       | `Opus 5.5`                                           |
+| `Opus 5.5`、`Claude Sonnet 4.6`、`Opus (1M context)`                                                         | adapter：对应条目 displayName | `Opus 5.5` / `Sonnet 4.6` / `Opus`                   |
+| `Uses the recommended model for your plan. Changes over time.`                                               | 句子                          | 无（显示「默认模型」/入口 `Auto`）                   |
 
 解析规则（`engineOptionDisplay.ts` `parseEngineDefaultModelName`，纯函数）：
 
-1. 含 `(currently X)` 时按括号配对取 X（允许 X 内再含一层括号）；否则取第一个 ` · ` 之前的部分。
+1. 含 `(currently X)` 时按括号配对取 X（允许 X 内再含一层括号）；否则取第一个 `·` 之前的部分。
 2. 候选去掉末尾上下文说明 `(1M context)` / `[1m]`。
 3. 候选为 Claude 模型 id（可带 `anthropic/`、`<region>.anthropic.` 前缀，`-YYYYMMDD` 日期、`-vN:M`、`[1m]` 后缀）时格式化为「家族 主.次」（`claude-opus-5-5` → `Opus 5.5`，`claude-opus-5` → `Opus 5`）。
 4. 剩余候选不含括号、不以句号结尾且不超过 48 字符时视为模型名；否则无解析结果。
