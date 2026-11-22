@@ -2303,7 +2303,7 @@ const enUS: Record<string, string> = {
     "Download and verify, then restart now or install automatically when you quit",
   "desktopUpdate.downloadHint.windows":
     "Download and verify, then restart now or install automatically when you quit",
-  "desktopUpdate.readyHint": "Update ready. It installs automatically when you quit ZCode",
+  "desktopUpdate.readyHint": "Update ready. It installs automatically when you quit YCode",
   "desktopUpdate.manualDownload": "Download v{version}",
   "desktopUpdate.manualDownloadHint":
     "Download this platform's build manually from the Release page",
@@ -3317,7 +3317,7 @@ const enUS: Record<string, string> = {
   "settings.notificationSounds.preview": "Preview {label}",
   "settings.notificationSounds.playWhenFocused": "Play when window is focused",
   "settings.notificationSounds.playWhenFocusedDescription":
-    "By default, sounds only play when ZCode is in the background.",
+    "By default, sounds only play when YCode is in the background.",
   "settings.notificationSounds.saveFailed": "Couldn't save notification settings. Try again.",
   "settings.updates.autoCheck": "Check for updates automatically",
   "settings.updates.autoCheckDescription": "Checks for a new version at launch and every 6 hours.",
