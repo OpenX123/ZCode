@@ -354,6 +354,28 @@ modules:
     layers: { ui: "." }
     owner: conversation
 
+  # large-text-preview：Preview Pane 大文件分块预览（docs/ui/preview-pane.md「大文件预览」）
+  - id: large-text-preview
+    roots: [packages/ui/src/large-text-preview]
+    managed: true
+    requires: [shared, ui]
+    publicEntrypoints:
+      - packages/ui/src/large-text-preview/index.ts
+      - packages/ui/src/large-text-preview/contract.ts
+    layers: { ui: "." }
+    owner: desktop
+
+  # turn-stall：轮次无响应提示（docs/chat/turn-stall-indicator.md）
+  - id: turn-stall
+    roots: [packages/ui/src/turn-stall]
+    managed: true
+    requires: [shared, ui]
+    publicEntrypoints:
+      - packages/ui/src/turn-stall/index.ts
+      - packages/ui/src/turn-stall/contract.ts
+    layers: { ui: "." }
+    owner: conversation
+
   - id: gen-ui-service
     roots: [packages/services/src/gen-ui]
     managed: true

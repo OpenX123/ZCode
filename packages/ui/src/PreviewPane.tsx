@@ -28,11 +28,15 @@ import { cn } from "@/components/lib/utils.js";
 import type { FileBinaryPreview, FileMediaPreview, FileTextSlice } from "@zcode/shared";
 import { TID_PREVIEW_PANE } from "@zcode/shared/test-ids";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import {
+  TEXT_PREVIEW_CHUNK_BYTES,
+  classifyTextFilePreview,
+  readFullTextFile,
+} from "@/large-text-preview/index.js";
 import { usePptxFileWatch } from "@/hooks/usePptxFileWatch.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { usePdfViewerLabels, usePptxViewerLabels } from "@/hooks/usePreviewViewerLabels.js";
 import {
-  FILE_VIEWER_MAX_TEXT_BYTES,
   createDiffSourceFilePreviewSource,
   inferImageMediaType,
   inferMediaPreview,
@@ -216,23 +220,18 @@ export function readPreviewPaneScrollMetrics(
 export function resolvePreviewPaneTextFileResult(result: FileTextSlice): {
   filePreview: FileTextSlice | null;
   fileTooLarge: boolean;
+  largeTextFile: FileTextSlice | null;
 } {
-  if (result.isBinary) {
-    return {
-      filePreview: result,
-      fileTooLarge: false,
-    };
+  // 1.5.0：首块 1MB 读取后分三档；大文件档复用首块作为简化查看器的第一块，不重复读取。
+  const classification = classifyTextFilePreview(result);
+  switch (classification.kind) {
+    case "full":
+      return { filePreview: classification.preview, fileTooLarge: false, largeTextFile: null };
+    case "large":
+      return { filePreview: null, fileTooLarge: false, largeTextFile: classification.firstChunk };
+    case "tooLarge":
+      return { filePreview: null, fileTooLarge: true, largeTextFile: null };
   }
-
-  return result.truncated
-    ? {
-        filePreview: null,
-        fileTooLarge: true,
-      }
-    : {
-        filePreview: result,
-        fileTooLarge: false,
-      };
 }
 
 function isSvgFilePath(path?: string): boolean {
@@ -592,6 +591,11 @@ export function PreviewPane({
   }, [fileService, sourceFilePath]);
   const [filePreview, setFilePreview] = useState<FileTextSlice | null>(null);
   const [fileTooLarge, setFileTooLarge] = useState(false);
+  // 1.5.0 大文件档：首块（1MB）由简化查看器继续分块读取；“仍然渲染”时读取完整文档。
+  const [largeTextFile, setLargeTextFile] = useState<FileTextSlice | null>(null);
+  const [renderingLargeTextFile, setRenderingLargeTextFile] = useState(false);
+  const [renderLargeTextFileError, setRenderLargeTextFileError] = useState<string | null>(null);
+  const largeTextRenderGenerationRef = useRef(0);
   const [loadingInitial, setLoadingInitial] = useState(false);
   const [loadingImagePreview, setLoadingImagePreview] = useState(false);
   const [imagePreview, setImagePreview] = useState<FileMediaPreview | null>(null);
@@ -631,7 +635,7 @@ export function PreviewPane({
   const [preferredEditorId] = useState<string | null>(() => readLastSelectedEditorId());
   const [markdownViewMode, setMarkdownViewMode] = useState<"preview" | "code">("preview");
   const [svgViewMode, setSvgViewMode] = useState<"preview" | "code">("preview");
-  const [htmlViewMode, setHtmlViewMode] = useState<"preview" | "code">("preview");
+  const [htmlViewMode, setHtmlViewMode] = useState<"preview" | "code">("code");
   const [wrapLongLinesOverride, setWrapLongLinesOverride] = useState<boolean | null>(null);
   const [breadcrumbMaskState, setBreadcrumbMaskState] = useState<BreadcrumbMaskState>("none");
   const breadcrumbScrollRef = useRef<HTMLDivElement | null>(null);
@@ -791,7 +795,8 @@ export function PreviewPane({
         : "code",
     );
     setWrapLongLinesOverride(null);
-    setHtmlViewMode("preview");
+    // 1.5.0：HTML 默认显示源码，用户通过更多菜单切换到预览；切换 source 后复位。
+    setHtmlViewMode("code");
   }, [source]);
 
   const handleSubmitCodeComment = useCallback(
@@ -968,6 +973,9 @@ export function PreviewPane({
     };
     setFilePreview(null);
     setFileTooLarge(false);
+    setLargeTextFile(null);
+    setRenderingLargeTextFile(false);
+    setRenderLargeTextFileError(null);
     setError(null);
     setLoadingInitial(Boolean(fileSource));
     if (scrollContainerRef.current) {
@@ -980,14 +988,14 @@ export function PreviewPane({
       };
     }
 
-    // 把传输分块直接当成多个文档解码和渲染，会在 UTF-8 字符中间产生乱码，
-    // 同时让每块行号从 1 重置。文本预览现在只读取 service 允许的完整上限；
-    // 非二进制结果返回 truncated 时丢弃局部文本并提示文件过大，不再拼接分块。
+    // 首块读取 1MB：完整文档进入正常渲染；1MB–50MB 进入大文件简化模式（首块复用为第一块，
+    // 后续由 LargeTextFileViewer 以 offset+bytesRead 推进，service 保证块边界落在 UTF-8 字符边界）；
+    // 超过 50MB 只显示外部编辑器提示。
     void fileService
       .readTextFile({
         path: fileSource.path,
         offset: 0,
-        length: FILE_VIEWER_MAX_TEXT_BYTES,
+        length: TEXT_PREVIEW_CHUNK_BYTES,
       })
       .then((result) => {
         if (disposed) {
@@ -997,6 +1005,7 @@ export function PreviewPane({
         const nextFileState = resolvePreviewPaneTextFileResult(result);
         setFilePreview(nextFileState.filePreview);
         setFileTooLarge(nextFileState.fileTooLarge);
+        setLargeTextFile(nextFileState.largeTextFile);
       })
       .catch((readError: unknown) => {
         if (disposed) {
@@ -1020,8 +1029,44 @@ export function PreviewPane({
 
     return () => {
       disposed = true;
+      // source 切换后作废进行中的“仍然渲染”读取。
+      largeTextRenderGenerationRef.current += 1;
     };
   }, [fileService, fileSource, intl]);
+
+  const largeTextFilePath = largeTextFile?.path ?? null;
+  const readLargeTextChunk = useCallback(
+    (params: { offset: number; length: number }) => {
+      if (!largeTextFilePath) {
+        return Promise.reject(new Error("Large text file source is unavailable"));
+      }
+      return fileService.readTextFile({ path: largeTextFilePath, ...params });
+    },
+    [fileService, largeTextFilePath],
+  );
+  const handleRenderLargeTextFileAnyway = useCallback(() => {
+    if (!largeTextFile || renderingLargeTextFile) return;
+    const generation = ++largeTextRenderGenerationRef.current;
+    const isCancelled = () => generation !== largeTextRenderGenerationRef.current;
+    setRenderingLargeTextFile(true);
+    setRenderLargeTextFileError(null);
+    void readFullTextFile(largeTextFile, readLargeTextChunk, isCancelled)
+      .then((fullPreview) => {
+        if (!fullPreview || isCancelled()) return;
+        setFilePreview(fullPreview);
+        setLargeTextFile(null);
+      })
+      .catch((readError: unknown) => {
+        if (isCancelled()) return;
+        logger.warn("[PreviewPane] 大文件完整读取失败", {
+          error: readError instanceof Error ? readError.message : String(readError),
+        });
+        setRenderLargeTextFileError(getPreviewPaneSafeErrorMessage(readError, largeTextFile.path));
+      })
+      .finally(() => {
+        if (!isCancelled()) setRenderingLargeTextFile(false);
+      });
+  }, [largeTextFile, readLargeTextChunk, renderingLargeTextFile]);
 
   useEffect(() => {
     let disposed = false;
@@ -1861,6 +1906,11 @@ export function PreviewPane({
             source={pptxSource ?? imageSource ?? pdfSource ?? mediaSource ?? source}
             filePreview={filePreview}
             fileTooLarge={fileTooLarge}
+            largeTextFile={largeTextFile}
+            readLargeTextChunk={readLargeTextChunk}
+            renderingLargeTextFile={renderingLargeTextFile}
+            renderLargeTextFileError={renderLargeTextFileError}
+            onRenderLargeTextFileAnyway={handleRenderLargeTextFileAnyway}
             loadingInitial={loadingInitial}
             loadingImagePreview={loadingImagePreview}
             imagePreview={imagePreview}

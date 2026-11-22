@@ -17,6 +17,7 @@ import type { WorkspaceFileDragPayload } from "@/lib/workspaceFileDrag.js";
 import { PreviewPaneMediaContent } from "@/previewPaneMediaContent.js";
 import { PdfPreviewContent } from "@/previewPanePdfContent.js";
 import { PptxPreviewContent } from "@/previewPanePptxContent.js";
+import { LargeTextFileViewer, type TextChunkReader } from "@/large-text-preview/index.js";
 import { PatchFallbackContent } from "@/previewPanePatchFallbackContent.js";
 import { DiffViewer } from "@/components/ui/diff-viewer.js";
 import type { PdfViewerLabels, PdfViewerSource } from "@/components/ui/pdf-viewer.js";
@@ -33,6 +34,12 @@ interface PreviewPaneContentProps {
   source: CodeViewerSource;
   filePreview: FileTextSlice | null;
   fileTooLarge: boolean;
+  /** 1MB–50MB 大文件档的首块；非空时渲染大文件简化查看器。 */
+  largeTextFile?: FileTextSlice | null;
+  readLargeTextChunk?: TextChunkReader;
+  renderingLargeTextFile?: boolean;
+  renderLargeTextFileError?: string | null;
+  onRenderLargeTextFileAnyway?: () => void;
   loadingInitial: boolean;
   loadingImagePreview: boolean;
   imagePreview: FileMediaPreview | null;
@@ -98,6 +105,11 @@ export function PreviewPaneContent({
   source,
   filePreview,
   fileTooLarge,
+  largeTextFile = null,
+  readLargeTextChunk,
+  renderingLargeTextFile = false,
+  renderLargeTextFileError = null,
+  onRenderLargeTextFileAnyway,
   loadingInitial,
   loadingImagePreview,
   imagePreview,
@@ -130,7 +142,7 @@ export function PreviewPaneContent({
   markdownSelectionTarget,
   markdownViewMode,
   svgViewMode,
-  htmlViewMode = "preview",
+  htmlViewMode = "code",
   readHtmlResource,
   wrapLongLines,
   codeComments,
@@ -409,8 +421,24 @@ export function PreviewPaneContent({
   if (fileTooLarge) {
     return (
       <div className="p-3 text-ui-base text-foreground-subtle">
-        {intl.formatMessage({ id: "codeViewer.fileTooLarge" })}
+        {intl.formatMessage({ id: "preview.largeFile.tooLarge" })}
       </div>
+    );
+  }
+
+  if (largeTextFile && readLargeTextChunk && onRenderLargeTextFileAnyway) {
+    return (
+      <LargeTextFileViewer
+        key={largeTextFile.path}
+        firstChunk={largeTextFile}
+        readChunk={readLargeTextChunk}
+        fontSizePx={codePreviewSettings.fontSizePx}
+        renderingAnyway={renderingLargeTextFile}
+        renderAnywayError={renderLargeTextFileError}
+        onRenderAnyway={onRenderLargeTextFileAnyway}
+        onScroll={onScroll}
+        scrollContainerRef={scrollContainerRef}
+      />
     );
   }
 
