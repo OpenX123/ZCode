@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronRightIcon, Loader2Icon, Undo2Icon } from "lucide-react";
+import { ChevronRightIcon, FileDiffIcon, Loader2Icon, Undo2Icon } from "lucide-react";
 import type {
   CommandAck,
   ConversationRowTarget,
@@ -47,6 +47,24 @@ function formatPatch(path: string, patches: FileChangeItem["patches"]): string {
   return lines.join("\n");
 }
 
+/**
+ * 把一轮的逐文件 patch 合并为一个多文件 unified diff（每个文件带 `diff --git` 头），
+ * 供“审阅”在侧栏一次打开整轮改动；没有可展示 patch 时返回空串。
+ */
+export function buildTurnChangesPatch(
+  items: readonly FileChangeItem[],
+  workspacePath: string,
+): string {
+  const sections: string[] = [];
+  for (const item of items) {
+    const relativePath = toWorkspaceRelativePath(workspacePath, item.path).replace(/\\/g, "/");
+    const patch = formatPatch(relativePath, item.patches);
+    if (!patch) continue;
+    sections.push(`diff --git a/${relativePath} b/${relativePath}\n${patch}`);
+  }
+  return sections.join("\n");
+}
+
 function openDiff(
   item: FileChangeItem,
   context: Pick<
@@ -83,6 +101,7 @@ export function ConversationFileSummaryPanel({
     result: V4ConversationFileChangesResult | null;
   } | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [reviewLoading, setReviewLoading] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [preview, setPreview] = useState<V4ConversationFileRewindPreviewResult | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -122,8 +141,8 @@ export function ConversationFileSummaryPanel({
     {
       id:
         summary?.files === 1
-          ? "chat.changeSummary.filesChanged.one"
-          : "chat.changeSummary.filesChanged.other",
+          ? "chat.turnChanges.filesChanged.one"
+          : "chat.turnChanges.filesChanged.other",
     },
     { count: String(summary?.files ?? 0) },
   );
@@ -180,6 +199,48 @@ export function ConversationFileSummaryPanel({
     requestKey,
     target,
   ]);
+
+  const canReviewTurn = Boolean(context.onOpenCodeViewer && context.fetchFileChanges && target);
+  // 1.5.0 轮次更改卡片：“审阅”读取该轮明细（已加载则复用），合并为一个多文件 diff 打开。
+  const handleReviewTurn = useCallback(async () => {
+    const { onOpenCodeViewer, fetchFileChanges, workspacePath } = context;
+    if (!onOpenCodeViewer || !fetchFileChanges || !target) return;
+    let result = details;
+    if (!result) {
+      setReviewLoading(true);
+      try {
+        result = await fetchFileChanges(target, { cachePolicy, fileChangesState });
+        setLoadedDetails({ key: requestKey, result });
+      } catch (loadError) {
+        logger.warn("[ConversationFileSummaryPanel] 读取本轮 diff 失败", {
+          error: loadError instanceof Error ? loadError.message : String(loadError),
+          rowId: target.rowId,
+        });
+        result = null;
+      } finally {
+        setReviewLoading(false);
+      }
+    }
+    const reviewItems =
+      result?.items.filter((item) => !matchesGenUiSourcePath(item.path, genUiSources)) ?? [];
+    const patch = buildTurnChangesPatch(reviewItems, workspacePath);
+    if (!patch) {
+      logger.warn("[ConversationFileSummaryPanel] 本轮 diff 为空，跳过打开审阅", {
+        rowId: target.rowId,
+      });
+      return;
+    }
+    onOpenCodeViewer({
+      type: "patch",
+      title: intl.formatMessage({ id: "chat.turnChanges.reviewTitle" }),
+      patch,
+      workspacePath,
+      ...(context.workspaceIdentity ? { workspaceIdentity: context.workspaceIdentity } : {}),
+      ...(context.workspaceRemoteSessionId
+        ? { workspaceRemoteSessionId: context.workspaceRemoteSessionId }
+        : {}),
+    });
+  }, [cachePolicy, context, details, fileChangesState, genUiSources, intl, requestKey, target]);
 
   const handlePreviewRewind = useCallback(async () => {
     if (!context.previewFileRewind || !target) return;
@@ -270,6 +331,20 @@ export function ConversationFileSummaryPanel({
               ) : null}
             </button>
           </CollapsibleTrigger>
+          {canReviewTurn ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={reviewLoading}
+              onClick={() => void handleReviewTurn()}
+              title={intl.formatMessage({ id: "chat.turnChanges.review" })}
+              data-testid="turn-changes-review"
+            >
+              {reviewLoading ? <Loader2Icon className="animate-spin" /> : <FileDiffIcon />}
+              <span>{intl.formatMessage({ id: "chat.turnChanges.review" })}</span>
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
