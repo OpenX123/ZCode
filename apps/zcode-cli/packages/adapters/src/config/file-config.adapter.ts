@@ -1,5 +1,6 @@
 // File Config Adapter - Load and patch JSON configuration files
 
+import { resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 import {
   existsSync,
   readFileSync,
@@ -59,7 +60,8 @@ export interface PluginRemovePatchResult {
 }
 
 const DEFAULT_CONFIG_FILE = "config.json";
-const DEFAULT_BASE_DIR = "~/.zcode/cli";
+// 用户级配置随数据根迁移：~/.ycode/cli，未迁移时 ~/.zcode/cli（docs/desktop/ycode-data-dir-migration.md）。
+const getDefaultBaseDir = (): string => join(resolveYCodeDataRoot(homedir()), "cli");
 
 /**
  * Resolve path with ~ expansion
@@ -78,7 +80,7 @@ export function loadFileConfig(filePath?: string, options: FileConfigOptions = {
   const resolvedPath = filePath
     ? resolvePath(filePath)
     : join(
-        resolvePath(options.baseDir ?? DEFAULT_BASE_DIR),
+        (options.baseDir ? resolvePath(options.baseDir) : getDefaultBaseDir()),
         options.configFileName ?? DEFAULT_CONFIG_FILE,
       );
 
@@ -441,7 +443,7 @@ export async function removeSuppressedBuiltinInFileConfig(
  * Get default config file path
  */
 export function getDefaultConfigPath(): string {
-  return join(resolvePath(DEFAULT_BASE_DIR), DEFAULT_CONFIG_FILE);
+  return join(getDefaultBaseDir(), DEFAULT_CONFIG_FILE);
 }
 
 /**

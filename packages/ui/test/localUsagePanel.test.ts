@@ -63,7 +63,7 @@ describe("LocalUsagePanel（LU-11）", () => {
     );
     for (const label of [
       "全部",
-      "ZCode",
+      "YCode",
       "Claude Code",
       "Codex",
       "今天",
@@ -81,7 +81,7 @@ describe("LocalUsagePanel（LU-11）", () => {
     expect(screen.getByTestId("zcode-runtime-metrics")).toBeTruthy();
   });
 
-  it("切换到 Claude Code 时隐藏 ZCode 运行指标并按来源重新请求", async () => {
+  it("切换到 Claude Code 时隐藏 YCode 运行指标并按来源重新请求", async () => {
     const { services, getLocalUsageSnapshot } = createServices();
     renderPanel(services);
     await screen.findByText("请求数");
@@ -102,7 +102,7 @@ describe("LocalUsagePanel（LU-11）", () => {
     const tab = screen.getByRole("tab", { name: "请求明细" });
     fireEvent.mouseDown(tab);
     fireEvent.click(tab);
-    expect(await screen.findByText("ZCode · Claude Code")).toBeTruthy();
+    expect(await screen.findByText("YCode · Claude Code")).toBeTruthy();
   });
 });
 

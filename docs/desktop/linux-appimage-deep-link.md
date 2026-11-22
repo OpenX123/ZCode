@@ -2,7 +2,7 @@
 
 ## 背景
 
-Linux `.deb` / `.rpm` 安装包会通过系统级 desktop entry 注册 `zcode://` 协议，登录回调可以稳定回到已安装应用。AppImage 直跑没有固定安装入口，ZCode 会在启动时写入用户级 `~/.local/share/applications/zcode.desktop`，让浏览器登录后的 `zcode://...` 能交给当前 AppImage（前提是系统中不存在系统级同 ID 条目，见下文"与系统安装共存"）。
+Linux `.deb` / `.rpm` 安装包会通过系统级 desktop entry 注册 `zcode://` 协议，登录回调可以稳定回到已安装应用。AppImage 直跑没有固定安装入口，ZCode 会在启动时写入用户级 `~/.local/share/applications/zcode.desktop`，让浏览器登录后的 `zcode://...` 能交给当前 AppImage（前提是系统中不存在系统级同 ID 条目，见下文"与系统安装共存"）。 1.5.1 起同一 desktop entry 同时声明 `x-scheme-handler/ycode` 与 `x-scheme-handler/zcode`，Comment 改为 `YCode Desktop App`，所有权判定兼容旧 `ZCode Desktop App`。
 
 用户在 Ubuntu 24.04 + NVIDIA 环境中发现：手动启动 AppImage 时带了 `--no-sandbox`、`--disable-gpu`、`--use-gl=swiftshader` 等参数，窗口和登录页都能打开；但浏览器回调触发 `.desktop Exec` 后，系统按裸 AppImage 路径二次启动，缺少这些参数，进程在 Electron sandbox/GPU 初始化阶段崩溃，导致应用一直停留在“等待浏览器回调”。
 

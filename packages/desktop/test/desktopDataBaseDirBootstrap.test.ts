@@ -23,7 +23,8 @@ describe("desktopDataBaseDirBootstrap", () => {
     const result = resolveBootstrapSettingsFile("/Users/tester");
     // Windows 下 path.join 使用反斜杠，统一为正斜杠后再比较
     expect(result.replace(/\\/g, "/")).toBe(
-      "/Users/tester/.zcode/v2/setting.json",
+      // 新旧目录都不存在时按迁移后的布局解析为 ~/.ycode（docs/desktop/ycode-data-dir-migration.md）。
+      "/Users/tester/.ycode/v2/setting.json",
     );
   });
 });

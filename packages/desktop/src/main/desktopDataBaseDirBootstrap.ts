@@ -2,9 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setDataBaseDir } from "@zcode/services/node";
+import { resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 
 export function resolveBootstrapSettingsFile(homePath: string = homedir()): string {
-  return join(homePath, ".zcode", "v2", "setting.json");
+  // 迁移后 setting.json 位于 ~/.ycode；未迁移时解析器返回旧 ~/.zcode。
+  return join(resolveYCodeDataRoot(homePath), "v2", "setting.json");
 }
 
 export function extractBootstrapDataBaseDir(rawValue: unknown): string | null {

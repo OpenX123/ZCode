@@ -528,11 +528,13 @@ it("左侧只保留权限芯片；Claude agent 进入更多选项并可选择", 
   expect(onChange).toHaveBeenCalledExactlyOnceWith("agent", "reviewer");
 });
 
-it("default 模型入口只显示档位；弹层显示解析出的真实模型名与默认标记，滑杆无 Default 档且档位使用英文", () => {
+it("1.5.1：default 模型入口显示「解析名 档位」；弹层显示解析出的真实模型名与默认标记，滑杆无 Default 档且档位使用英文", () => {
   const onChange = vi.fn();
   render(claudeTree([claudeMode, claudeModel, claudeEffort], onChange));
   const trigger = screen.getByTestId("engine-config-model-effort");
-  expect(trigger.textContent).toBe("High");
+  expect(screen.getByTestId("engine-trigger-model").textContent).toBe("Opus 5.5");
+  expect(screen.getByTestId("engine-trigger-effort").textContent).toBe("High");
+  expect(trigger.getAttribute("aria-label")).toBe("Opus 5.5 High");
   expect(trigger.querySelector('[data-task-client-logo="claude-code"]')).not.toBeNull();
   fireEvent.click(trigger);
   const header = screen.getByTestId("engine-config-model");
@@ -553,7 +555,7 @@ it("default 模型入口只显示档位；弹层显示解析出的真实模型�
   expect(document.body.textContent).not.toContain("Default (recommended)");
 });
 
-it("具体模型入口显示「模型 档位缩写」（无 ·）；无法解析 default 描述时显示默认模型", () => {
+it("具体模型入口显示「模型 档位缩写」（无 ·）；无法解析 default 描述时入口为 Auto、读屏为默认模型", () => {
   const view = render(claudeTree([{ ...claudeModel, currentValue: "sonnet" }, claudeEffort]));
   const trigger = screen.getByTestId("engine-config-model-effort");
   expect(trigger.textContent).toBe("SonnetHigh");
@@ -590,7 +592,44 @@ it("具体模型入口显示「模型 档位缩写」（无 ·）；无法解析
       },
     ]),
   );
-  expect(screen.getByTestId("engine-config-model-effort").textContent).toBe("默认模型");
+  expect(screen.getByTestId("engine-config-model-effort").textContent).toBe("Auto");
+  expect(screen.getByTestId("engine-config-model-effort").getAttribute("aria-label")).toBe(
+    "默认模型",
+  );
+  view.rerender(
+    claudeTree([
+      {
+        ...claudeModel,
+        options: [
+          {
+            value: "default",
+            name: "Default (recommended)",
+            description: "Uses the recommended model for your plan. Changes over time.",
+          },
+        ],
+      },
+      { ...claudeEffort, currentValue: "medium" },
+    ]),
+  );
+  expect(screen.getByTestId("engine-trigger-model").textContent).toBe("Auto");
+  expect(screen.getByTestId("engine-trigger-effort").textContent).toBe("Med");
+  expect(screen.getByTestId("engine-config-model-effort").getAttribute("aria-label")).toBe(
+    "默认模型 Medium",
+  );
+  // adapter 匹配不到对应条目时 description 为 resolvedModel id（本机实测 claude-opus-5-5[1m]）。
+  view.rerender(
+    claudeTree([
+      {
+        ...claudeModel,
+        options: [
+          { value: "default", name: "Default (recommended)", description: "claude-opus-5-5[1m]" },
+        ],
+      },
+      { ...claudeEffort, currentValue: "medium" },
+    ]),
+  );
+  expect(screen.getByTestId("engine-trigger-model").textContent).toBe("Opus 5.5");
+  expect(screen.getByTestId("engine-trigger-effort").textContent).toBe("Med");
   expect(document.body.textContent).not.toContain("Default (recommended)");
 });
 
@@ -657,7 +696,8 @@ it("1.5.0：Codex 模型名原样显示，Medium 缩写为 Med，default 档位�
   );
   view.unmount();
   render(claudeTree([claudeModel, { ...claudeEffort, currentValue: "default" }]));
-  expect(screen.getByTestId("engine-config-model-effort").textContent).toBe("Auto");
+  expect(screen.getByTestId("engine-trigger-model").textContent).toBe("Opus 5.5");
+  expect(screen.getByTestId("engine-trigger-effort").textContent).toBe("Auto");
 });
 
 it("Codex fast-mode 只渲染为弹层左上角闪电开关，点亮表示开启并回传原始 on/off", () => {

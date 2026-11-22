@@ -321,13 +321,13 @@ function contract(name: string, target: RemoteTarget): void {
       );
       expect(backend.uploads).toHaveLength(1);
       expect(backend.uploads[0]?.remotePath).toMatch(
-        /^~\/\.zcode\/server\/\.bootstrap-[^/]+\/zcode-server\.tar\.gz$/u,
+        /^~\/\.ycode\/server\/\.bootstrap-[^/]+\/zcode-server\.tar\.gz$/u,
       );
       expect(backend.uploads[0]?.remotePath).not.toContain("/tmp/");
       const prepareCommand = backend.commands.find(
         (command) => command.includes("mkdir -p") && command.includes(".bootstrap-"),
       );
-      expect(prepareCommand).toContain('"$HOME/.zcode/server"/.bootstrap-*');
+      expect(prepareCommand).toContain('"$HOME/.ycode/server"/.bootstrap-*');
       expect(prepareCommand).toContain("1800000");
       expect(prepareCommand).toContain("date +%s");
       const updateCommand = backend.commands.find((command) =>
@@ -395,20 +395,36 @@ it.each(targets)("forwards $kind install progress before command completion", as
   });
   const onLog = vi.fn();
   let complete = false;
-  const install = adapter.installOrUpdate(target, {
-    localArchivePath: "/tmp/release.tar.gz", target: "linux-x64", version: "3.12.1",
-    sha256: "a".repeat(64), sizeBytes: 1024, urls: [],
-  }, { onLog }).then(() => { complete = true; });
+  const install = adapter
+    .installOrUpdate(
+      target,
+      {
+        localArchivePath: "/tmp/release.tar.gz",
+        target: "linux-x64",
+        version: "3.12.1",
+        sha256: "a".repeat(64),
+        sizeBytes: 1024,
+        urls: [],
+      },
+      { onLog },
+    )
+    .then(() => {
+      complete = true;
+    });
   await started.promise;
   expect(backend.commands.at(-1)).toContain("--progress");
   expect(onLog).toHaveBeenCalledWith(expect.objectContaining({ phase: "extract" }));
   stdout.write('shell banner\n{"type":"source-server-install-progress","phase":"ver');
   stdout.write('ify"}\n{"type":"source-server-install-progress","phase":"ready"}\n');
-  await vi.waitFor(() => expect(onLog).toHaveBeenCalledWith(expect.objectContaining({ phase: "verify" })));
+  await vi.waitFor(() =>
+    expect(onLog).toHaveBeenCalledWith(expect.objectContaining({ phase: "verify" })),
+  );
   expect(complete).toBe(false);
   expect(onLog).not.toHaveBeenCalledWith(expect.objectContaining({ phase: "ready" }));
   stdout.write('{"type":"source-server-install-progress","phase":"restart"}\n');
-  await vi.waitFor(() => expect(onLog).toHaveBeenCalledWith(expect.objectContaining({ phase: "restart" })));
+  await vi.waitFor(() =>
+    expect(onLog).toHaveBeenCalledWith(expect.objectContaining({ phase: "restart" })),
+  );
   stdout.end('{"applied":true}\n');
   stderr.end();
   closed.fire(0);
@@ -488,7 +504,7 @@ it("preserves a public archive update guard from CLI JSON", async () => {
   expect(updateCommand).toContain(".bootstrap-");
   expect(updateCommand).toContain("zcode-server.tar.gz");
   expect(updateCommand).not.toContain("/tmp/zcode-server-bootstrap-");
-  expect(updateCommand).toContain('"$HOME/.zcode/server"/.bootstrap-');
+  expect(updateCommand).toContain('"$HOME/.ycode/server"/.bootstrap-');
 });
 
 it.each(targets)(
@@ -690,7 +706,7 @@ it("uploads an explicitly resolved local development archive despite the SSH dow
     {
       localPath: "/tmp/current-development-source-server.tar.gz",
       remotePath: expect.stringMatching(
-        /^~\/\.zcode\/server\/\.bootstrap-[^/]+\/zcode-server\.tar\.gz$/u,
+        /^~\/\.ycode\/server\/\.bootstrap-[^/]+\/zcode-server\.tar\.gz$/u,
       ),
     },
   ]);

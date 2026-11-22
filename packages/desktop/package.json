@@ -2,7 +2,7 @@
   "name": "@zcode/desktop",
   "private": true,
   "description": "YCode Desktop App",
-  "author": "ZCode",
+  "author": "YCode",
   "type": "module",
   "main": "out/main/index.js",
   "imports": {

@@ -10,7 +10,7 @@ import {
 } from "@/v4/conversation-presentation/disclosure.js";
 import { getToolCallErrorText } from "@/lib/toolError.js";
 import { ChevronRightIcon, PlugIcon } from "lucide-react";
-import { useCallback, useId } from "react";
+import { useCallback, useId, useMemo } from "react";
 import {
   CodeBlock,
   CodeBlockActions,
@@ -378,9 +378,17 @@ export function McpGroupToolCallBlock(context: ToolCallBlockRenderContext) {
         ]
       : [];
   });
+  // 运行中耗时按子工具 id 命中（docs/chat/turn-stall-indicator.md「工具行耗时」）；
+  // 没有子工具（单个工具复用本渲染器）时缺省为自身 toolId。
+  const activityToolCallIds = useMemo(
+    () =>
+      childToolCalls.length > 0 ? childToolCalls.map((child) => child.toolCall.toolId) : undefined,
+    [childToolCalls],
+  );
   return (
     <ToolLayout
       toolId={toolCall.toolId}
+      activityToolCallIds={activityToolCallIds}
       icon={MCP_TOOL_ICON}
       kindLabel={formatMcpServerLabel(raw.mcpServerName)}
       primaryText={intl.formatMessage(

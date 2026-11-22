@@ -1,12 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import type { Locale } from "@zcode/shared";
 
-const WORKFLOW_NAME = "Open in ZCode.workflow";
+const WORKFLOW_NAME = "Open in YCode.workflow";
+// 1.5.1 品牌更名前的 workflow 包名；安装新包时清理，避免 Services 菜单出现两个同名入口。
+const LEGACY_WORKFLOW_NAMES = ["Open in ZCode.workflow"] as const;
 const WORKFLOW_BUNDLE_ID = "dev.zcode.app.finder-open-workflow";
-const WORKFLOW_VERSION = "5";
+// 6：深链改为 ycode://，workflow 包名改为 YCode。
+const WORKFLOW_VERSION = "6";
 const SERVICES_MENU_LABELS: Record<Locale, string> = {
   "zh-CN": "在YCode中打开",
   "en-US": "Open in YCode",
@@ -22,7 +25,7 @@ done
 
 if [ -n "$first" ]; then
   encoded=$(/usr/bin/osascript -l JavaScript -e 'function run(argv) { return encodeURIComponent(argv[0]); }' "$first")
-  /usr/bin/open "zcode://workspace/open?path=\${encoded}"
+  /usr/bin/open "ycode://workspace/open?path=\${encoded}"
 fi
 `;
 
@@ -245,6 +248,24 @@ function refreshMacServicesIndex(): void {
   child.unref();
 }
 
+/**
+ * 只删除本应用写入的旧 workflow（Info.plist 带本应用 bundle id）；
+ * 用户自建的同名服务保留，避免误删用户数据。
+ */
+function removeLegacyWorkflows(servicesDir: string): boolean {
+  let removed = false;
+  for (const legacyName of LEGACY_WORKFLOW_NAMES) {
+    const legacyDir = join(servicesDir, legacyName);
+    const legacyInfoPlistPath = join(legacyDir, "Contents", "Info.plist");
+    if (!existsSync(legacyInfoPlistPath)) continue;
+    const legacyInfoPlist = readFileSync(legacyInfoPlistPath, "utf8");
+    if (!legacyInfoPlist.includes(`<string>${WORKFLOW_BUNDLE_ID}</string>`)) continue;
+    rmSync(legacyDir, { recursive: true, force: true });
+    removed = true;
+  }
+  return removed;
+}
+
 export function installFinderOpenFolderWorkflow(options: {
   platform: NodeJS.Platform;
   locale: Locale;
@@ -266,6 +287,7 @@ export function installFinderOpenFolderWorkflow(options: {
 
   try {
     mkdirSync(resourcesDir, { recursive: true });
+    const legacyRemoved = removeLegacyWorkflows(servicesDir);
 
     const infoChanged = writeFileIfChanged(infoPlistPath, buildInfoPlist(options.locale));
     const workflowContent = buildDocumentWorkflow();
@@ -278,7 +300,7 @@ export function installFinderOpenFolderWorkflow(options: {
       workflowContent,
     );
 
-    if (infoChanged || workflowChanged || resourcesWorkflowChanged) {
+    if (infoChanged || workflowChanged || resourcesWorkflowChanged || legacyRemoved) {
       // Finder 系统服务展示名来自 workflow 的 Info.plist。
       // 语言切换后必须重写 plist 并刷新 Services 索引，否则系统菜单会继续显示旧语言。
       (options.refreshServicesIndex ?? refreshMacServicesIndex)();

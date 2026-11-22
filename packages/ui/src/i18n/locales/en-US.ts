@@ -86,6 +86,7 @@ const enUS: Record<string, string> = {
   "engine.switch.locked": "The engine can't be changed after the session starts",
   "engine.model.default": "Default model",
   "engine.model.defaultTag": "Default",
+  "engine.modelShort.default": "Auto",
   "engine.effort.default": "Default",
   "engine.effort.minimal": "Minimal",
   "engine.effort.low": "Low",
@@ -2303,7 +2304,7 @@ const enUS: Record<string, string> = {
     "Download and verify, then restart now or install automatically when you quit",
   "desktopUpdate.downloadHint.windows":
     "Download and verify, then restart now or install automatically when you quit",
-  "desktopUpdate.readyHint": "Update ready. It installs automatically when you quit ZCode",
+  "desktopUpdate.readyHint": "Update ready. It installs automatically when you quit YCode",
   "desktopUpdate.manualDownload": "Download v{version}",
   "desktopUpdate.manualDownloadHint":
     "Download this platform's build manually from the Release page",
@@ -3020,8 +3021,8 @@ const enUS: Record<string, string> = {
   "chat.stall.idle.one": "{engine} has produced no output for {minutes} minute",
   "chat.stall.idle.other": "{engine} has produced no output for {minutes} minutes",
   "chat.stall.phase.waitingModel": "Waiting for model response",
-  "chat.stall.runningTool.one": "Running {tool} for {minutes} minute",
-  "chat.stall.runningTool.other": "Running {tool} for {minutes} minutes",
+  "chat.stall.toolElapsed.one": "{minutes} min",
+  "chat.stall.toolElapsed.other": "{minutes} min",
   "chat.stall.interruptAndRetry": "Interrupt and retry",
   "chat.stall.interrupt": "Interrupt",
   "chat.stall.viewLogs": "View logs",
@@ -3317,7 +3318,7 @@ const enUS: Record<string, string> = {
   "settings.notificationSounds.preview": "Preview {label}",
   "settings.notificationSounds.playWhenFocused": "Play when window is focused",
   "settings.notificationSounds.playWhenFocusedDescription":
-    "By default, sounds only play when ZCode is in the background.",
+    "By default, sounds only play when YCode is in the background.",
   "settings.notificationSounds.saveFailed": "Couldn't save notification settings. Try again.",
   "settings.updates.autoCheck": "Check for updates automatically",
   "settings.updates.autoCheckDescription": "Checks for a new version at launch and every 6 hours.",

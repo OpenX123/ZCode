@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- 导出日志流程涉及文件收集、脱敏与打包，集中维护便于排查与一致性 */
+import { resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 import { constants, createReadStream, createWriteStream } from "node:fs";
 import {
   access,
@@ -31,7 +32,7 @@ function getZCodeDataDir() {
 }
 
 function getZCodeCliDir() {
-  return join(homedir(), ".zcode", "cli");
+  return join(resolveYCodeDataRoot(homedir()), "cli");
 }
 
 function getZCodeCliLogDir() {
@@ -44,7 +45,7 @@ function getZCodeCliLogDir() {
  * helperExitLogPathFor）。同目录下还有 `.tokens` broker 凭据，收集时必须按文件名白名单。
  */
 function getCuaHelperRunDir() {
-  return join(homedir(), ".zcode", "computer-use", "run");
+  return join(resolveYCodeDataRoot(homedir()), "computer-use", "run");
 }
 
 function isCuaHelperDiagnosticFileName(fileName: string): boolean {

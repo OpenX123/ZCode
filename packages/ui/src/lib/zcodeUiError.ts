@@ -20,6 +20,8 @@ const GENERIC_ZCODE_UI_ERROR_MESSAGES = new Set([
   "Turn execution failed",
   "Compact failed",
   "Rewind failed",
+  // 1.5.1 品牌更名：新兜底文案为 YCode；旧会话里持久化的 ZCode 文案仍按通用兜底识别。
+  "YCode session failed",
   "ZCode session failed",
 ]);
 

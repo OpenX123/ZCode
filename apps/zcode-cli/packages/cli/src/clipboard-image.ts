@@ -1,3 +1,4 @@
+import { readYCodeEnv, resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -30,7 +31,8 @@ type NodeClipboardImageReaderOptions = {
 };
 
 function resolveDefaultClipboardDirectory(processEnv: NodeJS.ProcessEnv = process.env): string {
-  const storageRoot = processEnv.ZCODE_STORAGE_DIR?.trim() || join(homedir(), ".zcode");
+  const storageRoot =
+    readYCodeEnv(processEnv, "STORAGE_DIR") || resolveYCodeDataRoot(homedir());
   return join(storageRoot, "clipboard");
 }
 

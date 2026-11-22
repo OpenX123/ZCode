@@ -72,11 +72,8 @@ describe("resolveConversationStallState", () => {
       activityPhase: { kind: "running_tool", toolName: "Bash" },
     });
     expect(state(T0 + 30_000, { turnActivity: tool })).toEqual({ kind: "none" });
-    expect(state(T0 + 20 * 60_000, { turnActivity: tool })).toEqual({
-      kind: "tool",
-      toolName: "Bash",
-      elapsedMinutes: 20,
-    });
+    // 1.5.1：running_tool 不再出独立提示条，耗时由运行中工具行显示。
+    expect(state(T0 + 20 * 60_000, { turnActivity: tool })).toEqual({ kind: "none" });
   });
 
   it("stays hidden while waiting for the user or after the turn ends", () => {
@@ -111,10 +108,11 @@ describe("ConversationStallNotice", () => {
     expect(html).not.toContain("查看日志");
   });
 
-  it("renders running tool progress copy", () => {
+  it("does not render a separate notice while a tool is running (1.5.1)", () => {
     const html = renderNotice(T0 + 3 * 60_000, {
       turnActivity: activity({ activityPhase: { kind: "running_tool", toolName: "Bash" } }),
     });
-    expect(html).toContain("正在执行 Bash，已 3 分钟");
+    expect(html).toBe("");
+    expect(html).not.toContain("Bash");
   });
 });

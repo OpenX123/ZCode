@@ -57,7 +57,7 @@ describe("botsService Feishu runtime lock", () => {
       const runtime = (await serviceB.getStatus()).botRuntime[0];
       expect(runtime).toMatchObject({
         status: "idle",
-        message: "Feishu WebSocket is handled by another ZCode window.",
+        message: "Feishu WebSocket is handled by another YCode window.",
       });
     });
 

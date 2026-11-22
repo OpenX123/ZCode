@@ -1,4 +1,6 @@
 /* eslint-disable max-lines */
+// ~/.zcode → ~/.ycode 迁移必须先于其它模块求值（setting.json 读取、logger、子进程），见 data-dir-migration/CONTRACT.md。
+import "./data-dir-migration/early.js";
 import "./desktopEarlyDataBaseDirBootstrap.js";
 import "./desktopEarlyChromiumHardwareAccelerationBootstrap.js";
 import { powerSaveBlocker } from "electron";
@@ -40,6 +42,7 @@ import type { UtilityProcess as ElectronUtilityProcess } from "electron";
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 import {
   createSettingService,
   buildRuntimeProcessEnvPatch,
@@ -175,7 +178,13 @@ import {
   getPluginSandboxHost,
   installPluginSandboxHost,
 } from "./pluginSandbox/index.js";
+import {
+  getEarlyDataDirMigrationReport,
+  logEarlyDataDirMigrationReport,
+} from "./data-dir-migration/index.js";
 
+// 迁移在 logger 之前完成，结果在此补记。
+logEarlyDataDirMigrationReport(getEarlyDataDirMigrationReport(), logger);
 registerLocalMediaPreviewScheme(protocol, [PLUGIN_SANDBOX_PRIVILEGED_SCHEME]);
 const localMediaPreviewPathRegistry = createLocalMediaPreviewPathRegistry();
 
@@ -465,7 +474,7 @@ async function runBrowserCommandOnView(params: {
 let currentDesktopZoomLevel = 0;
 let currentDesktopWindowSize: DesktopWindowSize | undefined;
 const preloadPath = join(import.meta.dirname, "../preload/index.cjs");
-const settingsFile = join(homedir(), ".zcode", "v2", "setting.json");
+const settingsFile = join(resolveYCodeDataRoot(homedir()), "v2", "setting.json");
 let activeAppShutdownPolicy = resolveAppShutdownPolicy("normal", process.platform);
 let activeAppShutdownKind: AppShutdownKind | null = null;
 const WINDOWS_AGENT_FORCE_KILL_TIMEOUT_MS = 2_000;

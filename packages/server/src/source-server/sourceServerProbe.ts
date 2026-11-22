@@ -5,6 +5,7 @@ import {
 } from "@zcode/server/remote/detectEnv.js";
 import type { IRemoteBackend } from "@zcode/server/remote/backend.js";
 import { assertSupportedRemoteEnvironment } from "@zcode/server/remote/remotePlatformSupport.js";
+import { buildRemoteDataDirMigrationScript } from "@zcode/server/remote/deployShared.js";
 import {
   collectCommand,
   readLastJsonLine,
@@ -17,8 +18,8 @@ import type {
   TransportContext,
 } from "@zcode/server/source-server/transportAdapter.js";
 
-const SERVER_ROOT_SHELL = '"$HOME/.zcode/server"';
-const SERVER_BIN_SHELL = '"$HOME/.zcode/server/bin/zcode"';
+const SERVER_ROOT_SHELL = '"$HOME/.ycode/server"';
+const SERVER_BIN_SHELL = '"$HOME/.ycode/server/bin/zcode"';
 const SERVER_CURRENT_SHELL = `${SERVER_ROOT_SHELL}/current.json`;
 const SERVER_STATUS_SHELL = `${SERVER_ROOT_SHELL}/run/status.json`;
 const SOURCE_SERVER_PROBE_MARKER_PREFIX = "__ZCODE_PROBE_";
@@ -26,6 +27,8 @@ const SOURCE_SERVER_PROBE_MARKER_PREFIX = "__ZCODE_PROBE_";
 function buildSourceServerProbeCommand(includeReleaseIdentity: boolean): string {
   return [
     "set +e",
+    // 先完成 ~/.zcode → ~/.ycode 迁移再读取 Server 状态；合并在 probe 中避免额外一次 SSH 往返。
+    buildRemoteDataDirMigrationScript(),
     `printf '${SOURCE_SERVER_PROBE_MARKER_PREFIX}PLATFORM__\\n'`,
     "uname -s",
     `printf '${SOURCE_SERVER_PROBE_MARKER_PREFIX}ARCH__\\n'`,
@@ -86,7 +89,7 @@ function assertSupportedGlibc(platform: string, libcText: string): void {
   if (major > minMajor || (major === minMajor && minor >= minMinor)) return;
   const required = SOURCE_SERVER_MIN_GLIBC_VERSION.join(".");
   throw new SourceServerProbeEnvironmentError(
-    `Remote glibc ${major}.${minor} is older than glibc ${required} required by ZCode Source Server. ` +
+    `Remote glibc ${major}.${minor} is older than glibc ${required} required by YCode Source Server. ` +
       `Use a Linux system with glibc ${required} or later, such as RHEL 8+, Ubuntu 20.04+ or Debian 10+.`,
   );
 }

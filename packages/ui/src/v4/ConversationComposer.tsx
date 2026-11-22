@@ -198,6 +198,9 @@ import {
 } from "@/v4/composer/composerSubmissionSettlement.js";
 import { resolveAttachableShareContext } from "@/lib/conversationShareContext.js";
 
+/** 外部引擎 composer：上下文用量低于 20% 时不显示用量环（docs/chat/turn-stall-indicator.md 1.5.1）。 */
+const EXTERNAL_CONTEXT_USAGE_MIN_VISIBLE_RATIO = 0.2;
+
 const MODEL_SELECTION_LOADING_STATE: ModelSelectionState = { status: "loading" };
 
 export interface ConversationComposerSendOptions {
@@ -2280,6 +2283,7 @@ function ConversationComposerImpl({
               <>
                 {engineModelControls}
                 <ChatContextUsage
+                  hideBelowRatio={EXTERNAL_CONTEXT_USAGE_MIN_VISIBLE_RATIO}
                   taskUsage={externalContextUsage}
                   selectedProvider={provider ?? ZCODE_AGENT_PROVIDER}
                   intl={intl}

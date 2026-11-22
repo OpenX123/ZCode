@@ -4,7 +4,7 @@
 
 ## 会话链接
 
-- 复用 `zcode://session/open`，携带 taskId、workspacePath、可选 workspaceIdentity 和已保存的 Source 标识，不携带凭据。身份比较使用 `workspaceIdentity?.trim() || workspacePath`。
+- 生成 `ycode://session/open`（1.5.1 起；旧 `zcode://session/open` 继续解析），携带 taskId、workspacePath、可选 workspaceIdentity 和已保存的 Source 标识，不携带凭据。身份比较使用 `workspaceIdentity?.trim() || workspacePath`。
 - 链接只定位已存在的会话。Host 查权威任务索引后再激活工作区；不存在、已删除或远端不可达必须显示错误，不创建空会话、不按相同路径匹配其他 Host。
 - 冷启动和 renderer 尚未注册时缓存请求，ready 后按顺序投递；已有窗口复用工作台导航。只打开链接不提交 prompt。
 - 第二实例通过安全 argv／additionalData 复用同一协议路由；macOS 驻留且无主窗口时先缓存会话请求并创建主窗口，不能只聚焦空实例或丢弃链接。

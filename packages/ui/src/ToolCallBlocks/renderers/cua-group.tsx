@@ -1,4 +1,12 @@
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   EMPTY_SCROLL_MASK_STATE,
@@ -250,9 +258,17 @@ export function CuaGroupToolCallBlock(context: CuaGroupRenderProps) {
     [context, events],
   );
 
+  // 运行中耗时按子工具 id 命中（docs/chat/turn-stall-indicator.md「工具行耗时」）；
+  // 没有子工具（单个工具复用本渲染器）时缺省为自身 toolId。
+  const activityToolCallIds = useMemo(
+    () =>
+      childToolCalls.length > 0 ? childToolCalls.map((child) => child.toolCall.toolId) : undefined,
+    [childToolCalls],
+  );
   return (
     <ToolLayout
       toolId={toolCall.toolId}
+      activityToolCallIds={activityToolCallIds}
       icon={isRunning ? null : CUA_TOOL_ICON}
       showIcon={!isRunning}
       canToggle={context.canToggle ?? true}

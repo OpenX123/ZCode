@@ -1213,6 +1213,12 @@ function ConversationBackgroundResultWork({
   );
 }
 
+/**
+ * 轮内容的水平内边距。轮外但须与轮内容同一左边线的节点（live tail footer 的无响应提示条）共用此值，
+ * 不各自手写，避免再次错位（docs/chat/turn-stall-indicator.md「对齐」）。
+ */
+export const TURN_CONTENT_INLINE_PADDING_CLASS = "px-4 @md/conversation:px-6";
+
 function ConversationTurnGroupImpl({
   unit,
   apiRetry = null,
@@ -1376,7 +1382,8 @@ function ConversationTurnGroupImpl({
       data-turn-id={unit.turnId}
       data-turn-key={unit.key}
       className={cn(
-        "relative mx-auto flex w-full flex-col gap-5 px-4 @md/conversation:px-6 pb-5",
+        "relative mx-auto flex w-full flex-col gap-5 pb-5",
+        TURN_CONTENT_INLINE_PADDING_CLASS,
         startsWithoutUserBubble ? "pt-0" : "pt-14",
       )}
     >

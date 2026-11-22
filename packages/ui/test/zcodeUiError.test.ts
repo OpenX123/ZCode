@@ -37,6 +37,15 @@ describe("normalizeZCodeUiError", () => {
     });
   });
 
+  it.each(["YCode session failed", "ZCode session failed"])(
+    "新旧品牌的会话兜底文案都按泛化错误处理：%s",
+    (message) => {
+      expect(
+        normalizeZCodeUiError({ message, data: { message: "Provider quota exceeded" } }),
+      ).toMatchObject({ message: "Provider quota exceeded" });
+    },
+  );
+
   it("message 缺失时会回退到 data.reason", () => {
     const normalized = normalizeZCodeUiError({
       data: {
