@@ -54,7 +54,8 @@ describe("paths", () => {
 
     await copyDataDirectory(oldBase, newBase);
 
-    const newV2Dir = join(newBase, ".zcode", "v2");
+    // 新数据根为空时解析为 .ycode；旧根仍是未迁移的 .zcode。
+    const newV2Dir = join(newBase, ".ycode", "v2");
     const newWorkspaceRoot = join(newV2Dir, "agent-config", "claude", "workspace-hash-1");
     const newSkillLink = join(newWorkspaceRoot, "skills");
     const newPluginLink = join(newWorkspaceRoot, "plugins");
@@ -68,7 +69,8 @@ describe("paths", () => {
     const oldBase = makeTempHome();
     const newBase = makeTempHome();
     const oldV2Dir = join(oldBase, ".zcode", "v2");
-    const newV2Dir = join(newBase, ".zcode", "v2");
+    // 新数据根为空时解析为 .ycode；旧根仍是未迁移的 .zcode。
+    const newV2Dir = join(newBase, ".ycode", "v2");
     mkdirSync(oldV2Dir, { recursive: true });
     writeFileSync(join(oldV2Dir, "setting.json"), '{"dataBaseDir":"/old"}', "utf-8");
     writeFileSync(join(oldV2Dir, "setting.json.lock"), "lock", "utf-8");

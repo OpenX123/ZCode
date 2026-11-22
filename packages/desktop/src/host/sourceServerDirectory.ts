@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- Source/Profile/Workspace 三实体迁移与凭据重定向需要保持同一事务编排。 */
+import { resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { Emitter, type Event } from "@zcode/rpc";
@@ -167,7 +168,7 @@ export class SourceServerDirectory {
       options.migrateControllerIdentity ??
       (async (input) =>
         await migrateControllerRemoteWorkspaceIdentity({
-          dbPath: join(getDataBaseDir(), ".zcode", "v2", "tasks-index.sqlite"),
+          dbPath: join(resolveYCodeDataRoot(getDataBaseDir()), "v2", "tasks-index.sqlite"),
           ...input,
         }));
   }

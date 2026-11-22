@@ -1,4 +1,5 @@
 import { open } from "node:fs/promises";
+import { resolveYCodeDataRoot } from "@zcode/shared/ycode-data-root";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getDataBaseDir } from "#src/paths.js";
@@ -15,8 +16,8 @@ export interface TrajectoryFileTail {
 // debug（开发态）与 rollout（生产态）都尝试，避免数据目录环境变量差异导致读不到。
 export function resolveModelIODirs(): string[] {
   const roots = new Set<string>([
-    join(homedir(), ".zcode", "cli"),
-    join(getDataBaseDir(), ".zcode", "cli"),
+    join(resolveYCodeDataRoot(homedir()), "cli"),
+    join(resolveYCodeDataRoot(getDataBaseDir()), "cli"),
   ]);
   return [...roots].flatMap((root) => [join(root, "debug"), join(root, "rollout")]);
 }

@@ -62,7 +62,8 @@ test("resolves the development ZCode Built-in Config and shared Personal Config"
   );
   assert.equal(
     prepared[ZCODE_PERSONAL_PROVIDER_CONFIG_FILE_ENV],
-    join(root, "home/.zcode/v2/provider_config.json"),
+    // 全新数据根按迁移后的布局解析为 .ycode。
+    join(root, "home/.ycode/v2/provider_config.json"),
   );
   const activeFilePath = prepared[ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV];
 
@@ -105,7 +106,7 @@ test("materializes the SEA config in the fixed environment resource path, separa
   assert.equal(reads, 1);
   const resource = join(
     root,
-    ".zcode",
+    ".ycode",
     "v2",
     "runtime",
     "provider",

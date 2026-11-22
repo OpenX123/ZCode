@@ -3,6 +3,11 @@ import { homedir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import { config as loadDotenv } from "dotenv";
 import {
+  applyYCodeEnvAliases,
+  readYCodeEnv,
+  resolveYCodeDataRoot,
+} from "@zcode/shared/ycode-data-root";
+import {
   ZCODE_RUNTIME_ENV_KEY,
   buildZCodeToolEnvPassthroughEnv,
   normalizeZCodeRuntimeEnv,
@@ -112,6 +117,8 @@ export function shouldLoadCliDotenvForProtocolServer(env: CliEnv): boolean {
 }
 
 function applyCliRuntimeEnvDefaults(env: CliEnv, argv: readonly string[]): void {
+  // CLI 可独立启动：先把 YCODE_* 写回 ZCODE_*，后续读取点与子进程两种名称都生效。
+  applyYCodeEnvAliases(env);
   env[ZCODE_RUNTIME_ENV_KEY] = resolveCliRuntimeEnv(env, argv);
   applyBetaStorageDefault(env, argv);
 }
@@ -131,9 +138,10 @@ function resolveCliRuntimeEnv(env: CliEnv, argv: readonly string[]): ZCodeRuntim
 }
 
 function applyBetaStorageDefault(env: CliEnv, argv: readonly string[]): void {
-  if (env.ZCODE_STORAGE_DIR?.trim()) return;
-  const explicitBeta = env.ZCODE_BETA === "1" || env.ZCODE_ENV === "beta";
+  if (readYCodeEnv(env, "STORAGE_DIR")) return;
+  const explicitBeta = readYCodeEnv(env, "BETA") === "1" || readYCodeEnv(env, "ENV") === "beta";
   const invokedAsBeta = argv.some((arg) => /(^|[/\\])zcode-beta(?:$|\.)/u.test(arg));
   if (!explicitBeta && !invokedAsBeta) return;
-  env.ZCODE_STORAGE_DIR = join(homedir(), ".zcode-beta");
+  // Beta 数据根：~/.ycode-beta，未迁移时沿用 ~/.zcode-beta。
+  env.ZCODE_STORAGE_DIR = resolveYCodeDataRoot(homedir(), "beta");
 }
