@@ -55,7 +55,11 @@ vi.mock("electron", () => ({
     images: unknown[] = [];
     tooltips: string[] = [];
     constructor(imagePath: string) {
-      state.trayInstances.push({ imageAtCreate: imagePath, images: this.images, tooltips: this.tooltips });
+      state.trayInstances.push({
+        imageAtCreate: imagePath,
+        images: this.images,
+        tooltips: this.tooltips,
+      });
     }
     setImage(image: unknown) {
       this.images.push(image);
@@ -112,7 +116,7 @@ describe("desktop tray unread badge", () => {
     expect(state.trayInstances).toHaveLength(0);
   });
 
-  it("计数非零时在 Logo 圆角透明缺口合成红点，按 label 缓存", async () => {
+  it("计数非零时在托盘右上角合成数字徽章，按 label 缓存", async () => {
     const mod = await loadModule();
     mod.createDesktopTray({ ...trayOptions, platform: "win32" });
     expect(state.trayInstances).toHaveLength(1);
@@ -122,11 +126,13 @@ describe("desktop tray unread badge", () => {
 
     // 同一 label 只合成一次（缓存的 NativeImage 含 1x/2x 两份表示）
     expect(state.representations).toHaveLength(2);
-    expect(state.representations.map(({ scaleFactor, width, height }) => ({
-      scaleFactor,
-      width,
-      height,
-    }))).toEqual([
+    expect(
+      state.representations.map(({ scaleFactor, width, height }) => ({
+        scaleFactor,
+        width,
+        height,
+      })),
+    ).toEqual([
       { scaleFactor: 1, width: 16, height: 16 },
       { scaleFactor: 2, width: 32, height: 32 },
     ]);
@@ -136,17 +142,8 @@ describe("desktop tray unread badge", () => {
 
     const oneX = state.representations[0]!.buffer;
     const twoX = state.representations[1]!.buffer;
-    // 1x / 2x 都有纯红芯，且抗锯齿边缘与底图混合（不是硬边纯红或原底图）
-    expect(pixelOf(oneX, 16, 13, 2)).toEqual([53, 57, 229, 255]);
-    expect(pixelOf(twoX, 32, 27, 4)).toEqual([53, 57, 229, 255]);
-    expect(pixelOf(twoX, 32, 23, 4)).not.toEqual([200, 40, 10, 255]);
-    expect(pixelOf(twoX, 32, 23, 4)).not.toEqual([53, 57, 229, 255]);
-    // Logo 本体与远离红点的底图保持不变
-    expect(pixelOf(oneX, 16, 8, 8)).toEqual([200, 40, 10, 255]);
-    expect(pixelOf(twoX, 32, 16, 16)).toEqual([200, 40, 10, 255]);
-    // 整图不应出现白色笔画像素
-    for (const buffer of [oneX, twoX]) {
-      let hasWhitePixel = false;
+    const countWhite = (buffer: Buffer) => {
+      let count = 0;
       for (let offset = 0; offset + 3 < buffer.length; offset += 4) {
         if (
           buffer[offset] === 255 &&
@@ -154,12 +151,34 @@ describe("desktop tray unread badge", () => {
           buffer[offset + 2] === 255 &&
           buffer[offset + 3] === 255
         ) {
-          hasWhitePixel = true;
-          break;
+          count += 1;
         }
       }
-      expect(hasWhitePixel).toBe(false);
-    }
+      return count;
+    };
+    // 1.5.0：右上角是与任务栏同一计数的数字徽章——红底 + 白色数字
+    expect(countWhite(oneX)).toBeGreaterThan(4);
+    expect(countWhite(twoX)).toBeGreaterThan(countWhite(oneX));
+    // 1x 徽章 9px 高贴右上角：(15,4) 在徽章内（红或白），不再是原底图
+    expect(pixelOf(oneX, 16, 15, 4)).not.toEqual([200, 40, 10, 255]);
+    // 左下角远离徽章的底图保持不变
+    expect(pixelOf(oneX, 16, 2, 13)).toEqual([200, 40, 10, 255]);
+    expect(pixelOf(twoX, 32, 4, 27)).toEqual([200, 40, 10, 255]);
+  });
+
+  it("不同计数合成不同徽章，9+ 为更宽的胶囊", async () => {
+    const mod = await loadModule();
+    mod.createDesktopTray({ ...trayOptions, platform: "win32" });
+
+    mod.applyDesktopTrayUnreadBadge(1);
+    mod.applyDesktopTrayUnreadBadge(12);
+
+    expect(state.representations).toHaveLength(4);
+    const single = state.representations[0]!.buffer;
+    const wide = state.representations[2]!.buffer;
+    // 9+ 胶囊向左延伸：x=6 行 4 处单数字为底图，9+ 已覆盖
+    expect(pixelOf(single, 16, 5, 4)).toEqual([200, 40, 10, 255]);
+    expect(pixelOf(wide, 16, 5, 4)).not.toEqual([200, 40, 10, 255]);
   });
 
   it("计数归零时恢复原始托盘底图", async () => {

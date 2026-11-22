@@ -7,6 +7,7 @@ import {
 } from "./external-engine/index.js";
 import { appToolSearchModeSchema } from "./app-runtime-preferences.js";
 import type { AppSettings } from "./protocol.js";
+import { DEFAULT_TASK_NOTIFICATION_PREFERENCES, TASK_NOTIFICATION_SOUND_IDS } from "./platform.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import { wslUserSchema } from "./wslUserValidation.js";
@@ -141,6 +142,18 @@ export const postUpdateReleaseNotesPayloadSchema = z.object({
     .optional(),
 });
 
+const taskNotificationSoundIdSchema = z.enum(TASK_NOTIFICATION_SOUND_IDS);
+// 设置文件是持久化事实；单个字段非法时回落默认值，不让整份偏好失效。
+const taskNotificationPreferencesSchema = z.object({
+  enabled: z.boolean().catch(DEFAULT_TASK_NOTIFICATION_PREFERENCES.enabled),
+  completedSound: taskNotificationSoundIdSchema.catch(
+    DEFAULT_TASK_NOTIFICATION_PREFERENCES.completedSound,
+  ),
+  attentionSound: taskNotificationSoundIdSchema.catch(
+    DEFAULT_TASK_NOTIFICATION_PREFERENCES.attentionSound,
+  ),
+  playWhenFocused: z.boolean().catch(DEFAULT_TASK_NOTIFICATION_PREFERENCES.playWhenFocused),
+});
 const skippedElectronUpdateVersionsSchema = z
   .partialRecord(electronReleaseChannelSchema, nonEmptyStringSchema)
   .default({});
@@ -637,6 +650,9 @@ const appSettingsObjectSchema = z.object({
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
   dataBaseDir: z.string().trim().min(1).optional(),
   pendingPostUpdateReleaseNotes: postUpdateReleaseNotesPayloadSchema.optional(),
+  taskNotificationPreferences: taskNotificationPreferencesSchema.optional(),
+  desktopUpdateAutoCheck: z.boolean().optional(),
+  desktopUpdateAutoDownload: z.boolean().optional(),
   receivePreviewUpdates: z.boolean().default(false),
   autoDownloadAndInstallUpdates: z.boolean().default(false),
   skippedElectronUpdateVersions: skippedElectronUpdateVersionsSchema,
@@ -752,6 +768,9 @@ export const appSettingsPatchSchema = z.object({
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
   dataBaseDir: z.string().trim().min(1).optional(),
   pendingPostUpdateReleaseNotes: postUpdateReleaseNotesPayloadSchema.optional(),
+  taskNotificationPreferences: taskNotificationPreferencesSchema.optional(),
+  desktopUpdateAutoCheck: z.boolean().optional(),
+  desktopUpdateAutoDownload: z.boolean().optional(),
   receivePreviewUpdates: z.boolean().optional(),
   autoDownloadAndInstallUpdates: z.boolean().optional(),
   skippedElectronUpdateVersions: z

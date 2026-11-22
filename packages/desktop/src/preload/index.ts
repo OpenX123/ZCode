@@ -807,8 +807,8 @@ window.addEventListener("message", (event) => {
   });
 });
 
-ipcRenderer.on(PlatformChannels.TaskNotificationSound, () => {
-  window.postMessage(InternalChannels.TaskNotificationSound, "*");
+ipcRenderer.on(PlatformChannels.TaskNotificationSound, (_event, cue: unknown) => {
+  window.postMessage({ type: InternalChannels.TaskNotificationSound, cue }, "*");
 });
 
 // dom-ready autoInject 之后 Bridge 若被重置，再尝试一次包装

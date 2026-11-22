@@ -430,6 +430,12 @@ export interface AppSettings {
     releaseDate?: string;
     releaseNotesByLocale?: Partial<Record<Locale, { title: string; markdown: string }>>;
   };
+  /** 本机任务通知与提示音偏好；缺席表示尚未从旧 localStorage key 迁移，按默认值运行。 */
+  taskNotificationPreferences?: import("./platform.js").TaskNotificationPreferences;
+  /** GitHub 桌面更新：启动与每 6 小时自动检查；缺席按开启。 */
+  desktopUpdateAutoCheck?: boolean;
+  /** GitHub 桌面更新：发现新版后后台下载并校验，退出时安装；缺席按开启。 */
+  desktopUpdateAutoDownload?: boolean;
   /** 设置页“接收 preview 自动更新”偏好；仅桌面端自动更新读取。 */
   receivePreviewUpdates?: boolean;
   /** 设置页/更新弹窗“以后自动下载并安装更新”偏好；仅桌面端自动更新读取。 */

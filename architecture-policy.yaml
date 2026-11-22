@@ -1000,6 +1000,20 @@ modules:
     layers:
       ui: .
     owner: conversation
+  # task-notifications-ui：由 architecture:adopt 登记
+  - id: task-notifications-ui
+    roots:
+      - packages/ui/src/task-notifications
+      - packages/ui/src/hooks/task-notifications
+    managed: true
+    requires: [ui, shared]
+    publicEntrypoints:
+      - packages/ui/src/task-notifications/index.ts
+      - packages/ui/src/task-notifications/contract.ts
+      - packages/ui/src/hooks/task-notifications/index.ts
+    layers:
+      ui: .
+    owner: desktop
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。

@@ -104,7 +104,7 @@ describe("desktop task notifications", () => {
 
     expect(shown).toBe(false);
     expect(electronMocks.notificationInstances).toHaveLength(0);
-    expect(eventSender.send).not.toHaveBeenCalledWith(PlatformChannels.TaskNotificationSound);
+    expect(eventSender.send).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(
       "[show-task-notification] missing localized notification copy",
       {
@@ -146,7 +146,10 @@ describe("desktop task notifications", () => {
 
     expect(shown).toBe(true);
     expect(getActiveTaskNotificationCountForTest()).toBe(1);
-    expect(eventSender.send).toHaveBeenCalledWith(PlatformChannels.TaskNotificationSound);
+    expect(eventSender.send).toHaveBeenCalledWith(PlatformChannels.TaskNotificationSound, {
+      category: "completed",
+      appFocused: false,
+    });
 
     electronMocks.notificationInstances[0]?.emit("click");
 
@@ -247,6 +250,38 @@ describe("desktop task notifications", () => {
     expect(nextRequestShown).toBe(true);
     expect(electronMocks.notificationInstances).toHaveLength(2);
     expect(eventSender.send).toHaveBeenCalledTimes(2);
-    expect(eventSender.send).toHaveBeenCalledWith(PlatformChannels.TaskNotificationSound);
+    expect(eventSender.send).toHaveBeenCalledWith(PlatformChannels.TaskNotificationSound, {
+      category: "attention",
+      appFocused: false,
+    });
+  });
+
+  it("应用在前台时不弹系统通知，但仍把带 appFocused 的提示音意图交给播放器", () => {
+    electronMocks.browserWindowGetAllWindows.mockReturnValue([
+      { isDestroyed: () => false, isFocused: () => true },
+    ] as never);
+    const eventSender = { send: vi.fn() };
+    const logger = { info: vi.fn(), warn: vi.fn() };
+
+    const shown = dispatchTaskNotification({
+      event: { sender: eventSender } as never,
+      payload: { ...createTaskNotificationPayload("task-focused"), status: "failed" },
+      logger,
+    });
+    const duplicate = dispatchTaskNotification({
+      event: { sender: eventSender } as never,
+      payload: { ...createTaskNotificationPayload("task-focused"), status: "failed" },
+      logger,
+    });
+
+    expect(shown).toBe(false);
+    expect(duplicate).toBe(false);
+    expect(electronMocks.notificationInstances).toHaveLength(0);
+    // 去重仍生效：同一失败只发送一次提示音意图
+    expect(eventSender.send).toHaveBeenCalledTimes(1);
+    expect(eventSender.send).toHaveBeenCalledWith(PlatformChannels.TaskNotificationSound, {
+      category: "attention",
+      appFocused: true,
+    });
   });
 });

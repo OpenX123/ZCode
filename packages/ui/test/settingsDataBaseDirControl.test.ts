@@ -102,8 +102,9 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
           "settings.desktopChromiumHardwareAccelerationDescription": "desc",
           "settings.notification": "任务通知",
           "settings.notificationDescription": "desc",
-          "settings.notificationSound": "通知声音",
-          "settings.notificationSoundDescription": "desc",
+          "settings.notificationSounds.playWhenFocused": "窗口在前台时也播放",
+          "settings.updates.autoCheck": "自动检查更新",
+          "settings.updates.autoDownload": "自动下载更新",
           "settings.messageStreamShowReasoning": "显示思考过程",
           "settings.messageStreamShowReasoningDescription": "desc",
           "settings.messageStreamShowTodos": "显示流式待办",
@@ -159,8 +160,6 @@ async function renderGeneralSection(
     createElement(GeneralSectionContent, {
       theme: "system",
       localePreference: "system",
-      notificationEnabled: true,
-      notificationSoundEnabled: true,
       closeToTrayOnWindows: true,
       keepAwakeWhileRunning: false,
       isDesktop: true,
@@ -172,8 +171,6 @@ async function renderGeneralSection(
       defaultHomeDir: "/Users/test",
       setTheme: vi.fn(),
       setLocalePreference: vi.fn(),
-      setNotificationEnabled: vi.fn(),
-      setNotificationSoundEnabled: vi.fn(),
       messageStreamShowReasoning: true,
       messageStreamShowTodos: false,
       toolGroupingExploreEnabled: true,
@@ -225,13 +222,14 @@ describe("GeneralSectionContent data directory control", () => {
 
   it("桌面常规设置移除官方更新开关，保留硬件加速与任务通知", async () => {
     const onDesktopChromiumHardwareAccelerationChange = vi.fn(async () => {});
-    const setNotificationEnabled = vi.fn();
-    const setNotificationSoundEnabled = vi.fn();
+    const onNotificationPreferencesChange = vi.fn();
+    const onDesktopUpdatePreferencesChange = vi.fn();
 
     const markup = await renderGeneralSection({
       onDesktopChromiumHardwareAccelerationChange,
-      setNotificationEnabled,
-      setNotificationSoundEnabled,
+      onNotificationPreferencesChange,
+      desktopUpdatePreferences: { autoCheck: true, autoDownload: true },
+      onDesktopUpdatePreferencesChange,
     });
 
     expect(markup).not.toContain("settings.receivePreviewUpdates");
@@ -244,12 +242,24 @@ describe("GeneralSectionContent data directory control", () => {
     (hardwareSwitch?.onCheckedChange as ((checked: boolean) => void) | undefined)?.(false);
     expect(onDesktopChromiumHardwareAccelerationChange).toHaveBeenCalledWith(false);
 
-    for (const callback of [setNotificationEnabled, setNotificationSoundEnabled]) {
-      const control = capturedSwitches.find((entry) => entry.onCheckedChange === callback);
-      expect(control?.checked).toBe(true);
-      (control?.onCheckedChange as ((checked: boolean) => void) | undefined)?.(false);
-      expect(callback).toHaveBeenCalledWith(false);
-    }
+    // 任务通知偏好（1.5.0）：总开关与“前台也播放”经同一回调提交补丁。
+    const switchByLabel = (label: string) =>
+      capturedSwitches.find((entry) => entry["aria-label"] === label);
+    const notificationSwitch = switchByLabel("任务通知");
+    expect(notificationSwitch?.checked).toBe(true);
+    (notificationSwitch?.onCheckedChange as ((checked: boolean) => void) | undefined)?.(false);
+    expect(onNotificationPreferencesChange).toHaveBeenCalledWith({ enabled: false });
+    const focusedSwitch = switchByLabel("窗口在前台时也播放");
+    expect(focusedSwitch?.checked).toBe(false);
+    (focusedSwitch?.onCheckedChange as ((checked: boolean) => void) | undefined)?.(true);
+    expect(onNotificationPreferencesChange).toHaveBeenCalledWith({ playWhenFocused: true });
+
+    // 更新偏好：自动检查 / 自动下载默认开启，切换提交对应补丁。
+    const autoDownload = switchByLabel("自动下载更新");
+    expect(switchByLabel("自动检查更新")?.checked).toBe(true);
+    expect(autoDownload?.checked).toBe(true);
+    (autoDownload?.onCheckedChange as ((checked: boolean) => void) | undefined)?.(false);
+    expect(onDesktopUpdatePreferencesChange).toHaveBeenCalledWith({ autoDownload: false });
   });
 
   it("ModelIO 读取关闭值并通过标准设置开关提交", async () => {

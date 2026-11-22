@@ -1,7 +1,12 @@
 import { app, BrowserWindow, Notification } from "electron";
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron";
-import type { TaskNotificationPayload } from "@zcode/shared";
-import { formatZodError, PlatformChannels, taskNotificationPayloadSchema } from "@zcode/shared";
+import type { TaskNotificationPayload, TaskNotificationSoundCue } from "@zcode/shared";
+import {
+  formatZodError,
+  PlatformChannels,
+  taskNotificationPayloadSchema,
+  taskNotificationSoundCategory,
+} from "@zcode/shared";
 
 const TASK_NOTIFICATION_DEDUPE_WINDOW_MS = 3000;
 const MAX_ACTIVE_TASK_NOTIFICATIONS = 100;
@@ -105,10 +110,6 @@ export function dispatchTaskNotification(options: {
     return false;
   }
 
-  if (isAnyAppWindowFocused()) {
-    return false;
-  }
-
   const { taskId, status, requestId, title, body } = result.data;
   const notificationTitle = title.trim();
   const notificationBody = body.trim();
@@ -125,6 +126,18 @@ export function dispatchTaskNotification(options: {
   }
 
   if (shouldSuppressDuplicateTaskNotification(taskId, status, requestId)) {
+    return false;
+  }
+
+  // 1.5.0：提示音偏好（类别音色、前台是否也响）属于 renderer 设置投影，Main 不读偏好；
+  // 这里只判定是否弹系统通知（仍仅在应用不在前台时），并把提示音意图交给发起窗口的播放器。
+  // spec：docs/desktop/task-notification-sounds.md
+  const soundCue: TaskNotificationSoundCue = {
+    category: taskNotificationSoundCategory(status),
+    appFocused: isAnyAppWindowFocused(),
+  };
+  if (soundCue.appFocused) {
+    options.event.sender.send(PlatformChannels.TaskNotificationSound, soundCue);
     return false;
   }
 
@@ -162,6 +175,6 @@ export function dispatchTaskNotification(options: {
   });
 
   notification.show();
-  options.event.sender.send(PlatformChannels.TaskNotificationSound);
+  options.event.sender.send(PlatformChannels.TaskNotificationSound, soundCue);
   return true;
 }

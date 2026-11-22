@@ -62,7 +62,10 @@ import {
   InternalChannels,
 } from "@zcode/shared";
 import { logger } from "./logger.js";
-import { installGithubDesktopUpdates } from "./github-update/index.js";
+import {
+  installGithubDesktopUpdates,
+  type GithubDesktopUpdatesHandle,
+} from "./github-update/index.js";
 import { markMainLaunchAppReady } from "./desktopLaunchMarks.js";
 import { createCuaPipFocusRouter, resolveCuaPipWindowKey } from "./cuaPipFocusRouter.js";
 import { BroadcastHub } from "./broadcastHub.js";
@@ -692,8 +695,23 @@ function syncCloseToTrayOnWindows(value: unknown) {
   logger.info(`[settings] closeToTrayOnWindows=${value}`);
 }
 
+// GitHub 桌面更新 owner 的 Main 句柄；whenReady 后创建，退出屏障与设置同步经此访问。
+let githubDesktopUpdates: GithubDesktopUpdatesHandle | null = null;
+
 function syncImmediateAppSettings(patch: ReturnType<typeof appSettingsPatchSchema.parse>) {
   syncCloseToTrayOnWindows(patch.closeToTrayOnWindows);
+
+  if (patch.desktopUpdateAutoCheck !== undefined || patch.desktopUpdateAutoDownload !== undefined) {
+    // 设置页“自动检查/自动下载更新”即时生效；spec：docs/desktop/github-desktop-update-spec.md
+    githubDesktopUpdates?.setPreferences({
+      ...(patch.desktopUpdateAutoCheck !== undefined
+        ? { autoCheck: patch.desktopUpdateAutoCheck }
+        : {}),
+      ...(patch.desktopUpdateAutoDownload !== undefined
+        ? { autoDownload: patch.desktopUpdateAutoDownload }
+        : {}),
+    });
+  }
 
   if (typeof patch.keepAwakeWhileRunning === "boolean") {
     keepAwakeWhileRunning = patch.keepAwakeWhileRunning;
@@ -711,7 +729,10 @@ function syncImmediateAppSettings(patch: ReturnType<typeof appSettingsPatchSchem
     patch.shortcutBindings !== undefined ||
     patch.defaultSessionEngine !== undefined ||
     patch.externalEngineConfigPreferences !== undefined ||
-    patch.dismissedDesktopUpdateVersion !== undefined
+    patch.dismissedDesktopUpdateVersion !== undefined ||
+    patch.taskNotificationPreferences !== undefined ||
+    patch.desktopUpdateAutoCheck !== undefined ||
+    patch.desktopUpdateAutoDownload !== undefined
   ) {
     // 本机偏好落盘后统一通知窗口；远端工作区也不能把设备偏好写进远端设置。
     for (const win of getApplicationWindowsExcludingCuaIndicator()) {
@@ -768,6 +789,15 @@ async function prepareAppQuit(reason: string, kind: AppShutdownKind = "normal"):
     // remote session、attachment 和 transport 都由窗口 Host 持有；这里先清理
     // Main 的请求关联，再由下方每窗口唯一 Host 的 shutdown barrier 释放真实连接与 Agent。
     remoteSessionManager.disposeAllAndWaitForAppShutdown(reason),
+    // 1.5.0：用户正常退出且有已校验的更新时，在同一屏障内交接静默安装（内部 ≤60s，失败照常退出）。
+    // 重启菜单与“重启以更新”不走这里，避免与新进程或已交接的安装冲突。
+    ...(reason === "app-before-quit" && githubDesktopUpdates
+      ? [
+          githubDesktopUpdates.installOnQuit().then((handedOff) => {
+            if (handedOff) logger.info("[app-quit] github update installer handed off on quit");
+          }),
+        ]
+      : []),
     ...hostProcesses.map((child, index) =>
       disposeHostProcessAndWait(
         child,
@@ -1251,14 +1281,25 @@ app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
 
 app.whenReady().then(async () => {
   markMainLaunchAppReady();
-  const disposeGithubUpdates = installGithubDesktopUpdates({
+  const githubUpdates = installGithubDesktopUpdates({
     confirmInstall: () => !shouldConfirmAppQuit() || confirmAppQuit(),
     quitForInstall: async () => {
       await prepareAppQuit("github-update-install", "update-install");
       app.quit();
     },
+    readPreferences: async () => {
+      const settings = await mainSettingService.get();
+      return {
+        autoCheck: settings.desktopUpdateAutoCheck !== false,
+        autoDownload: settings.desktopUpdateAutoDownload !== false,
+      };
+    },
   });
-  app.once("will-quit", disposeGithubUpdates);
+  githubDesktopUpdates = githubUpdates;
+  app.once("will-quit", () => {
+    githubDesktopUpdates = null;
+    githubUpdates.dispose();
+  });
   installLocalMediaPreviewProtocol(session.defaultSession.protocol, {
     isPathAuthorized: localMediaPreviewPathRegistry.isAuthorized,
   });

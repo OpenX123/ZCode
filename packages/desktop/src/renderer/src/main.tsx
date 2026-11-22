@@ -25,6 +25,7 @@ import {
   LAUNCH_MARKS_QUERY_KEY,
   type LaunchMarks,
   DEFAULT_LOCALE,
+  parseTaskNotificationSoundCue,
 } from "@zcode/shared";
 import type { Locale } from "@zcode/shared";
 import type { IServiceAccessor } from "@zcode/services";
@@ -270,8 +271,9 @@ function handleServicePortMessage(event: MessageEvent): void {
     return;
   }
 
-  if (event.data === InternalChannels.TaskNotificationSound) {
-    void playTaskNotificationSound();
+  if (event.source === window && event.data?.type === InternalChannels.TaskNotificationSound) {
+    const cue = parseTaskNotificationSoundCue(event.data.cue);
+    if (cue) void playTaskNotificationSound(cue);
     return;
   }
 

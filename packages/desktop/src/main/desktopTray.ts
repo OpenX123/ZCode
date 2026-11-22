@@ -10,7 +10,7 @@ import {
 } from "@zcode/shared";
 import {
   blendBadgeIntoBitmap,
-  renderAntialiasedStatusDotPixels,
+  renderTrayCountBadgePixels,
   resolveBadgeOverlayLabel,
 } from "./unreadBadge.js";
 
@@ -19,7 +19,7 @@ let rebuildDesktopTrayContextMenu: (() => void) | null = null;
 let trayLogger: { warn: (...args: unknown[]) => void } | null = null;
 
 // 托盘图在 Windows 通知区域实际显示约 16px。为避免把普通 32px 合成图交给 Shell
-// 盲缩导致红点发糊，分别合成原生 1x(16px) 与 2x(32px) 表示；红点尺寸独立于任务栏。
+// 盲缩导致数字发糊，分别合成原生 1x(16px) 与 2x(32px) 表示；数字与任务栏 overlay 一致。
 // spec 见 docs/desktop/windows-taskbar-unread-badge.md
 const TRAY_LOGICAL_SIZE = 16;
 
@@ -158,20 +158,15 @@ function composeTrayBadgeRepresentation(
   }
 
   const canvas = new Uint8Array(bitmap);
-  // 托盘保持约 8px 逻辑直径，右上角完整圆；4× 超采样后按原生尺寸合成。
-  const dotSize = 5 * scale;
-  const badge = renderAntialiasedStatusDotPixels({
-    size: dotSize,
-    centerX: 2.75 * scale,
-    centerY: 2.25 * scale,
-    radius: 1.875 * scale,
-  });
+  // 1.5.0：右上角贴与任务栏同一计数的数字徽章（9px/18px 高，9+ 为胶囊）。
+  const badge = renderTrayCountBadgePixels(label, scale);
   blendBadgeIntoBitmap({
     base: canvas,
     size,
-    badge,
-    badgeSize: dotSize,
-    originX: size - dotSize,
+    badge: badge.pixels,
+    badgeWidth: badge.width,
+    badgeHeight: badge.height,
+    originX: size - badge.width,
     originY: 0,
   });
   return Buffer.from(canvas);

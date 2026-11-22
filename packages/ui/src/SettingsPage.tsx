@@ -102,6 +102,13 @@ import { useOptionalRemoteWorkspaceController } from "@/remote/useRemoteWorkspac
 import { AppearanceSectionContent } from "./settingsCodePreview.js";
 import type { SettingsSectionId } from "@/lib/settingsNavigation.js";
 import { requestPluginStoreOpen } from "@/lib/pluginStoreNavigation.js";
+import { useTaskNotificationPreferences } from "@/hooks/task-notifications/index.js";
+import type { TaskNotificationPreferencesPatch } from "@/task-notifications/index.js";
+import {
+  desktopUpdatePreferencesPatch,
+  resolveDesktopUpdatePreferences,
+  type DesktopUpdatePreferences,
+} from "@/desktop-updates/index.js";
 
 function SettingsSidebarButton({
   icon: Icon,
@@ -257,10 +264,8 @@ export function SettingsPage({
   const setCodePreviewSettings = useZCodeStore((state) => state.setCodePreviewSettings);
   const uiFontSizePx = useZCodeStore((state) => state.uiFontSizePx);
   const setUiFontSizePx = useZCodeStore((state) => state.setUiFontSizePx);
-  const notificationEnabled = useZCodeStore((state) => state.notificationEnabled);
-  const setNotificationEnabled = useZCodeStore((state) => state.setNotificationEnabled);
-  const notificationSoundEnabled = useZCodeStore((state) => state.notificationSoundEnabled);
-  const setNotificationSoundEnabled = useZCodeStore((state) => state.setNotificationSoundEnabled);
+  const { preferences: notificationPreferences, update: updateNotificationPreferences } =
+    useTaskNotificationPreferences();
   const [initialModelProviderTarget] = useState(() => consumePendingSettingsModelProviderTarget());
   const [pendingModelProviderTarget, setPendingModelProviderTarget] = useState<
     SettingsModelProviderTarget | undefined
@@ -635,6 +640,26 @@ export function SettingsPage({
       setCloseToTrayOnWindows(enabled);
     },
     [localHostServices.settingService, platform],
+  );
+  // 任务通知偏好：乐观更新投影后写本机设置，失败回滚并提示（spec：docs/desktop/task-notification-sounds.md）。
+  const handleNotificationPreferencesChange = useCallback(
+    (patch: TaskNotificationPreferencesPatch) => {
+      void updateNotificationPreferences(patch).catch(() => {
+        toast(intl.formatMessage({ id: "settings.notificationSounds.saveFailed" }), {
+          variant: "warning",
+        });
+      });
+    },
+    [updateNotificationPreferences, intl],
+  );
+  // 更新偏好：写本机设置，useSettings.update 经 syncAppSettings 通知 Main 更新 owner 即时生效。
+  const handleDesktopUpdatePreferencesChange = useCallback(
+    (patch: Partial<DesktopUpdatePreferences>) => {
+      void updateSharedSettings(desktopUpdatePreferencesPatch(patch)).catch(() => {
+        toast(intl.formatMessage({ id: "settings.updates.saveFailed" }), { variant: "warning" });
+      });
+    },
+    [updateSharedSettings, intl],
   );
   // keep-awake：走 useSettings 统一写盘 + syncAppSettings，和 Automations/创建页入口共享同一状态源。
   const handleKeepAwakeWhileRunningChange = useCallback(
@@ -1029,8 +1054,16 @@ export function SettingsPage({
                               isLinuxDesktop={isLinuxDesktop}
                               linuxCloseToTray={linuxCloseToTray}
                               platform={platform}
-                              notificationEnabled={notificationEnabled}
-                              notificationSoundEnabled={notificationSoundEnabled}
+                              notificationPreferences={notificationPreferences}
+                              onNotificationPreferencesChange={handleNotificationPreferencesChange}
+                              {...(platform.checkForUpdates
+                                ? {
+                                    desktopUpdatePreferences:
+                                      resolveDesktopUpdatePreferences(sharedSettings),
+                                    onDesktopUpdatePreferencesChange:
+                                      handleDesktopUpdatePreferencesChange,
+                                  }
+                                : {})}
                               closeToTrayOnWindows={closeToTrayOnWindows}
                               keepAwakeWhileRunning={sharedSettings?.keepAwakeWhileRunning ?? false}
                               desktopChromiumHardwareAccelerationEnabled={
@@ -1050,10 +1083,6 @@ export function SettingsPage({
                               defaultHomeDir={defaultHomeDir}
                               showIntegratedTerminalShell={hostPlatform === "win32"}
                               setLocalePreference={handleLocaleChange}
-                              setNotificationEnabled={(enabled) => setNotificationEnabled(enabled)}
-                              setNotificationSoundEnabled={(enabled) =>
-                                setNotificationSoundEnabled(enabled)
-                              }
                               messageStreamShowReasoning={messageStreamShowReasoning}
                               messageStreamShowTodos={messageStreamShowTodos}
                               toolGroupingExploreEnabled={toolGroupingExploreEnabled}

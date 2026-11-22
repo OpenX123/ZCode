@@ -47,6 +47,7 @@ async function fixture(
     cacheDir,
     fetch,
     openInstaller,
+    preferences: { autoDownload: false },
     ...overrides,
   });
   cleanups.push(async () => {
@@ -79,7 +80,8 @@ describe("更新清单失联回归", () => {
       kind: "ready",
       version: "1.0.1",
     });
-    expect(openInstaller).toHaveBeenCalledTimes(1);
+    // 1.5.0：下载只到“重启以更新”，不打开安装器。
+    expect(openInstaller).not.toHaveBeenCalled();
   });
 });
 
@@ -98,7 +100,8 @@ describe("发布目标收敛", () => {
     await updater.downloadUpdate();
     const selected = release.assets.find((asset) => asset.platform === target.platform)!;
     expect(fetch).toHaveBeenLastCalledWith(selected.url, expect.anything());
-    expect(openInstaller).toHaveBeenCalledTimes(1);
+    expect(openInstaller).not.toHaveBeenCalled();
+    expect(updater.getState().kind).toBe("update-downloaded");
   });
 
   it.each([1, 3])("拒绝不完整的 %s 目标清单", async (count) => {

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { resolveWorkspaceKey, type GitChangeSourceId, type WorkspacePurpose } from "@zcode/shared";
 import { useZCodeStore } from "@/store/StoreProvider.js";
+import { useTaskNotificationPreferencesSnapshot } from "@/lib/taskNotificationPreferences.js";
+import { TaskNotificationPreferencesBridge } from "@/task-notifications/index.js";
 import { getVisibleTaskMetas, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useTaskQueryCacheStore } from "@/store/taskQueryCacheStore.js";
 import { useAppPanels } from "@/hooks/useAppPanels.js";
@@ -263,7 +265,7 @@ export function App({
     }),
   });
   const workspaceKey = workspaceIdentity?.trim() || workspaceAbsPath;
-  const notificationEnabled = useZCodeStore((s) => s.notificationEnabled);
+  const notificationEnabled = useTaskNotificationPreferencesSnapshot().enabled;
   useWorkspaceTerminalTaskNotifications({
     workspacePath: workspaceAbsPath,
     ...(workspaceIdentity ? { workspaceIdentity } : {}),
@@ -1022,6 +1024,8 @@ export function App({
   );
   return (
     <>
+      {/* 任务通知偏好：本机设置 → renderer 投影的唯一同步路径（含旧 localStorage 迁移）。 */}
+      <TaskNotificationPreferencesBridge />
       <CommandCenterDialog
         open={isQuickPickOpen}
         commands={quickPickCommands}

@@ -2291,13 +2291,14 @@ const enUS: Record<string, string> = {
   // Update ready button
   "desktopUpdate.check": "Check for Updates",
   "desktopUpdate.available": "Update to v{version}",
-  "desktopUpdate.ready": "Install v{version}",
+  "desktopUpdate.ready": "Restart to update to v{version}",
   "desktopUpdate.retry": "Update failed. Retry",
   "desktopUpdate.downloading": "Downloading {progress}%",
   "desktopUpdate.downloadHint.mac":
-    "Download, verify, and install the update; macOS restarts automatically",
-  "desktopUpdate.downloadHint.windows": "Download and verify, then open the installer",
-  "desktopUpdate.readyHint": "Installer ready. Click to install the update",
+    "Download and verify, then restart now or install automatically when you quit",
+  "desktopUpdate.downloadHint.windows":
+    "Download and verify, then restart now or install automatically when you quit",
+  "desktopUpdate.readyHint": "Update ready. It installs automatically when you quit ZCode",
   "desktopUpdate.manualDownload": "Download v{version}",
   "desktopUpdate.manualDownloadHint":
     "Download this platform's build manually from the Release page",
@@ -3282,10 +3283,30 @@ const enUS: Record<string, string> = {
     "Chrome hardware acceleration setting saved. Restart the app to take effect.",
   "settings.notification": "Task notifications",
   "settings.notificationDescription":
-    "Send desktop notifications when a task completes, fails, or needs approval.",
-  "settings.notificationSound": "Notification sound",
-  "settings.notificationSoundDescription":
-    "When notifications are enabled, you can mute the task notification sound separately.",
+    "Send desktop notifications, sounds, and taskbar badges when a task completes, fails, or needs approval.",
+  "settings.notificationSounds.completed": "Task completed sound",
+  "settings.notificationSounds.completedDescription": "Plays when a task finishes running.",
+  "settings.notificationSounds.attention": "Needs your action sound",
+  "settings.notificationSounds.attentionDescription":
+    "Plays when a task waits for approval, asks a question, or fails.",
+  "settings.notificationSounds.option.pop": "Default",
+  "settings.notificationSounds.option.crisp": "Crisp",
+  "settings.notificationSounds.option.soft": "Soft",
+  "settings.notificationSounds.option.woodblock": "Woodblock",
+  "settings.notificationSounds.option.droplet": "Droplet",
+  "settings.notificationSounds.option.chime": "Two-tone",
+  "settings.notificationSounds.option.mute": "Mute",
+  "settings.notificationSounds.preview": "Preview {label}",
+  "settings.notificationSounds.playWhenFocused": "Play when window is focused",
+  "settings.notificationSounds.playWhenFocusedDescription":
+    "By default, sounds only play when ZCode is in the background.",
+  "settings.notificationSounds.saveFailed": "Couldn't save notification settings. Try again.",
+  "settings.updates.autoCheck": "Check for updates automatically",
+  "settings.updates.autoCheckDescription": "Checks for a new version at launch and every 6 hours.",
+  "settings.updates.autoDownload": "Download updates automatically",
+  "settings.updates.autoDownloadDescription":
+    "Downloads and verifies new versions in the background, then installs them when you quit.",
+  "settings.updates.saveFailed": "Couldn't save update settings. Try again.",
   "notification.taskWithTitle": "Task: {title}",
   "notification.taskWaiting": "Task waiting for your confirmation",
   "notification.completed": "Task completed",
