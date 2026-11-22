@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { longRunningToolExample, stalledWaitingModelExample } from "./contract.example.js";
-import { resolveConversationStallState } from "./model.js";
+import { resolveConversationStallState, resolveRunningToolActivity } from "./model.js";
 
 describe("turn-stall 合同", () => {
   it("等待模型超过 5 分钟升级为警告", () => {
@@ -11,11 +11,14 @@ describe("turn-stall 合同", () => {
     });
   });
 
-  it("长时间运行的工具不视为无响应", () => {
-    expect(resolveConversationStallState(longRunningToolExample)).toEqual({
-      kind: "tool",
-      toolName: "Bash",
-      elapsedMinutes: 10,
+  it("长时间运行的工具不视为无响应，也不出独立提示条", () => {
+    expect(resolveConversationStallState(longRunningToolExample)).toEqual({ kind: "none" });
+  });
+
+  it("运行中工具派生为工具行耗时的来源", () => {
+    expect(resolveRunningToolActivity(longRunningToolExample)).toEqual({
+      toolCallId: "call-1",
+      phaseStartedAt: longRunningToolExample.turnActivity.phaseStartedAt,
     });
   });
 });

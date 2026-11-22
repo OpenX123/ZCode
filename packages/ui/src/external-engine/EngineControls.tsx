@@ -13,10 +13,9 @@ import { TaskClientLogo } from "./TaskClientLogo.js";
 import { DiagnosticsCard } from "@/components/ai-elements/error-diagnostics.js";
 import { EngineConfigMenu, EngineModelPopover } from "./EngineConfigPicker.js";
 import {
-  ENGINE_DEFAULT_ALIAS,
   engineEffortCurrentLabel,
   engineEffortCurrentShortLabel,
-  engineModelCurrentLabel,
+  engineModelTriggerLabel,
 } from "./engineOptionDisplay.js";
 
 const MODEL_POPOVER_PICKER = "model-popover";
@@ -124,29 +123,33 @@ export function EngineControls({
     </details>
   ) : null;
 
-  const modelLabel = model ? engineModelCurrentLabel(intl, model) : undefined;
+  const modelLabel = model ? engineModelTriggerLabel(intl, model) : undefined;
   const effortLabel = effort ? engineEffortCurrentLabel(intl, effort) : undefined;
   // 1.5.0 B2：入口按钮只放档位缩写（≤5 个字母），全称留给弹层与无障碍名称。
   const effortShortLabel = effort ? engineEffortCurrentShortLabel(intl, effort) : undefined;
-  // W1：模型为 adapter 的 `default` 别名时入口只显示档位，否则「模型 档位」（1.5.0 起无 `·`）。
+  // Bug 修复（1.5.1）：1.5.0 的 W1 规则在模型为 adapter `default` 别名时入口只显示档位（如 `Med`），
+  // Claude 新会话默认就是 `default`，用户在入口上看不到当前模型。现在始终「模型 档位」：
+  // `default` 用 description 解析出的真实名（`Opus 5.5 Med`），解析不出时模型段为 `Auto`，
+  // 可访问名称/悬停读「默认模型」（docs/desktop/external-agent-engines-spec.md「右下角入口」）。
   const triggerLabel =
     model && modelLabel
       ? effortShortLabel
-        ? model.currentValue === ENGINE_DEFAULT_ALIAS
-          ? { text: effortShortLabel }
-          : { modelPart: modelLabel, effortPart: effortShortLabel }
-        : { text: modelLabel }
+        ? { modelPart: modelLabel.text, effortPart: effortShortLabel }
+        : { text: modelLabel.text }
       : effort
         ? { text: effortShortLabel ?? effort.name }
         : fast || more.length
           ? { text: intl.formatMessage({ id: "engine.moreOptions" }) }
           : { text: ENGINE_LABELS[engine] };
-  // 可访问名称读全称：缩写（XHigh/Med）对读屏不友好。
-  const triggerText = triggerLabel.modelPart
-    ? `${triggerLabel.modelPart} ${effortLabel ?? triggerLabel.effortPart}`
-    : triggerLabel.text === effortShortLabel && effortLabel
-      ? effortLabel
-      : (triggerLabel.text ?? "");
+  // 可访问名称读全称：缩写（XHigh/Med/Auto）对读屏不友好。
+  const triggerText =
+    model && modelLabel
+      ? effortShortLabel
+        ? `${modelLabel.accessibleText} ${effortLabel ?? effortShortLabel}`
+        : modelLabel.accessibleText
+      : triggerLabel.text === effortShortLabel && effortLabel
+        ? effortLabel
+        : (triggerLabel.text ?? "");
   const hasInteractiveConfig =
     (effort?.options.length ?? 0) > 0 ||
     (model?.options.length ?? 0) > 0 ||

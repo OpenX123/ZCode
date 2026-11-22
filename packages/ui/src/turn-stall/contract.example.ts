@@ -25,7 +25,7 @@ export const stalledWaitingModelExample = {
   nowMs: T0 + 6 * 60_000,
 } satisfies ConversationStallInput;
 
-/** 工具执行 10 分钟：不视为无响应，只显示工具耗时。 */
+/** 工具执行 10 分钟：不视为无响应，不出提示条（耗时由工具行显示）。 */
 export const longRunningToolExample = {
   turnActivity: runningToolActivity,
   running: true,

@@ -105,10 +105,18 @@ export function ExecuteGroupToolCallBlock(context: ToolCallBlockRenderContext) {
     ],
   );
 
+  // 运行中耗时按子工具 id 命中（docs/chat/turn-stall-indicator.md「工具行耗时」）；
+  // 没有子工具（单个工具复用本渲染器）时缺省为自身 toolId。
+  const activityToolCallIds = useMemo(
+    () =>
+      childToolCalls.length > 0 ? childToolCalls.map((child) => child.toolCall.toolId) : undefined,
+    [childToolCalls],
+  );
   // 只在 Execute 阶段运行时滚动新增 command；阶段结束必须立即清空旧队列并显示最终统计。
   return (
     <ToolLayout
       toolId={toolCall.toolId}
+      activityToolCallIds={activityToolCallIds}
       icon={EXECUTE_GROUP_ICON}
       canToggle={!isOfficeMode && (context.canToggle ?? true)}
       forceOpen={!isOfficeMode && (context.forceOpen ?? false)}
