@@ -553,9 +553,14 @@ it("default 模型入口只显示档位；弹层显示解析出的真实模型�
   expect(document.body.textContent).not.toContain("Default (recommended)");
 });
 
-it("具体模型入口显示「模型 · 档位」；无法解析 default 描述时显示默认模型", () => {
+it("具体模型入口显示「模型 档位缩写」（无 ·）；无法解析 default 描述时显示默认模型", () => {
   const view = render(claudeTree([{ ...claudeModel, currentValue: "sonnet" }, claudeEffort]));
-  expect(screen.getByTestId("engine-config-model-effort").textContent).toBe("Sonnet · High");
+  const trigger = screen.getByTestId("engine-config-model-effort");
+  expect(trigger.textContent).toBe("SonnetHigh");
+  expect(trigger.textContent).not.toContain("·");
+  expect(screen.getByTestId("engine-trigger-model").textContent).toBe("Sonnet");
+  expect(screen.getByTestId("engine-trigger-effort").textContent).toBe("High");
+  expect(trigger.getAttribute("aria-label")).toBe("Sonnet High");
   view.rerender(
     claudeTree([
       {
@@ -587,6 +592,72 @@ it("具体模型入口显示「模型 · 档位」；无法解析 default 描述
   );
   expect(screen.getByTestId("engine-config-model-effort").textContent).toBe("默认模型");
   expect(document.body.textContent).not.toContain("Default (recommended)");
+});
+
+it("1.5.0：模型名去掉 Claude 前缀、入口档位用缩写，弹层与读屏仍用全称并附说明", () => {
+  const model: EngineConfigOption = {
+    id: "model",
+    name: "Model",
+    currentValue: "opus",
+    options: [
+      { value: "default", name: "Default (recommended)", description: "Claude Sonnet 4.6" },
+      { value: "opus", name: "Claude Opus 4.7" },
+    ],
+  };
+  const onChange = vi.fn();
+  render(claudeTree([model, { ...claudeEffort, currentValue: "xhigh" }], onChange));
+  const trigger = screen.getByTestId("engine-config-model-effort");
+  expect(screen.getByTestId("engine-trigger-model").textContent).toBe("Opus 4.7");
+  expect(screen.getByTestId("engine-trigger-effort").textContent).toBe("XHigh");
+  expect(trigger.textContent).not.toContain("Claude");
+  expect(trigger.getAttribute("aria-label")).toBe("Opus 4.7 Extra high");
+  fireEvent.click(trigger);
+  expect(screen.getByTestId("engine-effort-value").textContent).toBe("Extra high");
+  expect(screen.getByTestId("engine-effort-hint").textContent).toBe(
+    "深入思考，适合困难问题，耗时更长",
+  );
+  fireEvent.keyDown(screen.getByTestId("engine-config-model"), { key: "ArrowDown" });
+  const items = screen.getAllByRole("menuitemradio").map((item) => item.textContent);
+  expect(items[0]).toContain("Sonnet 4.6");
+  expect(items[1]).toBe("Opus 4.7");
+  expect(items.join("")).not.toContain("Claude");
+});
+
+it("1.5.0：Codex 模型名原样显示，Medium 缩写为 Med，default 档位缩写为 Auto", () => {
+  const codexModel: EngineConfigOption = {
+    id: "model",
+    name: "Model",
+    currentValue: "gpt-5.5",
+    options: [{ value: "gpt-5.5", name: "GPT-5.5" }],
+  };
+  const reasoning: EngineConfigOption = {
+    id: "reasoning_effort",
+    name: "Reasoning effort",
+    currentValue: "medium",
+    options: [
+      { value: "low", name: "Low" },
+      { value: "medium", name: "Medium", description: "Balanced reasoning from adapter" },
+    ],
+  };
+  const view = render(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "en-US",
+      children: createElement(EngineControls, {
+        engine: "codex",
+        options: [codexModel, reasoning],
+        onConfigChange: vi.fn(),
+      }),
+    }),
+  );
+  expect(screen.getByTestId("engine-trigger-model").textContent).toBe("GPT-5.5");
+  expect(screen.getByTestId("engine-trigger-effort").textContent).toBe("Med");
+  fireEvent.click(screen.getByTestId("engine-config-model-effort"));
+  expect(screen.getByTestId("engine-effort-hint").textContent).toBe(
+    "Balanced reasoning from adapter",
+  );
+  view.unmount();
+  render(claudeTree([claudeModel, { ...claudeEffort, currentValue: "default" }]));
+  expect(screen.getByTestId("engine-config-model-effort").textContent).toBe("Auto");
 });
 
 it("Codex fast-mode 只渲染为弹层左上角闪电开关，点亮表示开启并回传原始 on/off", () => {

@@ -189,7 +189,11 @@ function TurnFailureTail({
     <TurnFailureRow
       kind="failure"
       summary={summary}
+      // 摘要已按稳定错误码本地化时保留该文案，不再用常见错误归类覆盖。
+      explain={summary === failure.summary}
       fields={{
+        code: failure.code,
+        source: failure.source,
         message: failure.message,
         httpStatus: failure.httpStatus,
         url: failure.url,

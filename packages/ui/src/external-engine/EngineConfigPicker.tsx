@@ -28,6 +28,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   engineEffortCurrentLabel,
+  engineEffortEntryHint,
   engineEffortEntryLabel,
   engineModelEntryLabel,
   engineVisibleEffortEntries,
@@ -231,6 +232,15 @@ export function EngineModelPopover({
       ? engineEffortEntryLabel(intl, previewEntry)
       : (engineEffortCurrentLabel(intl, effort) ?? effort.name)
     : undefined;
+  // 弹层内（展开态）显示全称 + 一行说明；入口按钮只用缩写。
+  const effortHint = previewEntry
+    ? engineEffortEntryHint(intl, previewEntry)
+    : effort
+      ? (() => {
+          const entry = effort.options.find((candidate) => candidate.value === effort.currentValue);
+          return entry ? engineEffortEntryHint(intl, entry) : undefined;
+        })()
+      : undefined;
   const progress = levels.length > 1 ? Math.max(0, index) / (levels.length - 1) : 0;
   const sliderDisabled = configDisabled || levels.length < 2;
   const commit = (nextIndex: number) => {
@@ -339,12 +349,19 @@ export function EngineModelPopover({
           <BrainIcon className="hidden size-4 group-data-[composer-compact=true]/engine-option:block" />
           {triggerLabel.modelPart ? (
             <>
-              <span className="min-w-0 truncate group-data-[composer-compact=true]/engine-option:hidden">
+              {/* 1.5.0 B2：「Opus 4.7 XHigh」两段只靠按钮自身的 gap-1 分隔，不再插入 `·`。 */}
+              <span
+                className="min-w-0 truncate group-data-[composer-compact=true]/engine-option:hidden"
+                data-testid="engine-trigger-model"
+              >
                 {triggerLabel.modelPart}
               </span>
               {triggerLabel.effortPart ? (
-                <span className="shrink-0 group-data-[composer-compact=true]/engine-option:hidden">
-                  {` · ${triggerLabel.effortPart}`}
+                <span
+                  className="shrink-0 text-foreground-subtle group-data-[composer-compact=true]/engine-option:hidden"
+                  data-testid="engine-trigger-effort"
+                >
+                  {triggerLabel.effortPart}
                 </span>
               ) : null}
             </>
@@ -442,6 +459,14 @@ export function EngineModelPopover({
               }}
             />
           </div>
+        ) : null}
+        {effort && effortHint ? (
+          <p
+            className="mx-1 line-clamp-2 text-ui-xs text-foreground-subtle"
+            data-testid="engine-effort-hint"
+          >
+            {effortHint}
+          </p>
         ) : null}
         {moreControls}
       </PopoverContent>

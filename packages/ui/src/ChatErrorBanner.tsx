@@ -16,7 +16,7 @@ import {
   TID_CHAT_ERROR_BANNER,
   TID_CHAT_ERROR_HOOK_ICON,
 } from "@zcode/shared/test-ids";
-import { AnchorIcon, CopyIcon, InfoIcon, SettingsIcon, X } from "lucide-react";
+import { AnchorIcon, CircleAlertIcon, CopyIcon, SettingsIcon, X } from "lucide-react";
 import { useZCodeIntl } from "./i18n/IntlProvider.js";
 import type { IntlInstance } from "./i18n/IntlProvider.js";
 import { Button } from "./components/ui/button.js";
@@ -30,6 +30,11 @@ import {
 import { cn } from "./components/lib/utils.js";
 import { toast } from "./components/ui/toast.js";
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
+import {
+  classifyErrorExplanation,
+  errorExplanationHintId,
+  errorExplanationTitleId,
+} from "@/components/ai-elements/error-explanations.js";
 
 const HISTORICAL_MODEL_UNAVAILABLE_MESSAGES = [
   "历史任务使用的模型已不可用",
@@ -166,16 +171,27 @@ export function ChatErrorBanner({
 }) {
   const { intl } = useZCodeIntl();
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
-  const actionButtonClassName = "shrink-0";
-  const iconButtonClassName = "shrink-0";
-  const localizedErrorMessage = resolveChatErrorBannerDisplayMessage(
-    error,
-    intl,
-    modelConfigTarget,
-  );
+  // 1.5.0 B1：与行内错误行同一套低饱和外观，操作为次要 ghost 按钮。
+  const actionButtonClassName = "h-7 shrink-0 px-2 text-ui-sm text-foreground-subtle";
+  const iconButtonClassName = "size-7 shrink-0 text-foreground-subtle";
+  const resolvedErrorMessage = resolveChatErrorBannerDisplayMessage(error, intl, modelConfigTarget);
   const remoteConnectionFailure = Boolean(getRemoteConnectionFailureCode(error));
   const modelConfigMissing = isModelConfigMissingError(error);
   const hookBlocked = error.code === "fault.runtime.hookBlocked";
+  // 未被稳定错误码本地化的原文才套用常见错误归类（401/429/超时/网络等），原文保留在详情与复制内容中。
+  const explanation =
+    resolvedErrorMessage === error.message && !hookBlocked && !remoteConnectionFailure
+      ? classifyErrorExplanation({ code: error.code, message: error.message })
+      : undefined;
+  const localizedErrorMessage = explanation
+    ? intl.formatMessage({ id: errorExplanationTitleId(explanation) })
+    : resolvedErrorMessage;
+  const explanationHint = explanation
+    ? intl.formatMessage({ id: errorExplanationHintId(explanation) })
+    : undefined;
+  const detailText = explanation
+    ? [error.message, error.detail].filter(Boolean).join("\n\n")
+    : error.detail;
   if (shouldSuppressChatErrorBanner(error)) {
     return null;
   }
@@ -194,7 +210,7 @@ export function ChatErrorBanner({
       await navigator.clipboard.writeText(
         buildErrorCopyText({
           message: localizedErrorMessage,
-          detail: error.detail,
+          detail: detailText,
           traceId: error.traceId,
           formatMessage: (id: string, values?: Record<string, string>) =>
             intl.formatMessage({ id }, values),
@@ -219,8 +235,9 @@ export function ChatErrorBanner({
         data-testid={TID_CHAT_ERROR_BANNER}
         data-error-code={error.code}
         className={cn(
-          "w-full flex flex-wrap items-center gap-2 rounded-xl bg-surface backdrop-blur-md border border-border px-3 py-2",
+          "w-full flex flex-wrap items-center gap-1 rounded-xl bg-surface backdrop-blur-md border border-border py-1 pr-1 pl-3",
         )}
+        data-explanation={explanation}
       >
         <div className="flex min-w-0 flex-1 items-center gap-2 text-ui-base text-foreground">
           {hookBlocked ? (
@@ -230,9 +247,11 @@ export function ChatErrorBanner({
               data-testid={TID_CHAT_ERROR_HOOK_ICON}
             />
           ) : (
-            <InfoIcon aria-hidden="true" className="size-4 shrink-0" />
+            <CircleAlertIcon aria-hidden="true" className="size-4 shrink-0 text-destructive" />
           )}
-          <div className="min-w-0 truncate font-medium">{localizedErrorMessage}</div>
+          <div className="min-w-0 truncate" title={localizedErrorMessage}>
+            {localizedErrorMessage}
+          </div>
         </div>
 
         {modelConfigMissing ? (
@@ -251,11 +270,11 @@ export function ChatErrorBanner({
           </>
         ) : null}
 
-        {!modelConfigMissing && error.detail ? (
+        {!modelConfigMissing && detailText ? (
           <>
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
               className={actionButtonClassName}
               data-testid={TID_CHAT_ERROR_DETAILS_BUTTON}
@@ -272,11 +291,12 @@ export function ChatErrorBanner({
                 <DialogHeader>
                   <DialogTitle className="whitespace-pre-wrap">{localizedErrorMessage}</DialogTitle>
                   <DialogDescription>
-                    {intl.formatMessage({ id: "chat.error.expandDetails" })}
+                    {explanationHint ?? intl.formatMessage({ id: "chat.error.expandDetails" })}
                   </DialogDescription>
                 </DialogHeader>
-                <pre className="max-h-[60vh] overflow-auto rounded-xl border border-border bg-surface px-3 py-2 text-ui-base whitespace-pre-wrap text-foreground-subtle">
-                  {error.detail}
+                {/* 与行内错误诊断卡一致：等宽、灰底、细边框。 */}
+                <pre className="max-h-[60vh] overflow-auto rounded-lg border border-border/60 bg-foreground/[0.04] px-3 py-2 font-mono text-ui-xs whitespace-pre-wrap break-all text-foreground">
+                  {detailText}
                 </pre>
               </DialogContent>
             </Dialog>
@@ -286,7 +306,7 @@ export function ChatErrorBanner({
         {!modelConfigMissing ? (
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={() => {
               void handleCopyError();
@@ -300,12 +320,18 @@ export function ChatErrorBanner({
         ) : null}
 
         {remoteConnectionFailure && onReconnect ? (
-          <Button variant="outline" size="sm" onClick={onReconnect}>
+          <Button variant="ghost" size="sm" className={actionButtonClassName} onClick={onReconnect}>
             {intl.formatMessage({ id: "remote.conversation.reconnect" })}
           </Button>
         ) : null}
         {!remoteConnectionFailure && !modelConfigMissing && onRetry ? (
-          <Button variant="outline" size="sm" onClick={onRetry} disabled={retryDisabled}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={actionButtonClassName}
+            onClick={onRetry}
+            disabled={retryDisabled}
+          >
             {retryLabel ?? intl.formatMessage({ id: "chat.error.retry" })}
           </Button>
         ) : null}
@@ -313,7 +339,7 @@ export function ChatErrorBanner({
         {onDismiss ? (
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="icon-sm"
             onClick={onDismiss}
             className={cn(iconButtonClassName)}

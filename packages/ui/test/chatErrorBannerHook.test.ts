@@ -40,4 +40,20 @@ describe("ChatErrorBanner Hook errors", () => {
     expect(html).toContain("展开详情");
     expect(html).toContain(`data-testid="${TID_CHAT_ERROR_HOOK_ICON}"`);
   });
+
+  it("非轮次错误的未本地化原文按常见错误归类为人话，原文仍可在详情中查看", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(ChatErrorBanner, {
+          error: { code: "SEND_FAILED", message: "fetch failed: ECONNREFUSED 127.0.0.1:443" },
+        }),
+      ),
+    );
+    expect(html).toContain('data-explanation="network"');
+    expect(html).toContain("Network connection lost");
+    // 原文进入详情（Dialog）与复制内容，详情入口因此出现。
+    expect(html).toContain(`data-testid="${TID_CHAT_ERROR_DETAILS_BUTTON}"`);
+  });
 });

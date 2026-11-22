@@ -4,6 +4,7 @@ import {
   getNextThoughtLevelValue,
   getThoughtLevelLabel,
   isNoThoughtLevel,
+  thoughtLevelShortLabel,
 } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import zhCN from "@/i18n/locales/zh-CN.js";
 import enUS from "@/i18n/locales/en-US.js";
@@ -14,16 +15,17 @@ const option: ZCodeConfigOption = {
   type: "select",
   currentValue: "",
 };
+// 第三列：入口按钮缩写（1.5.0 B2，≤5 个字母，中英文一致）。
 const expectedLabels = [
-  [["disabled", "false", "no", "none", "nothink", "no-think", "no_think", "off"], "Off"],
-  [["enable", "enabled", "on", "true"], "On"],
-  [["minimal"], "Minimal"],
-  [["low"], "Low"],
-  [["medium"], "Medium"],
-  [["high"], "High"],
-  [["xhigh", "extra-high", "extra_high"], "Extra high"],
-  [["max"], "Max"],
-  [["ultra"], "Ultra"],
+  [["disabled", "false", "no", "none", "nothink", "no-think", "no_think", "off"], "Off", "Off"],
+  [["enable", "enabled", "on", "true"], "On", "On"],
+  [["minimal"], "Minimal", "Min"],
+  [["low"], "Low", "Low"],
+  [["medium"], "Medium", "Med"],
+  [["high"], "High", "High"],
+  [["xhigh", "extra-high", "extra_high"], "Extra high", "XHigh"],
+  [["max"], "Max", "Max"],
+  [["ultra"], "Ultra", "Ultra"],
 ] as const;
 
 describe.each([
@@ -31,13 +33,18 @@ describe.each([
   ["en-US", enUS],
 ] as const)("思考档位 %s", (_locale, messages) => {
   const intl = { formatMessage: ({ id }: { id: string }) => messages[id] ?? id };
-  for (const [values, label] of expectedLabels) {
+  for (const [values, label, shortLabel] of expectedLabels) {
     it.each(values)("%s 使用约定文案且不改原始值", (value) => {
       const entry = Object.freeze({ value: ` ${value.toUpperCase()} `, name: "原始名称" });
       expect(getThoughtLevelLabel(intl, "glm", option, entry)).toBe(label);
+      expect(thoughtLevelShortLabel(intl, entry.value)).toEqual({ shortLabel });
+      expect(shortLabel.length).toBeLessThanOrEqual(5);
       expect(entry.value).toBe(` ${value.toUpperCase()} `);
     });
   }
+  it("未知档位没有缩写，入口回退全称", () => {
+    expect(thoughtLevelShortLabel(intl, "balanced")).toEqual({});
+  });
   it.each([
     "light",
     "shallow",
