@@ -40,7 +40,7 @@ import {
 } from "react";
 import type { BundledTheme } from "shiki";
 import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown";
-import type { Pluggable, PluggableList } from "unified";
+import type { Pluggable, PluggableList, Plugin } from "unified";
 import { CodeBlock, CodeBlockHeader } from "@/components/ai-elements/code-block.js";
 import { collectClosedMarkdownFences } from "@/components/ai-elements/mermaid-rendering/index.js";
 import {
@@ -427,10 +427,78 @@ function disableSingleTilde(plugin: Pluggable): Pluggable {
   ];
 }
 
-const messageCjkRemarkPluginsAfter = cjk.remarkPluginsAfter.map((plugin) => {
-  const attacher = Array.isArray(plugin) ? plugin[0] : plugin;
-  return attacher === remarkCjkFriendlyGfmStrikethrough ? disableSingleTilde(plugin) : plugin;
-});
+interface AutolinkMarkdownNode {
+  children?: AutolinkMarkdownNode[];
+  type: string;
+  url?: string;
+  value?: string;
+}
+
+const isAutolinkTextNode = (
+  node: AutolinkMarkdownNode | undefined,
+): node is AutolinkMarkdownNode & { value: string } =>
+  node?.type === "text" && typeof node.value === "string";
+
+/** GFM 裸链接字面量：唯一文本子节点就是 URL 本身（www 形式补了 `http://`）。 */
+function autolinkText(node: AutolinkMarkdownNode): string | null {
+  const child = node.children?.length === 1 ? node.children[0] : undefined;
+  if (node.type !== "link" || !isAutolinkTextNode(child) || typeof node.url !== "string") return null;
+  return node.url === child.value || node.url === `http://${child.value}` ? child.value : null;
+}
+
+function fixStrongAutolinks(children: AutolinkMarkdownNode[]): void {
+  for (let i = 0; i < children.length; i++) {
+    const link = children[i]!;
+    const text = autolinkText(link);
+    const cut = text?.indexOf("**") ?? -1;
+    if (text === null || cut <= 0) continue;
+
+    // 把 `**` 及其后的内容移出链接，URL 同步截断。
+    const tail = text.slice(cut);
+    link.children![0]!.value = text.slice(0, cut);
+    link.url = link.url!.slice(0, link.url!.length - tail.length);
+    const next = children[i + 1];
+    if (isAutolinkTextNode(next)) next.value = tail + next.value;
+    else children.splice(i + 1, 0, { type: "text", value: tail });
+
+    // 紧邻的开头 `**` 因结尾被吞进链接而未配对，这里补成 strong。
+    const prev = children[i - 1];
+    const after = children[i + 1] as AutolinkMarkdownNode & { value: string };
+    if (isAutolinkTextNode(prev) && prev.value.endsWith("**")) {
+      prev.value = prev.value.slice(0, -2);
+      after.value = after.value.slice(2);
+      children[i] = { type: "strong", children: [link] };
+    }
+  }
+}
+
+/**
+ * 修复 `**http://x/docs**。`：GFM autolink literal 只剥离结尾的 `*`，后面紧跟
+ * `。`/`，`/`）` 等非空白字符时会把 `**` 连同标点吞进 URL；@streamdown/cjk 的链接
+ * 拆分只在中文标点处截断，`**` 仍留在 href 里，开头的 `**` 也失配成字面量。
+ * 依据：URL 中出现 `**` 几乎只可能来自 Markdown 强调标记，因此在 `**` 处截断链接，
+ * 并在紧邻开头 `**` 时还原 strong。必须排在 cjk 链接拆分之后执行。
+ */
+const autolinkStrongRemarkPlugin: Plugin = function autolinkStrongRemarkPlugin() {
+  return (tree: unknown) => {
+    const visit = (node: AutolinkMarkdownNode): void => {
+      if (!node.children) return;
+      fixStrongAutolinks(node.children);
+      node.children.forEach(visit);
+    };
+    visit(tree as AutolinkMarkdownNode);
+  };
+};
+
+// Streamdown 顺序为 cjk before → app remarkPlugins → cjk after；加粗裸链接修复依赖
+// cjk 的中文标点链接拆分先执行，所以只能挂在 cjk after 末尾。
+const messageCjkRemarkPluginsAfter = [
+  ...cjk.remarkPluginsAfter.map((plugin) => {
+    const attacher = Array.isArray(plugin) ? plugin[0] : plugin;
+    return attacher === remarkCjkFriendlyGfmStrikethrough ? disableSingleTilde(plugin) : plugin;
+  }),
+  autolinkStrongRemarkPlugin,
+];
 const messageCjkPlugin: typeof cjk = {
   ...cjk,
   remarkPlugins: [...cjk.remarkPluginsBefore, ...messageCjkRemarkPluginsAfter],
