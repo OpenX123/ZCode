@@ -17,10 +17,13 @@ directives such as `::code-comment{...}` remain strict.
 
 ## Scope
 
-- Typed assistant media also remains visible outside collapsed work history when a later text summary arrives. Each received media item has one derived view with its original row/id source; media-only rows are valid. A final ordinary website link cannot hide MIME-qualified media. Only already embedded matching media covers that item; partial final coverage keeps the other items visible. The projection preserves original rows, scoped attachment authorization, and final-row actions. Anonymous shares show HTTP source links or attachment labels without automatic media requests or local artifact links.
+- Since 1.6.1 no website cards are generated from assistant body URLs (localhost,
+  public links, closed Markdown links, single-URL `text` fences or bare URL lines),
+  and no work-history excerpt rows are projected. Body links stay clickable inline;
+  local HTML file cards, Markdown, Office, PDF and audio/video cards are unchanged.
 - Preview card file types: Markdown, HTML, DOCX, XLSX, PPTX, PDF, MP4, MOV,
   WebM, M4V, MP3, WAV, M4A, OGG, Opus, FLAC, and WEBA.
-- Every preview card uses a 24 x 24 px leading icon for website, recognized-file,
+- Every preview card uses a 24 x 24 px leading icon for recognized-file
   and fallback-file presentation, inside the existing card icon container.
 - The file type registry owns extension, subtitle, and opening behavior so another
   previewable file type can be added without changing the extraction pipeline.
@@ -100,18 +103,15 @@ directives such as `::code-comment{...}` remain strict.
 
 ## Projection and state boundary
 
-### Work-history deliverable excerpts (UX04)
+### Work-history deliverable excerpts (UX04, removed in 1.6.1)
 
-`conversation-presentation` owns the pure extraction contract at
-`packages/ui/src/v4/conversation-presentation/index.ts`. It projects already
-loaded assistant text, without protocol, media, Host, queue, or persistence facts.
-The original row and its copy/fork/retry anchor remain unchanged. A collapsed
-work history additionally exposes source excerpts and a button to expand the
-original context. Excerpts have no message actions or preview-card auto-open.
-Single-URL text fences retain their code block and explanation and additionally
-offer an explicit native button through the existing URL-opening callbacks and
-browser-routing policy. The complete validated target is passed directly, never
-reconstructed as Markdown; keyboard activation has the same behavior as clicking.
+Removed by user decision (Q41=A). The excerpt projection copied history paragraphs,
+single-URL `text` fences and typed media into extra rows with "Open / View original
+context" actions, appended at the end of a running turn's open history. Complete
+paragraphs and code blocks therefore appeared below the still-streaming block, and
+the excerpts duplicated links already clickable in the body. The flow now renders
+only the original rows in order. `conversation-presentation` keeps only the pure
+reference extraction used for inline media.
 
 Within one MessageResponse scope, streaming body updates keep the Markdown
 renderer component types stable. An existing Mermaid diagram retains its mounted
@@ -119,68 +119,24 @@ instance and last successful SVG while later chunks arrive, including incomplete
 or invalid Mermaid text. Markdown image, audio, and video leaves retain their DOM
 identity, playback position, and already loaded resource/Blob URL when unrelated
 body text or a new text fence arrives; those updates do not reread the same
-resource. A newly closed single-URL `text` fence immediately exposes its open
-action with the current complete target, including when an earlier fence target
-was already present. The renderer reads the current fence target set for each
-render, rather than capturing a set from an earlier chunk.
+resource. A single-URL `text` fence renders only as a code block; since 1.6.1 no
+extra link line is added below it.
 
 The existing MessageResponse scope and media reader remain the resource owners:
 changing the reader, session, workspace path/identity, or remote session releases
 old temporary URLs, ignores stale reads, and loads through the new scope. Unmount
-also releases temporary URLs. The text-fence projection owns only derived targets;
-it does not cache media bytes or accept a second write path.
+also releases temporary URLs.
 
 ```text
-assistant body chunk -> MessageResponse props -> current reference/fence projection
+assistant body chunk -> MessageResponse props -> current media reference projection
                                            -> stable Markdown renderer types
                                            -> mounted Mermaid/media leaves
-closed fence arrives -> current target lookup -> native open action (complete URL)
 scope/reader changes or unmount -> leaf cleanup -> revoke old Blob / ignore stale read
 ```
 
-Only closed Markdown links/images, standalone HTTP(S) URLs, and closed `text`
-fences containing exactly one HTTP(S) URL qualify. Inline code, indented code,
-other fences and commands do not qualify. Streaming standalone URLs require a
-line ending; incomplete Markdown/fences never qualify. Valid received references
-survive failed/interrupted turns. This does not change terminal preview-card
-gates, file validation, limits, or the Markdown/HTML fileChanges gate.
-
-Each reference retains its source row, exact half-open source range, and complete
-surrounding paragraph; a standalone URL also retains the immediately preceding
-explanation paragraph. Extraction retains every valid source reference; complete
-source-context target groups are formed before cross-source deduplication. Targets
-already present in the visible final body produce no extra standalone excerpt. A
-paragraph containing several references is rendered once. If only some targets
-are in the final body, the complete source paragraph remains intact for the new
-targets, even when it also contains those previously visible references; when
-all targets are covered, the paragraph is omitted. Extraction is memoized by source
-row/text/state so work-clock ticks do not parse unchanged history again.
-
-Overlapping context ranges from the same source row are merged into one exact
-source slice, anchored to the first original reference key. Ranges from different
-rows never merge. Coverage is evaluated over all merged targets; every uncovered
-text-fence target retains a separate native open action keyed by its complete
-target. An already covered target gets no additional standalone open action.
-
-The source/range key describes the actual selected reference. Prepending an older
-duplicate may select that source and truthfully change its source key/range.
-React identity is separate: it uses the sorted, complete original target group,
-fixed before cross-source deduplication or final-body coverage. A duplicate-A
-prepend therefore preserves both single-A identity and an existing A/B excerpt's
-identity; it cannot silently re-anchor the A/B group to B. Fully covered source
-groups are omitted in source order, while partial coverage preserves their full
-original text and target-group identity. Neither a mutable representative cache
-nor persisted presentation state is introduced. Mounted excerpts additionally use
-`workspaceIdentity?.trim() || workspacePath`, remote session, session, log epoch,
-and turn scope; file opening reuses the same row context and Host accessor.
-The public module entrypoint remains pure so shared readonly timelines cannot
-pull runtime services into the public share dependency closure.
-
-```text
-delivered assistant rows -> pure source/range extraction -> collapsed-history excerpt
-                        -> unchanged original work history -> expand original context
-existing row context -> selected workspace Host -> existing file/link opening
-```
+Media extraction accepts only closed Markdown links/images and standalone HTTP(S)
+URLs; inline code, indented code, fences and commands do not qualify. Streaming
+standalone URLs require a line ending; incomplete Markdown never qualifies.
 
 Preview cards remain a UI-only projection from already delivered V4 rows. The
 separate UX05 native-media contract adds optional `assistantText.media` references;
@@ -190,20 +146,18 @@ The public share timeline explicitly disables automatic media rendering: links p
 by its existing image sanitization must not become fetched image/audio/video previews.
 Authenticated readonly conversation views retain their existing scoped media access.
 
-### Delivered media and websites (UX05)
+### Delivered media (UX05)
 
-Ordinary HTTP(S) websites use received link titles and the URL domain only. No
-page metadata fetch, arbitrary iframe, auto-open or autoplay is permitted. Existing
-local HTML/file gates and Host-scoped opening remain unchanged; mobile suppresses
-only unsupported localhost/file previews, not ordinary public website links.
+Ordinary HTTP(S) and localhost URLs stay inline body links; since 1.6.1 they do
+not produce website cards. No page metadata fetch, arbitrary iframe, auto-open or
+autoplay is permitted. Existing local HTML file gates and Host-scoped opening remain
+unchanged; mobile suppresses HTML file cards.
 Direct image/audio/video references render with existing image/media controls.
 Typed MIME metadata permits extensionless media; a URL without known MIME or a
-recognized media extension stays a website. Missing/failed media retains its
+recognized media extension stays an ordinary link. Missing/failed media retains its
 original reference, an unavailable state and an explicit retry action. Retrying
-only rereads that resource, never reruns the assistant turn. Single-URL closed
-`text` fences in final and historical bodies keep the original code and expose
-the same safe native open action, so final-body deduplication cannot hide access.
-The website-card open button and unavailable-resource retry button remain
+only rereads that resource, never reruns the assistant turn.
+The card open button and unavailable-resource retry button remain
 reachable by native Tab navigation and activate with Enter.
 Their desktop acceptance uses real keyboard input and verifies the resulting
 browser target or decoded resource, without programmatically focusing the target.
@@ -233,7 +187,6 @@ assistantText rows (desktop continuous / mobile replayable hydration)
         |
         +-- join assistant text in body order once
         +-- extract file references once; reuse them for gate + card build
-        +-- extract localhost candidates
         +-- fetch this turn's fileChanges with the turnHeader target when md/html is present
         |     +-- running: revision key + in-flight only
         |     +-- terminal: target + active|reverted key + settled success, shared LRU <= 20 entries
@@ -325,12 +278,8 @@ instead of path existence booleans.
   redirects, so business templates cannot replace the preview with `file:///login`.
   Preview supports source mode. Desktop local files additionally offer an explicit
   run action in the built-in browser; remote paths are never sent to the local browser.
-- Web `/remote` does not project localhost/127.0.0.1 URL cards or HTML
-  output cards. Without port forwarding or a URL proxy those URLs cannot reach
-  the Desktop host. Markdown, DOCX, XLSX, PPTX, PDF, and video/audio cards remain available.
-- Desktop localhost HTTP cards keep the Browser side-pane behavior. When a URL
-  maps to a generated HTML file, the backing file must also pass the existence
-  check.
+- Web `/remote` does not project HTML output cards. Without port forwarding or a
+  URL proxy those files cannot be run against the Desktop host. Markdown, DOCX, XLSX, PPTX, PDF, and video/audio cards remain available.
 - Desktop local and Desktop remote workspaces support the automatic PPTX open
   because they expose a right-side Preview Pane. Web `/remote` keeps the cards
   visible, but does not auto-open when the current surface has no usable right-
@@ -340,8 +289,8 @@ instead of path existence booleans.
 
 - Desktop stays on the existing `desktop-continuous` message path.
 - Web remote stays on `web-remote-replayable`; card projection runs only after
-  row hydration and does not enter gap/snapshot recovery. Unsupported local URL
-  and HTML candidates are filtered in renderer projection before the 15-card
+  row hydration and does not enter gap/snapshot recovery. Unsupported HTML
+  candidates are filtered in renderer projection before the 15-card
   existence-check window, without adding protocol or Host state.
 - The `fileChanges` cache is renderer-local query state. It does not add relay,
   Host, snapshot, or replayable state and does not alter delivery semantics.
@@ -364,8 +313,7 @@ new actions; both entry points reuse the same opening handlers. File context
 menus offer Preview, Open (the system default application), an Open with submenu,
 then copying relative and absolute paths. The context menu omits Open containing
 folder and its separator. Chinese labels are 预览 and 打开.
-Website cards use the same Preview and Open labels for side-pane and browser
-actions, followed by copying the URL; file-backed local HTML additionally offers path actions.
+File-backed local HTML cards use the same Preview and Open labels and path actions.
 The card primary button continues to read Open for all card types.
 
 Native file actions require the platform's explicit `canOpenLocalFiles` capability.
@@ -390,5 +338,5 @@ primitives, keyboard navigation, light/dark tokens and localized labels.
 APC14 acceptance: right-click a real Office card, verify its dropdown remains unchanged,
 assert the compact labels and absence of the directory entry, preview the file,
 and verify the default-app shell call with a mock. Focused
-component tests cover website links, HTML paths, unavailable preview, Web and
+component tests cover HTML paths, unavailable preview, Web and
 remote-native capability exclusion.

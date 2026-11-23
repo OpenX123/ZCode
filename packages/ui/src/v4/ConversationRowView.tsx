@@ -232,7 +232,6 @@ export interface EditWorkspaceRewindAvailability {
 }
 
 export interface ConversationRowViewProps {
-  suppressTextFenceActions?: boolean;
   row: ConversationRow;
   /** 渲染上下文（theme/codePreviewSettings/workspacePath）；宿主保证引用稳定。 */
   context: ConversationRowRenderContext;
@@ -1640,7 +1639,6 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
 });
 
 const AssistantTextRowView = memo(function AssistantTextRowView({
-  suppressTextFenceActions,
   row,
   context,
   onFork,
@@ -1653,7 +1651,6 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
   codeCommentCards,
   codeCommentProjectionEnabled,
 }: {
-  suppressTextFenceActions?: boolean;
   row: AssistantTextRow;
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
@@ -1687,7 +1684,6 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
           selectable 语义必须放在稳定的 DOM 包装层上，完成态和 streaming 共用同一路径。 */}
       <div data-conversation-selectable="true" className="w-full text-ui-base">
         <GenUiMessageResponse
-          suppressTextFenceActions={suppressTextFenceActions}
           completed={row.state === "complete"}
           messageKey={`${row.rowId}:${row.entityId ?? ""}`}
           renderZCodeFileCitations
@@ -2321,7 +2317,6 @@ const SubagentRowView = memo(function SubagentRowView({ row }: { row: SubagentRo
  * useCallback/useMemo）。
  */
 function ConversationRowViewImpl({
-  suppressTextFenceActions,
   row,
   context,
   onFork,
@@ -2352,7 +2347,6 @@ function ConversationRowViewImpl({
     case "assistantText":
       return (
         <AssistantTextRowView
-          suppressTextFenceActions={suppressTextFenceActions}
           row={row}
           context={context}
           onFork={onFork}

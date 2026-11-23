@@ -362,7 +362,6 @@ export const MessageBranchPage = ({ className, ...props }: MessageBranchPageProp
 
 export type MessageResponseProps = {
   media?: readonly AssistantMediaRef[];
-  suppressTextFenceActions?: boolean;
   /** 公开分享关闭自动媒体加载；已认证只读会话仍使用默认展示。 */
   allowAutomaticMedia?: boolean;
   /** 办公模式的正式回答固定换行，不覆盖用户保存的代码预览设置。 */
@@ -1308,7 +1307,6 @@ export const messageResponsePropsAreEqual = (
 ): boolean =>
   prevProps.children === nextProps.children &&
   prevProps.media === nextProps.media &&
-  prevProps.suppressTextFenceActions === nextProps.suppressTextFenceActions &&
   prevProps.allowAutomaticMedia === nextProps.allowAutomaticMedia &&
   prevProps.forceCodeWrap === nextProps.forceCodeWrap &&
   nextProps.streaming === prevProps.streaming &&
@@ -1329,7 +1327,6 @@ export const messageResponsePropsAreEqual = (
 export const MessageResponse = memo(
   ({
     media,
-    suppressTextFenceActions = false,
     allowAutomaticMedia = true,
     className,
     streaming = false,
@@ -1355,17 +1352,6 @@ export const MessageResponse = memo(
       () => assistantPresentationReferences(rawMarkdown, streaming),
       [rawMarkdown, streaming],
     );
-    const textFenceTargets = useMemo(
-      () =>
-        new Set(
-          references.filter((ref) => ref.sourceFormat === "textFence").map((ref) => ref.target),
-        ),
-      [references],
-    );
-    // 流式正文每次更新都会重建目标 Set；若它参与 renderer 依赖，内联组件类型会换代，
-    // 导致 Mermaid 与 Markdown 媒体卸载。保持类型稳定，同时在本轮渲染读取最新目标。
-    const textFenceTargetsRef = useRef(textFenceTargets);
-    textFenceTargetsRef.current = textFenceTargets;
     const deliveredMedia = useMemo(() => {
       if (!allowAutomaticMedia) return [];
       const typed = (media ?? []).map((ref) => ({
@@ -1668,42 +1654,29 @@ export const MessageResponse = memo(
           const codeText = trimCodeFenceTrailingNewlines(extractCodeText(children));
           const language = getCodeLanguage(codeClassName);
 
+          // 1.6.1 不再在单 URL text fence 下追加链接行：用户反馈代码块下多出一行令人困惑。
           return (
-            <>
-              <CodeBlock
-                className="my-4 border border-border bg-card"
-                code={codeText}
-                // 流式消息里的代码围栏会被 Streamdown 反复拆分/重挂载。
-                // 高亮等消息完成后再启动，避免 async highlighter 和消息流更新叠加触发 React #185。
-                enableSyntaxHighlighting={!renderStreaming}
-                fontSizePx={codePreviewSettings.fontSizePx}
+            <CodeBlock
+              className="my-4 border border-border bg-card"
+              code={codeText}
+              // 流式消息里的代码围栏会被 Streamdown 反复拆分/重挂载。
+              // 高亮等消息完成后再启动，避免 async highlighter 和消息流更新叠加触发 React #185。
+              enableSyntaxHighlighting={!renderStreaming}
+              fontSizePx={codePreviewSettings.fontSizePx}
+              language={language}
+              mermaidStreaming={
+                renderStreaming && !closedMarkdownFencesRef.current.has(codeText.trim())
+              }
+              theme={codeBlockTheme}
+              appTheme={theme}
+              wrapLongLines={wrapLongLines}
+            >
+              <CodeBlockHeader
+                className="pl-3 pr-2 pt-2"
                 language={language}
-                mermaidStreaming={
-                  renderStreaming && !closedMarkdownFencesRef.current.has(codeText.trim())
-                }
-                theme={codeBlockTheme}
-                appTheme={theme}
-                wrapLongLines={wrapLongLines}
-              >
-                <CodeBlockHeader
-                  className="pl-3 pr-2 pt-2"
-                  language={language}
-                  showWrapButton={!forceCodeWrap}
-                />
-              </CodeBlock>
-              {!suppressTextFenceActions &&
-              textFenceTargetsRef.current.has(codeText.trim()) &&
-              onOpenExternalUrl ? (
-                <MessageExternalLink
-                  href={codeText.trim()}
-                  onOpenExternalUrl={onOpenExternalUrl}
-                  className="mb-3 block max-w-full break-all text-ui-sm"
-                  data-assistant-text-fence-link
-                >
-                  {codeText.trim()}
-                </MessageExternalLink>
-              ) : null}
-            </>
+                showWrapButton={!forceCodeWrap}
+              />
+            </CodeBlock>
           );
         },
         blockquote: MarkdownBlockquote,
@@ -1727,7 +1700,6 @@ export const MessageResponse = memo(
         onOpenCodeViewer,
         onOpenExternalUrl,
         openMediaSource,
-        suppressTextFenceActions,
         readAttachment,
         renderStreaming,
         sessionId,

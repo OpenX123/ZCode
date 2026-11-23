@@ -2029,7 +2029,6 @@ const zhCN: Record<string, string> = {
   "chat.codeComments.many": "{count} 条评论",
   "chat.codeComments.remove": "移除代码评论",
   "chat.codeCommentCards.expandAll": "展开 {count} 条评论",
-  "chat.deliverable.showSourceContext": "查看原始上下文",
   "chat.codeCommentCards.collapseAll": "收起评论",
   "chat.codeCommentCards.openReview": "打开 {title} 的代码审查",
   "chat.webElements.one": "1 个网页元素",
@@ -2854,7 +2853,6 @@ const zhCN: Record<string, string> = {
   "chat.edit.workspaceConflict.description":
     "对话尚未裁剪。请检查冲突或忽略的文件，然后仅重置对话并发送，或取消。",
   "chat.edit.workspaceConflict.conversationOnly": "仅重置对话并发送",
-  "chat.previewCards.website": "网站",
   "chat.previewCards.htmlWebsite": "网站 · HTML",
   "chat.previewCards.markdown": "文档 · MD",
   "chat.previewCards.text": "文本 · TXT",
