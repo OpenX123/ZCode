@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { shouldRenderAssistantPreviewCardAsFile } from "@/AssistantPreviewCards.js";
 import {
   ASSISTANT_PREVIEW_CARD_CANDIDATE_LIMIT,
   ASSISTANT_PREVIEW_CARD_VISIBLE_LIMIT,
@@ -434,28 +433,6 @@ describe("assistant HTML open target", () => {
       shouldOpenAssistantHtmlInBrowser({
         path: "/workspace/page.html",
         compactForRemoteControl: true,
-      }),
-    ).toBe(false);
-  });
-  it("HTML 文件使用静态 Preview Pane，localhost HTTP 仍使用 Browser", () => {
-    expect(
-      shouldRenderAssistantPreviewCardAsFile({
-        id: "website:file:///workspace/page.html",
-        type: "website",
-        title: "page.html",
-        subtitleId: "chat.previewCards.htmlWebsite",
-        url: "file:///workspace/page.html",
-        filePath: "/workspace/page.html",
-      }),
-    ).toBe(true);
-    expect(
-      shouldRenderAssistantPreviewCardAsFile({
-        id: "website:http://localhost:5173/page.html",
-        type: "website",
-        title: "page.html",
-        subtitleId: "chat.previewCards.website",
-        url: "http://localhost:5173/page.html",
-        filePath: "/workspace/page.html",
       }),
     ).toBe(false);
   });

@@ -87,33 +87,16 @@ describe("buildAssistantPreviewCards", () => {
     });
   });
 
-  it("builds website cards for localhost links with markdown labels", () => {
-    const cards = buildAssistantPreviewCards(
+  it("1.6.1 不再从 localhost / 127.0.0.1 / 公网链接生成网站卡", () => {
+    for (const content of [
       "Open [Neon Snake](http://localhost:5173/play) when ready.",
-      "/workspace",
-    );
-
-    expect(cards).toEqual([
-      {
-        id: "website:http://localhost:5173/play",
-        type: "website",
-        title: "Neon Snake",
-        subtitleId: "chat.previewCards.website",
-        url: "http://localhost:5173/play",
-      },
-    ]);
-  });
-
-  it("builds website cards for 127.0.0.1 links", () => {
-    const cards = buildAssistantPreviewCards("Preview: http://127.0.0.1:3000.", "/workspace");
-
-    expect(cards).toMatchObject([
-      {
-        type: "website",
-        title: "127.0.0.1:3000",
-        url: "http://127.0.0.1:3000",
-      },
-    ]);
+      "Preview: http://127.0.0.1:3000.",
+      "[说明](https://example.com/result)",
+      "```text\nhttp://localhost:3000/a\n```",
+      "服务地址是 **http://localhost:8765/dashboard/index.html**，可以打开。",
+    ]) {
+      expect(buildAssistantPreviewCards(content, "/workspace")).toEqual([]);
+    }
   });
 
   it("builds markdown cards from links and raw paths without duplicates", () => {
@@ -203,7 +186,7 @@ describe("buildAssistantPreviewCards", () => {
     expect(cards).toHaveLength(1);
   });
 
-  it("does not build html file cards when a local http preview exists", () => {
+  it("localhost URL 不再抑制 HTML 文件卡", () => {
     const cards = buildAssistantPreviewCards(
       [
         "Preview http://localhost:5173.",
@@ -217,14 +200,8 @@ describe("buildAssistantPreviewCards", () => {
     );
 
     expect(cards).toMatchObject([
-      {
-        type: "markdown",
-        path: "/workspace/docs/notes.md",
-      },
-      {
-        type: "website",
-        url: "http://localhost:5173",
-      },
+      { type: "markdown", path: "/workspace/docs/notes.md" },
+      { type: "website", url: "file:///workspace/game/index.html" },
     ]);
     expect(cards).toHaveLength(2);
   });
@@ -245,93 +222,8 @@ describe("buildAssistantPreviewCards", () => {
     ]);
   });
 
-  it("trims markdown emphasis and CJK punctuation from localhost URLs", () => {
-    const cards = buildAssistantPreviewCards(
-      "服务地址是 **http://localhost:8765/dashboard/index.html**，你现在可以在浏览器打开试试。",
-      "/workspace",
-      {
-        changedFilePaths: ["/workspace/dashboard/index.html"],
-      },
-    );
-
-    expect(cards).toEqual([
-      {
-        id: "website:http://localhost:8765/dashboard/index.html",
-        type: "website",
-        title: "index.html",
-        subtitleId: "chat.previewCards.website",
-        url: "http://localhost:8765/dashboard/index.html",
-        filePath: "/workspace/dashboard/index.html",
-      },
-    ]);
-    expect(cards.map((card) => requiresAssistantPreviewCardFileStat(card))).toEqual([true]);
-  });
-
-  it("treats localhost html URL paths as workspace files before rendering", () => {
-    const cards = buildAssistantPreviewCards(
-      "服务地址是 http://localhost:8765/dashboard/index.html。",
-      "/workspace",
-      { changedFilePaths: ["/workspace/dashboard/index.html"] },
-    );
-
-    expect(cards).toEqual([
-      {
-        id: "website:http://localhost:8765/dashboard/index.html",
-        type: "website",
-        title: "index.html",
-        subtitleId: "chat.previewCards.website",
-        url: "http://localhost:8765/dashboard/index.html",
-        filePath: "/workspace/dashboard/index.html",
-      },
-    ]);
-    expect(cards.map((card) => requiresAssistantPreviewCardFileStat(card))).toEqual([true]);
-  });
-
-  it("deduplicates localhost cards and ignores polluted markdown link labels", () => {
-    const cards = buildAssistantPreviewCards(
-      [
-        "[** (kernel](http://127.0.0.1:8781)",
-        "[) 。完整](http://127.0.0.1:8781)",
-        "也可以直接打开 http://127.0.0.1:8781。",
-      ].join("\n"),
-      "/workspace",
-    );
-
-    expect(cards).toEqual([
-      {
-        id: "website:http://127.0.0.1:8781",
-        type: "website",
-        title: "127.0.0.1:8781",
-        subtitleId: "chat.previewCards.website",
-        url: "http://127.0.0.1:8781",
-      },
-    ]);
-  });
-
   it("classifies cards that require file stat", () => {
     const cards: AssistantPreviewCard[] = [
-      {
-        id: "website:http://localhost:5173",
-        type: "website",
-        title: "localhost:5173",
-        subtitleId: "chat.previewCards.website",
-        url: "http://localhost:5173",
-      },
-      {
-        id: "website:http://localhost:70000",
-        type: "website",
-        title: "localhost:70000",
-        subtitleId: "chat.previewCards.website",
-        url: "http://localhost:70000",
-      },
-      {
-        id: "website:http://localhost:8765/dashboard/index.html",
-        type: "website",
-        title: "index.html",
-        subtitleId: "chat.previewCards.website",
-        url: "http://localhost:8765/dashboard/index.html",
-        filePath: "/workspace/dashboard/index.html",
-      },
       {
         id: "website:file:///workspace/index.html",
         type: "website",
@@ -372,9 +264,6 @@ describe("buildAssistantPreviewCards", () => {
       },
     ];
     expect(cards.map((card) => requiresAssistantPreviewCardFileStat(card))).toEqual([
-      false,
-      false,
-      true,
       true,
       true,
       true,
@@ -384,24 +273,18 @@ describe("buildAssistantPreviewCards", () => {
   });
 
   it("returns stat-free preview cards synchronously", () => {
-    const cards: AssistantPreviewCard[] = [
-      {
-        id: "website:http://localhost:5173",
-        type: "website",
-        title: "localhost:5173",
-        subtitleId: "chat.previewCards.website",
-        url: "http://localhost:5173",
-      },
-      {
-        id: "website:http://localhost:70000",
-        type: "website",
-        title: "bad localhost",
-        subtitleId: "chat.previewCards.website",
-        url: "http://localhost:70000",
-      },
-    ];
-
-    expect(resolveAssistantPreviewCardsWithoutFileStat(cards)).toEqual([cards[0]]);
+    expect(resolveAssistantPreviewCardsWithoutFileStat([])).toEqual([]);
+    expect(
+      resolveAssistantPreviewCardsWithoutFileStat([
+        {
+          id: "website:file:///workspace/index.html",
+          type: "website",
+          title: "index.html",
+          subtitleId: "chat.previewCards.htmlWebsite",
+          url: "file:///workspace/index.html",
+        },
+      ]),
+    ).toBeNull();
   });
 
   it("waits for all file-backed preview checks before returning renderable cards", async () => {
