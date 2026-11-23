@@ -12,7 +12,7 @@ export function exampleConversationPresentation(
   extract: ExtractConversationDeliverables,
   rows: readonly AssistantTextRow[],
 ): readonly string[] {
-  return extract(rows).map((reference) => reference.contextText);
+  return extract(rows).map((reference) => reference.target);
 }
 
 /** 无 React/Host 的连续服务投影消费方。 */

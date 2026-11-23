@@ -1,5 +1,5 @@
 import type { AssistantTextRow } from "@zcode/shared/zcode-protocol-v4";
-import type { ConversationDeliverable, ConversationDeliverableScope } from "./contract.js";
+import type { ConversationDeliverable } from "./contract.js";
 
 interface SourceRange {
   start: number;
@@ -9,7 +9,6 @@ interface Candidate extends SourceRange {
   target: string;
   image?: boolean;
   standalone?: boolean;
-  textFence?: boolean;
 }
 
 // 仅缓存原行派生，WeakMap 不拥有历史生命周期，也不形成第二份会话事实。
@@ -50,9 +49,8 @@ function cleanTarget(raw: string): string | undefined {
   return target;
 }
 
-function protectedCode(text: string): { ranges: SourceRange[]; candidates: Candidate[] } {
+function protectedCode(text: string): SourceRange[] {
   const ranges: SourceRange[] = [];
-  const candidates: Candidate[] = [];
   const opening = /^ {0,3}(`{3,}|~{3,})([^\n\r]*)(?:\r?\n|$)/gm;
   for (let match = opening.exec(text); match; match = opening.exec(text)) {
     if (overlaps(match.index, match.index + 1, ranges)) continue;
@@ -66,16 +64,6 @@ function protectedCode(text: string): { ranges: SourceRange[]; candidates: Candi
     const close = closing.exec(text);
     const end = close ? close.index + close[0].length : text.length;
     ranges.push({ start: match.index, end });
-    const target = close ? text.slice(bodyStart, close.index).trim() : "";
-    if (match[2]!.trim().toLowerCase() === "text" && httpTarget(target)) {
-      candidates.push({
-        start: match.index,
-        end: close!.index + close![0].trimEnd().length,
-        target,
-        standalone: true,
-        textFence: true,
-      });
-    }
     opening.lastIndex = end;
   }
   for (const match of text.matchAll(/^(?: {4}|\t).*$/gm)) {
@@ -84,7 +72,7 @@ function protectedCode(text: string): { ranges: SourceRange[]; candidates: Candi
   for (const match of text.matchAll(/(`+)([\s\S]*?)(\1)(?!`)/g)) {
     ranges.push({ start: match.index, end: match.index + match[0].length });
   }
-  return { ranges, candidates };
+  return ranges;
 }
 
 function markdownCandidates(text: string, ranges: readonly SourceRange[]): Candidate[] {
@@ -121,34 +109,12 @@ function markdownCandidates(text: string, ranges: readonly SourceRange[]): Candi
   return candidates;
 }
 
-function sourceContext(
-  text: string,
-  candidate: Candidate,
-  ranges: readonly SourceRange[],
-): SourceRange {
-  const boundaries = [...text.matchAll(/\r?\n[ \t]*\r?\n/g)];
-  const previous = boundaries.findLast((match) => match.index + match[0].length <= candidate.start);
-  let start = previous ? previous.index + previous[0].length : 0;
-  const next = boundaries.find((match) => match.index >= candidate.end);
-  let end = next?.index ?? text.length;
-  if (candidate.standalone && start > 0) {
-    const previousEnd = previous!.index;
-    const beforePrevious = boundaries.findLast((match) => match.index < previousEnd);
-    const from = beforePrevious ? beforePrevious.index + beforePrevious[0].length : 0;
-    // 独立 URL 的用途常在前一个段落；不把前一段代码示例当作说明带出。
-    if (!overlaps(from, previousEnd, ranges)) start = from;
-  }
-  while (start < candidate.start && /\s/.test(text[start]!)) start += 1;
-  while (end > candidate.end && /\s/.test(text[end - 1]!)) end -= 1;
-  return { start, end };
-}
-
 function extractRow(row: AssistantTextRow): readonly ConversationDeliverable[] {
   const cached = rowCache.get(row);
   const streaming = row.state === "streaming";
   if (cached?.text === row.text && cached.streaming === streaming) return cached.references;
-  const { ranges, candidates } = protectedCode(row.text);
-  candidates.push(...markdownCandidates(row.text, ranges));
+  const ranges = protectedCode(row.text);
+  const candidates = markdownCandidates(row.text, ranges);
   for (const match of row.text.matchAll(/^[ \t]*(https?:\/\/[^\s<>`]+)[ \t]*(?:\r?\n|$)/gm)) {
     const target = match[1]!;
     const start = match.index + match[0].indexOf(target);
@@ -164,7 +130,6 @@ function extractRow(row: AssistantTextRow): readonly ConversationDeliverable[] {
   const references = candidates
     .sort((a, b) => a.start - b.start)
     .map((candidate): ConversationDeliverable => {
-      const context = sourceContext(row.text, candidate, ranges);
       const kind = candidate.image ? "image" : httpTarget(candidate.target) ? "link" : "file";
       return {
         key: `${row.rowId}:${candidate.start}:${candidate.end}:${kind}`,
@@ -172,15 +137,8 @@ function extractRow(row: AssistantTextRow): readonly ConversationDeliverable[] {
         start: candidate.start,
         end: candidate.end,
         kind,
-        sourceFormat: candidate.textFence
-          ? "textFence"
-          : candidate.standalone
-            ? "standaloneUrl"
-            : "markdown",
+        sourceFormat: candidate.standalone ? "standaloneUrl" : "markdown",
         target: candidate.target,
-        contextStart: context.start,
-        contextEnd: context.end,
-        contextText: row.text.slice(context.start, context.end),
       };
     });
   rowCache.set(row, { text: row.text, streaming, references });
@@ -190,51 +148,5 @@ function extractRow(row: AssistantTextRow): readonly ConversationDeliverable[] {
 export function extractConversationDeliverables(
   rows: readonly AssistantTextRow[],
 ): readonly ConversationDeliverable[] {
-  // 必须先保留原段的所有引用再分组，过早跨来源去重会把仍在的 A/B 段错误改锚到 B。
-  return rows.flatMap((row) => [
-    ...extractRow(row),
-    // 文本未变时仍可能收到 media 增量；只缓存文字解析，不缓存第二份媒体事实。
-    ...(row.media ?? []).map(
-      (media): ConversationDeliverable => ({
-        key: `${row.rowId}:media:${media.id}`,
-        sourceRowId: row.rowId,
-        start: row.text.length,
-        end: row.text.length,
-        kind: media.mediaType === "image" ? "image" : "file",
-        sourceFormat: "typedMedia",
-        target: media.source.kind === "artifact" ? media.source.uri : media.source.url,
-        media,
-        contextStart: row.text.length,
-        contextEnd: row.text.length,
-        contextText: "",
-      }),
-    ),
-  ]);
-}
-
-export function resolveConversationDeliverableIdentity(reference: ConversationDeliverable): string {
-  if (reference.media)
-    return JSON.stringify([
-      "typedMedia",
-      reference.media.mediaType,
-      reference.media.mimeType,
-      reference.target,
-    ]);
-  return JSON.stringify([...new Set(reference.identityTargets ?? [reference.target])].sort());
-}
-
-export function resolveConversationDeliverableKey(
-  reference: ConversationDeliverable,
-  scope: ConversationDeliverableScope,
-  turnId: string,
-): string {
-  return JSON.stringify([
-    scope.workspaceIdentity?.trim() || scope.workspacePath,
-    scope.workspaceRemoteSessionId ?? "",
-    scope.sessionId ?? "",
-    scope.logEpoch ?? "",
-    turnId,
-    // 来源 key 只负责溯源；前插相同目标时代表来源会变，但逻辑片段不能因此重新挂载。
-    resolveConversationDeliverableIdentity(reference),
-  ]);
+  return rows.flatMap(extractRow);
 }

@@ -128,13 +128,11 @@ export type ConversationShareArtifactOpenAction = ComponentType<{
 
 interface ReadonlyLabels {
   history: string;
-  showSourceContext: string;
   computerUse: string;
   explore: string;
   execute: string;
   changes: string;
   artifactPreview: string;
-  open: string;
   markerCompact: string;
   markerModelChange: string;
   unsupportedRows: string;
@@ -305,14 +303,12 @@ function UserInputPresentation({
 }
 
 const AssistantTextPresentation = memo(function AssistantTextPresentation({
-  suppressTextFenceActions,
   row,
   theme,
   codePreviewSettings,
   artifactNames,
   onOpenExternalUrl,
 }: {
-  suppressTextFenceActions?: boolean;
   row: AssistantTextRow;
   theme: Theme;
   codePreviewSettings: CodePreviewSettings;
@@ -328,7 +324,6 @@ const AssistantTextPresentation = memo(function AssistantTextPresentation({
       <div data-conversation-selectable="true" className="w-full text-ui-base">
         <MessageResponse
           allowAutomaticMedia={false}
-          suppressTextFenceActions={suppressTextFenceActions}
           streaming={false}
           theme={theme}
           codePreviewSettings={codePreviewSettings}
@@ -881,52 +876,13 @@ function ReadonlySegment({
           content = <UserInputPresentation row={item.row} artifactUrls={artifactUrls} />;
         } else if (item.kind === "assistantText") {
           content = (
-            <div data-conversation-deliverable={item.deliverable?.key}>
-              <AssistantTextPresentation
-                suppressTextFenceActions={Boolean(item.deliverable)}
-                row={
-                  item.deliverable
-                    ? {
-                        ...item.row,
-                        text: item.deliverable.contextText,
-                        media: item.deliverable.media ? [item.deliverable.media] : undefined,
-                      }
-                    : item.row
-                }
-                theme={theme}
-                codePreviewSettings={codePreviewSettings}
-                artifactNames={artifactNames}
-                onOpenExternalUrl={onOpenExternalUrl}
-              />
-              {(
-                item.deliverable?.textFenceTargets ??
-                (item.deliverable?.sourceFormat === "textFence" ? [item.deliverable.target] : [])
-              ).map((href) => (
-                <Button
-                  key={href}
-                  data-deliverable-open-link
-                  type="button"
-                  variant="link"
-                  size="xs"
-                  title={href}
-                  className="mt-1 mr-3 px-0"
-                  onClick={() => onOpenExternalUrl(href)}
-                >
-                  {labels.open}
-                </Button>
-              ))}
-              {item.deliverable ? (
-                <Button
-                  data-deliverable-show-source
-                  variant="link"
-                  size="xs"
-                  className="mt-1 px-0 text-foreground-subtle"
-                  onClick={() => setHistoryOpen(true)}
-                >
-                  {labels.showSourceContext}
-                </Button>
-              ) : null}
-            </div>
+            <AssistantTextPresentation
+              row={item.row}
+              theme={theme}
+              codePreviewSettings={codePreviewSettings}
+              artifactNames={artifactNames}
+              onOpenExternalUrl={onOpenExternalUrl}
+            />
           );
         } else if (item.kind === "cuaGroup") {
           const group = (
@@ -1193,13 +1149,11 @@ function ConversationShareReadonlyTimelineContent({
   }, []);
   const labels: ReadonlyLabels = {
     history: intl.formatMessage({ id: "conversationShare.readonly.history" }),
-    showSourceContext: intl.formatMessage({ id: "chat.deliverable.showSourceContext" }),
     computerUse: intl.formatMessage({ id: "conversationShare.readonly.computerUse" }),
     explore: intl.formatMessage({ id: "conversationShare.readonly.explore" }),
     execute: intl.formatMessage({ id: "conversationShare.readonly.execute" }),
     changes: intl.formatMessage({ id: "conversationShare.readonly.changes" }),
     artifactPreview: intl.formatMessage({ id: "conversationShare.readonly.artifactPreview" }),
-    open: intl.formatMessage({ id: "common.open" }),
     markerCompact: intl.formatMessage({ id: "conversationShare.readonly.markerCompact" }),
     markerModelChange: intl.formatMessage({ id: "conversationShare.readonly.markerModelChange" }),
     unsupportedRows: intl.formatMessage({ id: "conversationShare.readonly.unsupportedRows" }),

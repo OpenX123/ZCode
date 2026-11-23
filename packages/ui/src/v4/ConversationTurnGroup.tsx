@@ -98,7 +98,6 @@ import type {
 import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
 import { ConversationTurnRow, resolveAssistantCopyText } from "@/v4/ConversationTurnRow.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
-import { resolveConversationDeliverableKey } from "@/v4/conversation-presentation/index.js";
 import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
 
 interface ConversationTurnGroupProps {
@@ -762,10 +761,7 @@ function ConversationWorkSegmentFlow({
           (item.kind === "assistantHistory" || item.kind === "assistantWork");
         const showHistoryStatus = shouldShowHistoryStatus && index === firstAssistantFlowItemIndex;
         // 段首多行 item 用位置 key：HLP01 前插更早行时不能整段卸载重挂（见 resolveConversationFlowItemKey）。
-        const itemKey =
-          item.kind === "assistantText" && item.deliverable
-            ? resolveConversationDeliverableKey(item.deliverable, context, item.row.turnId)
-            : resolveConversationFlowItemKey(item, index, firstAssistantFlowItemIndex);
+        const itemKey = resolveConversationFlowItemKey(item, index, firstAssistantFlowItemIndex);
         let content: React.ReactNode;
 
         if (item.kind === "userInput") {
@@ -812,8 +808,6 @@ function ConversationWorkSegmentFlow({
           content = (
             <ConversationTurnRow
               row={item.row}
-              deliverable={item.deliverable}
-              onShowSourceContext={item.deliverable ? () => setHistoryOpen(true) : undefined}
               context={context}
               onFork={item.latest && canForkLatestAssistant ? onFork : undefined}
               onRetry={item.latest && canRetryLatestAssistant ? onRetry : undefined}

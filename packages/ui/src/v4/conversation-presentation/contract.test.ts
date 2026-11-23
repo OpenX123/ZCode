@@ -33,13 +33,9 @@ describe("conversation-presentation contract", () => {
       kind: "link",
       sourceFormat: "markdown",
       target: "https://example.invalid",
-      identityTargets: ["https://example.invalid"],
-      contextStart: 0,
-      contextEnd: 1,
-      contextText: "打开入口",
     };
     const extract: ExtractConversationDeliverables = () => [reference];
-    expect(exampleConversationPresentation(extract, [])).toEqual(["打开入口"]);
+    expect(exampleConversationPresentation(extract, [])).toEqual(["https://example.invalid"]);
   });
 });
 

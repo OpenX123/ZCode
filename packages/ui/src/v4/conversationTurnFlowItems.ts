@@ -5,24 +5,13 @@ import type {
   UserInputRow,
 } from "@zcode/shared/zcode-protocol-v4";
 import type { ConversationCuaGroupRenderItem } from "@/v4/conversationCuaGroups.js";
-import {
-  extractConversationDeliverables,
-  classifyAssistantMedia,
-  resolveConversationDeliverableIdentity,
-  type ConversationDeliverable,
-} from "@/v4/conversation-presentation/index.js";
 
 export type AssistantWorkRow = Exclude<ConversationRow, TurnHeaderRow | UserInputRow>;
 
 export type ConversationTurnFlowItem =
   | { kind: "userInput"; row: UserInputRow }
   | { kind: "assistantHistory"; rows: AssistantWorkRow[] }
-  | {
-      kind: "assistantText";
-      row: AssistantTextRow;
-      latest: boolean;
-      deliverable?: ConversationDeliverable;
-    }
+  | { kind: "assistantText"; row: AssistantTextRow; latest: boolean }
   | { kind: "assistantWork"; rows: AssistantWorkRow[] }
   | ConversationCuaGroupRenderItem;
 
@@ -66,110 +55,9 @@ export function buildConversationFlowItems(options: {
   const followingRowIds = new Set(options.assistantFollowingRows.map((row) => row.rowId));
   const tailRowIds = new Set(options.assistantTailRows.map((row) => row.rowId));
   const items: ConversationTurnFlowItem[] = [];
-  const visibleReferences = extractConversationDeliverables(
-    [options.visibleAssistantTextRow, options.latestAssistantTextRow].filter(
-      (row): row is AssistantTextRow => row !== undefined,
-    ),
-  );
-  const visibleTargets = new Set(
-    visibleReferences.filter((reference) => !reference.media).map((reference) => reference.target),
-  );
-  const sourceRows = options.orderedRows.filter(
-    (row): row is AssistantTextRow =>
-      isAssistantTextRow(row) && (historyRowIds.has(row.rowId) || followingRowIds.has(row.rowId)),
-  );
-  const sourceById = new Map(sourceRows.map((row) => [row.rowId, row]));
-  const referencesByRow = new Map<number, ConversationDeliverable[]>();
-  for (const reference of options.timelineOnly ? [] : extractConversationDeliverables(sourceRows)) {
-    const references = referencesByRow.get(reference.sourceRowId) ?? [];
-    references.push(reference);
-    referencesByRow.set(reference.sourceRowId, references);
-  }
-  type SourceContext = {
-    reference: ConversationDeliverable;
-    targets: Set<string>;
-    textFenceTargets: Set<string>;
-  };
-  const contexts: SourceContext[] = [];
-  for (const references of referencesByRow.values()) {
-    let context: SourceContext | undefined;
-    for (const reference of references.toSorted(
-      (a, b) => a.contextStart - b.contextStart || a.start - b.start,
-    )) {
-      if (reference.media) {
-        // 类型化媒体没有正文区间；每个成果只引用当前媒体，不能合并成整行再重复渲染。
-        contexts.push({
-          reference,
-          targets: new Set([reference.target]),
-          textFenceTargets: new Set(),
-        });
-        context = undefined;
-        continue;
-      }
-      if (!context || reference.contextStart >= context.reference.contextEnd) {
-        context = { reference, targets: new Set(), textFenceTargets: new Set() };
-        contexts.push(context);
-      } else {
-        // 独立入口会借前段说明；合并相交区间，避免 A 段单列后又在 B 的上下文里重复。
-        const contextStart = context.reference.contextStart;
-        const contextEnd = Math.max(context.reference.contextEnd, reference.contextEnd);
-        const anchor = context.reference.start <= reference.start ? context.reference : reference;
-        context.reference = {
-          ...anchor,
-          contextStart,
-          contextEnd,
-          contextText: sourceById.get(reference.sourceRowId)!.text.slice(contextStart, contextEnd),
-        };
-      }
-      context.targets.add(reference.target);
-      if (reference.sourceFormat === "textFence") context.textFenceTargets.add(reference.target);
-    }
-  }
-  // 先合并来源区间再判最终覆盖，首引用锚点不因部分覆盖而跳到另一目标。
-  const representedTargets = new Set(visibleTargets);
-  const representedMedia = [...visibleReferences];
-  const deliverables = contexts.flatMap((context) => {
-    if (context.reference.media) {
-      const reference = context.reference;
-      const media = reference.media!;
-      // 普通无扩展网页链接没有媒体展示能力，不能覆盖 MIME 明确的原生媒体。
-      const covered = representedMedia.some((candidate) => {
-        if (candidate.target !== reference.target) return false;
-        if (candidate.media)
-          return (
-            resolveConversationDeliverableIdentity(candidate) ===
-            resolveConversationDeliverableIdentity(reference)
-          );
-        const classification = classifyAssistantMedia(candidate.target);
-        if (classification)
-          return (
-            classification.mediaType === media.mediaType &&
-            classification.mimeType === media.mimeType
-          );
-        return candidate.kind === "image" && media.mediaType === "image";
-      });
-      representedMedia.push(reference);
-      return covered ? [] : [reference];
-    }
-    const identityTargets = [...context.targets];
-    const hasNewTarget = identityTargets.some((target) => !representedTargets.has(target));
-    const textFenceTargets = [...context.textFenceTargets].filter(
-      (target) => !representedTargets.has(target),
-    );
-    for (const target of identityTargets) representedTargets.add(target);
-    representedMedia.push(context.reference);
-    return hasNewTarget ? [{ ...context.reference, identityTargets, textFenceTargets }] : [];
-  });
-  let appendedDeliverables = false;
-  const appendDeliverables = () => {
-    if (appendedDeliverables) return;
-    appendedDeliverables = true;
-    for (const deliverable of deliverables) {
-      const row = sourceById.get(deliverable.sourceRowId);
-      if (row) items.push({ kind: "assistantText", row, latest: false, deliverable });
-    }
-  };
 
+  // 1.6.1 移除“成果摘录”投影：它把历史段落/代码块复制追加到运行中 turn 的末尾，
+  // 导致完整段落出现在仍在流式输出的正文下方（流式不再自上而下）。flow 只按原行序输出。
   for (const row of options.orderedRows) {
     if (isUserInputRow(row)) {
       items.push({ kind: "userInput", row });
@@ -187,8 +75,6 @@ export function buildConversationFlowItems(options: {
       !tailRowIds.has(row.rowId) &&
       !options.timelineOnly
     ) {
-      // 原历史原位保留；仅在外置正文之前投影完整来源段，不能因“已工作”收起而丢失成果。
-      appendDeliverables();
       items.push({
         kind: "assistantText",
         row,
@@ -202,7 +88,6 @@ export function buildConversationFlowItems(options: {
       row,
     );
   }
-  appendDeliverables();
 
   return items;
 }
@@ -226,8 +111,6 @@ export function resolveConversationFlowItemKey(
   index: number,
   firstAssistantFlowItemIndex: number,
 ): string {
-  if (item.kind === "assistantText" && item.deliverable)
-    return `deliverable:${resolveConversationDeliverableIdentity(item.deliverable)}`;
   if (item.kind === "userInput" || item.kind === "assistantText") {
     return `${item.kind}:${item.row.rowId}`;
   }
