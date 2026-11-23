@@ -285,10 +285,14 @@ export function resolveReasoningStreamingSummary(
  * 把 3 个以上换行折叠成一个空行，不改存储数据。
  */
 export function formatReasoningBody(text: string): string {
-  return text
-    .replace(/\r\n?/gu, "\n")
-    .trim()
-    .replace(/\n[ \t]*(?:\n[ \t]*){2,}/gu, "\n\n");
+  return (
+    text
+      .replace(/\r\n?/gu, "\n")
+      // 只去首尾空白行和末尾空白，保留首行缩进（思考可能以缩进代码或列表开头）。
+      .replace(/^(?:[ \t]*\n)+/u, "")
+      .trimEnd()
+      .replace(/\n[ \t]*(?:\n[ \t]*){2,}/gu, "\n\n")
+  );
 }
 
 const REASONING_SUMMARY_MASK =
@@ -447,8 +451,10 @@ export const ReasoningContent = memo(
     const shouldRenderChildren = isOpen || shouldRenderContent || Boolean(forceMount);
     // split 的捕获组落在奇数位：整行 **标题** 去星号后轻量加粗，其余保持纯文本。
     const bodyParts = useMemo(
-      () => formatReasoningBody(children).split(REASONING_TITLE_LINES),
-      [children],
+      // 收起时正文不挂载，跳过每个流式 chunk 上的整段格式化。
+      () =>
+        shouldRenderChildren ? formatReasoningBody(children).split(REASONING_TITLE_LINES) : [],
+      [children, shouldRenderChildren],
     );
     const scrollRef = useRef<HTMLDivElement | null>(null);
     const contentRef = useRef<HTMLDivElement | null>(null);

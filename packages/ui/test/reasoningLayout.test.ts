@@ -193,6 +193,10 @@ describe("Reasoning layout", () => {
     expect(completed.indexOf("定位根因")).toBeLessThan(completed.indexOf("持续了 5 秒"));
   });
 
+  it("keeps first-line indentation while dropping leading blank lines", () => {
+    expect(formatReasoningBody("\n\n  - 缩进列表\n")).toBe("  - 缩进列表");
+  });
+
   it("trims and collapses blank lines in the expanded body", () => {
     expect(formatReasoningBody("\n\n**标题**\n\n\n\n正文\n \n\n下一段\n\n")).toBe(
       "**标题**\n\n正文\n\n下一段",
