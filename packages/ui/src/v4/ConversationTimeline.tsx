@@ -603,6 +603,8 @@ function ConversationTimelineImpl({
   if (heightCacheRef.current === null) {
     heightCacheRef.current = new TimelineRowHeightCache();
   }
+  // 测高缓存所属的会话坐标系；只有它变化才清缓存，面板隐藏 → 显示（paused 切换）不清。
+  const heightCacheScopeRef = useRef<string | null>(null);
   const [backToBottomVisible, setBackToBottomVisible] = useState(false);
   const [turnNavigatorViewport, setTurnNavigatorViewport] = useState({
     scrollOffsetPx: 0,
@@ -1687,7 +1689,16 @@ function ConversationTimelineImpl({
   useLayoutEffect(() => {
     if (paused) return;
     clearUserScrollIntent();
-    heightCacheRef.current?.clear();
+    // 修复切回 workbench tab 后长会话行叠加：此 effect 依赖 paused，旧实现每次面板重新可见
+    // 都清空测高缓存，virtualizer.measure() 后所有行回落到 72px 估算。恢复滚动位置会派发
+    // scroll，tanstack 在 isScrolling 期间跳过 ref 挂载测高，新挂载的行只能等 ResizeObserver
+    // 异步回调再提交；长会话重渲染期间整帧按 72px 间距绘制，上千 px 高的行互相覆盖。
+    // 同一会话坐标系内保留真实测高（隐藏时的 0 高度不会写入缓存），只在 scope 变化时清空。
+    const heightCacheScope = JSON.stringify([scrollMemoryKey, sessionKey]);
+    if (heightCacheScopeRef.current !== heightCacheScope) {
+      heightCacheScopeRef.current = heightCacheScope;
+      heightCacheRef.current?.clear();
+    }
     // prepend 锚定基线一并重置：rowId 跨会话可重复，禁止拿旧会话首行比较。
     prependAnchorRef.current = { firstRowId: null, totalSize: 0 };
     pendingPrependVirtualAnchorRef.current = null;
