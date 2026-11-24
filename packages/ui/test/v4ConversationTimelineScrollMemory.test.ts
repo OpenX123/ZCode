@@ -37,8 +37,18 @@ const virtualizer = vi.hoisted(() => ({
     | ((item: { end: number; start: number }) => boolean),
 }));
 
+const virtualizerOptions = vi.hoisted(() => ({
+  current: null as null | {
+    estimateSize: (index: number) => number;
+    measureElement: (element: Element, entry: ResizeObserverEntry | undefined) => number;
+  },
+}));
+
 vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: () => virtualizer,
+  useVirtualizer: (options: NonNullable<typeof virtualizerOptions.current>) => {
+    virtualizerOptions.current = options;
+    return virtualizer;
+  },
 }));
 
 vi.mock("@/v4/ConversationTurnGroup.js", async () => {
@@ -401,6 +411,31 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
       flushAnimationFrame();
     });
     expect(timeline.scrollTop).toBe(520);
+  });
+
+  it("面板隐藏后重新可见保留真实测高，切换会话才回落估算高度", () => {
+    // 回归：切回 workbench tab 时清空测高缓存，行按 72px 估算间距绘制并互相覆盖。
+    const container = installMinimalDom();
+    mountedRoot = createRoot(container);
+    const key = "workspace::pane:stack::session:1";
+    act(() => renderTimeline(mountedRoot!, "session-1", key));
+    const measuredRow = { getAttribute: (name: string) => (name === "data-index" ? "0" : null) };
+    const entry = { borderBoxSize: [{ blockSize: 1362, inlineSize: 800 }] };
+    virtualizerOptions.current!.measureElement(
+      measuredRow as unknown as Element,
+      entry as unknown as ResizeObserverEntry,
+    );
+    expect(virtualizerOptions.current!.estimateSize(0)).toBe(1362);
+
+    act(() => renderTimeline(mountedRoot!, "session-1", key, undefined, { paused: true }));
+    act(() => {
+      renderTimeline(mountedRoot!, "session-1", key, undefined, { paused: false });
+      flushAnimationFrame();
+    });
+    expect(virtualizerOptions.current!.estimateSize(0)).toBe(1362);
+
+    act(() => renderTimeline(mountedRoot!, "session-2", "workspace::pane:stack::session:2"));
+    expect(virtualizerOptions.current!.estimateSize(0)).toBe(72);
   });
 
   it("贴底面板隐藏期间增长内容，恢复后继续贴底而不使用零尺寸位置", () => {
