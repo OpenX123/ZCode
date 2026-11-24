@@ -1,4 +1,4 @@
-import { FileTextIcon, GlobeIcon } from "lucide-react";
+import { FileTextIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { MessageFileLinkTarget } from "@/components/ai-elements/message.js";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
@@ -24,7 +24,7 @@ export interface AssistantPreviewCardValidationResult {
 }
 
 export function buildAssistantPreviewCardFileSource(
-  card: Extract<AssistantPreviewCard, { type: "markdown" | "file" }>,
+  card: { title: string; path: string },
   scope: {
     workspacePath?: string;
     workspaceIdentity?: string;
@@ -77,11 +77,6 @@ interface AssistantPreviewCardsProps {
   /** Desktop 完成态生成产物：批量打开本轮已通过校验的 PPTX。 */
   autoOpenPptxKey?: string;
   onAutoOpenPptx?: (request: AssistantPreviewCardsAutoOpenRequest) => void;
-}
-
-export function shouldRenderAssistantPreviewCardAsFile(card: AssistantPreviewCard): boolean {
-  const filePath = getAssistantPreviewCardFilePath(card);
-  return card.type !== "website" || (card.url.startsWith("file://") && filePath !== null);
 }
 
 export function useAssistantPreviewCardValidation(
@@ -254,20 +249,9 @@ function AssistantPreviewCardRow({
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
 }) {
-  const filePath = getAssistantPreviewCardFilePath(card);
-  const renderAsFile = shouldRenderAssistantPreviewCardAsFile(card);
-  const descriptor = filePath ? resolveFileDisplayDescriptor(filePath) : null;
-  const fileSource =
-    renderAsFile && filePath
-      ? {
-          type: "file" as const,
-          title: card.title,
-          path: filePath,
-          ...(workspacePath ? { workspacePath } : {}),
-          ...(workspaceIdentity ? { workspaceIdentity } : {}),
-          ...(workspaceRemoteSessionId ? { workspaceRemoteSessionId } : {}),
-        }
-      : null;
+  // 1.6.1 起只生成文件卡（含本地 HTML 文件卡），不再有 http(s) 网站卡分支。
+  const filePath = getAssistantPreviewCardFilePath(card)!;
+  const descriptor = resolveFileDisplayDescriptor(filePath);
   return (
     <OpenSplitButton
       renderCard={(button) => (
@@ -282,9 +266,7 @@ function AssistantPreviewCardRow({
           }
         >
           <div className="flex size-11 shrink-0 items-center justify-center rounded-md bg-background text-foreground-subtle">
-            {!renderAsFile && card.type === "website" ? (
-              <GlobeIcon className="size-6" />
-            ) : descriptor ? (
+            {descriptor ? (
               <FileDisplayIcon src={descriptor.fileIconSrc} size={24} />
             ) : (
               <FileTextIcon className="size-6" />
@@ -299,34 +281,18 @@ function AssistantPreviewCardRow({
           {button}
         </div>
       )}
-      target={
-        !renderAsFile && card.type === "website"
-          ? {
-              type: "website",
-              url: card.url,
-              // website 卡有两个来源——html 引用卡（file://）与 localhost
-              // 预览卡（http(s) 活服务）。localPath 直开只对前者生效；localhost 卡
-              // 必须继续把 URL 交给浏览器，否则丢路由/动态内容。
-              workspacePath,
-              localPath: card.url.startsWith("file:") ? card.filePath : undefined,
-            }
-          : {
-              type: "file",
-              path: filePath!,
-              title: card.title,
-              label: card.title,
-              // Preview Card 以前没有 CodeViewer scope，远程 Linux path
-              // 会被 OpenSplitButton 当成本地路径交给宿主编辑器。
-              previewSource:
-                card.type === "website"
-                  ? fileSource!
-                  : buildAssistantPreviewCardFileSource(card, {
-                      workspacePath,
-                      workspaceIdentity,
-                      workspaceRemoteSessionId,
-                    }),
-            }
-      }
+      target={{
+        type: "file",
+        path: filePath,
+        title: card.title,
+        label: card.title,
+        // Preview Card 以前没有 CodeViewer scope，远程 Linux path
+        // 会被 OpenSplitButton 当成本地路径交给宿主编辑器。
+        previewSource: buildAssistantPreviewCardFileSource(
+          { title: card.title, path: filePath },
+          { workspacePath, workspaceIdentity, workspaceRemoteSessionId },
+        ),
+      }}
       onOpenBrowserUrl={onOpenBrowserUrl}
       onOpenFileLink={onOpenFileLink}
       onOpenCodeViewer={onOpenCodeViewer}

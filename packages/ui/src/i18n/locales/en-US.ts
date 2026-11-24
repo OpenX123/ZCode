@@ -2213,7 +2213,6 @@ const enUS: Record<string, string> = {
   "chat.codeComments.many": "{count} comments",
   "chat.codeComments.remove": "Remove code comments",
   "chat.codeCommentCards.expandAll": "Show {count} comments",
-  "chat.deliverable.showSourceContext": "View original context",
   "chat.codeCommentCards.collapseAll": "Collapse comments",
   "chat.codeCommentCards.openReview": "Open code review for {title}",
   "chat.webElements.one": "1 web element",
@@ -3076,7 +3075,6 @@ const enUS: Record<string, string> = {
   "chat.edit.workspaceConflict.description":
     "No conversation history was changed. Review the conflicting or ignored files, then reset only the conversation or cancel.",
   "chat.edit.workspaceConflict.conversationOnly": "Reset chat only and send",
-  "chat.previewCards.website": "Website",
   "chat.previewCards.htmlWebsite": "Website · HTML",
   "chat.previewCards.markdown": "Document · MD",
   "chat.previewCards.text": "Text · TXT",

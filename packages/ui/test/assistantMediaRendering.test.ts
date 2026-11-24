@@ -9,13 +9,7 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ServiceProvider } from "@/hooks/useServices.js";
 import type { IServiceAccessor } from "@zcode/services";
 import { buildAssistantPreviewCards } from "@/lib/assistantPreviewCards.js";
-import type { AssistantMediaRef, AssistantTextRow } from "@zcode/shared/zcode-protocol-v4";
-import { ConversationTurnRow } from "@/v4/ConversationTurnRow.js";
-import {
-  extractConversationDeliverables,
-  resolveConversationDeliverableKey,
-} from "@/v4/conversation-presentation/index.js";
-import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
+import type { AssistantMediaRef } from "@zcode/shared/zcode-protocol-v4";
 
 // CodeViewer 正文位于第三方 shadow DOM；这里只观察传入的原文，真实渲染由 E2E 覆盖。
 vi.mock("@/components/ui/code-viewer.js", () => ({
@@ -44,86 +38,6 @@ const ref = (
 });
 
 describe("UX05 已送达媒体", () => {
-  it.each([
-    ["image", "image/png", "img"],
-    ["audio", "audio/wav", "audio"],
-    ["video", "video/mp4", "video"],
-  ] as const)(
-    "%s 成果前插较早来源不重挂真实叶子、不重读或重置 Blob",
-    async (kind, mimeType, selector) => {
-      const reader = vi.fn().mockResolvedValue({ bytes: new Uint8Array([1]), mediaType: mimeType });
-      const createUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:original");
-      const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-      const source: AssistantTextRow = {
-        rowId: 12,
-        turnId: "t",
-        createdAt: 1,
-        createdAtSeq: 12,
-        kind: "assistantText",
-        text: "",
-        state: "complete",
-        media: [
-          {
-            id: "latest",
-            name: "较晚来源",
-            mediaType: kind,
-            mimeType,
-            source: { kind: "artifact", uri: "zcode-artifact://session-a/result" },
-          },
-        ],
-      };
-      const context = {
-        workspacePath: "/same",
-        workspaceIdentity: "ssh:host-a",
-        workspaceRemoteSessionId: "r-a",
-        sessionId: "session-a",
-        logEpoch: "epoch-a",
-        theme: "light" as const,
-        codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
-        readAttachment: reader,
-      };
-      const renderRow = (row: AssistantTextRow) => {
-        const deliverable = extractConversationDeliverables([row])[0]!;
-        return wrap(
-          createElement(ConversationTurnRow, {
-            key: resolveConversationDeliverableKey(deliverable, context, row.turnId),
-            row,
-            deliverable,
-            context,
-          }),
-        );
-      };
-      const view = render(renderRow(source));
-      await waitFor(() =>
-        expect(view.container.querySelector(selector)?.getAttribute("src")).toBe("blob:original"),
-      );
-      const original = view.container.querySelector(selector)!;
-      if (original instanceof HTMLMediaElement) original.currentTime = 0.75;
-      view.rerender(
-        renderRow({
-          ...source,
-          rowId: 1,
-          createdAtSeq: 1,
-          media: [{ ...source.media![0]!, id: "earlier", name: "较早来源" }],
-        }),
-      );
-      await waitFor(() =>
-        expect(view.container.querySelector(selector)?.getAttribute("src")).toBe("blob:original"),
-      );
-      expect(view.container.querySelector('[data-source-row-id="1"]')).not.toBeNull();
-      expect(view.container.querySelector('[data-source-row-id="12"]')).toBeNull();
-      expect(view.container.querySelector(selector)).toBe(original);
-      if (original instanceof HTMLMediaElement) expect(original.currentTime).toBe(0.75);
-      else expect(original.getAttribute("alt")).toBe("较早来源");
-      expect(reader).toHaveBeenCalledTimes(1);
-      expect(reader).toHaveBeenCalledWith({
-        sessionId: "session-a",
-        ref: "zcode-artifact://session-a/result",
-      });
-      expect(createUrl).toHaveBeenCalledTimes(1);
-      expect(revoke).not.toHaveBeenCalled();
-    },
-  );
   it.each([
     "target",
     "MIME",
@@ -191,53 +105,6 @@ describe("UX05 已送达媒体", () => {
     expect(nextReader).toHaveBeenCalledTimes(changed === "reader" ? 1 : 0);
     view.unmount();
     expect(revoke).toHaveBeenCalledWith("blob:after");
-  });
-  it("类型化成果每个excerpt只渲染当前媒体，并保留准确来源和上下文按钮", () => {
-    const source = {
-      rowId: 12,
-      turnId: "t",
-      createdAt: 1,
-      createdAtSeq: 12,
-      kind: "assistantText" as const,
-      text: "",
-      state: "complete" as const,
-      media: [
-        ref("audio", { kind: "url", url: "https://example.com/audio" }),
-        ref("video", { kind: "url", url: "https://example.com/video" }),
-      ],
-      actions: { canRetry: true, canFork: true },
-    };
-    const showSource = vi.fn();
-    const references = extractConversationDeliverables([source]);
-    render(
-      wrap(
-        createElement(
-          "div",
-          null,
-          references.map((deliverable) =>
-            createElement(ConversationTurnRow, {
-              key: deliverable.key,
-              row: source,
-              deliverable,
-              context: {
-                workspacePath: "/same",
-                theme: "light",
-                codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
-              },
-              onShowSourceContext: showSource,
-            }),
-          ),
-        ),
-      ),
-    );
-    expect(document.querySelectorAll("audio")).toHaveLength(1);
-    expect(document.querySelectorAll("video")).toHaveLength(1);
-    expect(document.querySelectorAll('[data-source-row-id="12"]')).toHaveLength(2);
-    fireEvent.click(screen.getAllByRole("button", { name: "查看原始上下文" })[0]!);
-    expect(showSource).toHaveBeenCalledTimes(1);
-    expect(
-      document.querySelector('[data-testid^="v4-retry"], [data-testid^="v4-fork"]'),
-    ).toBeNull();
   });
   it("Markdown 媒体写法按音视频扩展名复用原生控件", () => {
     render(
@@ -312,72 +179,27 @@ describe("UX05 已送达媒体", () => {
     expect(revoke).toHaveBeenCalledWith("blob:audio");
     expect(revoke).toHaveBeenCalledWith("blob:video");
   });
-  it("流式 text fence 闭合及目标更新读取当前完整目标", () => {
-    const first = "https://example.com/first?next=(a)&x=1";
-    const second = "https://example.com/second?next=(b)&x=2";
-    const open = vi.fn();
-    const response = (body: string) =>
-      wrap(
-        createElement(MessageResponse, {
-          children: body,
-          streaming: true,
-          theme: "light",
-          onOpenExternalUrl: open,
-        }),
-      );
-    const view = render(response(`\`\`\`text\n${first}`));
-    expect(view.container.querySelector("[data-assistant-text-fence-link]")).toBeNull();
-    view.rerender(response(`\`\`\`text\n${first}\n\`\`\``));
-    const firstAction = view.container.querySelector<HTMLButtonElement>(
-      "[data-assistant-text-fence-link]",
-    );
-    expect(firstAction?.getAttribute("title")).toBe(first);
-    fireEvent.click(firstAction!);
-    expect(open).toHaveBeenLastCalledWith(first);
-    view.rerender(response(`\`\`\`text\n${second}\n\`\`\``));
-    const secondAction = view.container.querySelector<HTMLButtonElement>(
-      "[data-assistant-text-fence-link]",
-    );
-    expect(secondAction?.getAttribute("title")).toBe(second);
-    fireEvent.click(secondAction!);
-    expect(open).toHaveBeenLastCalledWith(second);
-  });
-  it("无 MIME 的普通网页按收到的标题成卡且手机仍可打开", () => {
-    const cards = buildAssistantPreviewCards(
-      "[成果说明](https://example.com/result)",
-      "/workspace",
-      { suppressWebRemoteCards: true },
-    );
-    expect(cards).toContainEqual(
-      expect.objectContaining({
-        type: "website",
-        title: "成果说明",
-        url: "https://example.com/result",
-      }),
-    );
-  });
-  it("完整闭合的 localhost URL 不再派生一张截断卡片", () => {
+  it("1.6.1 普通网页与 localhost URL 不再生成网站卡", () => {
+    expect(
+      buildAssistantPreviewCards("[成果说明](https://example.com/result)", "/workspace"),
+    ).toEqual([]);
     const url = "http://localhost:3000/result?next=(step)&x=1";
-    expect(buildAssistantPreviewCards(`\`\`\`text\n${url}\n\`\`\``, "/workspace")).toEqual([
-      expect.objectContaining({ type: "website", url }),
-    ]);
+    expect(buildAssistantPreviewCards(`\`\`\`text\n${url}\n\`\`\``, "/workspace")).toEqual([]);
+    expect(buildAssistantPreviewCards(`访问 ${url}`, "/workspace")).toEqual([]);
   });
-  it("最终正文保留单 URL text fence 并可打开完整目标", () => {
+  it("1.6.1 单 URL text fence 只保留代码块，下方不再追加链接行", () => {
     const href = "https://example.com/result?q=(a)&x=1";
-    const open = vi.fn();
     render(
       wrap(
         createElement(
           MessageResponse,
-          { theme: "light", onOpenExternalUrl: open },
+          { theme: "light", onOpenExternalUrl: vi.fn() },
           `说明\n\n\`\`\`text\n${href}\n\`\`\``,
         ),
       ),
     );
-    const button = screen.getByRole("button", { name: href });
-    fireEvent.click(button);
-    expect(open).toHaveBeenCalledWith(href);
     expect(document.querySelector('[data-language="text"]')?.textContent).toContain(href);
+    expect(screen.queryByRole("button", { name: href })).toBeNull();
   });
   it.each(["audio", "video"] as const)(
     "显式 MIME 的无扩展名 %s 使用原生控件且不自动播放",

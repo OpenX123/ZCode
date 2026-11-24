@@ -456,33 +456,33 @@ function unitWithWorkRows(
 }
 
 describe("v4 assistant preview cards helper", () => {
-  it("builds a website card for a completed latest assistant row", () => {
-    const row = assistantText(1, "Preview http://localhost:5173.");
+  it("builds a file card for a completed latest assistant row", () => {
+    const row = assistantText(1, "Generated report.pdf.");
 
     expect(buildForRow(row, [row])).toMatchObject([
       {
-        type: "website",
-        url: "http://localhost:5173",
+        type: "file",
+        path: "/workspace/report.pdf",
       },
     ]);
   });
 
   it("builds interrupted turn cards from early assistant text but only for the latest row", () => {
-    const early = assistantText(1, "Preview http://localhost:5173.");
+    const early = assistantText(1, "Generated report.pdf.");
     const latest = assistantText(2, "已停止。", "interrupted");
 
     expect(buildForRow(early, [early, latest])).toEqual([]);
     expect(buildForRow(latest, [early, latest])).toMatchObject([
       {
-        type: "website",
-        url: "http://localhost:5173",
+        type: "file",
+        path: "/workspace/report.pdf",
       },
     ]);
   });
 
   it("does not build cards for streaming, failed, or non-latest rows", () => {
-    const streaming = assistantText(1, "Preview http://localhost:5173.", "streaming");
-    const failed = assistantText(2, "Preview http://localhost:5173.", "failed");
+    const streaming = assistantText(1, "Generated report.pdf.", "streaming");
+    const failed = assistantText(2, "Generated report.pdf.", "failed");
     const latest = assistantText(3, "done");
 
     expect(buildForRow(streaming, [streaming])).toEqual([]);
@@ -491,12 +491,12 @@ describe("v4 assistant preview cards helper", () => {
   });
 
   it("merges multiple assistant text segments before deduping candidates", () => {
-    const first = assistantText(1, "Preview http://localhost:5173 and README.md.");
-    const latest = assistantText(2, "Again: http://localhost:5173 and ./README.md.");
+    const first = assistantText(1, "Generated report.pdf and README.md.");
+    const latest = assistantText(2, "Again: report.pdf and ./README.md.");
 
     expect(buildForRow(latest, [first, latest]).map((card) => card.id)).toEqual([
       "markdown:/workspace/README.md",
-      "website:http://localhost:5173",
+      "file:pdf:/workspace/report.pdf",
     ]);
   });
 });
@@ -535,12 +535,12 @@ describe("ConversationTurnGroup assistant preview cards", () => {
     }
   });
   it("renders preview cards once below the latest assistant text row", () => {
-    const early = assistantText(1, "Preview http://localhost:5173.");
+    const early = assistantText(1, "Generated report.pdf.");
     const latest = assistantText(2, "Final answer.");
     const html = renderTurn(baseUnit([early, latest]));
 
     expect(html.match(/mock-assistant-preview-cards/g)).toHaveLength(1);
-    expect(html).toContain('data-card-ids="website:http://localhost:5173"');
+    expect(html).toContain('data-card-ids="file:pdf:/workspace/report.pdf"');
     expect(html.indexOf("Final answer.")).toBeLessThan(
       html.indexOf('data-testid="mock-assistant-preview-cards"'),
     );
@@ -550,7 +550,7 @@ describe("ConversationTurnGroup assistant preview cards", () => {
     const onOpenBrowserUrl = vi.fn();
     const onOpenCodeViewer = vi.fn();
     const onOpenFileLink = vi.fn();
-    const row = assistantText(1, "Preview http://localhost:5173 and README.md.");
+    const row = assistantText(1, "Generated report.pdf and README.md.");
     const html = renderTurnWithContext(baseUnit([row]), {
       ...rowContext,
       onOpenBrowserUrl,

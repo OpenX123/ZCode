@@ -40,7 +40,7 @@ import {
 } from "react";
 import type { BundledTheme } from "shiki";
 import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown";
-import type { Pluggable, PluggableList } from "unified";
+import type { Pluggable, PluggableList, Plugin } from "unified";
 import { CodeBlock, CodeBlockHeader } from "@/components/ai-elements/code-block.js";
 import { collectClosedMarkdownFences } from "@/components/ai-elements/mermaid-rendering/index.js";
 import {
@@ -362,7 +362,6 @@ export const MessageBranchPage = ({ className, ...props }: MessageBranchPageProp
 
 export type MessageResponseProps = {
   media?: readonly AssistantMediaRef[];
-  suppressTextFenceActions?: boolean;
   /** 公开分享关闭自动媒体加载；已认证只读会话仍使用默认展示。 */
   allowAutomaticMedia?: boolean;
   /** 办公模式的正式回答固定换行，不覆盖用户保存的代码预览设置。 */
@@ -428,10 +427,78 @@ function disableSingleTilde(plugin: Pluggable): Pluggable {
   ];
 }
 
-const messageCjkRemarkPluginsAfter = cjk.remarkPluginsAfter.map((plugin) => {
-  const attacher = Array.isArray(plugin) ? plugin[0] : plugin;
-  return attacher === remarkCjkFriendlyGfmStrikethrough ? disableSingleTilde(plugin) : plugin;
-});
+interface AutolinkMarkdownNode {
+  children?: AutolinkMarkdownNode[];
+  type: string;
+  url?: string;
+  value?: string;
+}
+
+const isAutolinkTextNode = (
+  node: AutolinkMarkdownNode | undefined,
+): node is AutolinkMarkdownNode & { value: string } =>
+  node?.type === "text" && typeof node.value === "string";
+
+/** GFM 裸链接字面量：唯一文本子节点就是 URL 本身（www 形式补了 `http://`）。 */
+function autolinkText(node: AutolinkMarkdownNode): string | null {
+  const child = node.children?.length === 1 ? node.children[0] : undefined;
+  if (node.type !== "link" || !isAutolinkTextNode(child) || typeof node.url !== "string") return null;
+  return node.url === child.value || node.url === `http://${child.value}` ? child.value : null;
+}
+
+function fixStrongAutolinks(children: AutolinkMarkdownNode[]): void {
+  for (let i = 0; i < children.length; i++) {
+    const link = children[i]!;
+    const text = autolinkText(link);
+    const cut = text?.indexOf("**") ?? -1;
+    if (text === null || cut <= 0) continue;
+
+    // 把 `**` 及其后的内容移出链接，URL 同步截断。
+    const tail = text.slice(cut);
+    link.children![0]!.value = text.slice(0, cut);
+    link.url = link.url!.slice(0, link.url!.length - tail.length);
+    const next = children[i + 1];
+    if (isAutolinkTextNode(next)) next.value = tail + next.value;
+    else children.splice(i + 1, 0, { type: "text", value: tail });
+
+    // 紧邻的开头 `**` 因结尾被吞进链接而未配对，这里补成 strong。
+    const prev = children[i - 1];
+    const after = children[i + 1] as AutolinkMarkdownNode & { value: string };
+    if (isAutolinkTextNode(prev) && prev.value.endsWith("**")) {
+      prev.value = prev.value.slice(0, -2);
+      after.value = after.value.slice(2);
+      children[i] = { type: "strong", children: [link] };
+    }
+  }
+}
+
+/**
+ * 修复 `**http://x/docs**。`：GFM autolink literal 只剥离结尾的 `*`，后面紧跟
+ * `。`/`，`/`）` 等非空白字符时会把 `**` 连同标点吞进 URL；@streamdown/cjk 的链接
+ * 拆分只在中文标点处截断，`**` 仍留在 href 里，开头的 `**` 也失配成字面量。
+ * 依据：URL 中出现 `**` 几乎只可能来自 Markdown 强调标记，因此在 `**` 处截断链接，
+ * 并在紧邻开头 `**` 时还原 strong。必须排在 cjk 链接拆分之后执行。
+ */
+const autolinkStrongRemarkPlugin: Plugin = function autolinkStrongRemarkPlugin() {
+  return (tree: unknown) => {
+    const visit = (node: AutolinkMarkdownNode): void => {
+      if (!node.children) return;
+      fixStrongAutolinks(node.children);
+      node.children.forEach(visit);
+    };
+    visit(tree as AutolinkMarkdownNode);
+  };
+};
+
+// Streamdown 顺序为 cjk before → app remarkPlugins → cjk after；加粗裸链接修复依赖
+// cjk 的中文标点链接拆分先执行，所以只能挂在 cjk after 末尾。
+const messageCjkRemarkPluginsAfter = [
+  ...cjk.remarkPluginsAfter.map((plugin) => {
+    const attacher = Array.isArray(plugin) ? plugin[0] : plugin;
+    return attacher === remarkCjkFriendlyGfmStrikethrough ? disableSingleTilde(plugin) : plugin;
+  }),
+  autolinkStrongRemarkPlugin,
+];
 const messageCjkPlugin: typeof cjk = {
   ...cjk,
   remarkPlugins: [...cjk.remarkPluginsBefore, ...messageCjkRemarkPluginsAfter],
@@ -1308,7 +1375,6 @@ export const messageResponsePropsAreEqual = (
 ): boolean =>
   prevProps.children === nextProps.children &&
   prevProps.media === nextProps.media &&
-  prevProps.suppressTextFenceActions === nextProps.suppressTextFenceActions &&
   prevProps.allowAutomaticMedia === nextProps.allowAutomaticMedia &&
   prevProps.forceCodeWrap === nextProps.forceCodeWrap &&
   nextProps.streaming === prevProps.streaming &&
@@ -1329,7 +1395,6 @@ export const messageResponsePropsAreEqual = (
 export const MessageResponse = memo(
   ({
     media,
-    suppressTextFenceActions = false,
     allowAutomaticMedia = true,
     className,
     streaming = false,
@@ -1355,17 +1420,6 @@ export const MessageResponse = memo(
       () => assistantPresentationReferences(rawMarkdown, streaming),
       [rawMarkdown, streaming],
     );
-    const textFenceTargets = useMemo(
-      () =>
-        new Set(
-          references.filter((ref) => ref.sourceFormat === "textFence").map((ref) => ref.target),
-        ),
-      [references],
-    );
-    // 流式正文每次更新都会重建目标 Set；若它参与 renderer 依赖，内联组件类型会换代，
-    // 导致 Mermaid 与 Markdown 媒体卸载。保持类型稳定，同时在本轮渲染读取最新目标。
-    const textFenceTargetsRef = useRef(textFenceTargets);
-    textFenceTargetsRef.current = textFenceTargets;
     const deliveredMedia = useMemo(() => {
       if (!allowAutomaticMedia) return [];
       const typed = (media ?? []).map((ref) => ({
@@ -1668,42 +1722,29 @@ export const MessageResponse = memo(
           const codeText = trimCodeFenceTrailingNewlines(extractCodeText(children));
           const language = getCodeLanguage(codeClassName);
 
+          // 1.6.1 不再在单 URL text fence 下追加链接行：用户反馈代码块下多出一行令人困惑。
           return (
-            <>
-              <CodeBlock
-                className="my-4 border border-border bg-card"
-                code={codeText}
-                // 流式消息里的代码围栏会被 Streamdown 反复拆分/重挂载。
-                // 高亮等消息完成后再启动，避免 async highlighter 和消息流更新叠加触发 React #185。
-                enableSyntaxHighlighting={!renderStreaming}
-                fontSizePx={codePreviewSettings.fontSizePx}
+            <CodeBlock
+              className="my-4 border border-border bg-card"
+              code={codeText}
+              // 流式消息里的代码围栏会被 Streamdown 反复拆分/重挂载。
+              // 高亮等消息完成后再启动，避免 async highlighter 和消息流更新叠加触发 React #185。
+              enableSyntaxHighlighting={!renderStreaming}
+              fontSizePx={codePreviewSettings.fontSizePx}
+              language={language}
+              mermaidStreaming={
+                renderStreaming && !closedMarkdownFencesRef.current.has(codeText.trim())
+              }
+              theme={codeBlockTheme}
+              appTheme={theme}
+              wrapLongLines={wrapLongLines}
+            >
+              <CodeBlockHeader
+                className="pl-3 pr-2 pt-2"
                 language={language}
-                mermaidStreaming={
-                  renderStreaming && !closedMarkdownFencesRef.current.has(codeText.trim())
-                }
-                theme={codeBlockTheme}
-                appTheme={theme}
-                wrapLongLines={wrapLongLines}
-              >
-                <CodeBlockHeader
-                  className="pl-3 pr-2 pt-2"
-                  language={language}
-                  showWrapButton={!forceCodeWrap}
-                />
-              </CodeBlock>
-              {!suppressTextFenceActions &&
-              textFenceTargetsRef.current.has(codeText.trim()) &&
-              onOpenExternalUrl ? (
-                <MessageExternalLink
-                  href={codeText.trim()}
-                  onOpenExternalUrl={onOpenExternalUrl}
-                  className="mb-3 block max-w-full break-all text-ui-sm"
-                  data-assistant-text-fence-link
-                >
-                  {codeText.trim()}
-                </MessageExternalLink>
-              ) : null}
-            </>
+                showWrapButton={!forceCodeWrap}
+              />
+            </CodeBlock>
           );
         },
         blockquote: MarkdownBlockquote,
@@ -1727,7 +1768,6 @@ export const MessageResponse = memo(
         onOpenCodeViewer,
         onOpenExternalUrl,
         openMediaSource,
-        suppressTextFenceActions,
         readAttachment,
         renderStreaming,
         sessionId,

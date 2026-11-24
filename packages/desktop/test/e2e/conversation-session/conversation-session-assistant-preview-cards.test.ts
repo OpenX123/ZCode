@@ -106,7 +106,7 @@ let retryMediaRequestCount = 0;
 let fixtureVideo: Buffer;
 let fixtureImage: Buffer;
 
-async function setExcerptPresentation(locale: "zh-CN" | "en-US", theme: "zai-light" | "zai-dark") {
+async function setLocaleAndTheme(locale: "zh-CN" | "en-US", theme: "zai-light" | "zai-dark") {
   const result = await browser.executeAsync(
     (next, done: (result: string) => void) => {
       const actions = (window as typeof window & { __testActions?: Record<string, unknown> })
@@ -151,37 +151,18 @@ describe("Assistant Preview Cards E2E", () => {
     await clearAppData();
   });
 
-  it("UX05 展示：网页卡、直接及本地媒体、失效重试、最终正文入口", async () => {
+  it("UX05 展示：直接及本地媒体、失效重试；1.6.1 起无网页卡与 text fence 链接行", async () => {
     await prepareCase();
     await materializeMediaFixtures();
     retryMediaAvailable = false;
     retryMediaRequestCount = 0;
-    await setExcerptPresentation("zh-CN", "zai-light");
+    await setLocaleAndTheme("zh-CN", "zai-light");
     const marker = `${CASE_MARKER}_UX05_DISPLAY`;
     await sendV4Prompt(`${marker} E2E_BROWSER_FIXTURE_URL:${fixtureRootUrl}`);
     await waitForCompleted(`${marker}_DONE`);
     await assertLoadedAssistantMedia(3);
-    await browser.waitUntil(
-      async () =>
-        (await readPreviewCards(["UX05 公共网站"])).some((card) => card.title === "UX05 公共网站"),
-      { timeout: 30_000 },
-    );
-    const websiteOrigin = await establishKeyboardOrigin();
-    const keyboardSteps = {
-      website: await activateByTabAndEnter(
-        await browser.$('[data-preview-card-title="UX05 公共网站"] button'),
-        64,
-        true,
-        websiteOrigin.readCountAfter,
-      ),
-    };
-    await browser.waitUntil(
-      async () =>
-        (await browser.$(`[data-testid="${TID_BROWSER_ADDRESS_INPUT}"]`).getValue()) ===
-        "https://example.com/ux05",
-      { timeout: 10_000 },
-    );
-    await closeSidePanes();
+    // 1.6.1：普通网页链接只保留正文内链接，不再生成网站卡。
+    await expectPreviewCardMissing("UX05 公共网站");
     const failed = await browser.$(
       `[data-assistant-media]:has(button[title="${fixtureRootUrl}-retry.wav"])`,
     );
@@ -206,11 +187,8 @@ describe("Assistant Preview Cards E2E", () => {
       async () => browser.execute((el) => (el as HTMLImageElement).naturalWidth > 0, image),
       { timeout: 10_000 },
     );
-    const fence = await browser.$("[data-assistant-text-fence-link]");
-    await fence.scrollIntoView();
-    await fence.click();
-    await waitForBrowserSurface(`${fixtureRootUrl}-final?next=(step)&x=1`, "APC01_LOCAL_URL_PAGE");
-    await closeSidePanes();
+    // 1.6.1：单 URL text fence 只渲染代码块，下方不再追加链接行。
+    expect(await browser.$("[data-assistant-text-fence-link]").isExisting()).toBe(false);
     const screenshots = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
     if (screenshots) {
       await browser.saveScreenshot(join(screenshots, "ux05-display-light-zh.png"));
@@ -218,9 +196,7 @@ describe("Assistant Preview Cards E2E", () => {
         join(screenshots, "ux05-display-keyboard.json"),
         JSON.stringify(
           {
-            ...keyboardSteps,
             retry: retryKeyboard,
-            websiteOrigin,
             retryOrigin,
             retryReadCountAfterEnter,
           },
@@ -276,28 +252,18 @@ describe("Assistant Preview Cards E2E", () => {
     await sendV4PromptInPane(paneId, "UX05 验证原生输出媒体");
     await waitForCompleted(marker);
     const sessionId = await waitForBoundSession(marker);
-    await assertNativeMediaOutsideHistory();
+    await assertNativeMediaInHistory();
     await assertLoadedAssistantMedia(3);
-    const sourceButton = await browser.$(
-      "[data-conversation-deliverable] [data-deliverable-show-source]",
-    );
-    await sourceButton.click();
-    expect(
-      await browser
-        .$('[data-testid^="chat-assistant-history-trigger-"]')
-        .getAttribute("data-history-open"),
-    ).toBe("true");
     expect(await browser.$("body").getText()).toContain("UX05 未知资源说明");
-    await browser.$('[data-testid^="chat-assistant-history-trigger-"]').click();
     await startNewV4Draft();
     await selectV4TaskById(sessionId);
     await waitForCompleted(marker);
-    await assertNativeMediaOutsideHistory();
+    await assertNativeMediaInHistory();
     await assertLoadedAssistantMedia(3);
     await browser.refresh();
     await selectV4TaskById(sessionId, 60_000);
     await waitForCompleted(marker);
-    await assertNativeMediaOutsideHistory();
+    await assertNativeMediaInHistory();
     await assertLoadedAssistantMedia(3);
     const nativeWorkspace = await browser.execute(
       () =>
@@ -312,14 +278,14 @@ describe("Assistant Preview Cards E2E", () => {
     await restartCurrentWorkspacePreservingProfile(nativeWorkspace);
     await selectV4TaskById(sessionId, 60_000);
     await waitForCompleted(marker);
-    await assertNativeMediaOutsideHistory();
+    await assertNativeMediaInHistory();
     await assertLoadedAssistantMedia(3);
     const screenshots = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
     if (screenshots) await browser.saveScreenshot(join(screenshots, "ux05-native-cold.png"));
     await assertNativeMediaVirtualized(marker);
   }).timeout(360_000);
 
-  it("UX04: 非最终正文关键入口在已工作折叠外可见，并保留原始上下文", async () => {
+  it("UX04 撤销（1.6.1）：非最终正文入口只在原历史中，不再在已工作折叠外追加摘录", async () => {
     await browser.waitUntil(
       async () =>
         (await browser.$('[data-testid="onboarding-page"]').isExisting()) ||
@@ -328,121 +294,32 @@ describe("Assistant Preview Cards E2E", () => {
     );
     await browser.keys("Escape");
     await prepareCase({ yolo: true });
-    await setExcerptPresentation("zh-CN", "zai-light");
     const marker = `${CASE_MARKER}_WORK_EXCERPT`;
     await sendV4Prompt(
       `${marker}: publish the entry before working. E2E_BROWSER_FIXTURE_URL:${fixtureRootUrl}`,
     );
     await waitForCompleted(`${marker}_DONE`);
-    const sessionId = await waitForBoundSession(marker);
-    const excerpt = await browser.$(
-      `[data-conversation-deliverable]:has(button[title="${fixtureRootUrl}"])`,
-    );
-    await excerpt.waitForDisplayed();
-    expect(await excerpt.getText()).toContain("请打开此入口继续操作");
-    expect(await excerpt.$(`button[title="${fixtureRootUrl}"]`).isDisplayed()).toBe(true);
-    expect(await excerpt.$$('[data-testid^="v4-fork"], [data-testid^="v4-retry"]').length).toBe(0);
-    const sourceKey = await excerpt.getAttribute("data-conversation-deliverable");
+    expect(await browser.$("[data-conversation-deliverable]").isExisting()).toBe(false);
+    expect(await browser.$("[data-deliverable-show-source]").isExisting()).toBe(false);
+    expect(await browser.$("[data-deliverable-open-link]").isExisting()).toBe(false);
     const history = await browser.$('[data-testid^="chat-assistant-history-content"]');
     expect(await history.isDisplayed()).toBe(false);
-    const screenshotDir = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
-    if (screenshotDir) await browser.saveScreenshot(join(screenshotDir, "ux04-collapsed.png"));
-    await excerpt.$("[data-deliverable-show-source]").click();
+    await browser.$('[data-testid^="chat-assistant-history-trigger"]').click();
     await history.waitForDisplayed();
     expect(await history.getText()).toContain("请打开此入口继续操作");
-    expect(await excerpt.getAttribute("data-conversation-deliverable")).toBe(sourceKey);
-    const trigger = await browser.$('[data-testid^="chat-assistant-history-trigger"]');
-    await trigger.click();
-    await history.waitForDisplayed({ reverse: true });
-    await excerpt.$(`button[title="${fixtureRootUrl}"]`).click();
-    await waitForBrowserSurface(fixtureRootUrl, "APC01_LOCAL_URL_PAGE");
-    await closeSidePanes();
-    const textEntryUrl = `${fixtureRootUrl}-text-entry?next=(step)&label=%E4%B8%AD%E6%96%87%20path&angle=%3Cdone%3E`;
-    const textEntry = await browser.$("button[data-deliverable-open-link]");
-    expect(await textEntry.getAttribute("title")).toBe(textEntryUrl);
-    await textEntry.scrollIntoView();
-    // 真实 Tab 聚焦与 Enter 激活，验证原生按钮可用且完整 URL 没有经过 Markdown 重建。
-    await excerpt.$("[data-deliverable-show-source]").click();
-    await trigger.click();
-    await activateByTabAndEnter(textEntry, 16);
-    await waitForBrowserSurface(textEntryUrl, "APC01_LOCAL_URL_PAGE");
-    await closeSidePanes();
-    await startNewV4Draft();
-    expect(await browser.$("[data-conversation-deliverable]").isExisting()).toBe(false);
-    await selectV4TaskById(sessionId);
-    const restored = await browser.$(
-      `[data-conversation-deliverable]:has(button[title="${fixtureRootUrl}"])`,
-    );
-    await restored.waitForDisplayed();
-    expect(await restored.getAttribute("data-conversation-deliverable")).toBe(sourceKey);
-    if (screenshotDir) await browser.saveScreenshot(join(screenshotDir, "ux04-restored.png"));
-    const originalWindow = await setCurrentElectronRendererContentSize(1280, 900);
-    const minimum = await browser.electron.execute((electron, id) => {
-      const window = electron.BrowserWindow.fromId(id)!;
-      const previous = window.getMinimumSize();
-      // 仅测试窄屏：Windows 原生最小宽为 481px，暂时下调后验证真实 430px viewport。
-      window.setMinimumSize(320, 400);
-      return previous;
-    }, originalWindow.windowId);
-    try {
-      await setCurrentElectronRendererContentSize(430, 900);
-      await setExcerptPresentation("en-US", "zai-dark");
-      const drawer = await browser.$('[data-testid="workspace-sidebar-drawer-backdrop"]');
-      if (await drawer.isDisplayed()) {
-        // 窄屏标题栏被 drawer 自身拖拽区覆盖，真实点击右侧露出的 backdrop 收起。
-        await browser.action("pointer").move({ x: 420, y: 450 }).down().up().perform();
-        await drawer.waitForDisplayed({ reverse: true });
-      }
-      await restored.scrollIntoView();
-      expect(await restored.$("[data-deliverable-show-source]").getText()).toBe(
-        "View original context",
-      );
-      const layout = await browser.execute(() => ({
-        width: window.innerWidth,
-        excerpts: Array.from(document.querySelectorAll("[data-conversation-deliverable]")).map(
-          (node) => {
-            const rect = node.getBoundingClientRect();
-            return { left: rect.left, right: rect.right, width: rect.width };
-          },
-        ),
-      }));
-      if (screenshotDir) {
-        await browser.saveScreenshot(join(screenshotDir, "ux04-narrow-dark-en.png"));
-        await writeFile(join(screenshotDir, "ux04-layout.json"), JSON.stringify(layout, null, 2));
-      }
-      // 与精确窗口 helper 相同：Windows 物理像素换算允许 1px 原生舍入，布局仍用实际宽度校验。
-      expect(Math.abs(layout.width - 430)).toBeLessThanOrEqual(1);
-      expect(layout.excerpts).toHaveLength(1);
-      for (const rect of layout.excerpts) {
-        expect(rect.width).toBeGreaterThan(0);
-        expect(rect.left).toBeGreaterThanOrEqual(0);
-        expect(rect.right).toBeLessThanOrEqual(layout.width + 1);
-      }
-    } finally {
-      await browser.electron.execute(
-        (electron, id, min) => electron.BrowserWindow.fromId(id)?.setMinimumSize(min[0]!, min[1]!),
-        originalWindow.windowId,
-        minimum,
-      );
-      await restoreElectronRendererContentSize(originalWindow);
-      await setExcerptPresentation("zh-CN", "zai-light");
-    }
-  }).timeout(240_000);
+  }).timeout(180_000);
 
-  it("APC01/APC04: completed localhost URL 去重并打开真实 Browser 页面", async () => {
+  it("APC01（1.6.1）: completed localhost URL 不再生成网站卡", async () => {
     await prepareCase();
     const marker = `${CASE_MARKER}_LOCAL_URL`;
     await sendV4Prompt(
       `${marker}: reply with the same local preview URL more than once. E2E_BROWSER_FIXTURE_URL:${fixtureRootUrl}`,
     );
     await waitForCompleted(`${marker}_DONE`);
-
-    await waitForPreviewCards(["APC Local Preview"]);
-    await clickPreviewCard("APC Local Preview");
-    await waitForBrowserSurface(fixtureRootUrl, "APC01_LOCAL_URL_PAGE");
+    expect(await readPreviewCards()).toEqual([]);
   }).timeout(180_000);
 
-  it("APC02: interrupted turn 在 URL 已到达后 Stop，卡片只在终态出现", async () => {
+  it("APC02（1.6.1）: interrupted turn 在 URL 已到达后 Stop，终态也不生成网站卡", async () => {
     await prepareCase();
     const marker = `${CASE_MARKER}_INTERRUPTED`;
     await sendV4Prompt(`${marker}: keep streaming after publishing ${STREAM_URL}.`);
@@ -455,10 +332,10 @@ describe("Assistant Preview Cards E2E", () => {
       "APC02 Stop 后 turn 没有进入 interrupted 终态",
       60_000,
     );
-    await waitForPreviewCards(["assistant-preview-stream"]);
+    expect(await readPreviewCards()).toEqual([]);
   }).timeout(180_000);
 
-  it("APC03: streaming 期间不显示卡片，complete 后显示", async () => {
+  it("APC03（1.6.1）: streaming 与 complete 后均不为 URL 生成网站卡", async () => {
     await prepareCase();
     const marker = `${CASE_MARKER}_STREAMING`;
     await sendV4Prompt(`${marker}: stream ${STREAM_URL} before the final marker.`);
@@ -466,10 +343,10 @@ describe("Assistant Preview Cards E2E", () => {
     expect(await readPreviewCards()).toEqual([]);
 
     await waitForCompleted(`${marker}_DONE`);
-    await waitForPreviewCards(["assistant-preview-stream"]);
+    expect(await readPreviewCards()).toEqual([]);
   }).timeout(180_000);
 
-  it("APC15 FR-I1: 同一流式正文保持 Mermaid/媒体叶子并及时显示完整 text fence 目标", async () => {
+  it("APC15 FR-I1: 同一流式正文保持 Mermaid/媒体叶子，text fence 闭合后不追加链接行", async () => {
     await prepareCase();
     const marker = `${CASE_MARKER}_RENDERER`;
     const fixtureId = "assistant-preview-cards-renderer-stream";
@@ -560,27 +437,34 @@ describe("Assistant Preview Cards E2E", () => {
     );
 
     await releaseControlledReplay(fixtureId);
-    const action = await browser.$(`[data-assistant-text-fence-link][title="${target}"]`);
-    await action.waitForDisplayed({ timeout: 30_000 });
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          (expected) =>
+            Array.from(document.querySelectorAll('[data-language="text"]')).some((node) =>
+              (node.textContent ?? "").includes(expected),
+            ),
+          target,
+        ),
+      { timeout: 30_000, timeoutMsg: "APC15 闭合 text fence 未渲染为代码块" },
+    );
+    expect(await browser.$("[data-assistant-text-fence-link]").isExisting()).toBe(false);
     const afterClosed = await readRendererStreamProbe();
     expect(afterClosed).toEqual(
       expect.objectContaining({ diagram: true, image: true, audio: true, video: true, svg: true }),
     );
-    await action.click();
-    await waitForBrowserSurface(target, "APC01_LOCAL_URL_PAGE");
-    const afterClick = await readRendererStreamProbe();
     const evidenceDir = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
     if (evidenceDir) {
       await browser.saveScreenshot(join(evidenceDir, "apc15-renderer-stream.png"));
       await writeFile(
         join(evidenceDir, "apc15-renderer-stream.json"),
-        JSON.stringify({ initial, afterPartial, afterClosed, afterClick }, null, 2),
+        JSON.stringify({ initial, afterPartial, afterClosed }, null, 2),
       );
     }
     await waitForCompleted(`${marker}_DONE`);
   }).timeout(180_000);
 
-  it("APC04: localhost 与本轮 HTML 同时出现时按现有业务规则抑制 HTML", async () => {
+  it("APC04（1.6.1）: localhost 与本轮 HTML 同时出现时只显示 HTML 文件卡", async () => {
     await prepareCase({ yolo: true });
     const marker = `${CASE_MARKER}_LOCAL_SUPPRESSES_HTML`;
     await sendV4Prompt(
@@ -588,8 +472,8 @@ describe("Assistant Preview Cards E2E", () => {
     );
     await waitForCompleted(`${marker}_DONE`);
 
-    await waitForPreviewCards(["APC Local Only"]);
-    await expectPreviewCardMissing(basename(SOURCE_HTML_RELATIVE_PATH));
+    await waitForPreviewCards([basename(SOURCE_HTML_RELATIVE_PATH)]);
+    await expectPreviewCardMissing("APC Local Only");
   }).timeout(180_000);
 
   it("APC06/APC07: source gate、Office 自动打开 PPTX", async () => {
@@ -806,8 +690,6 @@ async function readRendererStreamProbe() {
     const image = document.querySelector<HTMLImageElement>('img[alt="FRI1 图片"]');
     const audio = document.querySelector<HTMLAudioElement>('[data-assistant-media="audio"] audio');
     const video = document.querySelector<HTMLVideoElement>('[data-assistant-media="video"] video');
-    const action = document.querySelector<HTMLElement>("[data-assistant-text-fence-link]");
-    const rect = action?.getBoundingClientRect();
     return {
       diagram: diagram === probe.diagram,
       svg: diagram?.innerHTML === probe.svg,
@@ -817,9 +699,6 @@ async function readRendererStreamProbe() {
       imageWidth: image?.naturalWidth ?? 0,
       audioReadyState: audio?.readyState ?? 0,
       videoReadyState: video?.readyState ?? 0,
-      actionRect: rect
-        ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
-        : null,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
     };
@@ -957,13 +836,17 @@ async function assertLoadedAssistantMedia(count: number) {
   expect(controls).toBe(true);
 }
 
-async function assertNativeMediaOutsideHistory() {
+// 1.6.1 移除成果摘录后，历史中的类型化媒体随原历史展开查看，不再常显在折叠外。
+async function assertNativeMediaInHistory() {
   const trigger = await browser.$('[data-testid^="chat-assistant-history-trigger-"]');
-  expect(await trigger.getAttribute("data-history-open")).toBe("false");
-  expect(await browser.$$("[data-conversation-deliverable] [data-assistant-media]")).toHaveLength(
-    3,
+  if ((await trigger.getAttribute("data-history-open")) === "false") await trigger.click();
+  await browser.waitUntil(
+    async () => (await trigger.getAttribute("data-history-open")) === "true",
+    { timeout: 10_000 },
   );
-  const image = await browser.$("[data-conversation-deliverable] img[data-markdown-image]");
+  expect(await browser.$$("[data-conversation-deliverable]")).toHaveLength(0);
+  expect(await browser.$$("[data-assistant-media]")).toHaveLength(3);
+  const image = await browser.$("img[data-markdown-image]");
   await image.waitForExist();
   await image.scrollIntoView();
   await browser.waitUntil(
@@ -978,9 +861,7 @@ async function assertNativeMediaVirtualized(marker: string) {
   if (!paneId) throw new Error("缺少虚拟滚动验证的当前 pane");
   const turnId = await browser.execute(() => {
     const turn = document.querySelector<HTMLElement>('[data-v4-turn-unit="true"]');
-    const image = turn?.querySelector<HTMLImageElement>(
-      "[data-conversation-deliverable] img[data-markdown-image]",
-    );
+    const image = turn?.querySelector<HTMLImageElement>("img[data-markdown-image]");
     const media = Array.from(
       turn?.querySelectorAll<HTMLMediaElement>(
         "[data-assistant-media] audio, [data-assistant-media] video",
@@ -1055,15 +936,26 @@ async function assertNativeMediaVirtualized(marker: string) {
     expect(unmounted.mountedRenderUnitCount).toBeLessThan(historyTurns);
     expect(unmounted.scrollHeight).toBeGreaterThan(unmounted.clientHeight * 2);
     await scrollV4TimelineToTop(paneId);
+    // 历史展开态是 turn 内局部状态，虚拟滚动重挂后回到折叠，需重新展开才挂载媒体叶子。
+    await browser.waitUntil(
+      async () =>
+        browser.execute((id) => {
+          const trigger = Array.from(document.querySelectorAll('[data-v4-turn-unit="true"]'))
+            .find((node) => node.getAttribute("data-turn-id") === id)
+            ?.querySelector<HTMLElement>('[data-testid^="chat-assistant-history-trigger-"]');
+          if (!trigger) return false;
+          if (trigger.getAttribute("data-history-open") === "false") trigger.click();
+          return trigger.getAttribute("data-history-open") === "true";
+        }, turnId),
+      { timeout: 15_000, timeoutMsg: "首轮重挂后无法展开原历史" },
+    );
     await browser.waitUntil(
       async () =>
         browser.execute((id) => {
           const turn = Array.from(document.querySelectorAll('[data-v4-turn-unit="true"]')).find(
             (node) => node.getAttribute("data-turn-id") === id,
           );
-          const image = turn?.querySelector<HTMLImageElement>(
-            "[data-conversation-deliverable] img[data-markdown-image]",
-          );
+          const image = turn?.querySelector<HTMLImageElement>("img[data-markdown-image]");
           const media = Array.from(
             turn?.querySelectorAll<HTMLMediaElement>(
               "[data-assistant-media] audio, [data-assistant-media] video",
@@ -1083,9 +975,7 @@ async function assertNativeMediaVirtualized(marker: string) {
       const turn = Array.from(document.querySelectorAll('[data-v4-turn-unit="true"]')).find(
         (node) => node.getAttribute("data-turn-id") === id,
       )!;
-      const image = turn.querySelector<HTMLImageElement>(
-        "[data-conversation-deliverable] img[data-markdown-image]",
-      )!;
+      const image = turn.querySelector<HTMLImageElement>("img[data-markdown-image]")!;
       const media = Array.from(
         turn.querySelectorAll<HTMLMediaElement>(
           "[data-assistant-media] audio, [data-assistant-media] video",
@@ -1124,7 +1014,7 @@ async function assertNativeMediaVirtualized(marker: string) {
         (node) => node.ready > 0 && node.controls && !node.autoplay && node.paused,
       ),
     ).toBe(true);
-    expect(remounted.historyOpen).toBe("false");
+    expect(remounted.historyOpen).toBe("true");
     const screenshots = process.env.ZCODE_E2E_RUNTIME_LOG_DIR;
     if (screenshots) {
       await browser.saveScreenshot(join(screenshots, "ux05-native-virtual-remount.png"));
@@ -1150,7 +1040,7 @@ async function assertNarrowMediaLayout() {
   }, previous.windowId);
   try {
     await setCurrentElectronRendererContentSize(430, 900);
-    await setExcerptPresentation("en-US", "zai-dark");
+    await setLocaleAndTheme("en-US", "zai-dark");
     const drawer = await browser.$('[data-testid="workspace-sidebar-drawer-backdrop"]');
     if (await drawer.isDisplayed()) {
       await browser.action("pointer").move({ x: 420, y: 450 }).down().up().perform();
@@ -1180,7 +1070,7 @@ async function assertNarrowMediaLayout() {
       minimum,
     );
     await restoreElectronRendererContentSize(previous);
-    await setExcerptPresentation("zh-CN", "zai-light");
+    await setLocaleAndTheme("zh-CN", "zai-light");
   }
 }
 

@@ -12,17 +12,12 @@ import {
   parseAssistantFileUrlPath,
   resolveAssistantRawFilePath,
   type AssistantFileReference,
-  type AssistantFilePathResolveOptions,
   type AssistantPreviewFileKind,
   type AssistantPreviewFileSubtitleId,
 } from "@/lib/assistantFileReferences.js";
-import { decodeFilePathUriEscapes, getPathLeaf, toFileUrl } from "@/lib/path.js";
+import { getPathLeaf, toFileUrl } from "@/lib/path.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import { collectGenUiSourcePaths, matchesGenUiSourcePath } from "@/gen-ui/contract.js";
-import {
-  assistantPresentationReferences,
-  classifyAssistantMedia,
-} from "@/v4/conversation-presentation/index.js";
 
 export {
   extractAssistantFileReferences,
@@ -47,7 +42,7 @@ export type AssistantPreviewCard =
       id: string;
       type: "website";
       title: string;
-      subtitleId: "chat.previewCards.website" | "chat.previewCards.htmlWebsite";
+      subtitleId: "chat.previewCards.htmlWebsite";
       url: string;
       filePath?: string;
     }
@@ -75,13 +70,8 @@ export interface AssistantPreviewCardFileStatService {
   checkFilesExist(params: { paths: string[] }): Promise<Array<{ path: string; exists: boolean }>>;
 }
 
-const LOCALHOST_URL_RE =
-  /\bhttps?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(?:[/?#][^\s<>()\]`"'*，。！？；：、]*)?/gi;
-const STRICT_LOCALHOST_URL_RE =
-  /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d{1,5})?(?:[/?#][^\s<>()\]`"'*，。！？；：、]*)?$/i;
 const STRICT_FILE_HTML_URL_RE =
   /^file:\/\/(?:localhost\/|\/|[^/\s<>()\]`"'*，。！？；：、]+\/)[^\s<>()\]`"'*，。！？；：、]+\.html?(?:[?#][^\s<>()\]`"'*，。！？；：、]*)?$/i;
-const MARKDOWN_LINK_RE = /\[([^\]\n]*)\]\(([^)\n]+)\)/g;
 
 interface AssistantPreviewCardOptions {
   changedFilePaths?: readonly string[];
@@ -120,25 +110,6 @@ export function isValidAssistantPreviewWebsiteUrl(url: string): boolean {
   } catch {
     return false;
   }
-}
-
-function normalizeMarkdownHref(href: string): string {
-  return href.trim().replace(/^<|>$/g, "");
-}
-
-function cleanMarkdownLinkTitle(title: string): string | null {
-  const normalizedTitle = title.replace(/\s+/g, " ").trim();
-  if (
-    !normalizedTitle ||
-    normalizedTitle.length > 80 ||
-    /^https?:\/\//i.test(normalizedTitle) ||
-    /[*_`[\]<>]/.test(normalizedTitle) ||
-    /^[)"'`,.;:!?，。！？；：、）】》]+/.test(normalizedTitle) ||
-    !/[a-zA-Z0-9\u4e00-\u9fff]/.test(normalizedTitle)
-  ) {
-    return null;
-  }
-  return normalizedTitle;
 }
 
 export function shouldOpenAssistantHtmlInBrowser(params: {
@@ -191,47 +162,6 @@ function findMatchingChangedFilePath(
   return leafMatches.length === 1 ? leafMatches[0]!.path : null;
 }
 
-function getWebsiteTitleFromMarkdownLink(content: string, url: string): string | null {
-  for (const match of content.matchAll(MARKDOWN_LINK_RE)) {
-    const label = match[1] ? cleanMarkdownLinkTitle(match[1]) : null;
-    const href = match[2] ? normalizeTrailingUrlText(normalizeMarkdownHref(match[2])) : "";
-    if (label && href === url && !/^https?:\/\//i.test(label)) return label;
-  }
-  return null;
-}
-
-function getWebsiteFallbackTitle(url: string): string {
-  try {
-    const parsedUrl = new URL(url);
-    const pathLeaf = getPathLeaf(decodeURI(parsedUrl.pathname));
-    return pathLeaf && pathLeaf !== "/" ? pathLeaf : parsedUrl.host;
-  } catch {
-    return url;
-  }
-}
-
-function resolveLocalhostHtmlChangedPath(
-  url: string,
-  workspacePath: string,
-  changedFilePaths: readonly string[],
-  options: AssistantFilePathResolveOptions = {},
-): string | null {
-  try {
-    const parsedUrl = new URL(url);
-    const pathname = decodeFilePathUriEscapes(parsedUrl.pathname).replace(/^\/+/, "");
-    if (!isAssistantPreviewHtmlPath(pathname)) return null;
-    const path = resolveAssistantRawFilePath(workspacePath, pathname, options);
-    if (!path) return null;
-    return findMatchingChangedFilePath(
-      { start: 0, end: 0, kind: "html", path, raw: pathname },
-      changedFilePaths,
-      workspacePath,
-    );
-  } catch {
-    return null;
-  }
-}
-
 function buildFileCard(reference: AssistantFileReference): AssistantPreviewCard {
   const definition = getAssistantPreviewFileTypeDefinition(reference.path)!;
   if (reference.kind === "markdown") {
@@ -269,15 +199,7 @@ function buildFileCard(reference: AssistantFileReference): AssistantPreviewCard 
 
 function getCardSeenKey(card: AssistantPreviewCard): string {
   const filePath = getAssistantPreviewCardFilePath(card);
-  if (filePath) return `file:${normalizePathForCompare(filePath)}`;
-  try {
-    const parsedUrl = new URL(card.type === "website" ? card.url : "");
-    return parsedUrl.pathname === "/" && !parsedUrl.search && !parsedUrl.hash
-      ? `url:${parsedUrl.origin}`
-      : `url:${parsedUrl.href}`;
-  } catch {
-    return card.id;
-  }
+  return filePath ? `file:${normalizePathForCompare(filePath)}` : card.id;
 }
 
 export function buildAssistantPreviewCards(
@@ -305,56 +227,11 @@ export function buildAssistantPreviewCardsFromReferences(
   const changedFilePaths = options.changedFilePaths ?? [];
   const genUiSources = collectGenUiSourcePaths(content);
   const positionedCards: PositionedCard[] = [];
-  let hasLocalHttpPreview = false;
-
-  // 既有 localhost 行内地址语义保持；普通公网卡仅来自闭合的收到引用。
-  const closedReferences = assistantPresentationReferences(content);
-  const websiteReferences = [
-    ...closedReferences,
-    // 闭合引用已保留完整括号/查询；旧行内正则不能再从同一原文切出截断的第二张卡。
-    ...Array.from(content.matchAll(LOCALHOST_URL_RE))
-      .filter(
-        (match) =>
-          !closedReferences.some(
-            (reference) => match.index >= reference.start && match.index < reference.end,
-          ),
-      )
-      .map((match) => ({ target: normalizeTrailingUrlText(match[0]), start: match.index })),
-  ];
-  for (const reference of websiteReferences) {
-    const url = reference.target;
-    if (!isValidAssistantPreviewWebsiteUrl(url)) continue;
-    if (classifyAssistantMedia(url)) continue;
-    const isLocal = STRICT_LOCALHOST_URL_RE.test(url);
-    // Web 远控没有本地端口转发或 HTML 运行环境；在候选上限前过滤，避免隐藏卡片占位。
-    if (options.suppressWebRemoteCards && isLocal) continue;
-    const filePath = isLocal
-      ? resolveLocalhostHtmlChangedPath(url, workspacePath, changedFilePaths, {
-          homePath: options.homePath,
-        })
-      : null;
-    if (filePath && matchesGenUiSourcePath(filePath, genUiSources)) continue;
-    hasLocalHttpPreview ||= isLocal;
-    positionedCards.push({
-      position: reference.start,
-      card: {
-        id: `website:${url}`,
-        type: "website",
-        title:
-          filePath !== null
-            ? getPathLeaf(filePath)
-            : (getWebsiteTitleFromMarkdownLink(content, url) ?? getWebsiteFallbackTitle(url)),
-        subtitleId: "chat.previewCards.website",
-        url,
-        ...(filePath ? { filePath } : {}),
-      },
-    });
-  }
-
+  // 1.6.1 起不再从正文 URL（localhost / 闭合链接 / text fence / 裸 URL）生成网站卡：
+  // 用户反馈正文已有可点链接，额外的网站卡与之重复且令人困惑（Q41=A）；HTML 文件卡保留。
   const fileReferences: AssistantFileReference[] = [];
   for (const reference of references) {
     if (options.suppressWebRemoteCards && reference.kind === "html") continue;
-    if (reference.kind === "html" && hasLocalHttpPreview) continue;
 
     let resolvedReference = reference;
     if (reference.kind === "markdown" || reference.kind === "html") {

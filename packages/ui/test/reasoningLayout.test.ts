@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { StoreProvider } from "@/store/StoreProvider.js";
 import {
+  formatReasoningBody,
   getReasoningBottomDistance,
   getReasoningSummaryMaskStyle,
   isReasoningScrollAtBottom,
@@ -93,7 +94,9 @@ describe("Reasoning layout", () => {
   it("renders expanded thought content as plain text instead of Markdown", () => {
     const html = renderReasoningContent("**阶段一**\n\n# 计划\n`命令`");
 
-    expect(html).toContain("**阶段一**");
+    // 1.6.1：整行 **标题** 去掉星号（仅加粗），其余 Markdown 记号仍保持原文。
+    expect(html).not.toContain("**阶段一**");
+    expect(html).toContain("阶段一");
     expect(html).toContain("# 计划");
     expect(html).toContain("`命令`");
     expect(html).not.toContain("<strong>");
@@ -169,6 +172,35 @@ describe("Reasoning layout", () => {
       text: "第二行正在生成",
     });
     expect(resolveReasoningStreamingSummary(" \n\t ")).toBeNull();
+  });
+
+  it("uses the last bold summary title without asterisks", () => {
+    const text = "\n\n**读取配置**\n\n先看入口。\n\n**定位根因**\n\n继续检查实现。";
+    expect(resolveReasoningStreamingSummary(text)).toEqual({ key: "6", text: "定位根因" });
+    expect(resolveReasoningStreamingSummary("没有标题。", true)).toBeNull();
+
+    const running = renderReasoningContent(text, { defaultOpen: false, isStreaming: true });
+    expect(running).toContain("正在思考");
+    expect(running).toContain("定位根因");
+    expect(running).not.toContain("**");
+
+    const completed = renderReasoningContent(text, {
+      defaultOpen: false,
+      duration: 5,
+      isStreaming: false,
+    });
+    expect(completed.indexOf("思考")).toBeLessThan(completed.indexOf("定位根因"));
+    expect(completed.indexOf("定位根因")).toBeLessThan(completed.indexOf("持续了 5 秒"));
+  });
+
+  it("keeps first-line indentation while dropping leading blank lines", () => {
+    expect(formatReasoningBody("\n\n  - 缩进列表\n")).toBe("  - 缩进列表");
+  });
+
+  it("trims and collapses blank lines in the expanded body", () => {
+    expect(formatReasoningBody("\n\n**标题**\n\n\n\n正文\n \n\n下一段\n\n")).toBe(
+      "**标题**\n\n正文\n\n下一段",
+    );
   });
 
   it("shows elapsed duration instead of the inline summary while streaming is expanded", () => {

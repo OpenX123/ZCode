@@ -13,7 +13,7 @@ import { TID_CHAT_REASONING_CONTENT, TID_CHAT_REASONING_TRIGGER } from "@zcode/s
 import { BrainIcon, ChevronRightIcon } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { QueuedSummaryContent } from "@/ToolCallBlocks/QueuedSummaryContent.js";
-import type { ComponentProps, CSSProperties, ReactNode } from "react";
+import type { ComponentProps, CSSProperties } from "react";
 import {
   EMPTY_SCROLL_MASK_STATE,
   getVerticalScrollMaskStyle,
@@ -235,7 +235,6 @@ export const Reasoning = memo(
 );
 
 export type ReasoningTriggerProps = ComponentProps<typeof CollapsibleTrigger> & {
-  getThinkingMessage?: (isStreaming: boolean, duration?: number) => ReactNode;
   streamingText?: string;
 };
 
@@ -252,17 +251,48 @@ export function isReasoningSummaryOverflowing({
   return scrollWidth > clientWidth + 1;
 }
 
+// Codex ACP 推理摘要以单独一行 **标题** 开始每一段；只认整行，避免误吞正文里的行内加粗。
+const REASONING_TITLE_LINE = /^\*\*([^*\n]+)\*\*[ \t]*$/mu;
+const REASONING_TITLE_LINES = new RegExp(REASONING_TITLE_LINE.source, "gmu");
+
+/**
+ * 1.6.1：优先取最后一个 **标题** 行并去掉星号（修复前运行态直接显示带星号的原始行）。
+ * 没有标题行时，运行态沿用“最后一个非空行”；完成态传 titleOnly，不把长思考末行塞进标题。
+ */
 export function resolveReasoningStreamingSummary(
   streamingText: string,
+  titleOnly = false,
 ): { key: string; text: string } | null {
   const lines = streamingText.replace(/\r\n?/gu, "\n").split("\n");
+  let lastLine: { key: string; text: string } | null = null;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const text = lines[index]?.trim() ?? "";
-    if (text.length > 0) {
-      return { key: String(index), text };
+    if (text.length === 0) {
+      continue;
     }
+    const title = REASONING_TITLE_LINE.exec(text)?.[1]?.trim();
+    if (title) {
+      return { key: String(index), text: title };
+    }
+    lastLine ??= { key: String(index), text };
   }
-  return null;
+  return titleOnly ? null : lastLine;
+}
+
+/**
+ * Bug 原因：codex-acp 每段推理摘要都以 "\n\n" 开头，存储层原样拼接，
+ * whitespace-pre-wrap 正文因此出现开头空白和段间大空隙。只在显示层去掉首尾空白、
+ * 把 3 个以上换行折叠成一个空行，不改存储数据。
+ */
+export function formatReasoningBody(text: string): string {
+  return (
+    text
+      .replace(/\r\n?/gu, "\n")
+      // 只去首尾空白行和末尾空白，保留首行缩进（思考可能以缩进代码或列表开头）。
+      .replace(/^(?:[ \t]*\n)+/u, "")
+      .trimEnd()
+      .replace(/\n[ \t]*(?:\n[ \t]*){2,}/gu, "\n\n")
+  );
 }
 
 const REASONING_SUMMARY_MASK =
@@ -283,17 +313,13 @@ export function getReasoningSummaryMaskStyle(isOverflowing: boolean): CSSPropert
 }
 
 export const ReasoningTrigger = memo(
-  ({
-    className,
-    children,
-    getThinkingMessage,
-    streamingText = "",
-    ...props
-  }: ReasoningTriggerProps) => {
+  ({ className, children, streamingText = "", ...props }: ReasoningTriggerProps) => {
     const { isStreaming, isOpen, duration } = useReasoning();
     const { intl } = useZCodeIntl();
-    const streamingSummary =
-      isStreaming && !isOpen ? resolveReasoningStreamingSummary(streamingText) : null;
+    const isRunningCollapsed = isStreaming && !isOpen;
+    const streamingSummary = isOpen
+      ? null
+      : resolveReasoningStreamingSummary(streamingText, !isStreaming);
     const streamingSummaryRef = useRef<HTMLSpanElement | null>(null);
     const streamingSummaryTextRef = useRef<HTMLSpanElement | null>(null);
     const [isStreamingSummaryOverflowing, setIsStreamingSummaryOverflowing] = useState(false);
@@ -326,38 +352,25 @@ export const ReasoningTrigger = memo(
       return () => resizeObserver.disconnect();
     }, [streamingSummary?.text]);
 
-    const thinkingMessage =
-      getThinkingMessage?.(isStreaming, duration) ??
-      (isStreaming && !isOpen ? (
-        <span className="animated-gradient-text font-medium">
-          {intl.formatMessage({ id: "chat.reasoning.thinking" })}
-        </span>
-      ) : duration === undefined ? (
-        <span className="inline-flex items-center gap-2">
-          {/* 完成态“思考”单独使用 semibold，比同列工具类型标签更粗。
-              统一为 medium，保持对话时间线的视觉层级一致。 */}
-          <span className="font-medium text-foreground-subtlest">
-            {intl.formatMessage({ id: "chat.reasoning.thought" })}
-          </span>
-          <span className="font-normal text-foreground-subtlest">·</span>
-          <span className="font-normal text-foreground-subtlest">
-            {intl.formatMessage({ id: "chat.reasoning.durationFewSeconds" })}
-          </span>
-        </span>
-      ) : (
-        <span className="inline-flex items-center gap-2">
-          <span className="font-medium text-foreground-subtlest">
-            {intl.formatMessage({ id: "chat.reasoning.thought" })}
-          </span>
-          <span className="font-normal text-foreground-subtlest">·</span>
-          <span className="font-normal text-foreground-subtlest">
-            {intl.formatMessage(
-              { id: "chat.reasoning.durationSeconds" },
-              { seconds: String(duration) },
-            )}
-          </span>
-        </span>
-      ));
+    const thinkingMessage = isRunningCollapsed ? (
+      <span className="animated-gradient-text font-medium">
+        {intl.formatMessage({ id: "chat.reasoning.thinking" })}
+      </span>
+    ) : (
+      // 完成态“思考”统一为 medium，保持对话时间线的视觉层级一致。
+      <span className="font-medium text-foreground-subtlest">
+        {intl.formatMessage({ id: "chat.reasoning.thought" })}
+      </span>
+    );
+    // 1.6.1：完成态标题位于“思考”与耗时之间：思考 · 标题 · 持续了 N 秒。
+    const durationText = isRunningCollapsed
+      ? null
+      : duration === undefined
+        ? intl.formatMessage({ id: "chat.reasoning.durationFewSeconds" })
+        : intl.formatMessage(
+            { id: "chat.reasoning.durationSeconds" },
+            { seconds: String(duration) },
+          );
 
     return (
       <CollapsibleTrigger
@@ -404,6 +417,14 @@ export const ReasoningTrigger = memo(
                 />
               </span>
             ) : null}
+            {durationText ? (
+              <>
+                <span className="shrink-0 text-foreground-subtlest">·</span>
+                <span className="shrink-0 whitespace-nowrap text-foreground-subtlest">
+                  {durationText}
+                </span>
+              </>
+            ) : null}
             <ChevronRightIcon
               className={cn(
                 "size-4 shrink-0 text-foreground-subtlest transition-opacity transition-transform",
@@ -428,6 +449,13 @@ export const ReasoningContent = memo(
   ({ className, children, forceMount, variant = "default", ...props }: ReasoningContentProps) => {
     const { isOpen, shouldRenderContent } = useReasoning();
     const shouldRenderChildren = isOpen || shouldRenderContent || Boolean(forceMount);
+    // split 的捕获组落在奇数位：整行 **标题** 去星号后轻量加粗，其余保持纯文本。
+    const bodyParts = useMemo(
+      // 收起时正文不挂载，跳过每个流式 chunk 上的整段格式化。
+      () =>
+        shouldRenderChildren ? formatReasoningBody(children).split(REASONING_TITLE_LINES) : [],
+      [children, shouldRenderChildren],
+    );
     const scrollRef = useRef<HTMLDivElement | null>(null);
     const contentRef = useRef<HTMLDivElement | null>(null);
     const autoFollowBottomRef = useRef(true);
@@ -562,7 +590,15 @@ export const ReasoningContent = memo(
                 ref={contentRef}
                 className="min-w-0 whitespace-pre-wrap break-words text-foreground-subtlest"
               >
-                {children}
+                {bodyParts.map((part, index) =>
+                  index % 2 === 1 ? (
+                    <span key={index} className="font-medium text-foreground-subtle">
+                      {part.trim()}
+                    </span>
+                  ) : (
+                    part
+                  ),
+                )}
               </div>
             </div>
           </div>
